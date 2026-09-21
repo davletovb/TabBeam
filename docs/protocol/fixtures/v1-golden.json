@@ -1,0 +1,287 @@
+{
+  "protocol_version": 1,
+  "valid_requests": [
+    {
+      "name": "new conversation",
+      "value": {
+        "version": 1,
+        "type": "request",
+        "request_id": "req_answer_1",
+        "method": "conversation.send",
+        "payload": {
+          "provider_id": "fake",
+          "input": {
+            "text": "Hello"
+          }
+        }
+      }
+    },
+    {
+      "name": "continue conversation",
+      "value": {
+        "version": 1,
+        "type": "request",
+        "request_id": "req_answer_2",
+        "method": "conversation.send",
+        "payload": {
+          "provider_id": "fake",
+          "conversation_id": "conv_1",
+          "input": {
+            "text": "Continue"
+          }
+        }
+      }
+    },
+    {
+      "name": "provider status all",
+      "value": {
+        "version": 1,
+        "type": "request",
+        "request_id": "req_status_1",
+        "method": "provider.status",
+        "payload": {}
+      }
+    },
+    {
+      "name": "cancel request",
+      "value": {
+        "version": 1,
+        "type": "request",
+        "request_id": "req_cancel_1",
+        "method": "request.cancel",
+        "payload": {
+          "target_request_id": "req_answer_1"
+        }
+      }
+    }
+  ],
+  "valid_events": [
+    {
+      "name": "host ready",
+      "value": {
+        "version": 1,
+        "type": "event",
+        "request_id": null,
+        "event": "host.ready",
+        "payload": {
+          "host_version": "0.1.0-dev",
+          "protocol_versions": [1]
+        }
+      }
+    },
+    {
+      "name": "conversation created",
+      "value": {
+        "version": 1,
+        "type": "event",
+        "request_id": "req_answer_1",
+        "event": "conversation.created",
+        "payload": {
+          "conversation_id": "conv_1"
+        }
+      }
+    },
+    {
+      "name": "response started",
+      "value": {
+        "version": 1,
+        "type": "event",
+        "request_id": "req_answer_1",
+        "event": "response.started",
+        "payload": {
+          "conversation_id": "conv_1",
+          "provider_id": "fake"
+        }
+      }
+    },
+    {
+      "name": "response delta",
+      "value": {
+        "version": 1,
+        "type": "event",
+        "request_id": "req_answer_1",
+        "event": "response.delta",
+        "payload": {
+          "text": "Hello"
+        }
+      }
+    },
+    {
+      "name": "response source",
+      "value": {
+        "version": 1,
+        "type": "event",
+        "request_id": "req_answer_1",
+        "event": "response.source",
+        "payload": {
+          "source_id": "src_1",
+          "data": {}
+        }
+      }
+    },
+    {
+      "name": "response completed",
+      "value": {
+        "version": 1,
+        "type": "event",
+        "request_id": "req_answer_1",
+        "event": "response.completed",
+        "payload": {
+          "conversation_id": "conv_1"
+        }
+      }
+    },
+    {
+      "name": "provider status",
+      "value": {
+        "version": 1,
+        "type": "event",
+        "request_id": "req_status_1",
+        "event": "provider.status",
+        "payload": {
+          "provider_id": "fake",
+          "status": {}
+        }
+      }
+    },
+    {
+      "name": "cancellation acknowledged",
+      "value": {
+        "version": 1,
+        "type": "event",
+        "request_id": "req_cancel_1",
+        "event": "request.cancelled",
+        "payload": {
+          "target_request_id": "req_answer_1"
+        }
+      }
+    },
+    {
+      "name": "uncorrelated malformed-message failure",
+      "value": {
+        "version": 1,
+        "type": "event",
+        "request_id": null,
+        "event": "response.failed",
+        "payload": {
+          "error": {
+            "code": "INVALID_REQUEST",
+            "reason": "MALFORMED_MESSAGE",
+            "message": "Malformed request."
+          }
+        }
+      }
+    }
+  ],
+  "sequences": [
+    {
+      "name": "new conversation success",
+      "request_id": "req_answer_1",
+      "events": [
+        "conversation.created",
+        "response.started",
+        "response.delta",
+        "response.completed"
+      ]
+    },
+    {
+      "name": "existing conversation success",
+      "request_id": "req_answer_2",
+      "events": [
+        "response.started",
+        "response.delta",
+        "response.completed"
+      ]
+    },
+    {
+      "name": "preflight failure",
+      "request_id": "req_invalid_1",
+      "events": [
+        "response.failed"
+      ]
+    },
+    {
+      "name": "provider failure after start",
+      "request_id": "req_failed_1",
+      "events": [
+        "response.started",
+        "response.delta",
+        "response.failed"
+      ]
+    },
+    {
+      "name": "provider status success",
+      "request_id": "req_status_1",
+      "events": [
+        "provider.status",
+        "response.completed"
+      ]
+    }
+  ],
+  "invalid_cases": [
+    {
+      "name": "unsupported version",
+      "value": {
+        "version": 2,
+        "type": "request",
+        "request_id": "req_bad_version",
+        "method": "conversation.send",
+        "payload": {
+          "provider_id": "fake",
+          "input": {
+            "text": "Hello"
+          }
+        }
+      },
+      "expected": {
+        "event": "response.failed",
+        "request_id": "req_bad_version",
+        "error_code": "INVALID_REQUEST",
+        "reason": "UNSUPPORTED_PROTOCOL_VERSION"
+      }
+    },
+    {
+      "name": "unknown method",
+      "value": {
+        "version": 1,
+        "type": "request",
+        "request_id": "req_bad_method",
+        "method": "unknown.method",
+        "payload": {}
+      },
+      "expected": {
+        "event": "response.failed",
+        "request_id": "req_bad_method",
+        "error_code": "INVALID_REQUEST",
+        "reason": "UNKNOWN_METHOD"
+      }
+    },
+    {
+      "name": "unknown top-level field",
+      "value": {
+        "version": 1,
+        "type": "request",
+        "request_id": "req_extra_1",
+        "method": "provider.status",
+        "payload": {},
+        "extra": true
+      },
+      "expected": {
+        "event": "response.failed",
+        "request_id": "req_extra_1",
+        "error_code": "INVALID_REQUEST",
+        "reason": "INVALID_ENVELOPE"
+      }
+    },
+    {
+      "name": "malformed json",
+      "raw": "{not-json",
+      "expected": {
+        "event": "response.failed",
+        "request_id": null,
+        "error_code": "INVALID_REQUEST",
+        "reason": "MALFORMED_MESSAGE"
+      }
+    }
+  ]
+}
