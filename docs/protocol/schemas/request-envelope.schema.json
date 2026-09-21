@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pervue.local/protocol/v1/request-envelope.schema.json",
+  "title": "Pervue Protocol v1 Request Envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "type", "request_id", "method", "payload"],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "type": {
+      "const": "request"
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "method": {
+      "type": "string",
+      "enum": [
+        "conversation.send",
+        "provider.status",
+        "request.cancel"
+      ]
+    },
+    "payload": {
+      "type": "object"
+    }
+  }
+}
