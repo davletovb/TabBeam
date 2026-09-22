@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "Pervue",
+  "description": "A lightweight, provider-independent browser AI command layer.",
+  "version": "0.1.0",
+  "action": {
+    "default_title": "Pervue",
+    "default_popup": "src/popup/index.html"
+  },
+  "background": {
+    "service_worker": "src/background/service-worker.js",
+    "type": "module"
+  },
+  "permissions": [
+    "contextMenus",
+    "tabs"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "src/content/content-script.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "commands": {
+    "open-pervue-full-page": {
+      "suggested_key": {
+        "default": "Alt+Shift+P",
+        "mac": "Command+Shift+P"
+      },
+      "description": "Open the Pervue full-page surface"
+    }
+  }
+}
