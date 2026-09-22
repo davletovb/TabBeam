@@ -103,6 +103,7 @@ static int test_parser_cases(void) {
       "{\"version\":1,\"type\":\"request\",\"request_id\":\"req_1\","
       "\"method\":\"conversation.send\",\"payload\":{"
       "\"provider_id\":\"fake\",\"input\":{\"text\":\"Hello\"}}}";
+  static const char non_object_root[] = "[1,2,3]";
   static const char missing_payload[] =
       "{\"version\":1,\"type\":\"request\",\"request_id\":\"req_2\","
       "\"method\":\"provider.status\"}";
@@ -134,6 +135,10 @@ static int test_parser_cases(void) {
       expect_parse(
           valid_conversation,
           PERVUE_REQUEST_PARSE_OK,
+          false) != 0 ||
+      expect_parse(
+          non_object_root,
+          PERVUE_REQUEST_PARSE_INVALID_ENVELOPE,
           false) != 0 ||
       expect_parse(
           missing_payload,
