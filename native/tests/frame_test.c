@@ -54,9 +54,6 @@ static int test_round_trip(void) {
     return 1;
   }
 
-  memcpy(expected, &encoded_length, sizeof(encoded_length));
-  expected[PERVUE_NATIVE_MESSAGE_PREFIX_SIZE] = payload[0];
-
   if (pervue_frame_write(stream, payload, sizeof(payload)) != PERVUE_FRAME_OK) {
     goto cleanup;
   }
@@ -178,13 +175,16 @@ static int test_wire_format_uses_native_byte_order(void) {
   static const unsigned char payload[] = {0x41U};
   unsigned char expected[PERVUE_NATIVE_MESSAGE_PREFIX_SIZE + sizeof(payload)];
   unsigned char actual[sizeof(expected)];
-  uint32_t encoded_length = 1U;
+  uint32_t encoded_length = UINT32_C(1);
   FILE *stream = open_test_file();
   int result = 1;
 
   if (stream == NULL) {
     return 1;
   }
+
+  memcpy(expected, &encoded_length, sizeof(encoded_length));
+  expected[PERVUE_NATIVE_MESSAGE_PREFIX_SIZE] = payload[0];
 
   if (pervue_frame_write(stream, payload, sizeof(payload)) != PERVUE_FRAME_OK) {
     goto cleanup;
@@ -381,6 +381,7 @@ cleanup:
 static int test_invalid_arguments(void) {
   FILE *stream = open_test_file();
   pervue_frame_t frame;
+  unsigned char *owned = NULL;
   int result = 1;
 
   pervue_frame_init(&frame);
@@ -393,6 +394,18 @@ static int test_invalid_arguments(void) {
       pervue_frame_read(stream, NULL) != PERVUE_FRAME_INVALID_ARGUMENT ||
       pervue_frame_write(NULL, NULL, 0U) != PERVUE_FRAME_INVALID_ARGUMENT ||
       pervue_frame_write(stream, NULL, 1U) != PERVUE_FRAME_INVALID_ARGUMENT) {
+    goto cleanup;
+  }
+
+  owned = (unsigned char *)malloc(1U);
+  if (owned == NULL) {
+    goto cleanup;
+  }
+
+  frame.data = owned;
+  frame.length = 1U;
+
+  if (pervue_frame_read(stream, &frame) != PERVUE_FRAME_INVALID_ARGUMENT) {
     goto cleanup;
   }
 
