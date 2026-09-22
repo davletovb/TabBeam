@@ -259,6 +259,10 @@ static int test_host_protocol_flow(void) {
       "{\"version\":2,\"type\":\"request\","
       "\"request_id\":\"r\\u0065q_v2\","
       "\"method\":\"provider.status\",\"payload\":{}}";
+  static const char unknown[] =
+      "{\"version\":1,\"type\":\"request\","
+      "\"request_id\":\"req_unknown\","
+      "\"method\":\"unknown.method\",\"payload\":{}}";
   FILE *input = open_test_file(PERVUE_PROTOCOL_INPUT_PATH, "w+b");
   FILE *output = open_test_file(PERVUE_PROTOCOL_OUTPUT_PATH, "w+b");
   pervue_frame_t trailing;
@@ -280,6 +284,10 @@ static int test_host_protocol_flow(void) {
           input,
           (const unsigned char *)unsupported,
           strlen(unsupported)) != PERVUE_FRAME_OK ||
+      pervue_frame_write(
+          input,
+          (const unsigned char *)unknown,
+          strlen(unknown)) != PERVUE_FRAME_OK ||
       fseek(input, 0L, SEEK_SET) != 0) {
     goto cleanup;
   }
@@ -313,7 +321,11 @@ static int test_host_protocol_flow(void) {
       frame_contains(
           output,
           "\"reason\":\"UNSUPPORTED_PROTOCOL_VERSION\"",
-          "\"request_id\":\"r\\u0065q_v2\"") != 0) {
+          "\"request_id\":\"r\\u0065q_v2\"") != 0 ||
+      frame_contains(
+          output,
+          "\"reason\":\"UNKNOWN_METHOD\"",
+          "\"request_id\":\"req_unknown\"") != 0) {
     goto cleanup;
   }
 
