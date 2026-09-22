@@ -65,7 +65,9 @@
         "event": "host.ready",
         "payload": {
           "host_version": "0.1.0-dev",
-          "protocol_versions": [1]
+          "protocol_versions": [
+            1
+          ]
         }
       }
     },
@@ -140,7 +142,19 @@
         "event": "provider.status",
         "payload": {
           "provider_id": "fake",
-          "status": {}
+          "status": {
+            "availability": "available",
+            "authentication": "authenticated",
+            "capabilities": {
+              "streaming": true,
+              "continuation": true,
+              "web_search": "unknown",
+              "page_context": true,
+              "attachments": false,
+              "model_selection": true,
+              "cancellation": true
+            }
+          }
         }
       }
     },
@@ -167,7 +181,8 @@
           "error": {
             "code": "INVALID_REQUEST",
             "reason": "MALFORMED_MESSAGE",
-            "message": "Malformed request."
+            "message": "Malformed request.",
+            "retryable": false
           }
         }
       }
