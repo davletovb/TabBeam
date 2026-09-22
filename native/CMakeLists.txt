@@ -123,16 +123,16 @@ target_link_libraries(pervue-host PRIVATE pervue_host_core)
 pervue_enable_project_warnings(pervue-host)
 pervue_enable_sanitizers(pervue-host)
 
-add_executable(pervue-fake-provider
-  test_provider/fake_provider.c
-)
-
-pervue_enable_project_warnings(pervue-fake-provider)
-pervue_enable_sanitizers(pervue-fake-provider)
-
 include(CTest)
 
 if(BUILD_TESTING)
+  add_executable(pervue-fake-provider
+    test_provider/fake_provider.c
+  )
+
+  pervue_enable_project_warnings(pervue-fake-provider)
+  pervue_enable_sanitizers(pervue-fake-provider)
+
   add_executable(pervue-host-startup-test
     tests/host_startup_test.c
   )
