@@ -133,11 +133,15 @@ export class NativeConnectionManager {
     try {
       port.postMessage(request);
     } catch (error) {
-      this.routes.delete(requestId);
       if (this.port === port) {
         this.handleDisconnect(
           error instanceof Error ? error.message : String(error)
         );
+        try {
+          port.disconnect();
+        } catch {
+          // The port may already be closed. The manager state is already reset.
+        }
       }
       throw error;
     }
@@ -201,10 +205,12 @@ export class NativeConnectionManager {
       return;
     }
 
-    owner.onEvent?.(event);
-
-    if (TERMINAL_EVENTS.has(event?.event)) {
-      this.routes.delete(requestId);
+    try {
+      owner.onEvent?.(event);
+    } finally {
+      if (TERMINAL_EVENTS.has(event?.event)) {
+        this.routes.delete(requestId);
+      }
     }
   }
 
@@ -227,6 +233,7 @@ export class NativeConnectionManager {
   }
 }
 
+/** @param {NativeConnectionOptions} options */
 export function createNativeConnectionManager(options) {
   return new NativeConnectionManager(options);
 }
