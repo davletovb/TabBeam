@@ -1,14 +1,9 @@
-declare namespace chrome {
-  namespace runtime {
-    interface Manifest {
-      version: string;
-    }
-
-    const onInstalled: {
+interface PervueChrome {
+  runtime: {
+    onInstalled: {
       addListener(callback: () => void | Promise<void>): void;
     };
-
-    const onMessage: {
+    onMessage: {
       addListener(
         callback: (
           message: any,
@@ -17,36 +12,31 @@ declare namespace chrome {
         ) => void | boolean
       ): void;
     };
-
-    function getURL(path: string): string;
-    function getManifest(): Manifest;
-    function sendMessage(message: any): Promise<any>;
-  }
-
-  namespace commands {
-    const onCommand: {
+    getURL(path: string): string;
+    getManifest(): { version: string };
+    sendMessage(message: any): Promise<any>;
+  };
+  commands: {
+    onCommand: {
       addListener(callback: (command: string) => void | Promise<void>): void;
     };
-  }
-
-  namespace contextMenus {
-    interface OnClickData {
-      menuItemId: string | number;
-    }
-
-    const onClicked: {
-      addListener(callback: (info: OnClickData) => void | Promise<void>): void;
+  };
+  contextMenus: {
+    onClicked: {
+      addListener(
+        callback: (info: { menuItemId: string | number }) => void | Promise<void>
+      ): void;
     };
-
-    function removeAll(): Promise<void>;
-    function create(properties: {
+    removeAll(): Promise<void>;
+    create(properties: {
       id: string;
       title: string;
       contexts: string[];
     }): string | number;
-  }
-
-  namespace tabs {
-    function create(properties: { url: string }): Promise<unknown>;
-  }
+  };
+  tabs: {
+    create(properties: { url: string }): Promise<unknown>;
+  };
 }
+
+declare var chrome: PervueChrome;
