@@ -139,7 +139,7 @@ Reached after **Milestone H**:
 | ID | Title | Milestone | Area | Dependencies | Status |
 |---|---|---|---|---|---|
 | DOC-01 | Freeze protocol v1 envelope and event contract | Foundation | Documentation / Protocol | — | IMPLEMENTED — VERIFY |
-| DOC-02 | Freeze normalized error taxonomy and capability vocabulary | Foundation | Documentation / Protocol | DOC-01 | READY |
+| DOC-02 | Freeze normalized error taxonomy and capability vocabulary | Foundation | Documentation / Protocol | DOC-01 | IMPLEMENTED — VERIFY |
 | EXT-01 | Scaffold Manifest V3 extension surfaces | Foundation | Extension | — | READY |
 | NAT-01 | Scaffold native C host and build system | Foundation | Native | — | READY |
 | TST-01 | Establish CI/build/test baseline | Foundation | Testing | EXT-01, NAT-01 | READY |
@@ -295,7 +295,14 @@ Reached after **Milestone H**:
 - Error mapping fixture tests.
 - Capability serialization tests.
 
-**Status:** READY
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- Normative taxonomy: `docs/protocol/errors-and-capabilities-v1.md`
+- Error schema: `docs/protocol/schemas/error.schema.json`
+- Provider-status schema: `docs/protocol/schemas/provider-status.schema.json`
+- Golden mapping/status fixtures: `docs/protocol/fixtures/v1-errors-capabilities.json`
+- Automated schema/fixture validation is wired by TST-01 with the CI/test baseline.
 
 ### EXT-01 — Scaffold Manifest V3 extension surfaces
 **Milestone:** Foundation  
@@ -1395,7 +1402,7 @@ Update this section whenever item statuses change.
 
 | Stage | Total | Verified | Implemented — Verify | In Progress | Ready | Backlog | Blocked | Deferred |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Foundation | 5 | 0 | 1 | 0 | 4 | 0 | 0 | 0 |
+| Foundation | 5 | 0 | 2 | 0 | 3 | 0 | 0 | 0 |
 | A — Native round trip | 8 | 0 | 0 | 0 | 0 | 8 | 0 | 0 |
 | B — First provider | 10 | 0 | 0 | 0 | 0 | 10 | 0 | 0 |
 | C — Conversation continuity | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
@@ -1406,7 +1413,7 @@ Update this section whenever item statuses change.
 | G — Installable product | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 |
 | H — Search/citations | 8 | 0 | 0 | 0 | 0 | 8 | 0 | 0 |
 | Post-milestone | 6 | 0 | 0 | 0 | 0 | 4 | 0 | 2 |
-| **Total** | **81** | **0** | **1** | **0** | **4** | **74** | **0** | **2** |
+| **Total** | **81** | **0** | **2** | **0** | **3** | **74** | **0** | **2** |
 
 ### Milestone completion rule
 
