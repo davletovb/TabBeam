@@ -192,7 +192,7 @@ int pervue_protocol_write_parse_failure(
     case PERVUE_REQUEST_PARSE_MALFORMED:
       return pervue_protocol_write_error(
           output,
-          NULL,
+          request_id,
           "INVALID_REQUEST",
           "MALFORMED_MESSAGE",
           "Malformed request.",
