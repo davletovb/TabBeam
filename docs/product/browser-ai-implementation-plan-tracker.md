@@ -144,7 +144,7 @@ Reached after **Milestone H**:
 | NAT-01 | Scaffold native C host and build system | Foundation | Native | — | IMPLEMENTED — VERIFY |
 | TST-01 | Establish CI/build/test baseline | Foundation | Testing | EXT-01, NAT-01 | IMPLEMENTED — VERIFY |
 | NAT-02 | Implement bounded Native Messaging frame reader/writer | A | Native | NAT-01, DOC-01 | IMPLEMENTED — VERIFY |
-| NAT-03 | Implement JSON validation and request router | A | Native | NAT-02, DOC-01, DOC-02 | BACKLOG |
+| NAT-03 | Implement JSON validation and request router | A | Native | NAT-02, DOC-01, DOC-02 | IMPLEMENTED — VERIFY |
 | TST-02 | Build deterministic fake streaming provider | A | Testing | NAT-01 | BACKLOG |
 | EXT-02 | Implement service-worker Native Messaging connection manager | A | Extension | EXT-01, DOC-01 | BACKLOG |
 | EXT-03 | Implement minimal popup ask/stream UI | A | Extension | EXT-01, EXT-02 | BACKLOG |
@@ -440,7 +440,19 @@ Reached after **Milestone H**:
 - Missing/extra/unknown field cases.
 - Unsupported version/method cases.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- Strict bounded JSON syntax reader: `native/protocol/json.c`
+- Protocol request model/API: `native/include/pervue/protocol.h`
+- Strict top-level and method-payload validation: `native/protocol/request.c`
+- Method router: `native/protocol/router.c`
+- Protocol event/error emission: `native/protocol/events.c`
+- Host emits exactly one `host.ready`, keeps running after malformed requests, and routes the local fake conversation provider: `native/host/host.c`
+- Parser/router/integration tests cover malformed JSON, duplicate/missing/extra/wrong fields, 128/129-character request-ID boundaries, escaped identifiers, unsupported versions, unknown methods, depth limits, recovered-ID malformed failures, invalid method payloads, and fake conversation dispatch: `native/tests/protocol_test.c`
+- Parser fuzz target + golden-derived corpus: `native/fuzz/protocol_fuzz.c` + `native/fuzz/create_protocol_corpus.py`
+- Built-host contract harness validates emitted frames against the frozen event/error/provider-status schemas and golden event sequences: `scripts/validate_host_protocol.py`
+- CI verification: full 8-job matrix green, including Windows/MSVC, ASan+UBSan, minimum CMake, host conformance, frame fuzzing, and 2,000 protocol-fuzzer smoke runs.
 
 ### TST-02 — Build deterministic fake streaming provider
 **Area:** Testing  
@@ -1442,7 +1454,7 @@ Update this section whenever item statuses change.
 | Stage | Total | Verified | Implemented — Verify | In Progress | Ready | Backlog | Blocked | Deferred |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | Foundation | 5 | 0 | 5 | 0 | 0 | 0 | 0 | 0 |
-| A — Native round trip | 8 | 0 | 1 | 0 | 0 | 7 | 0 | 0 |
+| A — Native round trip | 8 | 0 | 2 | 0 | 0 | 6 | 0 | 0 |
 | B — First provider | 10 | 0 | 0 | 0 | 0 | 10 | 0 | 0 |
 | C — Conversation continuity | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
 | D — Browser context | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 |
@@ -1452,7 +1464,7 @@ Update this section whenever item statuses change.
 | G — Installable product | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 |
 | H — Search/citations | 8 | 0 | 0 | 0 | 0 | 8 | 0 | 0 |
 | Post-milestone | 6 | 0 | 0 | 0 | 0 | 4 | 0 | 2 |
-| **Total** | **81** | **0** | **6** | **0** | **0** | **73** | **0** | **2** |
+| **Total** | **81** | **0** | **7** | **0** | **0** | **72** | **0** | **2** |
 
 ### Milestone completion rule
 

@@ -45,6 +45,12 @@ jobs:
         run: python -m pip install --disable-pip-version-check jsonschema==4.25.1
       - name: Validate schemas and fixtures
         run: python scripts/validate_protocol.py
+      - name: Build native host for contract conformance
+        run: |
+          cmake -S native -B native/build/protocol-ci -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=Debug
+          cmake --build native/build/protocol-ci --target pervue-host --parallel
+      - name: Validate built host against golden protocol
+        run: python scripts/validate_host_protocol.py --host native/build/protocol-ci/pervue-host
 
   native-presets-minimum:
     name: Native presets (CMake 3.21.7)
@@ -95,20 +101,25 @@ jobs:
         run: cmake --build native/build/ci --parallel
       - name: Test
         run: ctest --test-dir native/build/ci --output-on-failure
-      - name: Configure frame fuzz target
+      - name: Configure native fuzz targets
         if: matrix.compiler == 'clang'
         env:
           CC: clang
         run: cmake -S native -B native/build/fuzz -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=Debug -DPERVUE_BUILD_FUZZERS=ON
-      - name: Build frame fuzz target
+      - name: Build native fuzz targets
         if: matrix.compiler == 'clang'
-        run: cmake --build native/build/fuzz --target pervue-frame-fuzz --parallel
-      - name: Generate structured frame fuzz corpus
+        run: cmake --build native/build/fuzz --target pervue-frame-fuzz pervue-protocol-fuzz --parallel
+      - name: Generate structured fuzz corpora
         if: matrix.compiler == 'clang'
-        run: python3 native/fuzz/create_corpus.py native/build/fuzz-corpus
+        run: |
+          python3 native/fuzz/create_corpus.py native/build/fuzz-frame-corpus
+          python3 native/fuzz/create_protocol_corpus.py native/build/fuzz-protocol-corpus --fixtures docs/protocol/fixtures/v1-golden.json
       - name: Smoke-run frame fuzz target
         if: matrix.compiler == 'clang'
-        run: ./native/build/fuzz/pervue-frame-fuzz native/build/fuzz-corpus -runs=1000 -max_len=1048580
+        run: ./native/build/fuzz/pervue-frame-fuzz native/build/fuzz-frame-corpus -runs=1000 -max_len=1048580
+      - name: Smoke-run protocol fuzz target
+        if: matrix.compiler == 'clang'
+        run: ./native/build/fuzz/pervue-protocol-fuzz native/build/fuzz-protocol-corpus -runs=2000 -max_len=1048576
 
   native-macos:
     name: Native macOS

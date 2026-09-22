@@ -36,18 +36,11 @@ static int test_version(void) {
 }
 
 static int test_stream_lifecycle(void) {
-  static const unsigned char sample[] = {
-    0x00U, 0x01U, 0x02U, 0x1aU, 0x0aU, 0x7fU, 0xffU
-  };
   FILE *input = open_test_file(PERVUE_TEST_INPUT_PATH, "w+b");
   FILE *output = open_test_file(PERVUE_TEST_OUTPUT_PATH, "w+b");
   int result = 1;
 
   if (input == NULL || output == NULL) {
-    goto cleanup;
-  }
-
-  if (pervue_frame_write(input, sample, sizeof(sample)) != PERVUE_FRAME_OK) {
     goto cleanup;
   }
 
@@ -63,7 +56,7 @@ static int test_stream_lifecycle(void) {
     goto cleanup;
   }
 
-  if (ftell(output) != 0L) {
+  if (ftell(output) <= 0L) {
     goto cleanup;
   }
 

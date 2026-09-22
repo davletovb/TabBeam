@@ -96,6 +96,10 @@ endfunction()
 
 add_library(pervue_host_core STATIC
   framing/frame.c
+  protocol/events.c
+  protocol/json.c
+  protocol/request.c
+  protocol/router.c
   host/host.c
 )
 
@@ -105,6 +109,7 @@ target_include_directories(pervue_host_core
     ${CMAKE_CURRENT_BINARY_DIR}/generated
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/framing
+    ${CMAKE_CURRENT_SOURCE_DIR}/protocol
 )
 
 pervue_enable_project_warnings(pervue_host_core)
@@ -133,6 +138,10 @@ if(BUILD_TESTING)
     tests/frame_test.c
   )
 
+  add_executable(pervue-protocol-test
+    tests/protocol_test.c
+  )
+
   target_include_directories(pervue-frame-test
     PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/framing
@@ -140,6 +149,14 @@ if(BUILD_TESTING)
   target_link_libraries(pervue-frame-test PRIVATE pervue_host_core)
   pervue_enable_project_warnings(pervue-frame-test)
   pervue_enable_sanitizers(pervue-frame-test)
+
+  target_include_directories(pervue-protocol-test
+    PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/protocol
+  )
+  target_link_libraries(pervue-protocol-test PRIVATE pervue_host_core)
+  pervue_enable_project_warnings(pervue-protocol-test)
+  pervue_enable_sanitizers(pervue-protocol-test)
 
   add_test(
     NAME pervue-host-startup
@@ -149,6 +166,11 @@ if(BUILD_TESTING)
   add_test(
     NAME pervue-frame
     COMMAND pervue-frame-test
+  )
+
+  add_test(
+    NAME pervue-protocol
+    COMMAND pervue-protocol-test
   )
 
   add_test(
@@ -169,6 +191,7 @@ if(BUILD_TESTING)
       "-DPROGRAM=$<TARGET_FILE:pervue-host>"
       "-DARGUMENT=chrome-extension://pervue-test-extension/"
       "-DEXPECTED_EXIT=0"
+      "-DIGNORE_STDOUT=ON"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_cli.cmake"
   )
 
@@ -202,6 +225,28 @@ if(PERVUE_BUILD_FUZZERS)
     -fno-omit-frame-pointer
   )
   target_link_options(pervue-frame-fuzz PRIVATE
+    -fsanitize=fuzzer,address,undefined
+    -fno-omit-frame-pointer
+  )
+
+  add_executable(pervue-protocol-fuzz
+    fuzz/protocol_fuzz.c
+    protocol/json.c
+    protocol/request.c
+  )
+
+  target_include_directories(pervue-protocol-fuzz
+    PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/include
+      ${CMAKE_CURRENT_SOURCE_DIR}/protocol
+  )
+
+  pervue_enable_project_warnings(pervue-protocol-fuzz)
+  target_compile_options(pervue-protocol-fuzz PRIVATE
+    -fsanitize=fuzzer,address,undefined
+    -fno-omit-frame-pointer
+  )
+  target_link_options(pervue-protocol-fuzz PRIVATE
     -fsanitize=fuzzer,address,undefined
     -fno-omit-frame-pointer
   )

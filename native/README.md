@@ -2,7 +2,7 @@
 
 This directory contains the native C companion/host.
 
-The current host foundation includes bounded Chrome Native Messaging framing. JSON validation/routing is intentionally deferred to NAT-03.
+The current host foundation includes bounded Chrome Native Messaging framing plus protocol-v1 JSON validation and routing.
 
 ## Requirements
 
@@ -46,7 +46,7 @@ Pervue uses Chrome Native Messaging framing:
 - partial prefix/payload EOF is a truncated-frame error;
 - short reads and writes are retried until the frame is complete or the stream fails.
 
-NAT-02 only validates and transports opaque payload bytes. NAT-03 owns JSON parsing, envelope validation, routing, and protocol responses.
+NAT-02 validates and transports frames. NAT-03 validates protocol-v1 JSON envelopes/payloads, emits normalized protocol failures, and routes known methods. Provider process execution remains deferred to NAT-04/NAT-05.
 
 At this milestone framing failures are exposed as deterministic host return/exit statuses. Structured stderr/lifecycle diagnostics are intentionally deferred to **OBS-01** so NAT-02 does not create an ad-hoc diagnostics format that later observability work must replace.
 
@@ -66,7 +66,11 @@ Chrome launches Native Messaging hosts with the caller origin as the first posit
 
 The caller-origin value is not yet used for application routing; host registration/allowed-origin policy and packaged identity checks are hardened by later security/packaging work. Unknown flags or unrelated positional arguments are rejected with usage status 64.
 
-Normal execution reads bounded Native Messaging frames from stdin until EOF. Valid payloads are currently consumed without interpretation or response. On Windows, stdin/stdout are switched to binary mode before framing so bytes are not transformed by the CRT.
+Normal execution first emits exactly one `host.ready` event, then reads bounded Native Messaging frames until EOF. Each frame must contain exactly one valid protocol-v1 JSON request object.
+
+Malformed JSON, invalid envelopes/payloads, unsupported versions, and unknown methods produce normalized `response.failed` events. Malformed requests do not terminate an otherwise usable host stream.
+
+For NAT-03, `provider_id: "fake"` is a deliberately local scaffold route that emits a deterministic conversation event sequence. Real provider discovery and execution begin in NAT-04/NAT-05. On Windows, stdin/stdout are switched to binary mode before framing so bytes are not transformed by the CRT.
 
 ## Frame fuzz target
 
