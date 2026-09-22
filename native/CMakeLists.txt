@@ -187,6 +187,7 @@ if(BUILD_TESTING)
       "-DPROGRAM=$<TARGET_FILE:pervue-host>"
       "-DARGUMENT=chrome-extension://pervue-test-extension/"
       "-DEXPECTED_EXIT=0"
+      "-DIGNORE_STDOUT=ON"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_cli.cmake"
   )
 
