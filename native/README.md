@@ -6,7 +6,7 @@ NAT-01 establishes only the portable build and process skeleton. Native Messagin
 
 ## Requirements
 
-- CMake 3.20+
+- CMake 3.21+
 - a C11 compiler
 
 ## Development build
@@ -31,12 +31,16 @@ cmake --build --preset dev-sanitize
 ctest --preset dev-sanitize
 ```
 
+The sanitizer preset fails during configuration when the active compiler is not configured for ASan+UBSan, rather than silently producing an unsanitized build.
+
 ## Host behavior at this milestone
 
 ```bash
 ./build/dev/pervue-host --version
 ```
 
-prints the host version.
+prints the host version and exits with status 0.
 
-Normal execution reads stdin until EOF and exits cleanly without interpreting or emitting protocol data. NAT-02 replaces that foundation behavior with bounded Chrome Native Messaging framing.
+Unsupported command-line arguments print usage information to stderr and exit with status 64.
+
+Normal execution reads stdin until EOF and exits cleanly without interpreting or emitting protocol data. On Windows, stdin/stdout are switched to binary mode before normal host execution so future length-prefixed Native Messaging bytes are not transformed by the CRT. NAT-02 replaces the foundation read loop with bounded Chrome Native Messaging framing.
