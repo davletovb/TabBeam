@@ -8,15 +8,17 @@
 typedef enum pervue_host_result {
   PERVUE_HOST_OK = 0,
   PERVUE_HOST_INVALID_ARGUMENT = 1,
-  PERVUE_HOST_IO_ERROR = 2
+  PERVUE_HOST_IO_ERROR = 2,
+  PERVUE_HOST_FRAME_TRUNCATED = 3,
+  PERVUE_HOST_FRAME_TOO_LARGE = 4,
+  PERVUE_HOST_ALLOCATION_FAILED = 5
 } pervue_host_result_t;
 
 /*
- * Foundation host loop.
+ * Host loop for bounded Native Messaging frames.
  *
- * NAT-01 intentionally does not interpret Native Messaging frames yet.
- * It validates the stdio lifecycle by consuming input until EOF and
- * flushing output before returning.
+ * NAT-02 consumes and validates complete frames but deliberately does not
+ * interpret JSON payloads or emit protocol events. NAT-03 owns that layer.
  */
 pervue_host_result_t pervue_host_run(FILE *input, FILE *output);
 
