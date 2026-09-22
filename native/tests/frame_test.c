@@ -1,5 +1,6 @@
 #include "pervue/frame.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -34,12 +35,9 @@ static int rewind_test_file(FILE *stream) {
 }
 
 static void encode_length(
-    unsigned long length,
+    uint32_t length,
     unsigned char prefix[PERVUE_NATIVE_MESSAGE_PREFIX_SIZE]) {
-  prefix[0] = (unsigned char)(length & 0xffUL);
-  prefix[1] = (unsigned char)((length >> 8U) & 0xffUL);
-  prefix[2] = (unsigned char)((length >> 16U) & 0xffUL);
-  prefix[3] = (unsigned char)((length >> 24U) & 0xffUL);
+  memcpy(prefix, &length, sizeof(length));
 }
 
 static int test_round_trip(void) {
@@ -55,6 +53,9 @@ static int test_round_trip(void) {
   if (stream == NULL) {
     return 1;
   }
+
+  memcpy(expected, &encoded_length, sizeof(encoded_length));
+  expected[PERVUE_NATIVE_MESSAGE_PREFIX_SIZE] = payload[0];
 
   if (pervue_frame_write(stream, payload, sizeof(payload)) != PERVUE_FRAME_OK) {
     goto cleanup;
@@ -173,12 +174,11 @@ cleanup:
   return result;
 }
 
-static int test_wire_format_is_little_endian(void) {
+static int test_wire_format_uses_native_byte_order(void) {
   static const unsigned char payload[] = {0x41U};
-  static const unsigned char expected[] = {
-    0x01U, 0x00U, 0x00U, 0x00U, 0x41U
-  };
+  unsigned char expected[PERVUE_NATIVE_MESSAGE_PREFIX_SIZE + sizeof(payload)];
   unsigned char actual[sizeof(expected)];
+  uint32_t encoded_length = 1U;
   FILE *stream = open_test_file();
   int result = 1;
 
@@ -222,7 +222,7 @@ static int test_oversized_read(void) {
   }
 
   encode_length(
-      (unsigned long)PERVUE_NATIVE_MAX_FRAME_SIZE + 1UL,
+      (uint32_t)PERVUE_NATIVE_MAX_FRAME_SIZE + UINT32_C(1),
       prefix);
 
   if (fwrite(prefix, 1U, sizeof(prefix), stream) != sizeof(prefix)) {
@@ -328,7 +328,7 @@ static int test_truncated_payload(void) {
     return 1;
   }
 
-  encode_length(5UL, prefix);
+  encode_length(UINT32_C(5), prefix);
 
   if (fwrite(prefix, 1U, sizeof(prefix), stream) != sizeof(prefix) ||
       fwrite(payload, 1U, sizeof(payload), stream) != sizeof(payload)) {
@@ -420,8 +420,8 @@ int main(void) {
     return 1;
   }
 
-  if (test_wire_format_is_little_endian() != 0) {
-    fprintf(stderr, "wire format test failed\n");
+  if (test_wire_format_uses_native_byte_order() != 0) {
+    fprintf(stderr, "native byte-order wire format test failed\n");
     return 1;
   }
 
