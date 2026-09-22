@@ -226,6 +226,26 @@ if(BUILD_TESTING)
     PROPERTIES
       TIMEOUT 10
   )
+
+  if(NOT WIN32)
+    add_executable(pervue-fake-provider-signal-test
+      tests/fake_provider_signal_test.c
+    )
+    pervue_enable_project_warnings(pervue-fake-provider-signal-test)
+    pervue_enable_sanitizers(pervue-fake-provider-signal-test)
+
+    add_test(
+      NAME pervue-fake-provider-signal-semantics
+      COMMAND
+        pervue-fake-provider-signal-test
+        "$<TARGET_FILE:pervue-fake-provider>"
+    )
+    set_tests_properties(
+      pervue-fake-provider-signal-semantics
+      PROPERTIES
+        TIMEOUT 5
+    )
+  endif()
 endif()
 
 if(PERVUE_BUILD_FUZZERS)
