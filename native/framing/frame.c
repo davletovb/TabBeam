@@ -1,5 +1,7 @@
 #include "pervue/frame.h"
 
+#include "frame_internal.h"
+
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,24 +24,43 @@ static void encode_u32_native(
   memcpy(prefix, &value, sizeof(value));
 }
 
+static size_t file_read(void *context, unsigned char *buffer, size_t length) {
+  return fread(buffer, 1U, length, (FILE *)context);
+}
+
+static size_t file_write(
+    void *context,
+    const unsigned char *buffer,
+    size_t length) {
+  return fwrite(buffer, 1U, length, (FILE *)context);
+}
+
+static int file_has_error(void *context) {
+  return ferror((FILE *)context);
+}
+
+static int file_flush(void *context) {
+  return fflush((FILE *)context);
+}
+
 static pervue_frame_result_t read_exact(
-    FILE *input,
+    pervue_frame_io_t *io,
     unsigned char *buffer,
     size_t length,
     size_t *bytes_read) {
   size_t total = 0U;
 
   while (total < length) {
-    size_t count = fread(buffer + total, 1U, length - total, input);
+    size_t count = io->read(io->context, buffer + total, length - total);
 
-    if (count > 0U) {
+    if (count > 0U && count <= (length - total)) {
       total += count;
       continue;
     }
 
     *bytes_read = total;
 
-    if (ferror(input) != 0) {
+    if (count > (length - total) || io->has_error(io->context) != 0) {
       return PERVUE_FRAME_IO_ERROR;
     }
 
@@ -51,13 +72,13 @@ static pervue_frame_result_t read_exact(
 }
 
 static pervue_frame_result_t write_exact(
-    FILE *output,
+    pervue_frame_io_t *io,
     const unsigned char *buffer,
     size_t length) {
   size_t total = 0U;
 
   while (total < length) {
-    size_t count = fwrite(buffer + total, 1U, length - total, output);
+    size_t count = io->write(io->context, buffer + total, length - total);
 
     if (count == 0U || count > (length - total)) {
       return PERVUE_FRAME_IO_ERROR;
@@ -88,7 +109,9 @@ void pervue_frame_destroy(pervue_frame_t *frame) {
   frame->length = 0U;
 }
 
-pervue_frame_result_t pervue_frame_read(FILE *input, pervue_frame_t *frame) {
+pervue_frame_result_t pervue_frame_read_io(
+    pervue_frame_io_t *io,
+    pervue_frame_t *frame) {
   unsigned char prefix[PERVUE_NATIVE_MESSAGE_PREFIX_SIZE];
   size_t prefix_bytes = 0U;
   size_t payload_bytes = 0U;
@@ -96,7 +119,8 @@ pervue_frame_result_t pervue_frame_read(FILE *input, pervue_frame_t *frame) {
   size_t length;
   pervue_frame_result_t result;
 
-  if (input == NULL || frame == NULL) {
+  if (io == NULL || io->read == NULL || io->has_error == NULL ||
+      frame == NULL) {
     return PERVUE_FRAME_INVALID_ARGUMENT;
   }
 
@@ -104,7 +128,7 @@ pervue_frame_result_t pervue_frame_read(FILE *input, pervue_frame_t *frame) {
     return PERVUE_FRAME_INVALID_ARGUMENT;
   }
 
-  result = read_exact(input, prefix, sizeof(prefix), &prefix_bytes);
+  result = read_exact(io, prefix, sizeof(prefix), &prefix_bytes);
   if (result != PERVUE_FRAME_OK) {
     if (result == PERVUE_FRAME_TRUNCATED && prefix_bytes == 0U) {
       return PERVUE_FRAME_EOF;
@@ -129,7 +153,7 @@ pervue_frame_result_t pervue_frame_read(FILE *input, pervue_frame_t *frame) {
     return PERVUE_FRAME_ALLOCATION_FAILED;
   }
 
-  result = read_exact(input, frame->data, length, &payload_bytes);
+  result = read_exact(io, frame->data, length, &payload_bytes);
   if (result != PERVUE_FRAME_OK) {
     (void)payload_bytes;
     pervue_frame_destroy(frame);
@@ -140,14 +164,15 @@ pervue_frame_result_t pervue_frame_read(FILE *input, pervue_frame_t *frame) {
   return PERVUE_FRAME_OK;
 }
 
-pervue_frame_result_t pervue_frame_write(
-    FILE *output,
+pervue_frame_result_t pervue_frame_write_io(
+    pervue_frame_io_t *io,
     const unsigned char *data,
     size_t length) {
   unsigned char prefix[PERVUE_NATIVE_MESSAGE_PREFIX_SIZE];
   pervue_frame_result_t result;
 
-  if (output == NULL || (data == NULL && length != 0U)) {
+  if (io == NULL || io->write == NULL || io->flush == NULL ||
+      (data == NULL && length != 0U)) {
     return PERVUE_FRAME_INVALID_ARGUMENT;
   }
 
@@ -158,42 +183,56 @@ pervue_frame_result_t pervue_frame_write(
 
   encode_u32_native((uint32_t)length, prefix);
 
-  result = write_exact(output, prefix, sizeof(prefix));
+  result = write_exact(io, prefix, sizeof(prefix));
   if (result != PERVUE_FRAME_OK) {
     return result;
   }
 
   if (length > 0U) {
-    result = write_exact(output, data, length);
+    result = write_exact(io, data, length);
     if (result != PERVUE_FRAME_OK) {
       return result;
     }
   }
 
-  if (fflush(output) != 0) {
+  if (io->flush(io->context) != 0) {
     return PERVUE_FRAME_IO_ERROR;
   }
 
   return PERVUE_FRAME_OK;
 }
 
-const char *pervue_frame_result_name(pervue_frame_result_t result) {
-  switch (result) {
-    case PERVUE_FRAME_OK:
-      return "ok";
-    case PERVUE_FRAME_EOF:
-      return "eof";
-    case PERVUE_FRAME_INVALID_ARGUMENT:
-      return "invalid_argument";
-    case PERVUE_FRAME_IO_ERROR:
-      return "io_error";
-    case PERVUE_FRAME_TRUNCATED:
-      return "truncated";
-    case PERVUE_FRAME_TOO_LARGE:
-      return "too_large";
-    case PERVUE_FRAME_ALLOCATION_FAILED:
-      return "allocation_failed";
-    default:
-      return "unknown";
+pervue_frame_result_t pervue_frame_read(FILE *input, pervue_frame_t *frame) {
+  pervue_frame_io_t io;
+
+  if (input == NULL) {
+    return PERVUE_FRAME_INVALID_ARGUMENT;
   }
+
+  io.context = input;
+  io.read = file_read;
+  io.write = NULL;
+  io.has_error = file_has_error;
+  io.flush = NULL;
+
+  return pervue_frame_read_io(&io, frame);
+}
+
+pervue_frame_result_t pervue_frame_write(
+    FILE *output,
+    const unsigned char *data,
+    size_t length) {
+  pervue_frame_io_t io;
+
+  if (output == NULL) {
+    return PERVUE_FRAME_INVALID_ARGUMENT;
+  }
+
+  io.context = output;
+  io.read = NULL;
+  io.write = file_write;
+  io.has_error = NULL;
+  io.flush = file_flush;
+
+  return pervue_frame_write_io(&io, data, length);
 }
