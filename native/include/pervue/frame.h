@@ -50,6 +50,4 @@ pervue_frame_result_t pervue_frame_write(
     const unsigned char *data,
     size_t length);
 
-const char *pervue_frame_result_name(pervue_frame_result_t result);
-
 #endif
