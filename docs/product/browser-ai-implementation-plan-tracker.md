@@ -362,7 +362,7 @@ Reached after **Milestone H**:
 - Foundation host core: `native/host/host.c`
 - Internal public header for current host boundary: `native/include/pervue/host.h`
 - Startup/std-stream unit test: `native/tests/host_startup_test.c`
-- Local validation: strict-warning build passed; CTest 2/2 passed; ASan+UBSan build and CTest 2/2 passed.
+- Local validation after review fixes: strict-warning GCC build passed; CTest 3/3 passed; ASan+UBSan build and CTest 3/3 passed; Clang build and CTest 3/3 passed.
 
 ### TST-01 — Establish CI/build/test baseline
 **Milestone:** Foundation  
