@@ -17,6 +17,8 @@ malformed     emit a deliberately malformed JSON line and exit 0
 large         emit exactly 2 MiB of deterministic stdout bytes and exit 0
 ```
 
+The `large` mode intentionally emits one 2 MiB byte stream **without a newline**. It exists to force later supervision/streaming code to chunk provider output by bounded byte size rather than assume one provider line maps to one protocol frame.
+
 Example:
 
 ```bash
@@ -24,3 +26,9 @@ Example:
 ```
 
 The test harness places strict timeouts around the non-terminating modes so CI never relies on manual cleanup.
+
+## What the tests pin
+
+The CTest harness verifies both completed-output and mid-stream behavior. Slow mode is run to completion, is separately required to time out before one second, and is killed at 0.5 seconds to prove its first line was already flushed. On POSIX, a dedicated process test sends SIGTERM directly: `hang` must terminate on SIGTERM, while `ignore-cancel` must survive SIGTERM until the test escalates to SIGKILL and reaps it.
+
+The fake-provider target exists only when `BUILD_TESTING=ON`, preventing test infrastructure from appearing in non-test/package-oriented builds.
