@@ -15,6 +15,7 @@ configure_file(
 )
 
 option(PERVUE_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer where supported" OFF)
+option(PERVUE_BUILD_FUZZERS "Build libFuzzer targets with Clang" OFF)
 
 function(pervue_enable_project_warnings target)
   if(MSVC)
@@ -45,6 +46,7 @@ function(pervue_enable_sanitizers target)
 endfunction()
 
 add_library(pervue_host_core STATIC
+  framing/frame.c
   host/host.c
 )
 
@@ -76,9 +78,22 @@ if(BUILD_TESTING)
   pervue_enable_project_warnings(pervue-host-startup-test)
   pervue_enable_sanitizers(pervue-host-startup-test)
 
+  add_executable(pervue-frame-test
+    tests/frame_test.c
+  )
+
+  target_link_libraries(pervue-frame-test PRIVATE pervue_host_core)
+  pervue_enable_project_warnings(pervue-frame-test)
+  pervue_enable_sanitizers(pervue-frame-test)
+
   add_test(
     NAME pervue-host-startup
     COMMAND pervue-host-startup-test
+  )
+
+  add_test(
+    NAME pervue-frame
+    COMMAND pervue-frame-test
   )
 
   add_test(
@@ -101,5 +116,31 @@ if(BUILD_TESTING)
       "-DEXPECTED_EXIT=64"
       "-DEXPECTED_STDERR_SUBSTRING=usage:"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_cli.cmake"
+  )
+endif()
+
+if(PERVUE_BUILD_FUZZERS)
+  if(MSVC OR NOT CMAKE_C_COMPILER_ID MATCHES "Clang")
+    message(FATAL_ERROR "PERVUE_BUILD_FUZZERS requires a Clang/libFuzzer toolchain")
+  endif()
+
+  add_executable(pervue-frame-fuzz
+    fuzz/frame_reader_fuzz.c
+    framing/frame.c
+  )
+
+  target_include_directories(pervue-frame-fuzz
+    PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/include
+  )
+
+  pervue_enable_project_warnings(pervue-frame-fuzz)
+  target_compile_options(pervue-frame-fuzz PRIVATE
+    -fsanitize=fuzzer,address,undefined
+    -fno-omit-frame-pointer
+  )
+  target_link_options(pervue-frame-fuzz PRIVATE
+    -fsanitize=fuzzer,address,undefined
+    -fno-omit-frame-pointer
   )
 endif()
