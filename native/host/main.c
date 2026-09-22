@@ -14,8 +14,19 @@ enum {
 };
 
 static int print_usage(const char *program_name) {
-  fprintf(stderr, "usage: %s [--version]\n", program_name);
+  fprintf(
+      stderr,
+      "usage: %s [--version | chrome-extension://<extension-id>/]\n",
+      program_name);
   return PERVUE_EXIT_USAGE;
+}
+
+static int is_chrome_extension_origin(const char *argument) {
+  static const char prefix[] = "chrome-extension://";
+  size_t prefix_length = sizeof(prefix) - 1U;
+
+  return strncmp(argument, prefix, prefix_length) == 0 &&
+         argument[prefix_length] != '\0';
 }
 
 static int configure_binary_stdio(void) {
@@ -37,16 +48,22 @@ static int configure_binary_stdio(void) {
 int main(int argc, char **argv) {
   int stdio_result;
 
-  if (argc == 2) {
-    if (strcmp(argv[1], "--version") == 0) {
-      puts(pervue_host_version());
-      return 0;
-    }
-
-    return print_usage(argv[0]);
+  if (argc == 2 && strcmp(argv[1], "--version") == 0) {
+    puts(pervue_host_version());
+    return 0;
   }
 
-  if (argc != 1) {
+  if (argc == 2) {
+    if (!is_chrome_extension_origin(argv[1])) {
+      return print_usage(argv[0]);
+    }
+
+    /*
+     * Chrome supplies the caller origin here. Origin allowlisting is enforced
+     * by Native Messaging registration and is hardened further by SEC-01 /
+     * packaging work; NAT-02 only accepts the production launch shape.
+     */
+  } else if (argc != 1) {
     return print_usage(argv[0]);
   }
 
