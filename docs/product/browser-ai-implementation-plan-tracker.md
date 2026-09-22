@@ -480,7 +480,7 @@ Reached after **Milestone H**:
 - CMake/CTest integration: `native/CMakeLists.txt`
 - Harness verifies normal streaming, deliberately slow streaming, stderr output, exit 42, bounded timeout for hanging behavior, cancellation-ignore behavior, malformed output, and exactly 2 MiB of large stdout.
 - Windows stdin/stdout/stderr are switched to binary mode so fixture bytes are deterministic across platforms.
-- CI verification remains pending until the full native matrix completes successfully.
+- CI verification: full 8-job matrix green, including GCC, Clang, macOS, Windows/MSVC, minimum CMake, ASan+UBSan, protocol, and extension checks; merge remains pending.
 
 ### EXT-02 — Implement service-worker Native Messaging connection manager
 **Area:** Extension  
