@@ -1,0 +1,114 @@
+{
+  "error_codes": [
+    "HOST_NOT_INSTALLED",
+    "HOST_UNAVAILABLE",
+    "PROVIDER_NOT_FOUND",
+    "PROVIDER_NOT_AUTHENTICATED",
+    "PROVIDER_FAILED",
+    "REQUEST_CANCELLED",
+    "REQUEST_TIMEOUT",
+    "CONTEXT_UNAVAILABLE",
+    "INVALID_REQUEST",
+    "INTERNAL_ERROR"
+  ],
+  "capability_keys": [
+    "streaming",
+    "continuation",
+    "web_search",
+    "page_context",
+    "attachments",
+    "model_selection",
+    "cancellation"
+  ],
+  "valid_errors": [
+    {
+      "code": "PROVIDER_NOT_FOUND",
+      "reason": "EXECUTABLE_NOT_FOUND",
+      "message": "The selected provider runtime is not installed.",
+      "retryable": false
+    },
+    {
+      "code": "PROVIDER_NOT_AUTHENTICATED",
+      "reason": "LOGIN_REQUIRED",
+      "message": "Sign in through the provider tooling before using this provider.",
+      "retryable": false
+    },
+    {
+      "code": "PROVIDER_FAILED",
+      "reason": "PROVIDER_RATE_LIMITED",
+      "message": "The provider is temporarily rate limited.",
+      "retryable": true,
+      "metadata": {
+        "provider_id": "fake"
+      }
+    },
+    {
+      "code": "REQUEST_CANCELLED",
+      "reason": "USER_CANCELLED",
+      "message": "The request was cancelled.",
+      "retryable": true
+    },
+    {
+      "code": "INVALID_REQUEST",
+      "reason": "UNKNOWN_METHOD",
+      "message": "Unsupported method.",
+      "retryable": false
+    }
+  ],
+  "provider_statuses": [
+    {
+      "provider_id": "codex",
+      "status": {
+        "availability": "available",
+        "authentication": "authenticated",
+        "capabilities": {
+          "streaming": true,
+          "continuation": true,
+          "web_search": "unknown",
+          "page_context": true,
+          "attachments": false,
+          "model_selection": true,
+          "cancellation": true
+        }
+      }
+    },
+    {
+      "provider_id": "claude",
+      "status": {
+        "availability": "not_found",
+        "authentication": "unknown",
+        "capabilities": {
+          "streaming": "unknown",
+          "continuation": "unknown",
+          "web_search": "unknown",
+          "page_context": "unknown",
+          "attachments": "unknown",
+          "model_selection": "unknown",
+          "cancellation": "unknown"
+        }
+      }
+    }
+  ],
+  "mapping_examples": [
+    {
+      "input": {"availability": "not_found"},
+      "error_code": "PROVIDER_NOT_FOUND"
+    },
+    {
+      "input": {"authentication": "unauthenticated"},
+      "error_code": "PROVIDER_NOT_AUTHENTICATED"
+    },
+    {
+      "input": {"provider_failure": "rate_limited"},
+      "error_code": "PROVIDER_FAILED",
+      "reason": "PROVIDER_RATE_LIMITED",
+      "retryable": true
+    },
+    {
+      "input": {"protocol_failure": "unknown_method"},
+      "error_code": "INVALID_REQUEST",
+      "reason": "UNKNOWN_METHOD",
+      "retryable": false
+    }
+  ]
+}
