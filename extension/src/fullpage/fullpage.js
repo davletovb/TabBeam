@@ -9,3 +9,5 @@ if (!(entryNode instanceof HTMLElement)) {
 entryNode.textContent = entry
   ? `Opened from: ${entry}`
   : "Opened directly.";
+
+export {};
