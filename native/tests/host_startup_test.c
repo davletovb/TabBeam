@@ -3,16 +3,42 @@
 #include <stdio.h>
 #include <string.h>
 
+#define PERVUE_TEST_INPUT_PATH "pervue_host_startup_input.tmp"
+#define PERVUE_TEST_OUTPUT_PATH "pervue_host_startup_output.tmp"
+
+static FILE *open_test_file(const char *path, const char *mode) {
+#ifdef _MSC_VER
+  FILE *stream = NULL;
+
+  if (fopen_s(&stream, path, mode) != 0) {
+    return NULL;
+  }
+
+  return stream;
+#else
+  return fopen(path, mode);
+#endif
+}
+
+static void close_and_remove(FILE **stream, const char *path) {
+  if (*stream != NULL) {
+    fclose(*stream);
+    *stream = NULL;
+  }
+
+  remove(path);
+}
+
 static int test_version(void) {
   return strcmp(pervue_host_version(), PERVUE_HOST_VERSION) == 0 ? 0 : 1;
 }
 
 static int test_stream_lifecycle(void) {
   static const unsigned char sample[] = {
-    0x00U, 0x01U, 0x02U, 0x7fU, 0xffU
+    0x00U, 0x01U, 0x02U, 0x1aU, 0x0aU, 0x7fU, 0xffU
   };
-  FILE *input = tmpfile();
-  FILE *output = tmpfile();
+  FILE *input = open_test_file(PERVUE_TEST_INPUT_PATH, "w+b");
+  FILE *output = open_test_file(PERVUE_TEST_OUTPUT_PATH, "w+b");
   int result = 1;
 
   if (input == NULL || output == NULL) {
@@ -46,18 +72,13 @@ static int test_stream_lifecycle(void) {
   result = 0;
 
 cleanup:
-  if (input != NULL) {
-    fclose(input);
-  }
-  if (output != NULL) {
-    fclose(output);
-  }
-
+  close_and_remove(&input, PERVUE_TEST_INPUT_PATH);
+  close_and_remove(&output, PERVUE_TEST_OUTPUT_PATH);
   return result;
 }
 
 static int test_invalid_streams(void) {
-  FILE *stream = tmpfile();
+  FILE *stream = open_test_file(PERVUE_TEST_OUTPUT_PATH, "w+b");
   int result = 1;
 
   if (stream == NULL) {
@@ -75,7 +96,7 @@ static int test_invalid_streams(void) {
   result = 0;
 
 cleanup:
-  fclose(stream);
+  close_and_remove(&stream, PERVUE_TEST_OUTPUT_PATH);
   return result;
 }
 
