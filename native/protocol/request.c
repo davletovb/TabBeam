@@ -502,9 +502,23 @@ pervue_request_parse_result_t pervue_request_parse(
   pervue_json_reader_init(&reader, data, length);
   pervue_json_skip_whitespace(&reader);
 
-  if (!pervue_json_consume(&reader, (unsigned char)'{')) {
-    return PERVUE_REQUEST_PARSE_MALFORMED;
+  if (pervue_json_peek(&reader) != (int)'{') {
+    pervue_json_result_t root_result = pervue_json_skip_value(&reader);
+
+    if (root_result == PERVUE_JSON_SYNTAX_ERROR) {
+      return PERVUE_REQUEST_PARSE_MALFORMED;
+    }
+
+    pervue_json_skip_whitespace(&reader);
+    if (!pervue_json_at_end(&reader)) {
+      return PERVUE_REQUEST_PARSE_MALFORMED;
+    }
+
+    failure->result = PERVUE_REQUEST_PARSE_INVALID_ENVELOPE;
+    return failure->result;
   }
+
+  (void)pervue_json_consume(&reader, (unsigned char)'{');
 
   pervue_json_skip_whitespace(&reader);
   if (pervue_json_consume(&reader, (unsigned char)'}')) {
