@@ -141,7 +141,7 @@ Reached after **Milestone H**:
 | DOC-01 | Freeze protocol v1 envelope and event contract | Foundation | Documentation / Protocol | — | IMPLEMENTED — VERIFY |
 | DOC-02 | Freeze normalized error taxonomy and capability vocabulary | Foundation | Documentation / Protocol | DOC-01 | IMPLEMENTED — VERIFY |
 | EXT-01 | Scaffold Manifest V3 extension surfaces | Foundation | Extension | — | IMPLEMENTED — VERIFY |
-| NAT-01 | Scaffold native C host and build system | Foundation | Native | — | READY |
+| NAT-01 | Scaffold native C host and build system | Foundation | Native | — | IMPLEMENTED — VERIFY |
 | TST-01 | Establish CI/build/test baseline | Foundation | Testing | EXT-01, NAT-01 | READY |
 | NAT-02 | Implement bounded Native Messaging frame reader/writer | A | Native | NAT-01, DOC-01 | BACKLOG |
 | NAT-03 | Implement JSON validation and request router | A | Native | NAT-02, DOC-01, DOC-02 | BACKLOG |
@@ -353,7 +353,16 @@ Reached after **Milestone H**:
 - Build matrix smoke test.
 - Sanitizer startup test.
 
-**Status:** READY
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- CMake build: `native/CMakeLists.txt`
+- Development/sanitizer presets: `native/CMakePresets.json`
+- Host entry point: `native/host/main.c`
+- Foundation host core: `native/host/host.c`
+- Internal public header for current host boundary: `native/include/pervue/host.h`
+- Startup/std-stream unit test: `native/tests/host_startup_test.c`
+- Local validation: strict-warning build passed; CTest 2/2 passed; ASan+UBSan build and CTest 2/2 passed.
 
 ### TST-01 — Establish CI/build/test baseline
 **Milestone:** Foundation  
@@ -1411,7 +1420,7 @@ Update this section whenever item statuses change.
 
 | Stage | Total | Verified | Implemented — Verify | In Progress | Ready | Backlog | Blocked | Deferred |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Foundation | 5 | 0 | 3 | 0 | 2 | 0 | 0 | 0 |
+| Foundation | 5 | 0 | 4 | 0 | 1 | 0 | 0 | 0 |
 | A — Native round trip | 8 | 0 | 0 | 0 | 0 | 8 | 0 | 0 |
 | B — First provider | 10 | 0 | 0 | 0 | 0 | 10 | 0 | 0 |
 | C — Conversation continuity | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
@@ -1422,7 +1431,7 @@ Update this section whenever item statuses change.
 | G — Installable product | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 |
 | H — Search/citations | 8 | 0 | 0 | 0 | 0 | 8 | 0 | 0 |
 | Post-milestone | 6 | 0 | 0 | 0 | 0 | 4 | 0 | 2 |
-| **Total** | **81** | **0** | **3** | **0** | **2** | **74** | **0** | **2** |
+| **Total** | **81** | **0** | **4** | **0** | **1** | **74** | **0** | **2** |
 
 ### Milestone completion rule
 
