@@ -2,6 +2,8 @@
 #include "pervue/host.h"
 #include "pervue/protocol.h"
 
+#include "json_internal.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -359,6 +361,18 @@ cleanup:
   return result;
 }
 
+static int test_integer_overflow_with_optional_flag(void) {
+  static const unsigned char input[] = "99999999999999999999";
+  pervue_json_reader_t reader;
+  int64_t value = 0;
+
+  pervue_json_reader_init(&reader, input, sizeof(input) - 1U);
+
+  return pervue_json_parse_integer(&reader, &value, NULL) == PERVUE_JSON_OK
+      ? 0
+      : 1;
+}
+
 static int test_router_dispatch(void) {
   static const char json[] =
       "{\"version\":1,\"type\":\"request\",\"request_id\":\"req_route\","
@@ -549,6 +563,11 @@ int main(void) {
 
   if (test_parser_regressions() != 0) {
     fprintf(stderr, "protocol parser regression cases failed\n");
+    return 1;
+  }
+
+  if (test_integer_overflow_with_optional_flag() != 0) {
+    fprintf(stderr, "optional integer overflow flag test failed\n");
     return 1;
   }
 
