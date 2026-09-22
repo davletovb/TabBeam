@@ -423,7 +423,7 @@ Reached after **Milestone H**:
 - Host-level oversized/truncated framing checks: `native/tests/host_startup_test.c`
 - Opt-in Clang/libFuzzer harness with runtime capability probe and structured corpus generator: `native/fuzz/frame_reader_fuzz.c` + `native/fuzz/create_corpus.py`
 - Project frame cap: 1 MiB, enforced before payload allocation and before writes.
-- CI verification remains pending until this PR's full native matrix and sanitizer job complete successfully.
+- CI verification completed successfully on the merged implementation PR.
 
 ### NAT-03 — Implement JSON validation and request router
 **Area:** Native  
@@ -478,9 +478,11 @@ Reached after **Milestone H**:
 - Test-only mode contract/documentation: `native/test_provider/README.md`
 - Cross-platform behavior harness: `native/tests/check_fake_provider.cmake`
 - CMake/CTest integration: `native/CMakeLists.txt`
-- Harness verifies normal streaming, deliberately slow streaming, stderr output, exit 42, bounded timeout for hanging behavior, cancellation-ignore behavior, malformed output, and exactly 2 MiB of large stdout.
+- Harness verifies normal streaming, deliberately slow streaming with deterministic timeout/flush probes, stderr output, exit 42 with empty stdout, bounded timeout for hanging behavior, cancellation-ignore behavior, malformed output, exactly 2 MiB of large stdout, and invalid CLI shapes.
 - Windows stdin/stdout/stderr are switched to binary mode so fixture bytes are deterministic across platforms.
-- CI verification: full 8-job matrix green, including GCC, Clang, macOS, Windows/MSVC, minimum CMake, ASan+UBSan, protocol, and extension checks; merge remains pending.
+- POSIX signal test proves `hang` terminates on SIGTERM while `ignore-cancel` survives SIGTERM until SIGKILL cleanup.
+- Fake-provider binaries are created only under `BUILD_TESTING=ON`, keeping test fixtures out of non-test builds.
+- Previous implementation CI was green across all 8 jobs; review-hardening CI is rerunning on the latest head before merge.
 
 ### EXT-02 — Implement service-worker Native Messaging connection manager
 **Area:** Extension  
