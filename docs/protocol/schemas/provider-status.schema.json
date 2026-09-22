@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pervue.local/protocol/v1/provider-status.schema.json",
+  "title": "Pervue Protocol v1 Provider Status Payload",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["provider_id", "status"],
+  "properties": {
+    "provider_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["availability", "authentication", "capabilities"],
+      "properties": {
+        "availability": {
+          "type": "string",
+          "enum": ["available", "unavailable", "not_found", "unknown"]
+        },
+        "authentication": {
+          "type": "string",
+          "enum": ["authenticated", "unauthenticated", "unknown"]
+        },
+        "capabilities": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "streaming",
+            "continuation",
+            "web_search",
+            "page_context",
+            "attachments",
+            "model_selection",
+            "cancellation"
+          ],
+          "properties": {
+            "streaming": {"$ref": "#/$defs/capability"},
+            "continuation": {"$ref": "#/$defs/capability"},
+            "web_search": {"$ref": "#/$defs/capability"},
+            "page_context": {"$ref": "#/$defs/capability"},
+            "attachments": {"$ref": "#/$defs/capability"},
+            "model_selection": {"$ref": "#/$defs/capability"},
+            "cancellation": {"$ref": "#/$defs/capability"}
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "capability": {
+      "oneOf": [
+        {"type": "boolean"},
+        {"const": "unknown"}
+      ]
+    }
+  }
+}
