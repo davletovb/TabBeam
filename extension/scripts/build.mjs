@@ -7,6 +7,7 @@ const dist = path.join(root, "dist");
 const source = path.join(root, "src");
 const manifest = path.join(root, "manifest.json");
 
+/** @type {any} */
 const parsedManifest = JSON.parse(fs.readFileSync(manifest, "utf8"));
 
 if (parsedManifest.manifest_version !== 3) {
@@ -21,7 +22,9 @@ fs.cpSync(source, path.join(dist, "src"), { recursive: true });
 const required = [
   parsedManifest.action.default_popup,
   parsedManifest.background.service_worker,
-  ...parsedManifest.content_scripts.flatMap((entry) => entry.js)
+  ...parsedManifest.content_scripts.flatMap(
+    (/** @type {any} */ entry) => entry.js
+  )
 ];
 
 for (const relativePath of required) {
