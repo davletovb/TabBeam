@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Pervue</title>
+    <link rel="stylesheet" href="./popup.css">
+  </head>
+  <body>
+    <main class="popup-shell">
+      <header>
+        <p class="eyebrow">Pervue</p>
+        <h1>Ask from the browser.</h1>
+      </header>
+
+      <label class="composer">
+        <span class="sr-only">Ask anything</span>
+        <textarea rows="3" placeholder="Ask anything…" disabled></textarea>
+      </label>
+
+      <p id="status" class="status" role="status" aria-live="polite">
+        Checking extension foundation…
+      </p>
+
+      <button id="open-full-page" type="button">Continue in full view</button>
+    </main>
+
+    <script type="module" src="./popup.js"></script>
+  </body>
+</html>
