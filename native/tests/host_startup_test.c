@@ -1,6 +1,7 @@
 #include "pervue/host.h"
 #include "pervue/frame.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -74,6 +75,71 @@ cleanup:
   return result;
 }
 
+static int test_truncated_frame(void) {
+  static const unsigned char partial_prefix[] = {0x01U, 0x00U};
+  FILE *input = open_test_file(PERVUE_TEST_INPUT_PATH, "w+b");
+  FILE *output = open_test_file(PERVUE_TEST_OUTPUT_PATH, "w+b");
+  int result = 1;
+
+  if (input == NULL || output == NULL) {
+    goto cleanup;
+  }
+
+  if (fwrite(partial_prefix, 1U, sizeof(partial_prefix), input) !=
+      sizeof(partial_prefix)) {
+    goto cleanup;
+  }
+
+  if (fflush(input) != 0 || fseek(input, 0L, SEEK_SET) != 0) {
+    goto cleanup;
+  }
+
+  if (pervue_host_run(input, output) != PERVUE_HOST_FRAME_TRUNCATED) {
+    goto cleanup;
+  }
+
+  result = 0;
+
+cleanup:
+  close_and_remove(&input, PERVUE_TEST_INPUT_PATH);
+  close_and_remove(&output, PERVUE_TEST_OUTPUT_PATH);
+  return result;
+}
+
+static int test_oversized_frame(void) {
+  uint32_t encoded_length =
+      (uint32_t)PERVUE_NATIVE_MAX_FRAME_SIZE + UINT32_C(1);
+  unsigned char prefix[PERVUE_NATIVE_MESSAGE_PREFIX_SIZE];
+  FILE *input = open_test_file(PERVUE_TEST_INPUT_PATH, "w+b");
+  FILE *output = open_test_file(PERVUE_TEST_OUTPUT_PATH, "w+b");
+  int result = 1;
+
+  memcpy(prefix, &encoded_length, sizeof(encoded_length));
+
+  if (input == NULL || output == NULL) {
+    goto cleanup;
+  }
+
+  if (fwrite(prefix, 1U, sizeof(prefix), input) != sizeof(prefix)) {
+    goto cleanup;
+  }
+
+  if (fflush(input) != 0 || fseek(input, 0L, SEEK_SET) != 0) {
+    goto cleanup;
+  }
+
+  if (pervue_host_run(input, output) != PERVUE_HOST_FRAME_TOO_LARGE) {
+    goto cleanup;
+  }
+
+  result = 0;
+
+cleanup:
+  close_and_remove(&input, PERVUE_TEST_INPUT_PATH);
+  close_and_remove(&output, PERVUE_TEST_OUTPUT_PATH);
+  return result;
+}
+
 static int test_invalid_streams(void) {
   FILE *stream = open_test_file(PERVUE_TEST_OUTPUT_PATH, "w+b");
   int result = 1;
@@ -105,6 +171,16 @@ int main(void) {
 
   if (test_stream_lifecycle() != 0) {
     fprintf(stderr, "stream lifecycle test failed\n");
+    return 1;
+  }
+
+  if (test_truncated_frame() != 0) {
+    fprintf(stderr, "truncated host frame test failed\n");
+    return 1;
+  }
+
+  if (test_oversized_frame() != 0) {
+    fprintf(stderr, "oversized host frame test failed\n");
     return 1;
   }
 
