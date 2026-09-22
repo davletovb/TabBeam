@@ -1,9 +1,9 @@
 #ifndef PERVUE_HOST_H
 #define PERVUE_HOST_H
 
-#include <stdio.h>
+#include "pervue/version.h"
 
-#define PERVUE_HOST_VERSION "0.1.0-dev"
+#include <stdio.h>
 
 typedef enum pervue_host_result {
   PERVUE_HOST_OK = 0,
