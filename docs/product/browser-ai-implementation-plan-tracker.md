@@ -142,7 +142,7 @@ Reached after **Milestone H**:
 | DOC-02 | Freeze normalized error taxonomy and capability vocabulary | Foundation | Documentation / Protocol | DOC-01 | IMPLEMENTED — VERIFY |
 | EXT-01 | Scaffold Manifest V3 extension surfaces | Foundation | Extension | — | IMPLEMENTED — VERIFY |
 | NAT-01 | Scaffold native C host and build system | Foundation | Native | — | IMPLEMENTED — VERIFY |
-| TST-01 | Establish CI/build/test baseline | Foundation | Testing | EXT-01, NAT-01 | READY |
+| TST-01 | Establish CI/build/test baseline | Foundation | Testing | EXT-01, NAT-01 | IMPLEMENTED — VERIFY |
 | NAT-02 | Implement bounded Native Messaging frame reader/writer | A | Native | NAT-01, DOC-01 | BACKLOG |
 | NAT-03 | Implement JSON validation and request router | A | Native | NAT-02, DOC-01, DOC-02 | BACKLOG |
 | TST-02 | Build deterministic fake streaming provider | A | Testing | NAT-01 | BACKLOG |
@@ -376,7 +376,18 @@ Reached after **Milestone H**:
 - Sanitizer-capable native test job exists.
 - Project fails CI on compiler warnings in project C code.
 
-**Status:** READY
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- Repository CI workflow: `.github/workflows/ci.yml`
+- Extension lint/type/build/smoke commands: `extension/package.json`
+- Extension lint config: `extension/eslint.config.js`
+- Extension JS type checking: `extension/jsconfig.json` + `extension/types/chrome.d.ts`
+- Deterministic unpacked build: `extension/scripts/build.mjs`
+- Protocol schema/fixture validation: `scripts/validate_protocol.py`
+- Native CI covers Linux GCC, Linux Clang, macOS Clang, Windows MSVC, plus an ASan+UBSan job.
+- Native warning-as-error flags remain enforced by the NAT-01 CMake targets.
+- CI verification remains pending until this PR's workflow completes successfully and the change is merged.
 
 ---
 
@@ -1420,7 +1431,7 @@ Update this section whenever item statuses change.
 
 | Stage | Total | Verified | Implemented — Verify | In Progress | Ready | Backlog | Blocked | Deferred |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Foundation | 5 | 0 | 4 | 0 | 1 | 0 | 0 | 0 |
+| Foundation | 5 | 0 | 5 | 0 | 0 | 0 | 0 | 0 |
 | A — Native round trip | 8 | 0 | 0 | 0 | 0 | 8 | 0 | 0 |
 | B — First provider | 10 | 0 | 0 | 0 | 0 | 10 | 0 | 0 |
 | C — Conversation continuity | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
@@ -1431,7 +1442,7 @@ Update this section whenever item statuses change.
 | G — Installable product | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 |
 | H — Search/citations | 8 | 0 | 0 | 0 | 0 | 8 | 0 | 0 |
 | Post-milestone | 6 | 0 | 0 | 0 | 0 | 4 | 0 | 2 |
-| **Total** | **81** | **0** | **4** | **0** | **1** | **74** | **0** | **2** |
+| **Total** | **81** | **0** | **5** | **0** | **0** | **74** | **0** | **2** |
 
 ### Milestone completion rule
 
