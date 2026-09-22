@@ -546,7 +546,7 @@ pervue_request_parse_result_t pervue_request_parse(
 
     json_result = pervue_json_parse_string(&reader, &key);
     if (json_result != PERVUE_JSON_OK) {
-      failure->result = json_result_to_request_result(json_result);
+      failure->result = json_result_to_envelope_result(json_result);
       return failure->result;
     }
 
@@ -569,14 +569,14 @@ pervue_request_parse_result_t pervue_request_parse(
            pervue_json_peek(&reader) > (int)'9')) {
         json_result = pervue_json_skip_value(&reader);
         if (json_result != PERVUE_JSON_OK) {
-          failure->result = json_result_to_request_result(json_result);
+          failure->result = json_result_to_envelope_result(json_result);
           return failure->result;
         }
         invalid_envelope = true;
       } else {
         json_result = pervue_json_parse_integer(&reader, &version, &integer);
         if (json_result != PERVUE_JSON_OK) {
-          failure->result = json_result_to_request_result(json_result);
+          failure->result = json_result_to_envelope_result(json_result);
           return failure->result;
         }
         version_is_integer = integer;
@@ -595,14 +595,14 @@ pervue_request_parse_result_t pervue_request_parse(
       if (pervue_json_peek(&reader) != (int)'"') {
         json_result = pervue_json_skip_value(&reader);
         if (json_result != PERVUE_JSON_OK) {
-          failure->result = json_result_to_request_result(json_result);
+          failure->result = json_result_to_envelope_result(json_result);
           return failure->result;
         }
         invalid_envelope = true;
       } else {
         json_result = pervue_json_parse_string(&reader, &value);
         if (json_result != PERVUE_JSON_OK) {
-          failure->result = json_result_to_request_result(json_result);
+          failure->result = json_result_to_envelope_result(json_result);
           return failure->result;
         }
         if (!pervue_json_string_equals_ascii(&value, "request")) {
@@ -620,14 +620,14 @@ pervue_request_parse_result_t pervue_request_parse(
       if (pervue_json_peek(&reader) != (int)'"') {
         json_result = pervue_json_skip_value(&reader);
         if (json_result != PERVUE_JSON_OK) {
-          failure->result = json_result_to_request_result(json_result);
+          failure->result = json_result_to_envelope_result(json_result);
           return failure->result;
         }
         invalid_envelope = true;
       } else {
         json_result = pervue_json_parse_string(&reader, &value);
         if (json_result != PERVUE_JSON_OK) {
-          failure->result = json_result_to_request_result(json_result);
+          failure->result = json_result_to_envelope_result(json_result);
           return failure->result;
         }
 
@@ -650,14 +650,14 @@ pervue_request_parse_result_t pervue_request_parse(
       if (pervue_json_peek(&reader) != (int)'"') {
         json_result = pervue_json_skip_value(&reader);
         if (json_result != PERVUE_JSON_OK) {
-          failure->result = json_result_to_request_result(json_result);
+          failure->result = json_result_to_envelope_result(json_result);
           return failure->result;
         }
         invalid_envelope = true;
       } else {
         json_result = pervue_json_parse_string(&reader, &value);
         if (json_result != PERVUE_JSON_OK) {
-          failure->result = json_result_to_request_result(json_result);
+          failure->result = json_result_to_envelope_result(json_result);
           return failure->result;
         }
 
@@ -683,7 +683,7 @@ pervue_request_parse_result_t pervue_request_parse(
       if (!object_value_is_object(&reader)) {
         json_result = pervue_json_skip_value(&reader);
         if (json_result != PERVUE_JSON_OK) {
-          failure->result = json_result_to_request_result(json_result);
+          failure->result = json_result_to_envelope_result(json_result);
           return failure->result;
         }
         invalid_envelope = true;
@@ -691,7 +691,7 @@ pervue_request_parse_result_t pervue_request_parse(
         start = reader.position;
         json_result = pervue_json_skip_value(&reader);
         if (json_result != PERVUE_JSON_OK) {
-          failure->result = json_result_to_request_result(json_result);
+          failure->result = json_result_to_payload_result(json_result);
           return failure->result;
         }
         payload.data = data + start;
@@ -701,7 +701,7 @@ pervue_request_parse_result_t pervue_request_parse(
       invalid_envelope = true;
       json_result = pervue_json_skip_value(&reader);
       if (json_result != PERVUE_JSON_OK) {
-        failure->result = json_result_to_request_result(json_result);
+        failure->result = json_result_to_envelope_result(json_result);
         return failure->result;
       }
     }
