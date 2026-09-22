@@ -8,6 +8,8 @@
 #include <string.h>
 
 #ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
 #include <windows.h>
 #else
 #include <errno.h>
@@ -17,6 +19,17 @@
 #define PERVUE_FAKE_EXIT_NONZERO 42
 #define PERVUE_FAKE_LARGE_OUTPUT_SIZE (2U * 1024U * 1024U)
 #define PERVUE_FAKE_SLOW_DELAY_MS 700U
+
+static int configure_binary_stdio(void) {
+#ifdef _WIN32
+  if (_setmode(_fileno(stdin), _O_BINARY) == -1 ||
+      _setmode(_fileno(stdout), _O_BINARY) == -1 ||
+      _setmode(_fileno(stderr), _O_BINARY) == -1) {
+    return 1;
+  }
+#endif
+  return 0;
+}
 
 static int sleep_ms(unsigned int milliseconds) {
 #ifdef _WIN32
@@ -162,6 +175,10 @@ static int usage(const char *program) {
 
 int main(int argc, char **argv) {
   const char *mode;
+
+  if (configure_binary_stdio() != 0) {
+    return 74;
+  }
 
   if (argc != 3 || strcmp(argv[1], "--mode") != 0) {
     return usage(argv[0]);
