@@ -1,4 +1,5 @@
 #include "pervue/host.h"
+#include "pervue/frame.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -45,11 +46,7 @@ static int test_stream_lifecycle(void) {
     goto cleanup;
   }
 
-  if (fwrite(sample, 1U, sizeof(sample), input) != sizeof(sample)) {
-    goto cleanup;
-  }
-
-  if (fflush(input) != 0) {
+  if (pervue_frame_write(input, sample, sizeof(sample)) != PERVUE_FRAME_OK) {
     goto cleanup;
   }
 
