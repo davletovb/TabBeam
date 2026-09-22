@@ -150,6 +150,10 @@ if(BUILD_TESTING)
   pervue_enable_project_warnings(pervue-frame-test)
   pervue_enable_sanitizers(pervue-frame-test)
 
+  target_include_directories(pervue-protocol-test
+    PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/protocol
+  )
   target_link_libraries(pervue-protocol-test PRIVATE pervue_host_core)
   pervue_enable_project_warnings(pervue-protocol-test)
   pervue_enable_sanitizers(pervue-protocol-test)
