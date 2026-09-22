@@ -224,4 +224,26 @@ if(PERVUE_BUILD_FUZZERS)
     -fsanitize=fuzzer,address,undefined
     -fno-omit-frame-pointer
   )
+
+  add_executable(pervue-protocol-fuzz
+    fuzz/protocol_fuzz.c
+    protocol/json.c
+    protocol/request.c
+  )
+
+  target_include_directories(pervue-protocol-fuzz
+    PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/include
+      ${CMAKE_CURRENT_SOURCE_DIR}/protocol
+  )
+
+  pervue_enable_project_warnings(pervue-protocol-fuzz)
+  target_compile_options(pervue-protocol-fuzz PRIVATE
+    -fsanitize=fuzzer,address,undefined
+    -fno-omit-frame-pointer
+  )
+  target_link_options(pervue-protocol-fuzz PRIVATE
+    -fsanitize=fuzzer,address,undefined
+    -fno-omit-frame-pointer
+  )
 endif()
