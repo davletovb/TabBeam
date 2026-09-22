@@ -126,6 +126,13 @@ pervue_enable_sanitizers(pervue-host)
 include(CTest)
 
 if(BUILD_TESTING)
+  add_executable(pervue-fake-provider
+    test_provider/fake_provider.c
+  )
+
+  pervue_enable_project_warnings(pervue-fake-provider)
+  pervue_enable_sanitizers(pervue-fake-provider)
+
   add_executable(pervue-host-startup-test
     tests/host_startup_test.c
   )
@@ -205,6 +212,40 @@ if(BUILD_TESTING)
       "-DEXPECTED_STDERR_SUBSTRING=usage:"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_cli.cmake"
   )
+
+  add_test(
+    NAME pervue-fake-provider-modes
+    COMMAND
+      ${CMAKE_COMMAND}
+      "-DPROGRAM=$<TARGET_FILE:pervue-fake-provider>"
+      "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/fake-provider-test"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_fake_provider.cmake"
+  )
+  set_tests_properties(
+    pervue-fake-provider-modes
+    PROPERTIES
+      TIMEOUT 10
+  )
+
+  if(NOT WIN32)
+    add_executable(pervue-fake-provider-signal-test
+      tests/fake_provider_signal_test.c
+    )
+    pervue_enable_project_warnings(pervue-fake-provider-signal-test)
+    pervue_enable_sanitizers(pervue-fake-provider-signal-test)
+
+    add_test(
+      NAME pervue-fake-provider-signal-semantics
+      COMMAND
+        pervue-fake-provider-signal-test
+        "$<TARGET_FILE:pervue-fake-provider>"
+    )
+    set_tests_properties(
+      pervue-fake-provider-signal-semantics
+      PROPERTIES
+        TIMEOUT 5
+    )
+  endif()
 endif()
 
 if(PERVUE_BUILD_FUZZERS)
