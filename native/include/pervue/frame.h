@@ -33,7 +33,7 @@ void pervue_frame_destroy(pervue_frame_t *frame);
 /*
  * Reads one Chrome Native Messaging frame:
  *
- *   4-byte unsigned little-endian payload length
+ *   4-byte unsigned payload length in the platform's native byte order
  *   payload bytes
  *
  * PERVUE_FRAME_EOF is returned only when EOF occurs before any prefix byte.
