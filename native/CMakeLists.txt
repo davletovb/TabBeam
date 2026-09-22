@@ -96,6 +96,10 @@ endfunction()
 
 add_library(pervue_host_core STATIC
   framing/frame.c
+  protocol/events.c
+  protocol/json.c
+  protocol/request.c
+  protocol/router.c
   host/host.c
 )
 
@@ -105,6 +109,7 @@ target_include_directories(pervue_host_core
     ${CMAKE_CURRENT_BINARY_DIR}/generated
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/framing
+    ${CMAKE_CURRENT_SOURCE_DIR}/protocol
 )
 
 pervue_enable_project_warnings(pervue_host_core)
@@ -133,6 +138,10 @@ if(BUILD_TESTING)
     tests/frame_test.c
   )
 
+  add_executable(pervue-protocol-test
+    tests/protocol_test.c
+  )
+
   target_include_directories(pervue-frame-test
     PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/framing
@@ -140,6 +149,10 @@ if(BUILD_TESTING)
   target_link_libraries(pervue-frame-test PRIVATE pervue_host_core)
   pervue_enable_project_warnings(pervue-frame-test)
   pervue_enable_sanitizers(pervue-frame-test)
+
+  target_link_libraries(pervue-protocol-test PRIVATE pervue_host_core)
+  pervue_enable_project_warnings(pervue-protocol-test)
+  pervue_enable_sanitizers(pervue-protocol-test)
 
   add_test(
     NAME pervue-host-startup
@@ -149,6 +162,11 @@ if(BUILD_TESTING)
   add_test(
     NAME pervue-frame
     COMMAND pervue-frame-test
+  )
+
+  add_test(
+    NAME pervue-protocol
+    COMMAND pervue-protocol-test
   )
 
   add_test(
