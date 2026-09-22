@@ -138,7 +138,7 @@ Reached after **Milestone H**:
 
 | ID | Title | Milestone | Area | Dependencies | Status |
 |---|---|---|---|---|---|
-| DOC-01 | Freeze protocol v1 envelope and event contract | Foundation | Documentation / Protocol | — | READY |
+| DOC-01 | Freeze protocol v1 envelope and event contract | Foundation | Documentation / Protocol | — | IMPLEMENTED — VERIFY |
 | DOC-02 | Freeze normalized error taxonomy and capability vocabulary | Foundation | Documentation / Protocol | DOC-01 | READY |
 | EXT-01 | Scaffold Manifest V3 extension surfaces | Foundation | Extension | — | READY |
 | NAT-01 | Scaffold native C host and build system | Foundation | Native | — | READY |
@@ -257,7 +257,14 @@ Reached after **Milestone H**:
 - Protocol fixture validation tests.
 - Golden request/event examples.
 
-**Status:** READY
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- Normative contract: `docs/protocol/v1.md`
+- Request envelope schema: `docs/protocol/schemas/request-envelope.schema.json`
+- Event envelope schema: `docs/protocol/schemas/event-envelope.schema.json`
+- Golden protocol fixtures: `docs/protocol/fixtures/v1-golden.json`
+- Automated fixture validation is intentionally wired by TST-01 when the CI/test baseline exists.
 
 ### DOC-02 — Freeze normalized error taxonomy and capability vocabulary
 **Milestone:** Foundation  
@@ -1388,7 +1395,7 @@ Update this section whenever item statuses change.
 
 | Stage | Total | Verified | Implemented — Verify | In Progress | Ready | Backlog | Blocked | Deferred |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Foundation | 5 | 0 | 0 | 0 | 5 | 0 | 0 | 0 |
+| Foundation | 5 | 0 | 1 | 0 | 4 | 0 | 0 | 0 |
 | A — Native round trip | 8 | 0 | 0 | 0 | 0 | 8 | 0 | 0 |
 | B — First provider | 10 | 0 | 0 | 0 | 0 | 10 | 0 | 0 |
 | C — Conversation continuity | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
@@ -1399,7 +1406,7 @@ Update this section whenever item statuses change.
 | G — Installable product | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 |
 | H — Search/citations | 8 | 0 | 0 | 0 | 0 | 8 | 0 | 0 |
 | Post-milestone | 6 | 0 | 0 | 0 | 0 | 4 | 0 | 2 |
-| **Total** | **81** | **0** | **0** | **0** | **5** | **74** | **0** | **2** |
+| **Total** | **81** | **0** | **1** | **0** | **4** | **74** | **0** | **2** |
 
 ### Milestone completion rule
 

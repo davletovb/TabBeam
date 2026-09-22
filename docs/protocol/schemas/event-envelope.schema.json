@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pervue.local/protocol/v1/event-envelope.schema.json",
+  "title": "Pervue Protocol v1 Event Envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "type", "request_id", "event", "payload"],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "type": {
+      "const": "event"
+    },
+    "request_id": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "event": {
+      "type": "string",
+      "enum": [
+        "host.ready",
+        "provider.status",
+        "conversation.created",
+        "response.started",
+        "response.delta",
+        "response.source",
+        "response.completed",
+        "response.failed",
+        "request.cancelled"
+      ]
+    },
+    "payload": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "event": {
+            "const": "host.ready"
+          }
+        },
+        "required": ["event"]
+      },
+      "then": {
+        "properties": {
+          "request_id": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event": {
+            "enum": [
+              "provider.status",
+              "conversation.created",
+              "response.started",
+              "response.delta",
+              "response.source",
+              "response.completed",
+              "request.cancelled"
+            ]
+          }
+        },
+        "required": ["event"]
+      },
+      "then": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+          }
+        }
+      }
+    }
+  ]
+}
