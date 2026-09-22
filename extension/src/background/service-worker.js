@@ -1,6 +1,6 @@
 const MENU_ID = "pervue-open-full-page";
 
-async function openFullPage(entry) {
+/** @param {string} entry */\nasync function openFullPage(entry) {
   const url = new URL(chrome.runtime.getURL("src/fullpage/index.html"));
   if (entry) {
     url.searchParams.set("entry", entry);
