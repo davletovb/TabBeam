@@ -6,6 +6,9 @@ if(NOT DEFINED EXPECTED_EXIT)
   message(FATAL_ERROR "EXPECTED_EXIT is required")
 endif()
 
+set(empty_stdin "${CMAKE_CURRENT_BINARY_DIR}/pervue_cli_empty_stdin")
+file(WRITE "${empty_stdin}" "")
+
 if(IGNORE_STDOUT)
   set(output_arguments OUTPUT_QUIET)
 else()
@@ -16,6 +19,7 @@ if(DEFINED ARGUMENT)
   execute_process(
     COMMAND "${PROGRAM}" "${ARGUMENT}"
     RESULT_VARIABLE actual_exit
+    INPUT_FILE "${empty_stdin}"
     ${output_arguments}
     ERROR_VARIABLE actual_stderr
   )
@@ -23,6 +27,7 @@ else()
   execute_process(
     COMMAND "${PROGRAM}"
     RESULT_VARIABLE actual_exit
+    INPUT_FILE "${empty_stdin}"
     ${output_arguments}
     ERROR_VARIABLE actual_stderr
   )
