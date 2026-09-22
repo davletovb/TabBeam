@@ -6,18 +6,24 @@ if(NOT DEFINED EXPECTED_EXIT)
   message(FATAL_ERROR "EXPECTED_EXIT is required")
 endif()
 
+if(IGNORE_STDOUT)
+  set(output_arguments OUTPUT_QUIET)
+else()
+  set(output_arguments OUTPUT_VARIABLE actual_stdout)
+endif()
+
 if(DEFINED ARGUMENT)
   execute_process(
     COMMAND "${PROGRAM}" "${ARGUMENT}"
     RESULT_VARIABLE actual_exit
-    OUTPUT_VARIABLE actual_stdout
+    ${output_arguments}
     ERROR_VARIABLE actual_stderr
   )
 else()
   execute_process(
     COMMAND "${PROGRAM}"
     RESULT_VARIABLE actual_exit
-    OUTPUT_VARIABLE actual_stdout
+    ${output_arguments}
     ERROR_VARIABLE actual_stderr
   )
 endif()
