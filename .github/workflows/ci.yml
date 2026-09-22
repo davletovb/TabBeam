@@ -95,6 +95,17 @@ jobs:
         run: cmake --build native/build/ci --parallel
       - name: Test
         run: ctest --test-dir native/build/ci --output-on-failure
+      - name: Configure frame fuzz target
+        if: matrix.compiler == 'clang'
+        env:
+          CC: clang
+        run: cmake -S native -B native/build/fuzz -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=Debug -DPERVUE_BUILD_FUZZERS=ON
+      - name: Build frame fuzz target
+        if: matrix.compiler == 'clang'
+        run: cmake --build native/build/fuzz --target pervue-frame-fuzz --parallel
+      - name: Smoke-run frame fuzz target
+        if: matrix.compiler == 'clang'
+        run: ./native/build/fuzz/pervue-frame-fuzz -runs=1000
 
   native-macos:
     name: Native macOS
