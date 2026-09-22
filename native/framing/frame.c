@@ -2,21 +2,24 @@
 
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
-static uint32_t decode_u32_le(const unsigned char prefix[PERVUE_NATIVE_MESSAGE_PREFIX_SIZE]) {
-  return ((uint32_t)prefix[0]) |
-         ((uint32_t)prefix[1] << 8U) |
-         ((uint32_t)prefix[2] << 16U) |
-         ((uint32_t)prefix[3] << 24U);
+_Static_assert(
+    sizeof(uint32_t) == PERVUE_NATIVE_MESSAGE_PREFIX_SIZE,
+    "Native Messaging requires a 32-bit length prefix");
+
+static uint32_t decode_u32_native(
+    const unsigned char prefix[PERVUE_NATIVE_MESSAGE_PREFIX_SIZE]) {
+  uint32_t value;
+
+  memcpy(&value, prefix, sizeof(value));
+  return value;
 }
 
-static void encode_u32_le(
+static void encode_u32_native(
     uint32_t value,
     unsigned char prefix[PERVUE_NATIVE_MESSAGE_PREFIX_SIZE]) {
-  prefix[0] = (unsigned char)(value & UINT32_C(0xff));
-  prefix[1] = (unsigned char)((value >> 8U) & UINT32_C(0xff));
-  prefix[2] = (unsigned char)((value >> 16U) & UINT32_C(0xff));
-  prefix[3] = (unsigned char)((value >> 24U) & UINT32_C(0xff));
+  memcpy(prefix, &value, sizeof(value));
 }
 
 static pervue_frame_result_t read_exact(
@@ -108,7 +111,7 @@ pervue_frame_result_t pervue_frame_read(FILE *input, pervue_frame_t *frame) {
     return result;
   }
 
-  encoded_length = decode_u32_le(prefix);
+  encoded_length = decode_u32_native(prefix);
   length = (size_t)encoded_length;
 
   if (length > (size_t)PERVUE_NATIVE_MAX_FRAME_SIZE) {
@@ -151,7 +154,7 @@ pervue_frame_result_t pervue_frame_write(
     return PERVUE_FRAME_TOO_LARGE;
   }
 
-  encode_u32_le((uint32_t)length, prefix);
+  encode_u32_native((uint32_t)length, prefix);
 
   result = write_exact(output, prefix, sizeof(prefix));
   if (result != PERVUE_FRAME_OK) {
