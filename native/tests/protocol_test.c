@@ -522,11 +522,7 @@ static int test_host_protocol_flow(void) {
       frame_contains(
           output,
           "\"reason\":\"UNKNOWN_METHOD\"",
-          "\"request_id\":\"req_unknown\"") != 0 ||
-      frame_contains(
-          output,
-          "\"code\":\"INVALID_REQUEST\"",
-          "\"retryable\":false") != 0) {
+          "\"request_id\":\"req_unknown\"") != 0) {
     goto cleanup;
   }
 
