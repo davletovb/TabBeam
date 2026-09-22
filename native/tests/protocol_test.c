@@ -174,6 +174,191 @@ static int test_parser_cases(void) {
   return 0;
 }
 
+
+static int test_parser_regressions(void) {
+  static const char duplicate_version[] =
+      "{\"version\":1,\"version\":1,\"type\":\"request\","
+      "\"request_id\":\"req_dup_v\",\"method\":\"provider.status\","
+      "\"payload\":{}}";
+  static const char duplicate_method[] =
+      "{\"version\":1,\"type\":\"request\","
+      "\"request_id\":\"req_dup_m\","
+      "\"method\":\"provider.status\","
+      "\"method\":\"provider.status\",\"payload\":{}}";
+  static const char duplicate_provider[] =
+      "{\"version\":1,\"type\":\"request\","
+      "\"request_id\":\"req_dup_p\","
+      "\"method\":\"conversation.send\",\"payload\":{"
+      "\"provider_id\":\"fake\",\"provider_id\":\"fake\","
+      "\"input\":{\"text\":\"Hello\"}}}";
+  static const char escaped_names[] =
+      "{\"version\":1,\"type\":\"request\","
+      "\"request_id\":\"req_escape\","
+      "\"method\":\"conversation.sen\\u0064\",\"payload\":{"
+      "\"provider_id\":\"fak\\u0065\","
+      "\"input\":{\"text\":\"Hello\"}}}";
+  static const unsigned char empty_frame[] = {0U};
+  static const unsigned char empty_object_nul[] = {'{', '}', 0U};
+  pervue_request_t request;
+  pervue_request_failure_t failure;
+  char long_id_json[512];
+  char id128[129];
+  char id129[130];
+  char *deep_json = NULL;
+  size_t index;
+  size_t position;
+  size_t deep_capacity = 2048U;
+  int result = 1;
+
+  if (expect_parse(
+          duplicate_version,
+          PERVUE_REQUEST_PARSE_INVALID_ENVELOPE,
+          true) != 0 ||
+      expect_parse(
+          duplicate_method,
+          PERVUE_REQUEST_PARSE_INVALID_ENVELOPE,
+          true) != 0 ||
+      expect_parse(
+          duplicate_provider,
+          PERVUE_REQUEST_PARSE_INVALID_PAYLOAD,
+          true) != 0 ||
+      expect_parse(
+          "{} {}",
+          PERVUE_REQUEST_PARSE_MALFORMED,
+          false) != 0 ||
+      expect_parse(
+          "{}x",
+          PERVUE_REQUEST_PARSE_MALFORMED,
+          false) != 0) {
+    goto cleanup;
+  }
+
+  if (pervue_request_parse(
+          empty_frame,
+          0U,
+          &request,
+          &failure) != PERVUE_REQUEST_PARSE_MALFORMED ||
+      pervue_request_parse(
+          empty_object_nul,
+          sizeof(empty_object_nul),
+          &request,
+          &failure) != PERVUE_REQUEST_PARSE_MALFORMED) {
+    goto cleanup;
+  }
+
+  memset(id128, 'a', 128U);
+  id128[128] = '\0';
+  memset(id129, 'a', 129U);
+  id129[129] = '\0';
+
+  if (snprintf(
+          long_id_json,
+          sizeof(long_id_json),
+          "{\"version\":1,\"type\":\"request\",\"request_id\":\"%s\","
+          "\"method\":\"provider.status\",\"payload\":{}}",
+          id128) < 0 ||
+      pervue_request_parse(
+          (const unsigned char *)long_id_json,
+          strlen(long_id_json),
+          &request,
+          &failure) != PERVUE_REQUEST_PARSE_OK) {
+    goto cleanup;
+  }
+
+  if (snprintf(
+          long_id_json,
+          sizeof(long_id_json),
+          "{\"version\":1,\"type\":\"request\",\"request_id\":\"%s\","
+          "\"method\":\"provider.status\",\"payload\":{}}",
+          id129) < 0 ||
+      pervue_request_parse(
+          (const unsigned char *)long_id_json,
+          strlen(long_id_json),
+          &request,
+          &failure) != PERVUE_REQUEST_PARSE_INVALID_ENVELOPE ||
+      failure.has_request_id) {
+    goto cleanup;
+  }
+
+  if (pervue_request_parse(
+          (const unsigned char *)escaped_names,
+          strlen(escaped_names),
+          &request,
+          &failure) != PERVUE_REQUEST_PARSE_OK ||
+      request.method != PERVUE_METHOD_CONVERSATION_SEND ||
+      !request.provider_is_fake) {
+    goto cleanup;
+  }
+
+  if (pervue_request_parse(
+          (const unsigned char *)
+              "{\"version\":2,\"type\":\"request\","
+              "\"request_id\":\"req_v2_detail\","
+              "\"method\":\"provider.status\",\"payload\":{}}",
+          strlen(
+              "{\"version\":2,\"type\":\"request\","
+              "\"request_id\":\"req_v2_detail\","
+              "\"method\":\"provider.status\",\"payload\":{}}"),
+          &request,
+          &failure) != PERVUE_REQUEST_PARSE_UNSUPPORTED_VERSION ||
+      !failure.has_received_version ||
+      failure.received_version != 2) {
+    goto cleanup;
+  }
+
+  deep_json = (char *)malloc(deep_capacity);
+  if (deep_json == NULL) {
+    goto cleanup;
+  }
+
+  position = (size_t)snprintf(
+      deep_json,
+      deep_capacity,
+      "{\"version\":1,\"type\":\"request\","
+      "\"request_id\":\"req_deep\","
+      "\"method\":\"conversation.send\",\"payload\":{"
+      "\"provider_id\":\"fake\",\"input\":{\"text\":\"Hello\"},"
+      "\"context\":");
+  if (position >= deep_capacity) {
+    goto cleanup;
+  }
+
+  for (index = 0U; index < 140U; ++index) {
+    if (position + 1U >= deep_capacity) {
+      goto cleanup;
+    }
+    deep_json[position++] = '[';
+  }
+  deep_json[position++] = '0';
+  for (index = 0U; index < 140U; ++index) {
+    if (position + 1U >= deep_capacity) {
+      goto cleanup;
+    }
+    deep_json[position++] = ']';
+  }
+  if (position + 3U >= deep_capacity) {
+    goto cleanup;
+  }
+  deep_json[position++] = '}';
+  deep_json[position++] = '}';
+  deep_json[position] = '\0';
+
+  if (pervue_request_parse(
+          (const unsigned char *)deep_json,
+          position,
+          &request,
+          &failure) != PERVUE_REQUEST_PARSE_INVALID_PAYLOAD ||
+      !failure.has_request_id) {
+    goto cleanup;
+  }
+
+  result = 0;
+
+cleanup:
+  free(deep_json);
+  return result;
+}
+
 static int test_router_dispatch(void) {
   static const char json[] =
       "{\"version\":1,\"type\":\"request\",\"request_id\":\"req_route\","
@@ -251,6 +436,10 @@ cleanup:
 
 static int test_host_protocol_flow(void) {
   static const char malformed[] = "{not-json";
+  static const char malformed_with_id[] =
+      "{\"version\":1,\"type\":\"request\","
+      "\"request_id\":\"req_malformed_flow\","
+      "\"method\":\"provider.status\",\"payload\":{}}x";
   static const char valid[] =
       "{\"version\":1,\"type\":\"request\",\"request_id\":\"req_flow\","
       "\"method\":\"conversation.send\",\"payload\":{"
@@ -276,6 +465,10 @@ static int test_host_protocol_flow(void) {
           input,
           (const unsigned char *)malformed,
           strlen(malformed)) != PERVUE_FRAME_OK ||
+      pervue_frame_write(
+          input,
+          (const unsigned char *)malformed_with_id,
+          strlen(malformed_with_id)) != PERVUE_FRAME_OK ||
       pervue_frame_write(
           input,
           (const unsigned char *)valid,
@@ -304,6 +497,10 @@ static int test_host_protocol_flow(void) {
           "\"request_id\":null") != 0 ||
       frame_contains(
           output,
+          "\"reason\":\"MALFORMED_MESSAGE\"",
+          "\"request_id\":\"req_malformed_flow\"") != 0 ||
+      frame_contains(
+          output,
           "\"event\":\"conversation.created\"",
           "\"request_id\":\"req_flow\"") != 0 ||
       frame_contains(
@@ -325,7 +522,11 @@ static int test_host_protocol_flow(void) {
       frame_contains(
           output,
           "\"reason\":\"UNKNOWN_METHOD\"",
-          "\"request_id\":\"req_unknown\"") != 0) {
+          "\"request_id\":\"req_unknown\"") != 0 ||
+      frame_contains(
+          output,
+          "\"code\":\"INVALID_REQUEST\"",
+          "\"retryable\":false") != 0) {
     goto cleanup;
   }
 
@@ -347,6 +548,11 @@ cleanup:
 int main(void) {
   if (test_parser_cases() != 0) {
     fprintf(stderr, "protocol parser cases failed\n");
+    return 1;
+  }
+
+  if (test_parser_regressions() != 0) {
+    fprintf(stderr, "protocol parser regression cases failed\n");
     return 1;
   }
 
