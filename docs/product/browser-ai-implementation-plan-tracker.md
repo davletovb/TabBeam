@@ -449,8 +449,10 @@ Reached after **Milestone H**:
 - Method router: `native/protocol/router.c`
 - Protocol event/error emission: `native/protocol/events.c`
 - Host emits exactly one `host.ready`, keeps running after malformed requests, and routes the local fake conversation provider: `native/host/host.c`
-- Parser/router/integration tests cover malformed JSON, missing/extra/wrong fields, unsupported version, unknown method, invalid method payloads, request-ID preservation, and fake conversation dispatch: `native/tests/protocol_test.c`
-- CI verification remains pending until the full native matrix and sanitizer job complete successfully.
+- Parser/router/integration tests cover malformed JSON, duplicate/missing/extra/wrong fields, 128/129-character request-ID boundaries, escaped identifiers, unsupported versions, unknown methods, depth limits, recovered-ID malformed failures, invalid method payloads, and fake conversation dispatch: `native/tests/protocol_test.c`
+- Parser fuzz target + golden-derived corpus: `native/fuzz/protocol_fuzz.c` + `native/fuzz/create_protocol_corpus.py`
+- Built-host contract harness validates emitted frames against the frozen event/error/provider-status schemas and golden event sequences: `scripts/validate_host_protocol.py`
+- CI verification: full 8-job matrix green, including Windows/MSVC, ASan+UBSan, minimum CMake, host conformance, frame fuzzing, and 2,000 protocol-fuzzer smoke runs.
 
 ### TST-02 — Build deterministic fake streaming provider
 **Area:** Testing  
