@@ -14,7 +14,8 @@
             "text": "Hello"
           }
         }
-      }
+      },
+      "sequence": "new conversation success"
     },
     {
       "name": "continue conversation",
@@ -30,7 +31,8 @@
             "text": "Continue"
           }
         }
-      }
+      },
+      "sequence": "existing conversation success"
     },
     {
       "name": "provider status all",
@@ -40,7 +42,8 @@
         "request_id": "req_status_1",
         "method": "provider.status",
         "payload": {}
-      }
+      },
+      "sequence": "provider status success"
     },
     {
       "name": "cancel request",
@@ -52,7 +55,9 @@
         "payload": {
           "target_request_id": "req_answer_1"
         }
-      }
+      },
+      "host_conformance": "deferred",
+      "deferred_until": "TST-02"
     }
   ],
   "valid_events": [
@@ -294,6 +299,16 @@
       "expected": {
         "event": "response.failed",
         "request_id": null,
+        "error_code": "INVALID_REQUEST",
+        "reason": "MALFORMED_MESSAGE"
+      }
+    },
+    {
+      "name": "malformed after recovered request id",
+      "raw": "{\"version\":1,\"type\":\"request\",\"request_id\":\"req_malformed_1\",\"method\":\"provider.status\",\"payload\":{}}x",
+      "expected": {
+        "event": "response.failed",
+        "request_id": "req_malformed_1",
         "error_code": "INVALID_REQUEST",
         "reason": "MALFORMED_MESSAGE"
       }
