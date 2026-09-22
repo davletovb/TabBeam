@@ -6,17 +6,21 @@ import {
 
 class MockEvent {
   constructor() {
+    /** @type {Set<(value: any) => void>} */
     this.listeners = new Set();
   }
 
+  /** @param {(value: any) => void} listener */
   addListener(listener) {
     this.listeners.add(listener);
   }
 
+  /** @param {(value: any) => void} listener */
   removeListener(listener) {
     this.listeners.delete(listener);
   }
 
+  /** @param {any} value */
   emit(value) {
     for (const listener of [...this.listeners]) {
       listener(value);
@@ -25,15 +29,22 @@ class MockEvent {
 }
 
 class MockPort {
+  /** @param {string} name */
   constructor(name) {
     this.name = name;
+    /** @type {any[]} */
     this.messages = [];
     this.disconnectCalls = 0;
+    this.throwOnPost = false;
     this.onMessage = new MockEvent();
     this.onDisconnect = new MockEvent();
   }
 
+  /** @param {any} message */
   postMessage(message) {
+    if (this.throwOnPost) {
+      throw new Error("mock post failure");
+    }
     this.messages.push(message);
   }
 
@@ -41,6 +52,7 @@ class MockPort {
     this.disconnectCalls += 1;
   }
 
+  /** @param {any} message */
   emitMessage(message) {
     this.onMessage.emit(message);
   }
@@ -51,11 +63,15 @@ class MockPort {
 }
 
 function makeHarness() {
+  /** @type {MockPort[]} */
   const ports = [];
+  /** @type {string | null} */
   let lastError = null;
+  /** @type {string[]} */
   const hostNames = [];
 
   const manager = createNativeConnectionManager({
+    /** @param {string} hostName */
     connectNative(hostName) {
       hostNames.push(hostName);
       const port = new MockPort(`port-${ports.length + 1}`);
@@ -71,12 +87,14 @@ function makeHarness() {
     manager,
     ports,
     hostNames,
+    /** @param {string | null} value */
     setLastError(value) {
       lastError = value;
     }
   };
 }
 
+/** @param {string} id @param {string} [method] */
 function request(id, method = "provider.status") {
   return {
     version: 1,
@@ -107,7 +125,9 @@ function request(id, method = "provider.status") {
 
 {
   const { manager, ports } = makeHarness();
+  /** @type {any[]} */
   const firstEvents = [];
+  /** @type {any[]} */
   const secondEvents = [];
 
   manager.send(request("req_1"), {
@@ -177,6 +197,7 @@ function request(id, method = "provider.status") {
 
 {
   const { manager, ports } = makeHarness();
+  /** @type {string[]} */
   const lifecycle = [];
 
   const unsubscribe = manager.onLifecycleEvent((event) => {
@@ -209,7 +230,9 @@ function request(id, method = "provider.status") {
 
 {
   const { manager, ports, setLastError } = makeHarness();
+  /** @type {{requestId: string, message: string | null}[]} */
   const requestDisconnects = [];
+  /** @type {{message: string | null, requestIds: string[]}[]} */
   const managerDisconnects = [];
 
   manager.onDisconnect((details) => {
@@ -243,9 +266,14 @@ function request(id, method = "provider.status") {
   assert.equal(ports.length, 2);
   assert.equal(manager.connected, true);
 
-  // A delayed disconnect callback from the dead port must not tear down the
-  // freshly reconnected port.
+  // Delayed callbacks from the dead port must not affect the replacement port.
+  ports[0].emitMessage({
+    request_id: "req_after_restart",
+    event: "response.completed",
+    payload: {}
+  });
   ports[0].emitDisconnect();
+
   assert.equal(manager.connected, true);
   assert.equal(manager.pendingRequestCount, 1);
 
@@ -273,6 +301,35 @@ function request(id, method = "provider.status") {
   assert.equal(ports[0].disconnectCalls, 1);
 
   manager.send(request("req_manual_reconnect"));
+  assert.equal(ports.length, 2);
+}
+
+{
+  const { manager, ports } = makeHarness();
+  /** @type {{requestId: string, message: string | null}[]} */
+  const requestDisconnects = [];
+
+  manager.send(request("req_post_failure"), {
+    onDisconnect: (details) => requestDisconnects.push(details)
+  });
+  ports[0].throwOnPost = true;
+
+  assert.throws(
+    () => manager.send(request("req_post_failure_2"), {
+      onDisconnect: (details) => requestDisconnects.push(details)
+    }),
+    /mock post failure/
+  );
+
+  assert.equal(manager.connected, false);
+  assert.equal(manager.pendingRequestCount, 0);
+  assert.equal(ports[0].disconnectCalls, 1);
+  assert.deepEqual(
+    requestDisconnects.map((item) => item.requestId),
+    ["req_post_failure", "req_post_failure_2"]
+  );
+
+  manager.send(request("req_post_failure_reconnect"));
   assert.equal(ports.length, 2);
 }
 
