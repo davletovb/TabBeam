@@ -22,6 +22,12 @@ typedef struct pervue_raw_json_string {
 
 typedef struct pervue_request {
   pervue_method_t method;
+  /*
+   * Raw JSON string bytes are intentionally preserved for byte-for-byte
+   * correlation on emitted events. Re-emission is safe only because
+   * request_id_is_valid() restricts the decoded ID to the protocol's ASCII
+   * [A-Za-z0-9][A-Za-z0-9._:-]* grammar before this structure is produced.
+   */
   pervue_raw_json_string_t request_id;
   bool provider_is_fake;
   bool has_provider_id;
