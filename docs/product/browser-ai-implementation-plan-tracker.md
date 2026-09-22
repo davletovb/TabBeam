@@ -145,7 +145,7 @@ Reached after **Milestone H**:
 | TST-01 | Establish CI/build/test baseline | Foundation | Testing | EXT-01, NAT-01 | IMPLEMENTED — VERIFY |
 | NAT-02 | Implement bounded Native Messaging frame reader/writer | A | Native | NAT-01, DOC-01 | IMPLEMENTED — VERIFY |
 | NAT-03 | Implement JSON validation and request router | A | Native | NAT-02, DOC-01, DOC-02 | IMPLEMENTED — VERIFY |
-| TST-02 | Build deterministic fake streaming provider | A | Testing | NAT-01 | BACKLOG |
+| TST-02 | Build deterministic fake streaming provider | A | Testing | NAT-01 | IMPLEMENTED — VERIFY |
 | EXT-02 | Implement service-worker Native Messaging connection manager | A | Extension | EXT-01, DOC-01 | BACKLOG |
 | EXT-03 | Implement minimal popup ask/stream UI | A | Extension | EXT-01, EXT-02 | BACKLOG |
 | SEC-01 | Enforce browser/native trust-boundary limits | A | Security | NAT-02, NAT-03 | BACKLOG |
@@ -471,7 +471,16 @@ Reached after **Milestone H**:
   - emit malformed output;
   - emit large output.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- Standalone native fake provider executable: `native/test_provider/fake_provider.c`
+- Test-only mode contract/documentation: `native/test_provider/README.md`
+- Cross-platform behavior harness: `native/tests/check_fake_provider.cmake`
+- CMake/CTest integration: `native/CMakeLists.txt`
+- Harness verifies normal streaming, deliberately slow streaming, stderr output, exit 42, bounded timeout for hanging behavior, cancellation-ignore behavior, malformed output, and exactly 2 MiB of large stdout.
+- Windows stdin/stdout/stderr are switched to binary mode so fixture bytes are deterministic across platforms.
+- CI verification remains pending until the full native matrix completes successfully.
 
 ### EXT-02 — Implement service-worker Native Messaging connection manager
 **Area:** Extension  
@@ -1454,7 +1463,7 @@ Update this section whenever item statuses change.
 | Stage | Total | Verified | Implemented — Verify | In Progress | Ready | Backlog | Blocked | Deferred |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | Foundation | 5 | 0 | 5 | 0 | 0 | 0 | 0 | 0 |
-| A — Native round trip | 8 | 0 | 2 | 0 | 0 | 6 | 0 | 0 |
+| A — Native round trip | 8 | 0 | 3 | 0 | 0 | 5 | 0 | 0 |
 | B — First provider | 10 | 0 | 0 | 0 | 0 | 10 | 0 | 0 |
 | C — Conversation continuity | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
 | D — Browser context | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 |
@@ -1464,7 +1473,7 @@ Update this section whenever item statuses change.
 | G — Installable product | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 |
 | H — Search/citations | 8 | 0 | 0 | 0 | 0 | 8 | 0 | 0 |
 | Post-milestone | 6 | 0 | 0 | 0 | 0 | 4 | 0 | 2 |
-| **Total** | **81** | **0** | **7** | **0** | **0** | **72** | **0** | **2** |
+| **Total** | **81** | **0** | **8** | **0** | **0** | **71** | **0** | **2** |
 
 ### Milestone completion rule
 
