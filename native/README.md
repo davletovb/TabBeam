@@ -37,7 +37,7 @@ The sanitizer preset fails during configuration when the active compiler is not 
 
 Pervue uses Chrome Native Messaging framing:
 
-- 4-byte unsigned little-endian payload length;
+- 4-byte unsigned payload length in the platform's native byte order;
 - followed by exactly that many payload bytes;
 - zero-length payloads are valid;
 - inbound and outbound frames are capped at `PERVUE_NATIVE_MAX_FRAME_SIZE` (currently 1 MiB);
