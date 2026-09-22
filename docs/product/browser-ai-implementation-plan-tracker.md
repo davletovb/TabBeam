@@ -482,7 +482,7 @@ Reached after **Milestone H**:
 - Windows stdin/stdout/stderr are switched to binary mode so fixture bytes are deterministic across platforms.
 - POSIX signal test proves `hang` terminates on SIGTERM while `ignore-cancel` survives SIGTERM until SIGKILL cleanup.
 - Fake-provider binaries are created only under `BUILD_TESTING=ON`, keeping test fixtures out of non-test builds.
-- Previous implementation CI was green across all 8 jobs; review-hardening CI is rerunning on the latest head before merge.
+- Review-hardening CI run #40 is green across all 8 jobs, including GCC, Clang, macOS, Windows/MSVC, minimum CMake, ASan+UBSan, protocol, and extension checks; merge remains pending.
 
 ### EXT-02 — Implement service-worker Native Messaging connection manager
 **Area:** Extension  
