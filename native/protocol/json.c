@@ -368,7 +368,9 @@ pervue_json_result_t pervue_json_parse_integer(
   while (pos < end) {
     unsigned int digit = (unsigned int)(reader->data[pos] - (unsigned char)'0');
     if (magnitude > (limit - digit) / UINT64_C(10)) {
-      *is_integer = false;
+      if (is_integer != NULL) {
+        *is_integer = false;
+      }
       return PERVUE_JSON_OK;
     }
     magnitude = magnitude * UINT64_C(10) + digit;
