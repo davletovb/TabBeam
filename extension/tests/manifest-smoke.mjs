@@ -13,6 +13,7 @@ assert.equal(manifest.action.default_popup, "src/popup/index.html");
 assert.equal(manifest.background.service_worker, "src/background/service-worker.js");
 assert.equal(manifest.background.type, "module");
 assert.ok(manifest.permissions.includes("contextMenus"));
+assert.ok(manifest.permissions.includes("nativeMessaging"));
 assert.ok(manifest.commands["open-pervue-full-page"]);
 
 const contentScript = manifest.content_scripts[0];
@@ -23,6 +24,7 @@ const referencedFiles = [
   manifest.action.default_popup,
   manifest.background.service_worker,
   ...contentScript.js,
+  "src/background/native-connection.js",
   "src/fullpage/index.html",
   "src/popup/popup.js",
   "src/popup/popup.css",
@@ -42,6 +44,8 @@ const listeners = {
   contextMenuClicks: []
 };
 
+let nativeConnectCalls = 0;
+
 globalThis.chrome = /** @type {any} */ ({
   runtime: {
     onInstalled: {
@@ -52,7 +56,11 @@ globalThis.chrome = /** @type {any} */ ({
     },
     getURL: (/** @type {string} */ relative) =>
       `chrome-extension://test/${relative}`,
-    getManifest: () => manifest
+    getManifest: () => manifest,
+    connectNative: () => {
+      nativeConnectCalls += 1;
+      throw new Error("smoke test should not connect eagerly");
+    }
   },
   commands: {
     onCommand: {
@@ -76,6 +84,7 @@ await import(
   `${pathToFileURL(path.join(root, manifest.background.service_worker)).href}?smoke=1`
 );
 
+assert.equal(nativeConnectCalls, 0);
 assert.equal(listeners.installed.length, 1);
 assert.equal(listeners.messages.length, 1);
 assert.equal(listeners.commands.length, 1);
@@ -97,4 +106,4 @@ assert.deepEqual(healthResponse, {
   version: manifest.version
 });
 
-console.log("EXT-01 manifest and service-worker smoke checks passed");
+console.log("EXT-01/EXT-02 manifest and service-worker smoke checks passed");
