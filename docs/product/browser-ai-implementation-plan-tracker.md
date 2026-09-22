@@ -419,9 +419,9 @@ Reached after **Milestone H**:
 - Bounded frame API: `native/include/pervue/frame.h`
 - Native Messaging reader/writer: `native/framing/frame.c`
 - Host framing integration and deterministic error mapping: `native/host/host.c`
-- Unit coverage for normal, empty, maximum-size, oversized, truncated, EOF, invalid-argument, and native-byte-order cases: `native/tests/frame_test.c`
+- Unit coverage for normal, empty, maximum-size, oversized, truncated, EOF, invalid-argument, literal native-byte-order, and forced short-read/short-write cases: `native/tests/frame_test.c`
 - Host-level oversized/truncated framing checks: `native/tests/host_startup_test.c`
-- Opt-in Clang/libFuzzer harness: `native/fuzz/frame_reader_fuzz.c`
+- Opt-in Clang/libFuzzer harness with runtime capability probe and structured corpus generator: `native/fuzz/frame_reader_fuzz.c` + `native/fuzz/create_corpus.py`
 - Project frame cap: 1 MiB, enforced before payload allocation and before writes.
 - CI verification remains pending until this PR's full native matrix and sanitizer job complete successfully.
 
