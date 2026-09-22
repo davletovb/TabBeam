@@ -2,7 +2,6 @@
 
 #include "json_internal.h"
 
-#include <ctype.h>
 #include <string.h>
 
 typedef struct payload_span {
@@ -16,6 +15,12 @@ static pervue_raw_json_string_t raw_string(
   result.data = view->data;
   result.length = view->length;
   return result;
+}
+
+static bool request_id_char_is_alnum(unsigned char c) {
+  return (c >= (unsigned char)'0' && c <= (unsigned char)'9') ||
+         (c >= (unsigned char)'A' && c <= (unsigned char)'Z') ||
+         (c >= (unsigned char)'a' && c <= (unsigned char)'z');
 }
 
 static bool request_id_is_valid(const pervue_json_string_view_t *view) {
@@ -33,13 +38,13 @@ static bool request_id_is_valid(const pervue_json_string_view_t *view) {
     return false;
   }
 
-  if (!isalnum((unsigned char)decoded[0])) {
+  if (!request_id_char_is_alnum((unsigned char)decoded[0])) {
     return false;
   }
 
   for (index = 1U; index < length; ++index) {
     unsigned char c = (unsigned char)decoded[index];
-    if (!isalnum(c) &&
+    if (!request_id_char_is_alnum(c) &&
         c != (unsigned char)'.' &&
         c != (unsigned char)'_' &&
         c != (unsigned char)':' &&
@@ -51,11 +56,16 @@ static bool request_id_is_valid(const pervue_json_string_view_t *view) {
   return true;
 }
 
-static pervue_request_parse_result_t json_result_to_request_result(
+static pervue_request_parse_result_t json_result_to_payload_result(
     pervue_json_result_t result) {
-  if (result == PERVUE_JSON_DEPTH_EXCEEDED) {
-    return PERVUE_REQUEST_PARSE_INVALID_PAYLOAD;
-  }
+  return result == PERVUE_JSON_DEPTH_EXCEEDED
+      ? PERVUE_REQUEST_PARSE_INVALID_PAYLOAD
+      : PERVUE_REQUEST_PARSE_MALFORMED;
+}
+
+static pervue_request_parse_result_t json_result_to_envelope_result(
+    pervue_json_result_t result) {
+  (void)result;
   return PERVUE_REQUEST_PARSE_MALFORMED;
 }
 
@@ -89,7 +99,7 @@ static pervue_request_parse_result_t parse_input_payload(
 
     result = pervue_json_parse_string(&reader, &key);
     if (result != PERVUE_JSON_OK) {
-      return json_result_to_request_result(result);
+      return json_result_to_payload_result(result);
     }
 
     pervue_json_skip_whitespace(&reader);
@@ -108,13 +118,13 @@ static pervue_request_parse_result_t parse_input_payload(
       if (pervue_json_peek(&reader) != (int)'"') {
         result = pervue_json_skip_value(&reader);
         if (result != PERVUE_JSON_OK) {
-          return json_result_to_request_result(result);
+          return json_result_to_payload_result(result);
         }
         duplicate = true;
       } else {
         result = pervue_json_parse_string(&reader, &text);
         if (result != PERVUE_JSON_OK) {
-          return json_result_to_request_result(result);
+          return json_result_to_payload_result(result);
         }
         if (!pervue_json_string_is_nonempty(&text)) {
           duplicate = true;
@@ -123,7 +133,7 @@ static pervue_request_parse_result_t parse_input_payload(
     } else {
       result = pervue_json_skip_value(&reader);
       if (result != PERVUE_JSON_OK) {
-        return json_result_to_request_result(result);
+        return json_result_to_payload_result(result);
       }
     }
 
@@ -177,7 +187,7 @@ static pervue_request_parse_result_t parse_conversation_payload(
 
     result = pervue_json_parse_string(&reader, &key);
     if (result != PERVUE_JSON_OK) {
-      return json_result_to_request_result(result);
+      return json_result_to_payload_result(result);
     }
 
     pervue_json_skip_whitespace(&reader);
@@ -196,13 +206,13 @@ static pervue_request_parse_result_t parse_conversation_payload(
       if (pervue_json_peek(&reader) != (int)'"') {
         result = pervue_json_skip_value(&reader);
         if (result != PERVUE_JSON_OK) {
-          return json_result_to_request_result(result);
+          return json_result_to_payload_result(result);
         }
         invalid = true;
       } else {
         result = pervue_json_parse_string(&reader, &value);
         if (result != PERVUE_JSON_OK) {
-          return json_result_to_request_result(result);
+          return json_result_to_payload_result(result);
         }
         if (!pervue_json_string_is_nonempty(&value)) {
           invalid = true;
@@ -225,7 +235,7 @@ static pervue_request_parse_result_t parse_conversation_payload(
       if (!object_value_is_object(&reader)) {
         result = pervue_json_skip_value(&reader);
         if (result != PERVUE_JSON_OK) {
-          return json_result_to_request_result(result);
+          return json_result_to_payload_result(result);
         }
         invalid = true;
       } else {
@@ -233,7 +243,7 @@ static pervue_request_parse_result_t parse_conversation_payload(
         result = pervue_json_skip_value(&reader);
         end = reader.position;
         if (result != PERVUE_JSON_OK) {
-          return json_result_to_request_result(result);
+          return json_result_to_payload_result(result);
         }
 
         if (parse_input_payload(
@@ -252,13 +262,13 @@ static pervue_request_parse_result_t parse_conversation_payload(
       if (pervue_json_peek(&reader) != (int)'"') {
         result = pervue_json_skip_value(&reader);
         if (result != PERVUE_JSON_OK) {
-          return json_result_to_request_result(result);
+          return json_result_to_payload_result(result);
         }
         invalid = true;
       } else {
         result = pervue_json_parse_string(&reader, &value);
         if (result != PERVUE_JSON_OK) {
-          return json_result_to_request_result(result);
+          return json_result_to_payload_result(result);
         }
         if (!pervue_json_string_is_nonempty(&value)) {
           invalid = true;
@@ -275,19 +285,19 @@ static pervue_request_parse_result_t parse_conversation_payload(
       if (!object_value_is_object(&reader)) {
         result = pervue_json_skip_value(&reader);
         if (result != PERVUE_JSON_OK) {
-          return json_result_to_request_result(result);
+          return json_result_to_payload_result(result);
         }
         invalid = true;
       } else {
         result = pervue_json_skip_value(&reader);
         if (result != PERVUE_JSON_OK) {
-          return json_result_to_request_result(result);
+          return json_result_to_payload_result(result);
         }
       }
     } else {
       result = pervue_json_skip_value(&reader);
       if (result != PERVUE_JSON_OK) {
-        return json_result_to_request_result(result);
+        return json_result_to_payload_result(result);
       }
     }
 
@@ -333,7 +343,7 @@ static pervue_request_parse_result_t parse_status_payload(
 
     result = pervue_json_parse_string(&reader, &key);
     if (result != PERVUE_JSON_OK) {
-      return json_result_to_request_result(result);
+      return json_result_to_payload_result(result);
     }
 
     pervue_json_skip_whitespace(&reader);
@@ -353,13 +363,13 @@ static pervue_request_parse_result_t parse_status_payload(
       if (pervue_json_peek(&reader) != (int)'"') {
         result = pervue_json_skip_value(&reader);
         if (result != PERVUE_JSON_OK) {
-          return json_result_to_request_result(result);
+          return json_result_to_payload_result(result);
         }
         invalid = true;
       } else {
         result = pervue_json_parse_string(&reader, &value);
         if (result != PERVUE_JSON_OK) {
-          return json_result_to_request_result(result);
+          return json_result_to_payload_result(result);
         }
 
         if (!pervue_json_string_is_nonempty(&value)) {
@@ -374,7 +384,7 @@ static pervue_request_parse_result_t parse_status_payload(
     } else {
       result = pervue_json_skip_value(&reader);
       if (result != PERVUE_JSON_OK) {
-        return json_result_to_request_result(result);
+        return json_result_to_payload_result(result);
       }
     }
 
@@ -417,7 +427,7 @@ static pervue_request_parse_result_t parse_cancel_payload(
 
     result = pervue_json_parse_string(&reader, &key);
     if (result != PERVUE_JSON_OK) {
-      return json_result_to_request_result(result);
+      return json_result_to_payload_result(result);
     }
 
     pervue_json_skip_whitespace(&reader);
@@ -437,13 +447,13 @@ static pervue_request_parse_result_t parse_cancel_payload(
       if (pervue_json_peek(&reader) != (int)'"') {
         result = pervue_json_skip_value(&reader);
         if (result != PERVUE_JSON_OK) {
-          return json_result_to_request_result(result);
+          return json_result_to_payload_result(result);
         }
         invalid = true;
       } else {
         result = pervue_json_parse_string(&reader, &value);
         if (result != PERVUE_JSON_OK) {
-          return json_result_to_request_result(result);
+          return json_result_to_payload_result(result);
         }
         if (!request_id_is_valid(&value)) {
           invalid = true;
@@ -452,7 +462,7 @@ static pervue_request_parse_result_t parse_cancel_payload(
     } else {
       result = pervue_json_skip_value(&reader);
       if (result != PERVUE_JSON_OK) {
-        return json_result_to_request_result(result);
+        return json_result_to_payload_result(result);
       }
     }
 
@@ -505,7 +515,7 @@ pervue_request_parse_result_t pervue_request_parse(
   if (pervue_json_peek(&reader) != (int)'{') {
     pervue_json_result_t root_result = pervue_json_skip_value(&reader);
 
-    if (root_result == PERVUE_JSON_SYNTAX_ERROR) {
+    if (root_result != PERVUE_JSON_OK) {
       return PERVUE_REQUEST_PARSE_MALFORMED;
     }
 
@@ -522,6 +532,10 @@ pervue_request_parse_result_t pervue_request_parse(
 
   pervue_json_skip_whitespace(&reader);
   if (pervue_json_consume(&reader, (unsigned char)'}')) {
+    pervue_json_skip_whitespace(&reader);
+    if (!pervue_json_at_end(&reader)) {
+      return PERVUE_REQUEST_PARSE_MALFORMED;
+    }
     failure->result = PERVUE_REQUEST_PARSE_INVALID_ENVELOPE;
     return failure->result;
   }
