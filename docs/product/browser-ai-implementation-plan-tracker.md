@@ -143,7 +143,7 @@ Reached after **Milestone H**:
 | EXT-01 | Scaffold Manifest V3 extension surfaces | Foundation | Extension | — | IMPLEMENTED — VERIFY |
 | NAT-01 | Scaffold native C host and build system | Foundation | Native | — | IMPLEMENTED — VERIFY |
 | TST-01 | Establish CI/build/test baseline | Foundation | Testing | EXT-01, NAT-01 | IMPLEMENTED — VERIFY |
-| NAT-02 | Implement bounded Native Messaging frame reader/writer | A | Native | NAT-01, DOC-01 | BACKLOG |
+| NAT-02 | Implement bounded Native Messaging frame reader/writer | A | Native | NAT-01, DOC-01 | IMPLEMENTED — VERIFY |
 | NAT-03 | Implement JSON validation and request router | A | Native | NAT-02, DOC-01, DOC-02 | BACKLOG |
 | TST-02 | Build deterministic fake streaming provider | A | Testing | NAT-01 | BACKLOG |
 | EXT-02 | Implement service-worker Native Messaging connection manager | A | Extension | EXT-01, DOC-01 | BACKLOG |
@@ -413,7 +413,17 @@ Reached after **Milestone H**:
 - Unit tests for normal/empty/max/oversized/truncated frames.
 - Fuzz target for frame parser when practical.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- Bounded frame API: `native/include/pervue/frame.h`
+- Native Messaging reader/writer: `native/framing/frame.c`
+- Host framing integration and deterministic error mapping: `native/host/host.c`
+- Unit coverage for normal, empty, maximum-size, oversized, truncated, EOF, invalid-argument, literal native-byte-order, and forced short-read/short-write cases: `native/tests/frame_test.c`
+- Host-level oversized/truncated framing checks: `native/tests/host_startup_test.c`
+- Opt-in Clang/libFuzzer harness with runtime capability probe and structured corpus generator: `native/fuzz/frame_reader_fuzz.c` + `native/fuzz/create_corpus.py`
+- Project frame cap: 1 MiB, enforced before payload allocation and before writes.
+- CI verification remains pending until this PR's full native matrix and sanitizer job complete successfully.
 
 ### NAT-03 — Implement JSON validation and request router
 **Area:** Native  
@@ -1432,7 +1442,7 @@ Update this section whenever item statuses change.
 | Stage | Total | Verified | Implemented — Verify | In Progress | Ready | Backlog | Blocked | Deferred |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | Foundation | 5 | 0 | 5 | 0 | 0 | 0 | 0 | 0 |
-| A — Native round trip | 8 | 0 | 0 | 0 | 0 | 8 | 0 | 0 |
+| A — Native round trip | 8 | 0 | 1 | 0 | 0 | 7 | 0 | 0 |
 | B — First provider | 10 | 0 | 0 | 0 | 0 | 10 | 0 | 0 |
 | C — Conversation continuity | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
 | D — Browser context | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 |
@@ -1442,7 +1452,7 @@ Update this section whenever item statuses change.
 | G — Installable product | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 |
 | H — Search/citations | 8 | 0 | 0 | 0 | 0 | 8 | 0 | 0 |
 | Post-milestone | 6 | 0 | 0 | 0 | 0 | 4 | 0 | 2 |
-| **Total** | **81** | **0** | **5** | **0** | **0** | **74** | **0** | **2** |
+| **Total** | **81** | **0** | **6** | **0** | **0** | **73** | **0** | **2** |
 
 ### Milestone completion rule
 
