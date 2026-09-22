@@ -1,5 +1,6 @@
 const MENU_ID = "pervue-open-full-page";
 
+/** @param {string} entry */
 async function openFullPage(entry) {
   const url = new URL(chrome.runtime.getURL("src/fullpage/index.html"));
   if (entry) {
@@ -17,26 +18,36 @@ chrome.runtime.onInstalled.addListener(async () => {
   });
 });
 
-chrome.commands.onCommand.addListener(async (command) => {
-  if (command === "open-pervue-full-page") {
-    await openFullPage("command");
+chrome.commands.onCommand.addListener(
+  async (/** @type {string} */ command) => {
+    if (command === "open-pervue-full-page") {
+      await openFullPage("command");
+    }
   }
-});
+);
 
-chrome.contextMenus.onClicked.addListener(async (info) => {
-  if (info.menuItemId === MENU_ID) {
-    await openFullPage("context-menu");
+chrome.contextMenus.onClicked.addListener(
+  async (/** @type {{ menuItemId: string | number }} */ info) => {
+    if (info.menuItemId === MENU_ID) {
+      await openFullPage("context-menu");
+    }
   }
-});
+);
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type === "pervue.health") {
-    sendResponse({
-      ok: true,
-      surface: "background",
-      version: chrome.runtime.getManifest().version
-    });
+chrome.runtime.onMessage.addListener(
+  (
+    /** @type {any} */ message,
+    /** @type {any} */ _sender,
+    /** @type {(response: any) => void} */ sendResponse
+  ) => {
+    if (message?.type === "pervue.health") {
+      sendResponse({
+        ok: true,
+        surface: "background",
+        version: chrome.runtime.getManifest().version
+      });
+    }
   }
-});
+);
 
 export { MENU_ID, openFullPage };

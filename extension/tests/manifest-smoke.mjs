@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const manifestPath = path.join(root, "manifest.json");
+/** @type {any} */
 const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
 
 assert.equal(manifest.manifest_version, 3);
@@ -33,6 +34,7 @@ for (const file of referencedFiles) {
   assert.ok(fs.existsSync(path.join(root, file)), `missing extension file: ${file}`);
 }
 
+/** @type {any} */
 const listeners = {
   installed: [],
   messages: [],
@@ -40,25 +42,35 @@ const listeners = {
   contextMenuClicks: []
 };
 
-globalThis.chrome = {
+globalThis.chrome = /** @type {any} */ ({
   runtime: {
-    onInstalled: { addListener: (fn) => listeners.installed.push(fn) },
-    onMessage: { addListener: (fn) => listeners.messages.push(fn) },
-    getURL: (relative) => `chrome-extension://test/${relative}`,
+    onInstalled: {
+      addListener: (/** @type {any} */ fn) => listeners.installed.push(fn)
+    },
+    onMessage: {
+      addListener: (/** @type {any} */ fn) => listeners.messages.push(fn)
+    },
+    getURL: (/** @type {string} */ relative) =>
+      `chrome-extension://test/${relative}`,
     getManifest: () => manifest
   },
   commands: {
-    onCommand: { addListener: (fn) => listeners.commands.push(fn) }
+    onCommand: {
+      addListener: (/** @type {any} */ fn) => listeners.commands.push(fn)
+    }
   },
   contextMenus: {
-    onClicked: { addListener: (fn) => listeners.contextMenuClicks.push(fn) },
+    onClicked: {
+      addListener: (/** @type {any} */ fn) =>
+        listeners.contextMenuClicks.push(fn)
+    },
     removeAll: async () => {},
-    create: () => {}
+    create: () => 1
   },
   tabs: {
     create: async () => ({ id: 1 })
   }
-};
+});
 
 await import(
   `${pathToFileURL(path.join(root, manifest.background.service_worker)).href}?smoke=1`
@@ -69,11 +81,12 @@ assert.equal(listeners.messages.length, 1);
 assert.equal(listeners.commands.length, 1);
 assert.equal(listeners.contextMenuClicks.length, 1);
 
+/** @type {any} */
 let healthResponse;
 listeners.messages[0](
   { type: "pervue.health" },
   {},
-  (response) => {
+  (/** @type {any} */ response) => {
     healthResponse = response;
   }
 );

@@ -1,0 +1,150 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  extension:
+    name: Extension checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - name: Lint
+        run: npm --prefix extension run lint
+      - name: Typecheck
+        run: npm --prefix extension run typecheck
+      - name: Build
+        run: npm --prefix extension run build
+      - name: Smoke tests
+        run: npm --prefix extension test
+
+  protocol:
+    name: Protocol fixtures
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install validator
+        run: python -m pip install --disable-pip-version-check jsonschema==4.25.1
+      - name: Validate schemas and fixtures
+        run: python scripts/validate_protocol.py
+
+  native-presets-minimum:
+    name: Native presets (CMake 3.21.7)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install minimum supported CMake
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSLO https://github.com/Kitware/CMake/releases/download/v3.21.7/cmake-3.21.7-linux-x86_64.tar.gz
+          curl -fsSLO https://github.com/Kitware/CMake/releases/download/v3.21.7/cmake-3.21.7-SHA-256.txt
+          grep 'cmake-3.21.7-linux-x86_64.tar.gz$' cmake-3.21.7-SHA-256.txt | sha256sum -c -
+          tar -xzf cmake-3.21.7-linux-x86_64.tar.gz
+          echo "$PWD/cmake-3.21.7-linux-x86_64/bin" >> "$GITHUB_PATH"
+      - name: Confirm minimum CMake
+        run: cmake --version
+      - name: Configure documented preset
+        working-directory: native
+        env:
+          CC: gcc
+        run: cmake --preset dev
+      - name: Build documented preset
+        working-directory: native
+        run: cmake --build --preset dev --parallel
+      - name: Test documented preset
+        working-directory: native
+        run: ctest --preset dev
+
+  native-linux:
+    name: Native Linux (${{ matrix.compiler }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler:
+          - gcc
+          - clang
+    steps:
+      - uses: actions/checkout@v5
+      - name: Configure
+        env:
+          CC: ${{ matrix.compiler }}
+        run: cmake -S native -B native/build/ci -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Debug
+      - name: Build
+        run: cmake --build native/build/ci --parallel
+      - name: Test
+        run: ctest --test-dir native/build/ci --output-on-failure
+
+  native-macos:
+    name: Native macOS
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - name: Configure
+        env:
+          CC: clang
+        run: cmake -S native -B native/build/ci -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Debug
+      - name: Build
+        run: cmake --build native/build/ci --parallel
+      - name: Test
+        run: ctest --test-dir native/build/ci --output-on-failure
+
+  native-windows:
+    name: Native Windows (MSVC)
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - name: Configure
+        run: cmake -S native -B native/build/ci -DBUILD_TESTING=ON
+      - name: Build
+        run: cmake --build native/build/ci --config Debug --parallel
+      - name: Test
+        run: ctest --test-dir native/build/ci -C Debug --output-on-failure
+
+  native-sanitizers:
+    name: Native ASan + UBSan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - name: Configure documented sanitizer preset
+        working-directory: native
+        env:
+          CC: gcc
+        run: cmake --preset dev-sanitize
+      - name: Assert sanitizer flags
+        shell: bash
+        run: |
+          grep -R -- '-fsanitize=address,undefined' native/build/dev-sanitize/CMakeFiles/*/flags.make
+      - name: Build documented sanitizer preset
+        working-directory: native
+        run: cmake --build --preset dev-sanitize --parallel
+      - name: Test documented sanitizer preset
+        working-directory: native
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: ctest --preset dev-sanitize

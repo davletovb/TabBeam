@@ -4,6 +4,9 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "lint": "npm exec --yes --package=eslint@9.36.0 -- eslint \"src/**/*.js\" \"scripts/**/*.mjs\" \"tests/**/*.mjs\" \"eslint.config.js\"",
+    "typecheck": "npm exec --yes --package=typescript@5.9.2 -- tsc -p jsconfig.json",
+    "build": "node scripts/build.mjs",
     "test": "node tests/manifest-smoke.mjs"
   }
 }

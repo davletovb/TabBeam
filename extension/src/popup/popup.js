@@ -1,14 +1,26 @@
-const status = document.querySelector("#status");
-const fullPageButton = document.querySelector("#open-full-page");
+/**
+ * @param {string} selector
+ * @returns {HTMLElement}
+ */
+function requireElement(selector) {
+  const node = document.querySelector(selector);
+  if (!(node instanceof HTMLElement)) {
+    throw new Error(`popup element is missing: ${selector}`);
+  }
+  return node;
+}
+
+const statusNode = requireElement("#status");
+const fullPageButton = requireElement("#open-full-page");
 
 async function checkFoundation() {
   try {
     const response = await chrome.runtime.sendMessage({ type: "pervue.health" });
-    status.textContent = response?.ok
+    statusNode.textContent = response?.ok
       ? `Extension ready · v${response.version}`
       : "Extension background unavailable";
   } catch {
-    status.textContent = "Extension background unavailable";
+    statusNode.textContent = "Extension background unavailable";
   }
 }
 
@@ -19,3 +31,5 @@ fullPageButton.addEventListener("click", async () => {
 });
 
 checkFoundation();
+
+export {};
