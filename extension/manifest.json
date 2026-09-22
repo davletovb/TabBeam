@@ -12,8 +12,7 @@
     "type": "module"
   },
   "permissions": [
-    "contextMenus",
-    "tabs"
+    "contextMenus"
   ],
   "content_scripts": [
     {
