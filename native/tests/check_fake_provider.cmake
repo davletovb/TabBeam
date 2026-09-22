@@ -10,7 +10,7 @@ endif()
 
 file(MAKE_DIRECTORY "${WORK_DIR}")
 
-set(normal_output
+string(CONCAT normal_output
   "{\"type\":\"delta\",\"text\":\"alpha\"}\n"
   "{\"type\":\"delta\",\"text\":\" beta\"}\n"
   "{\"type\":\"completed\"}\n"
