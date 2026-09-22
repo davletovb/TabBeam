@@ -1,6 +1,14 @@
 const status = document.querySelector("#status");
 const fullPageButton = document.querySelector("#open-full-page");
 
+if (!(status instanceof HTMLElement)) {
+  throw new Error("popup status element is missing");
+}
+
+if (!(fullPageButton instanceof HTMLButtonElement)) {
+  throw new Error("popup full-page button is missing");
+}
+
 async function checkFoundation() {
   try {
     const response = await chrome.runtime.sendMessage({ type: "pervue.health" });
