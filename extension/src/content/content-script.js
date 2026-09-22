@@ -16,5 +16,3 @@ chrome.runtime.onMessage.addListener(
     }
   }
 );
-
-export {};
