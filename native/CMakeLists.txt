@@ -123,6 +123,13 @@ target_link_libraries(pervue-host PRIVATE pervue_host_core)
 pervue_enable_project_warnings(pervue-host)
 pervue_enable_sanitizers(pervue-host)
 
+add_executable(pervue-fake-provider
+  test_provider/fake_provider.c
+)
+
+pervue_enable_project_warnings(pervue-fake-provider)
+pervue_enable_sanitizers(pervue-fake-provider)
+
 include(CTest)
 
 if(BUILD_TESTING)
@@ -204,6 +211,20 @@ if(BUILD_TESTING)
       "-DEXPECTED_EXIT=64"
       "-DEXPECTED_STDERR_SUBSTRING=usage:"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_cli.cmake"
+  )
+
+  add_test(
+    NAME pervue-fake-provider-modes
+    COMMAND
+      ${CMAKE_COMMAND}
+      "-DPROGRAM=$<TARGET_FILE:pervue-fake-provider>"
+      "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/fake-provider-test"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_fake_provider.cmake"
+  )
+  set_tests_properties(
+    pervue-fake-provider-modes
+    PROPERTIES
+      TIMEOUT 10
   )
 endif()
 
