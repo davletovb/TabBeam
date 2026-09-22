@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pervue.local/protocol/v1/error.schema.json",
+  "title": "Pervue Protocol v1 Normalized Error",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["code", "reason", "message", "retryable"],
+  "properties": {
+    "code": {
+      "type": "string",
+      "enum": [
+        "HOST_NOT_INSTALLED",
+        "HOST_UNAVAILABLE",
+        "PROVIDER_NOT_FOUND",
+        "PROVIDER_NOT_AUTHENTICATED",
+        "PROVIDER_FAILED",
+        "REQUEST_CANCELLED",
+        "REQUEST_TIMEOUT",
+        "CONTEXT_UNAVAILABLE",
+        "INVALID_REQUEST",
+        "INTERNAL_ERROR"
+      ]
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Z][A-Z0-9_]*$"
+    },
+    "message": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "retryable": {
+      "type": "boolean"
+    },
+    "metadata": {
+      "type": "object"
+    }
+  }
+}
