@@ -100,7 +100,9 @@ pervue_frame_result_t pervue_frame_read(FILE *input, pervue_frame_t *frame) {
     return PERVUE_FRAME_INVALID_ARGUMENT;
   }
 
-  pervue_frame_init(frame);
+  if (frame->data != NULL || frame->length != 0U) {
+    return PERVUE_FRAME_INVALID_ARGUMENT;
+  }
 
   result = read_exact(input, prefix, sizeof(prefix), &prefix_bytes);
   if (result != PERVUE_FRAME_OK) {
