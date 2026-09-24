@@ -13,16 +13,17 @@
         <h1>Ask from the browser.</h1>
       </header>
 
-      <label class="composer">
-        <span class="sr-only">Ask anything</span>
-        <textarea rows="3" placeholder="Ask anything…" disabled></textarea>
-      </label>
+      <form id="ask-form" class="composer">
+        <label class="sr-only" for="ask-input">Ask anything</label>
+        <textarea id="ask-input" rows="3" placeholder="Ask anything…"></textarea>
+        <button id="ask-submit" type="submit" aria-disabled="false">Ask</button>
+      </form>
 
-      <p id="status" class="status" role="status" aria-live="polite">
-        Checking extension foundation…
-      </p>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
 
-      <button id="open-full-page" type="button">Continue in full view</button>
+      <section id="answer" class="answer" aria-label="Answer" aria-busy="false" hidden></section>
+
+      <button id="open-full-page" class="secondary" type="button">Continue in full view</button>
     </main>
 
     <script type="module" src="./popup.js"></script>

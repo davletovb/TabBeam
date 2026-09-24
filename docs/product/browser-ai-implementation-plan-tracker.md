@@ -147,7 +147,7 @@ Reached after **Milestone H**:
 | NAT-03 | Implement JSON validation and request router | A | Native | NAT-02, DOC-01, DOC-02 | IMPLEMENTED — VERIFY |
 | TST-02 | Build deterministic fake streaming provider | A | Testing | NAT-01 | IMPLEMENTED — VERIFY |
 | EXT-02 | Implement service-worker Native Messaging connection manager | A | Extension | EXT-01, DOC-01 | IMPLEMENTED — VERIFY |
-| EXT-03 | Implement minimal popup ask/stream UI | A | Extension | EXT-01, EXT-02 | BACKLOG |
+| EXT-03 | Implement minimal popup ask/stream UI | A | Extension | EXT-01, EXT-02 | IMPLEMENTED — VERIFY |
 | SEC-01 | Enforce browser/native trust-boundary limits | A | Security | NAT-02, NAT-03 | BACKLOG |
 | OBS-01 | Add structured native lifecycle diagnostics | A | Observability | NAT-03, DOC-02 | BACKLOG |
 | TST-03 | Add extension ↔ host streamed round-trip integration test | A | Testing | TST-02, EXT-02, EXT-03, NAT-03 | BACKLOG |
@@ -525,7 +525,18 @@ Reached after **Milestone H**:
 - Incremental rendering test.
 - Duplicate-submit guard.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- Popup ask form with streaming render, completion/failure states, and duplicate-submit guard: `extension/src/popup/ask-form.js`, `extension/src/popup/index.html`
+- Popup ↔ service-worker contract, one runtime port per question: `extension/src/shared/ask-port.js`
+- Service-worker bridge sending one `conversation.send` per question, forwarding its events in order to one terminal event, reporting `HOST_UNAVAILABLE` for an unreachable host, and serving only the extension's own pages: `extension/src/background/ask-bridge.js`, `extension/src/background/service-worker.js`
+- Popup lifecycle, incremental rendering, duplicate-submit, text-only rendering, failure, and lost-worker tests: `extension/tests/popup-ask.mjs`
+- Bridge tests for request shape, event order, concurrent pages, native disconnect, connect and post failures, closed pages, empty questions, and sender checks: `extension/tests/ask-bridge.mjs`
+- Service-worker wiring smoke test: `extension/tests/manifest-smoke.mjs`
+- Milestone A asks the host's deterministic `fake` provider; provider selection arrives with Milestone B.
+- Development host registration for trying the popup: `extension/README.md`
+- Moves to VERIFIED once merged.
 
 ### SEC-01 — Enforce browser/native trust-boundary limits
 **Area:** Security  

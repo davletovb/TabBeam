@@ -1,35 +1,37 @@
+import { bindAskForm } from "./ask-form.js";
+
 /**
+ * @template {HTMLElement} T
  * @param {string} selector
- * @returns {HTMLElement}
+ * @param {{new (): T}} type
+ * @returns {T}
  */
-function requireElement(selector) {
+function requireElement(selector, type) {
   const node = document.querySelector(selector);
-  if (!(node instanceof HTMLElement)) {
+  if (!(node instanceof type)) {
     throw new Error(`popup element is missing: ${selector}`);
   }
   return node;
 }
 
-const statusNode = requireElement("#status");
-const fullPageButton = requireElement("#open-full-page");
+bindAskForm(
+  {
+    form: requireElement("#ask-form", HTMLFormElement),
+    input: requireElement("#ask-input", HTMLTextAreaElement),
+    submit: requireElement("#ask-submit", HTMLButtonElement),
+    status: requireElement("#status", HTMLElement),
+    answer: requireElement("#answer", HTMLElement)
+  },
+  chrome.runtime
+);
 
-async function checkFoundation() {
-  try {
-    const response = await chrome.runtime.sendMessage({ type: "pervue.health" });
-    statusNode.textContent = response?.ok
-      ? `Extension ready · v${response.version}`
-      : "Extension background unavailable";
-  } catch {
-    statusNode.textContent = "Extension background unavailable";
+requireElement("#open-full-page", HTMLButtonElement).addEventListener(
+  "click",
+  async () => {
+    await chrome.tabs.create({
+      url: chrome.runtime.getURL("src/fullpage/index.html?entry=popup")
+    });
   }
-}
-
-fullPageButton.addEventListener("click", async () => {
-  await chrome.tabs.create({
-    url: chrome.runtime.getURL("src/fullpage/index.html?entry=popup")
-  });
-});
-
-checkFoundation();
+);
 
 export {};

@@ -7,12 +7,15 @@ export default [
       globals: {
         chrome: "readonly",
         console: "readonly",
+        crypto: "readonly",
         document: "readonly",
         window: "readonly",
         URL: "readonly",
         URLSearchParams: "readonly",
         HTMLElement: "readonly",
-        HTMLButtonElement: "readonly"
+        HTMLButtonElement: "readonly",
+        HTMLFormElement: "readonly",
+        HTMLTextAreaElement: "readonly"
       }
     },
     rules: {

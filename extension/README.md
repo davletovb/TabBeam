@@ -18,6 +18,7 @@ The current foundation provides:
 - keyboard-command scaffold;
 - context-menu scaffold;
 - service-worker-owned Native Messaging connection manager;
+- popup ask/stream UI backed by the native host;
 - dependency-free smoke/lifecycle validation.
 
 ## Native Messaging connection lifecycle
@@ -35,6 +36,40 @@ The current foundation provides:
 - Stale callbacks from an old port are ignored after a replacement connection is established.
 
 The canonical Native Messaging host name is currently `com.pervue.host`. Packaging/registration work later in the tracker must register the companion under that same name.
+
+## Popup ask flow
+
+The popup asks the native host one question at a time and streams the answer back.
+
+- The input is focused and usable as soon as the popup opens. Enter asks; Shift+Enter adds a line; an Enter that ends an IME composition does neither.
+- Each question opens its own runtime port to the service worker (contract: `src/shared/ask-port.js`). The service worker sends one `conversation.send` and forwards that request's protocol events in order, ending with exactly one terminal event.
+- While a question is in flight, every other submit is ignored, whether it comes from Enter, the Ask button or `requestSubmit()`. The input stays editable.
+- Deltas are appended as text nodes as they arrive, so provider output is never parsed as HTML.
+- Completion and failure show in the status line without reloading. Failures show the error's `message`. When the native host can't be reached or disconnects, the service worker reports `HOST_UNAVAILABLE` itself.
+- Closing the popup drops the rest of that answer. The request still runs to its own terminal event; cancellation is EXT-12.
+- Only the extension's own pages can open the ask port. The service worker disconnects ports from content scripts.
+- Milestone A always asks the host's deterministic `fake` provider (`DEFAULT_PROVIDER_ID` in `src/background/ask-bridge.js`). Provider selection comes with Milestone B.
+
+### Trying it against the local host
+
+Until packaging registers the host (Milestone G), register a development build by hand:
+
+1. Build the host: `cargo build -p pervue-host` in `native/`.
+2. Load this directory unpacked and copy the extension ID from `chrome://extensions`.
+3. Save a host manifest named `com.pervue.host.json`:
+
+   ```json
+   {
+     "name": "com.pervue.host",
+     "description": "Pervue native host (development)",
+     "path": "/absolute/path/to/pervue/native/target/debug/pervue-host",
+     "type": "stdio",
+     "allowed_origins": ["chrome-extension://<extension-id>/"]
+   }
+   ```
+
+   Put it in Chrome's per-user `NativeMessagingHosts` directory: `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/` on macOS, or `~/.config/google-chrome/NativeMessagingHosts/` on Linux. On Windows, create the registry key `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.pervue.host`, set its default value to the manifest's full path, and point `path` at `pervue-host.exe`.
+4. Open the popup and ask anything. The fake provider answers "Fake provider response."
 
 ## Validation
 
