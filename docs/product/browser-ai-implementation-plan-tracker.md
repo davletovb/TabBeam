@@ -530,9 +530,9 @@ Reached after **Milestone H**:
 **Implementation evidence**
 - Popup ask form with streaming render, completion/failure states, and duplicate-submit guard: `extension/src/popup/ask-form.js`, `extension/src/popup/index.html`
 - Popup ↔ service-worker contract, one runtime port per question: `extension/src/shared/ask-port.js`
-- Service-worker bridge sending one `conversation.send` per question, forwarding its events in order to one terminal event, reporting `HOST_UNAVAILABLE` for an unreachable host, and serving only the extension's own pages: `extension/src/background/ask-bridge.js`, `extension/src/background/service-worker.js`
+- Service-worker bridge sending one `conversation.send` per question, forwarding its events in order to one terminal event, reporting a missing or unregistered host as `HOST_NOT_INSTALLED` and a host that can't start or disconnects as `HOST_UNAVAILABLE`, and serving only the extension's own pages: `extension/src/background/ask-bridge.js`, `extension/src/background/service-worker.js`
 - Popup lifecycle, incremental rendering, duplicate-submit, text-only rendering, failure, and lost-worker tests: `extension/tests/popup-ask.mjs`
-- Bridge tests for request shape, event order, concurrent pages, native disconnect, connect and post failures, closed pages, empty questions, and sender checks: `extension/tests/ask-bridge.mjs`
+- Bridge tests for request shape, event order, concurrent pages, native disconnect and its host-error classification, connect and post failures, closed pages, empty questions, and sender checks: `extension/tests/ask-bridge.mjs`
 - Service-worker wiring smoke test: `extension/tests/manifest-smoke.mjs`
 - Milestone A asks the host's deterministic `fake` provider; provider selection arrives with Milestone B.
 - Development host registration for trying the popup: `extension/README.md`

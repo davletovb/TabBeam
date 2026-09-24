@@ -22,6 +22,8 @@ function makeWorker({ failingConnects = 0 } = {}) {
   const reportedErrors = [];
   let remainingConnectFailures = failingConnects;
   let nextId = 0;
+  /** @type {string | null} */
+  let lastError = null;
 
   const manager = createNativeConnectionManager({
     connectNative() {
@@ -33,6 +35,7 @@ function makeWorker({ failingConnects = 0 } = {}) {
       nativePorts.push(port);
       return port;
     },
+    getLastError: () => lastError,
     reportError(context, error) {
       reportedErrors.push({ context, error });
     }
@@ -48,7 +51,16 @@ function makeWorker({ failingConnects = 0 } = {}) {
     return page;
   }
 
-  return { manager, nativePorts, reportedErrors, openPage };
+  return {
+    manager,
+    nativePorts,
+    reportedErrors,
+    openPage,
+    /** @param {string | null} value */
+    setLastError(value) {
+      lastError = value;
+    }
+  };
 }
 
 /**
@@ -183,8 +195,7 @@ function errorOf(message) {
   assert.deepEqual(errorOf(page.messages[1]), {
     code: "HOST_UNAVAILABLE",
     reason: "HOST_DISCONNECTED",
-    message:
-      "Pervue couldn't reach its companion app. Make sure it's installed, then try again.",
+    message: "Pervue lost its connection to the companion app. Try again.",
     retryable: true
   });
   assert.equal(page.disconnectCalls, 1);
@@ -194,6 +205,53 @@ function errorOf(message) {
   next.emitMessage({ type: "ask", text: "Try again" });
   assert.equal(nativePorts.length, 2);
   assert.equal(nativePorts[1].messages[0].request_id, "req_test_2");
+}
+
+{
+  // Chrome explains a native port that closes early only through
+  // runtime.lastError. A missing host, or one registered only for other
+  // extensions, is DOC-02's HOST_NOT_INSTALLED, which retrying cannot fix.
+  for (const [lastError, code, reason, retryable] of [
+    [
+      "Specified native messaging host not found.",
+      "HOST_NOT_INSTALLED",
+      "NATIVE_HOST_NOT_FOUND",
+      false
+    ],
+    [
+      "Access to the specified native messaging host is forbidden.",
+      "HOST_NOT_INSTALLED",
+      "NATIVE_HOST_NOT_REGISTERED",
+      false
+    ],
+    [
+      "Failed to start native messaging host.",
+      "HOST_UNAVAILABLE",
+      "HOST_START_FAILED",
+      true
+    ],
+    ["Native host has exited.", "HOST_UNAVAILABLE", "HOST_DISCONNECTED", true],
+    [
+      "Error when communicating with the native messaging host.",
+      "HOST_UNAVAILABLE",
+      "HOST_DISCONNECTED",
+      true
+    ],
+    [null, "HOST_UNAVAILABLE", "HOST_DISCONNECTED", true]
+  ]) {
+    const worker = makeWorker();
+    const page = worker.openPage();
+    page.emitMessage({ type: "ask", text: "Is the host installed?" });
+    worker.setLastError(/** @type {string | null} */ (lastError));
+    worker.nativePorts[0].emitDisconnect();
+
+    const error = errorOf(page.messages[0]);
+    assert.equal(error.code, code, String(lastError));
+    assert.equal(error.reason, reason, String(lastError));
+    assert.equal(error.retryable, retryable, String(lastError));
+    assert.ok(typeof error.message === "string" && error.message !== "");
+    assert.equal(page.disconnectCalls, 1);
+  }
 }
 
 {

@@ -2,13 +2,11 @@ import { ASK_TERMINAL_EVENTS } from "../shared/ask-port.js";
 
 /** @typedef {import("../shared/ask-port.js").AskPort} AskPort */
 /** @typedef {import("./native-connection.js").RequestOwner} RequestOwner */
+/** @typedef {{code: string, reason: string, message: string, retryable: boolean}} ErrorBody */
 
 // Milestone A answers with the native host's deterministic fake provider.
 // Choosing a real provider arrives with Milestone B (PRO-02, EXT-04).
 export const DEFAULT_PROVIDER_ID = "fake";
-
-const COMPANION_UNAVAILABLE =
-  "Pervue couldn't reach its companion app. Make sure it's installed, then try again.";
 
 const EMPTY_QUESTION = Object.freeze({
   code: "INVALID_REQUEST",
@@ -17,9 +15,60 @@ const EMPTY_QUESTION = Object.freeze({
   retryable: false
 });
 
+const HOST_START_FAILED = Object.freeze({
+  code: "HOST_UNAVAILABLE",
+  reason: "HOST_START_FAILED",
+  message: "Pervue's companion app couldn't start. Try again.",
+  retryable: true
+});
+
+const HOST_DISCONNECTED = Object.freeze({
+  code: "HOST_UNAVAILABLE",
+  reason: "HOST_DISCONNECTED",
+  message: "Pervue lost its connection to the companion app. Try again.",
+  retryable: true
+});
+
+// Chrome explains why a native port closed only through the text of
+// chrome.runtime.lastError. These are Chromium's messages for a host that is
+// missing, registered for other extensions only, or unable to launch.
+const HOST_ERRORS_BY_LAST_ERROR = new Map(
+  /** @type {[string, ErrorBody][]} */ ([
+    [
+      "Specified native messaging host not found.",
+      Object.freeze({
+        code: "HOST_NOT_INSTALLED",
+        reason: "NATIVE_HOST_NOT_FOUND",
+        message: "Pervue's companion app isn't installed. Install it, then try again.",
+        retryable: false
+      })
+    ],
+    [
+      "Access to the specified native messaging host is forbidden.",
+      Object.freeze({
+        code: "HOST_NOT_INSTALLED",
+        reason: "NATIVE_HOST_NOT_REGISTERED",
+        message:
+          "Pervue's companion app isn't set up for this browser. Reinstall it, then try again.",
+        retryable: false
+      })
+    ],
+    ["Failed to start native messaging host.", HOST_START_FAILED]
+  ])
+);
+
 /** @returns {string} a fresh protocol v1 request ID */
 export function createRequestId() {
   return `req_${crypto.randomUUID()}`;
+}
+
+/**
+ * The DOC-02 error for a native port that closed before its request finished.
+ *
+ * @param {string | null} lastError the port's `chrome.runtime.lastError` message
+ */
+export function hostDisconnectError(lastError) {
+  return HOST_ERRORS_BY_LAST_ERROR.get(lastError ?? "") ?? HOST_DISCONNECTED;
 }
 
 /**
@@ -100,32 +149,22 @@ export function serveAskPort(port, options) {
     try {
       manager.send(request, {
         onEvent: forward,
-        onDisconnect: () =>
-          forward(failed(requestId, hostUnavailable("HOST_DISCONNECTED")))
+        onDisconnect: ({ message }) =>
+          forward(failed(requestId, hostDisconnectError(message)))
       });
     } catch {
-      // A post failure has already reported HOST_DISCONNECTED; forward()
-      // ignores anything after the first terminal event.
-      forward(failed(requestId, hostUnavailable("HOST_START_FAILED")));
+      // A post failure has already reported a disconnect; forward() ignores
+      // anything after the first terminal event.
+      forward(failed(requestId, HOST_START_FAILED));
     }
   });
-}
-
-/** @param {string} reason */
-function hostUnavailable(reason) {
-  return {
-    code: "HOST_UNAVAILABLE",
-    reason,
-    message: COMPANION_UNAVAILABLE,
-    retryable: true
-  };
 }
 
 /**
  * A `response.failed` event for a failure the extension detects itself.
  *
  * @param {string | null} requestId
- * @param {{code: string, reason: string, message: string, retryable: boolean}} error
+ * @param {ErrorBody} error
  */
 function failed(requestId, error) {
   return {

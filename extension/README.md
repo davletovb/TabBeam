@@ -45,7 +45,8 @@ The popup asks the native host one question at a time and streams the answer bac
 - Each question opens its own runtime port to the service worker (contract: `src/shared/ask-port.js`). The service worker sends one `conversation.send` and forwards that request's protocol events in order, ending with exactly one terminal event.
 - While a question is in flight, every other submit is ignored, whether it comes from Enter, the Ask button or `requestSubmit()`. The input stays editable.
 - Deltas are appended as text nodes as they arrive, so provider output is never parsed as HTML.
-- Completion and failure show in the status line without reloading. Failures show the error's `message`. When the native host can't be reached or disconnects, the service worker reports `HOST_UNAVAILABLE` itself.
+- Completion and failure show in the status line without reloading. Failures show the error's `message`.
+- When the native port closes before the answer finishes, the service worker reports the failure itself, in the DOC-02 vocabulary, based on Chrome's `runtime.lastError`. A missing host, or one registered only for other extensions, is `HOST_NOT_INSTALLED` and not retryable. A host that can't start or that disconnects is `HOST_UNAVAILABLE`.
 - Closing the popup drops the rest of that answer. The request still runs to its own terminal event; cancellation is EXT-12.
 - Only the extension's own pages can open the ask port. The service worker disconnects ports from content scripts.
 - Milestone A always asks the host's deterministic `fake` provider (`DEFAULT_PROVIDER_ID` in `src/background/ask-bridge.js`). Provider selection comes with Milestone B.
