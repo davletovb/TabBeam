@@ -1,6 +1,6 @@
 declare module "node:assert/strict" {
   interface AssertStrict {
-    equal(actual: unknown, expected: unknown): void;
+    equal(actual: unknown, expected: unknown, message?: string): void;
     ok(value: unknown, message?: string): void;
     deepEqual(actual: unknown, expected: unknown): void;
     throws(block: () => unknown, error?: RegExp | object): void;

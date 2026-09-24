@@ -40,6 +40,11 @@ h1 {
   line-height: 1.25;
 }
 
+.composer {
+  display: grid;
+  gap: 8px;
+}
+
 textarea {
   width: 100%;
   resize: none;
@@ -56,6 +61,18 @@ textarea {
   opacity: 0.72;
 }
 
+.status[data-state="failed"] {
+  color: light-dark(#b3261e, #f2b8b5);
+  opacity: 1;
+}
+
+.answer {
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 button {
   min-height: 40px;
   border: 1px solid color-mix(in srgb, CanvasText 24%, transparent);
@@ -65,6 +82,16 @@ button {
   font: inherit;
   font-weight: 650;
   cursor: pointer;
+}
+
+button[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button.secondary {
+  background: transparent;
+  color: CanvasText;
 }
 
 button:focus-visible,

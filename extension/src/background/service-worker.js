@@ -1,3 +1,5 @@
+import { ASK_PORT_NAME } from "../shared/ask-port.js";
+import { isExtensionPage, serveAskPort } from "./ask-bridge.js";
 import {
   NATIVE_HOST_NAME,
   createNativeConnectionManager
@@ -57,6 +59,21 @@ chrome.runtime.onMessage.addListener(
         version: chrome.runtime.getManifest().version
       });
     }
+  }
+);
+
+chrome.runtime.onConnect.addListener(
+  (/** @type {PervueChromeRuntimePort} */ port) => {
+    if (port.name !== ASK_PORT_NAME) {
+      return;
+    }
+    // Only the extension's own pages may drive the native companion; content
+    // scripts run inside web pages.
+    if (!isExtensionPage(port.sender, chrome.runtime.getURL(""))) {
+      port.disconnect();
+      return;
+    }
+    serveAskPort(port, { manager: nativeConnectionManager });
   }
 );
 

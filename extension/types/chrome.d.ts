@@ -10,9 +10,17 @@ interface PervueChromePort {
   onDisconnect: PervueChromeEvent<() => void>;
 }
 
+interface PervueChromeRuntimePort extends PervueChromePort {
+  name: string;
+  sender?: {
+    url?: string;
+  };
+}
+
 interface PervueChrome {
   runtime: {
     onInstalled: PervueChromeEvent<() => void | Promise<void>>;
+    onConnect: PervueChromeEvent<(port: PervueChromeRuntimePort) => void>;
     onMessage: PervueChromeEvent<
       (
         message: any,
@@ -23,6 +31,7 @@ interface PervueChrome {
     getURL(path: string): string;
     getManifest(): { version: string };
     sendMessage(message: any): Promise<any>;
+    connect(connectInfo: { name: string }): PervueChromeRuntimePort;
     connectNative(hostName: string): PervueChromePort;
     lastError?: {
       message?: string;
