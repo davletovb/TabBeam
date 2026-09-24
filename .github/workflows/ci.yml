@@ -13,6 +13,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   extension:
     name: Extension checks
@@ -46,130 +49,73 @@ jobs:
       - name: Validate schemas and fixtures
         run: python scripts/validate_protocol.py
       - name: Build native host for contract conformance
-        run: |
-          cmake -S native -B native/build/protocol-ci -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=Debug
-          cmake --build native/build/protocol-ci --target pervue-host --parallel
+        run: cargo build --manifest-path native/Cargo.toml --locked
       - name: Validate built host against golden protocol
-        run: python scripts/validate_host_protocol.py --host native/build/protocol-ci/pervue-host
+        run: python scripts/validate_host_protocol.py --host native/target/debug/pervue-host
 
-  native-presets-minimum:
-    name: Native presets (CMake 3.21.7)
+  native-msrv:
+    name: Native minimum Rust (1.85)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: native
     steps:
       - uses: actions/checkout@v5
-      - name: Install minimum supported CMake
-        shell: bash
-        run: |
-          set -euo pipefail
-          curl -fsSLO https://github.com/Kitware/CMake/releases/download/v3.21.7/cmake-3.21.7-linux-x86_64.tar.gz
-          curl -fsSLO https://github.com/Kitware/CMake/releases/download/v3.21.7/cmake-3.21.7-SHA-256.txt
-          grep 'cmake-3.21.7-linux-x86_64.tar.gz$' cmake-3.21.7-SHA-256.txt | sha256sum -c -
-          tar -xzf cmake-3.21.7-linux-x86_64.tar.gz
-          echo "$PWD/cmake-3.21.7-linux-x86_64/bin" >> "$GITHUB_PATH"
-      - name: Confirm minimum CMake
-        run: cmake --version
-      - name: Configure documented preset
-        working-directory: native
-        env:
-          CC: gcc
-        run: cmake --preset dev
-      - name: Build documented preset
-        working-directory: native
-        run: cmake --build --preset dev --parallel
-      - name: Test documented preset
-        working-directory: native
-        run: ctest --preset dev
+      - name: Install minimum supported Rust
+        run: rustup toolchain install 1.85 --profile minimal
+      - name: Test on minimum supported Rust
+        run: cargo +1.85 test --workspace --locked
 
-  native-linux:
-    name: Native Linux (${{ matrix.compiler }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+  native:
+    name: Native ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        compiler:
-          - gcc
-          - clang
-    steps:
-      - uses: actions/checkout@v5
-      - name: Configure
-        env:
-          CC: ${{ matrix.compiler }}
-        run: cmake -S native -B native/build/ci -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Debug
-      - name: Build
-        run: cmake --build native/build/ci --parallel
-      - name: Test
-        run: ctest --test-dir native/build/ci --output-on-failure
-      - name: Configure native fuzz targets
-        if: matrix.compiler == 'clang'
-        env:
-          CC: clang
-        run: cmake -S native -B native/build/fuzz -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=Debug -DPERVUE_BUILD_FUZZERS=ON
-      - name: Build native fuzz targets
-        if: matrix.compiler == 'clang'
-        run: cmake --build native/build/fuzz --target pervue-frame-fuzz pervue-protocol-fuzz --parallel
-      - name: Generate structured fuzz corpora
-        if: matrix.compiler == 'clang'
-        run: |
-          python3 native/fuzz/create_corpus.py native/build/fuzz-frame-corpus
-          python3 native/fuzz/create_protocol_corpus.py native/build/fuzz-protocol-corpus --fixtures docs/protocol/fixtures/v1-golden.json
-      - name: Smoke-run frame fuzz target
-        if: matrix.compiler == 'clang'
-        run: ./native/build/fuzz/pervue-frame-fuzz native/build/fuzz-frame-corpus -runs=1000 -max_len=1048580
-      - name: Smoke-run protocol fuzz target
-        if: matrix.compiler == 'clang'
-        run: ./native/build/fuzz/pervue-protocol-fuzz native/build/fuzz-protocol-corpus -runs=2000 -max_len=1048576
-
-  native-macos:
-    name: Native macOS
-    runs-on: macos-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v5
-      - name: Configure
-        env:
-          CC: clang
-        run: cmake -S native -B native/build/ci -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Debug
-      - name: Build
-        run: cmake --build native/build/ci --parallel
-      - name: Test
-        run: ctest --test-dir native/build/ci --output-on-failure
-
-  native-windows:
-    name: Native Windows (MSVC)
-    runs-on: windows-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v5
-      - name: Configure
-        run: cmake -S native -B native/build/ci -DBUILD_TESTING=ON
-      - name: Build
-        run: cmake --build native/build/ci --config Debug --parallel
-      - name: Test
-        run: ctest --test-dir native/build/ci -C Debug --output-on-failure
-
-  native-sanitizers:
-    name: Native ASan + UBSan
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v5
-      - name: Configure documented sanitizer preset
-        working-directory: native
-        env:
-          CC: gcc
-        run: cmake --preset dev-sanitize
-      - name: Assert sanitizer flags
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    env:
+      RUSTFLAGS: -D warnings
+    defaults:
+      run:
         shell: bash
+        working-directory: native
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install stable Rust
         run: |
-          grep -R -- '-fsanitize=address,undefined' native/build/dev-sanitize/CMakeFiles/*/flags.make
-      - name: Build documented sanitizer preset
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt
+          rustup default stable
+      - name: Check formatting
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Test
+        run: cargo test --workspace --locked
+
+  native-fuzz:
+    name: Native fuzz smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
         working-directory: native
-        run: cmake --build --preset dev-sanitize --parallel
-      - name: Test documented sanitizer preset
-        working-directory: native
-        env:
-          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
-          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-        run: ctest --preset dev-sanitize
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install nightly Rust and cargo-fuzz
+        run: |
+          rustup toolchain install nightly --profile minimal
+          cargo install cargo-fuzz --locked --version 0.13.2
+      - name: Generate structured fuzz corpora
+        run: |
+          python3 fuzz/create_corpus.py fuzz/corpus/frame_reader
+          python3 fuzz/create_protocol_corpus.py fuzz/corpus/protocol --fixtures ../docs/protocol/fixtures/v1-golden.json
+      - name: Smoke-run frame fuzz target
+        run: cargo +nightly fuzz run frame_reader fuzz/corpus/frame_reader -- -runs=1000 -max_len=1048580
+      - name: Smoke-run protocol fuzz target
+        run: cargo +nightly fuzz run protocol fuzz/corpus/protocol -- -runs=2000 -max_len=1048576

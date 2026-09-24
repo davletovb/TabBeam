@@ -1,6 +1,6 @@
 # Browser AI Extension — Product & Engineering Framework
 
-**Status:** Framework v0.1  
+**Status:** Framework v0.2 (native host moved from C to Rust; see §9.7)  
 **Purpose:** Define the product, architecture, engineering principles, reusable native library boundaries, and acceptance criteria that will later be converted into an implementation plan and tracker.
 
 ---
@@ -19,7 +19,7 @@ The core interaction is:
 >
 > **Invoke → Ask → Deepen → Continue in full view**
 
-The initial implementation will use a **thin Chrome extension frontend** and a **native C companion/host** that can communicate with subscription-authenticated AI runtimes such as Codex/OpenAI and Claude Code, with additional providers added behind a common interface.
+The initial implementation will use a **thin Chrome extension frontend** and a **native Rust companion/host** that can communicate with subscription-authenticated AI runtimes such as Codex/OpenAI and Claude Code, with additional providers added behind a common interface.
 
 ---
 
@@ -81,7 +81,7 @@ The UI and conversation model must not be coupled to a single AI provider.
 
 ### 3.6 Reusable native core
 
-Low-level functionality should be written so that it can later be extracted into a reusable C library for other products.
+Low-level functionality should be written so that it can later be extracted into a reusable Rust library crate for other products.
 
 ### 3.7 Product before abstraction
 
@@ -224,7 +224,7 @@ Chrome Extension
           │
           │ Chrome Native Messaging
           ▼
-Native C Host / Companion
+Native Rust Host / Companion
   ├─ Message framing
   ├─ Request router
   ├─ Provider registry
@@ -306,7 +306,7 @@ Responsibilities:
 
 ---
 
-## 8. Native C Host Responsibilities
+## 8. Native Host Responsibilities
 
 The native host is the systems core of the project.
 
@@ -333,14 +333,14 @@ It should **not** own browser UI logic.
 
 ---
 
-## 9. Reusable C Library Strategy
+## 9. Reusable Native Library Strategy
 
 The project should be structured so that reusable native functionality can later be extracted without forcing premature generalization.
 
-Conceptual library layers:
+Conceptual library modules:
 
 ```text
-libbrowserai/
+browserai (library crate)
   ├─ process/
   ├─ messaging/
   ├─ stream/
@@ -354,13 +354,13 @@ libbrowserai/
 
 Potential API responsibilities:
 
-```c
-proc_spawn();
-proc_write();
-proc_read_stream();
-proc_cancel();
-proc_wait();
-proc_destroy();
+```rust
+Process::spawn(command) -> Result<Process>
+process.write(bytes)
+process.read_stream()   // separate stdout/stderr chunks
+process.cancel()
+process.wait() -> ExitStatus
+// dropping a Process performs deterministic cleanup
 ```
 
 Requirements:
@@ -376,10 +376,9 @@ Requirements:
 
 Potential API responsibilities:
 
-```c
-nm_read_message();
-nm_write_message();
-nm_validate_frame();
+```rust
+read_frame(input) -> Result<Option<Vec<u8>>, FrameError>
+write_frame(output, payload) -> Result<(), FrameError>
 ```
 
 Requirements:
@@ -393,11 +392,12 @@ Requirements:
 
 Conceptual interface:
 
-```c
-ai_provider_t *ai_provider_open(const char *id);
-ai_request_id_t ai_provider_send(ai_provider_t *, const ai_request_t *);
-int ai_provider_cancel(ai_provider_t *, ai_request_id_t);
-void ai_provider_close(ai_provider_t *);
+```rust
+trait Provider {
+    fn send(&mut self, request: &Request) -> Result<RequestId>;
+    fn cancel(&mut self, request: RequestId) -> Result<()>;
+    // opening is a constructor; closing is Drop
+}
 ```
 
 The interface should normalize:
@@ -439,6 +439,12 @@ A component should be promoted into the reusable library only when one of these 
 1. at least two provider adapters need it; or
 2. at least two applications need it; or
 3. it represents a clearly isolated transport/process primitive with stable semantics.
+
+### 9.7 Implementation language
+
+The native host is written in Rust. The first implementation was C; it was ported before provider integration (NAT-04 onward) because the remaining native work is concurrent, cross-platform process and stream handling over untrusted input, where Rust removes memory-safety bugs by construction and one implementation covers macOS, Windows, and Linux. The port was verified byte-for-byte against the C host before the C sources were removed.
+
+If a non-Rust application ever needs the reusable library, it can be exposed through a C ABI (`extern "C"` with generated headers) without changing the Rust API.
 
 ---
 
@@ -621,18 +627,16 @@ Treat all of the following as untrusted input:
 - explicit permission model for page-content access;
 - safe truncation and escaping for logs/UI.
 
-### 14.3 C-specific engineering requirements
+### 14.3 Native (Rust) engineering requirements
 
-Development builds should use:
+Native crates follow these rules:
 
-- AddressSanitizer where supported;
-- UndefinedBehaviorSanitizer where supported;
-- compiler warnings treated as errors for project code;
-- static analysis;
-- fuzzing for message/framing parsers when practical;
-- centralized ownership and cleanup conventions;
-- bounded buffers or explicit dynamic-length checks;
-- no unsafe string APIs where safer alternatives exist.
+- `unsafe` code is forbidden in project crates; any future exception needs a documented safety argument and targeted tests;
+- compiler and Clippy warnings are errors for project code in CI;
+- message/framing parsers are fuzzed (cargo-fuzz, which also runs them under AddressSanitizer);
+- untrusted input never causes a panic: malformed frames, requests, and provider output map to normalized errors;
+- buffers are bounded, or dynamic lengths checked, before allocating from untrusted sizes;
+- dependencies are few, reviewed, and pinned by the committed `Cargo.lock`.
 
 ---
 
@@ -689,7 +693,7 @@ Priority order:
 7. long operations are cancellable;
 8. UI never blocks on native work.
 
-C should be used to keep the native layer lean, but the product should not optimize insignificant sub-millisecond differences while provider/network latency dominates.
+Rust keeps the native layer lean and memory-safe, but the product should not optimize insignificant sub-millisecond differences while provider/network latency dominates.
 
 ---
 
@@ -700,7 +704,7 @@ C should be used to keep the native layer lean, but the product should not optim
 During development it is acceptable to require:
 
 - loading the unpacked Chrome extension;
-- compiling/installing the C native host;
+- building/installing the native host with Cargo;
 - manually registering the Native Messaging manifest;
 - installing provider tools;
 - authenticating providers through their supported flows.
@@ -742,7 +746,7 @@ Architecture must avoid unnecessary assumptions that make later Windows support 
 
 Testing should be layered.
 
-### 18.1 C unit tests
+### 18.1 Native unit tests
 
 Cover:
 
@@ -861,7 +865,7 @@ browser-ai/
 │   ├── tests/
 │   └── manifest.json
 │
-├── native/
+├── native/                (Cargo workspace)
 │   ├── host/
 │   ├── lib/
 │   │   ├── process/
@@ -874,7 +878,8 @@ browser-ai/
 │   ├── providers/
 │   │   ├── codex/
 │   │   └── claude/
-│   └── tests/
+│   ├── test_provider/
+│   └── fuzz/
 │
 ├── packaging/
 │   ├── macos/
@@ -965,7 +970,7 @@ These milestones define capability states, not yet the implementation sequence.
 
 ### Milestone A — Native round trip
 
-A Chrome extension can send a validated request through Native Messaging to the C host and receive a streamed fake response.
+A Chrome extension can send a validated request through Native Messaging to the native host and receive a streamed fake response.
 
 ### Milestone B — First provider
 
@@ -985,7 +990,7 @@ A second provider works through the same normalized provider interface, proving 
 
 ### Milestone F — Reusable native core
 
-Shared process, messaging, stream, and provider primitives are extracted into a reusable C library with documented API boundaries.
+Shared process, messaging, stream, and provider primitives are extracted into a reusable Rust library crate with documented API boundaries.
 
 ### Milestone G — Installable product
 
@@ -1013,8 +1018,8 @@ Suggested ID families:
 
 ```text
 EXT-xx   Browser extension
-NAT-xx   Native C host
-LIB-xx   Reusable C library
+NAT-xx   Native host
+LIB-xx   Reusable native library
 PRO-xx   Provider adapters
 CTX-xx   Page/selection context
 CON-xx   Conversation/session model
@@ -1077,13 +1082,13 @@ Engineering success additionally requires:
 - deterministic tests for the native protocol and process layer;
 - validated browser/native messages;
 - clear provider abstraction proven by at least two providers;
-- reusable C primitives extracted only where justified by real reuse;
+- reusable native primitives extracted only where justified by real reuse;
 - a path to packaged macOS and Windows installation.
 
 ---
 
 ## 27. Guiding Statement
 
-The project should optimize for **low-friction access to AI from the browser**, with the popup serving as the fastest interaction surface and the native C layer serving as a secure, reusable bridge to authenticated AI runtimes.
+The project should optimize for **low-friction access to AI from the browser**, with the popup serving as the fastest interaction surface and the native Rust layer serving as a secure, reusable bridge to authenticated AI runtimes.
 
 The product is not merely a Perplexity-style popup. Its longer-term shape is a **provider-independent browser AI command layer**, backed by a compact native runtime that can also serve future applications.

@@ -1,0 +1,20 @@
+[package]
+name = "pervue-fake-provider"
+description = "Deterministic fake provider for Pervue native tests"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "pervue-fake-provider"
+path = "src/main.rs"
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.31", default-features = false, features = ["signal"] }
+
+[target.'cfg(unix)'.dev-dependencies]
+nix = { version = "0.31", default-features = false, features = ["process", "signal"] }
+
+[lints]
+workspace = true
