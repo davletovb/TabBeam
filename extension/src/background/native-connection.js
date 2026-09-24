@@ -1,5 +1,9 @@
 export const NATIVE_HOST_NAME = "com.pervue.host";
 
+// Protocol v1 request-ID grammar (docs/protocol/v1.md §2). The host rejects any
+// other ID without being able to echo it back, so its route could never finish.
+export const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+
 const TERMINAL_EVENTS = new Set([
   "response.completed",
   "response.failed",
@@ -128,8 +132,10 @@ export class NativeConnectionManager {
   send(request, owner = {}) {
     const requestId = request?.request_id;
 
-    if (typeof requestId !== "string" || requestId.length === 0) {
-      throw new TypeError("request.request_id must be a non-empty string");
+    if (typeof requestId !== "string" || !REQUEST_ID_PATTERN.test(requestId)) {
+      throw new TypeError(
+        "request.request_id must be 1-128 characters: an ASCII letter or digit, then letters, digits, '.', '_', ':' or '-'"
+      );
     }
 
     if (this.routes.has(requestId)) {

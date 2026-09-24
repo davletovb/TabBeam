@@ -26,7 +26,7 @@ The current foundation provides:
 
 - The native port opens lazily on the first request.
 - One module-scope manager instance lives in the service worker, so popup closure does not own or tear down the native connection.
-- In-flight requests are multiplexed by protocol `request_id`.
+- In-flight requests are multiplexed by protocol `request_id`. `send()` rejects IDs outside the protocol v1 grammar before opening the port, because the host could not echo them back to the right request.
 - Terminal protocol events release their request route before the owner's handler runs, so the owner can reuse the request ID or disconnect.
 - Native-port disconnect clears in-flight routes and notifies every request owner.
 - Requester and listener callbacks are isolated: a callback that throws is reported (by default with `console.error`) and cannot stop other owners from being notified or the native port from closing.

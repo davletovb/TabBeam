@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   NATIVE_HOST_NAME,
+  REQUEST_ID_PATTERN,
   createNativeConnectionManager
 } from "../src/background/native-connection.js";
 
@@ -541,6 +545,46 @@ function request(id, method = "provider.status") {
   assert.equal(harness.lastErrorReads, readsBefore + 1);
   assert.equal(manager.connected, true);
   assert.equal(manager.pendingRequestCount, 1);
+}
+
+{
+  // Request IDs must follow the protocol v1 grammar (v1 §2). The host cannot
+  // echo any other ID, so the request's route would never finish.
+  const { manager, ports } = makeHarness();
+
+  for (const invalid of [
+    "a".repeat(129),
+    "",
+    "_leading",
+    "-leading",
+    ".leading",
+    "bad id",
+    "req/1",
+    "req#1",
+    "req\n",
+    "café"
+  ]) {
+    assert.throws(() => manager.send(request(invalid)), /request\.request_id/);
+  }
+  assert.throws(() => manager.send({ ...request("req"), request_id: 7 }), /request\.request_id/);
+
+  // Rejected IDs never open the native port or leave a route behind.
+  assert.equal(ports.length, 0);
+  assert.equal(manager.pendingRequestCount, 0);
+
+  manager.send(request("a".repeat(128)));
+  manager.send(request("A0.b_c:d-9"));
+  assert.equal(manager.pendingRequestCount, 2);
+
+  // The grammar is the frozen request schema's, so the two cannot drift apart.
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+  const schema = JSON.parse(
+    fs.readFileSync(
+      path.join(root, "docs/protocol/schemas/request-envelope.schema.json"),
+      "utf8"
+    )
+  );
+  assert.equal(REQUEST_ID_PATTERN.source, schema.properties.request_id.pattern);
 }
 
 console.log("EXT-02 Native Messaging connection manager tests passed");
