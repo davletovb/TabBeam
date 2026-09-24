@@ -146,7 +146,7 @@ Reached after **Milestone H**:
 | NAT-02 | Implement bounded Native Messaging frame reader/writer | A | Native | NAT-01, DOC-01 | IMPLEMENTED — VERIFY |
 | NAT-03 | Implement JSON validation and request router | A | Native | NAT-02, DOC-01, DOC-02 | IMPLEMENTED — VERIFY |
 | TST-02 | Build deterministic fake streaming provider | A | Testing | NAT-01 | IMPLEMENTED — VERIFY |
-| EXT-02 | Implement service-worker Native Messaging connection manager | A | Extension | EXT-01, DOC-01 | BACKLOG |
+| EXT-02 | Implement service-worker Native Messaging connection manager | A | Extension | EXT-01, DOC-01 | IMPLEMENTED — VERIFY |
 | EXT-03 | Implement minimal popup ask/stream UI | A | Extension | EXT-01, EXT-02 | BACKLOG |
 | SEC-01 | Enforce browser/native trust-boundary limits | A | Security | NAT-02, NAT-03 | BACKLOG |
 | OBS-01 | Add structured native lifecycle diagnostics | A | Observability | NAT-03, DOC-02 | BACKLOG |
@@ -498,7 +498,16 @@ Reached after **Milestone H**:
 - Disconnect/reconnect tests.
 - Request multiplexing tests.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- Lazy Native Messaging port manager: `extension/src/background/native-connection.js`
+- Service-worker-owned singleton, independent of popup lifetime: `extension/src/background/service-worker.js`
+- Required MV3 permission: `extension/manifest.json`
+- Mock-port lifecycle, multiplexing, disconnect/reconnect, stale-port, manual-disconnect, post-failure, connect-failure, `request.cancelled`, request-ID grammar, request-ID-first serialization, throwing-callback isolation, and terminal-route ordering tests: `extension/tests/native-connection-manager.mjs`
+- Service-worker smoke test proves import/health handling does not eagerly call `connectNative`: `extension/tests/manifest-smoke.mjs`
+- Canonical host name centralized as `com.pervue.host`; later packaging/registration must use the same identifier.
+- Moves to VERIFIED once merged.
 
 ### EXT-03 — Implement minimal popup ask/stream UI
 **Area:** Extension  
@@ -1463,7 +1472,7 @@ Update this section whenever item statuses change.
 | Stage | Total | Verified | Implemented — Verify | In Progress | Ready | Backlog | Blocked | Deferred |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | Foundation | 5 | 0 | 5 | 0 | 0 | 0 | 0 | 0 |
-| A — Native round trip | 8 | 0 | 3 | 0 | 0 | 5 | 0 | 0 |
+| A — Native round trip | 8 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
 | B — First provider | 10 | 0 | 0 | 0 | 0 | 10 | 0 | 0 |
 | C — Conversation continuity | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
 | D — Browser context | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 |
@@ -1473,7 +1482,7 @@ Update this section whenever item statuses change.
 | G — Installable product | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 |
 | H — Search/citations | 8 | 0 | 0 | 0 | 0 | 8 | 0 | 0 |
 | Post-milestone | 6 | 0 | 0 | 0 | 0 | 4 | 0 | 2 |
-| **Total** | **81** | **0** | **8** | **0** | **0** | **71** | **0** | **2** |
+| **Total** | **81** | **0** | **9** | **0** | **0** | **70** | **0** | **2** |
 
 ### Milestone completion rule
 

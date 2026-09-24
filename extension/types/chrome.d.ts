@@ -1,32 +1,42 @@
+interface PervueChromeEvent<TCallback> {
+  addListener(callback: TCallback): void;
+  removeListener?(callback: TCallback): void;
+}
+
+interface PervueChromePort {
+  postMessage(message: any): void;
+  disconnect(): void;
+  onMessage: PervueChromeEvent<(message: any) => void>;
+  onDisconnect: PervueChromeEvent<() => void>;
+}
+
 interface PervueChrome {
   runtime: {
-    onInstalled: {
-      addListener(callback: () => void | Promise<void>): void;
-    };
-    onMessage: {
-      addListener(
-        callback: (
-          message: any,
-          sender: any,
-          sendResponse: (response: any) => void
-        ) => void | boolean
-      ): void;
-    };
+    onInstalled: PervueChromeEvent<() => void | Promise<void>>;
+    onMessage: PervueChromeEvent<
+      (
+        message: any,
+        sender: any,
+        sendResponse: (response: any) => void
+      ) => void | boolean
+    >;
     getURL(path: string): string;
     getManifest(): { version: string };
     sendMessage(message: any): Promise<any>;
+    connectNative(hostName: string): PervueChromePort;
+    lastError?: {
+      message?: string;
+    };
   };
   commands: {
-    onCommand: {
-      addListener(callback: (command: string) => void | Promise<void>): void;
-    };
+    onCommand: PervueChromeEvent<
+      (command: string) => void | Promise<void>
+    >;
   };
   contextMenus: {
-    onClicked: {
-      addListener(
-        callback: (info: { menuItemId: string | number }) => void | Promise<void>
-      ): void;
-    };
+    onClicked: PervueChromeEvent<
+      (info: { menuItemId: string | number }) => void | Promise<void>
+    >;
     removeAll(): Promise<void>;
     create(properties: {
       id: string;

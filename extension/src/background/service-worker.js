@@ -1,4 +1,14 @@
+import {
+  NATIVE_HOST_NAME,
+  createNativeConnectionManager
+} from "./native-connection.js";
+
 const MENU_ID = "pervue-open-full-page";
+
+const nativeConnectionManager = createNativeConnectionManager({
+  connectNative: (hostName) => chrome.runtime.connectNative(hostName),
+  getLastError: () => chrome.runtime.lastError?.message ?? null
+});
 
 /** @param {string} entry */
 async function openFullPage(entry) {
@@ -50,4 +60,9 @@ chrome.runtime.onMessage.addListener(
   }
 );
 
-export { MENU_ID, openFullPage };
+export {
+  MENU_ID,
+  NATIVE_HOST_NAME,
+  nativeConnectionManager,
+  openFullPage
+};
