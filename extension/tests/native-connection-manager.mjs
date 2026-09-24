@@ -587,4 +587,34 @@ function request(id, method = "provider.status") {
   assert.equal(REQUEST_ID_PATTERN.source, schema.properties.request_id.pattern);
 }
 
+{
+  // The host echoes only an ID it read before a malformed or too-deep member
+  // (v1 §8.4). A lone surrogate after the ID gets a correlated failure; before
+  // it, the failure has request_id null and the route stays open until the
+  // port disconnects.
+  const { manager, ports } = makeHarness();
+  const loneSurrogate = String.fromCharCode(0xd83d);
+  const payloadFirst = {
+    payload: { provider_id: "codex", input: { text: `cut ${loneSurrogate}` } },
+    version: 1,
+    type: "request",
+    request_id: "req_order",
+    method: "conversation.send"
+  };
+
+  manager.send(payloadFirst);
+
+  const [sent] = ports[0].messages;
+  assert.ok(JSON.stringify(sent).startsWith('{"request_id":"req_order",'));
+  assert.deepEqual(sent, payloadFirst);
+  // The requester's own object is left as it was.
+  assert.deepEqual(Object.keys(payloadFirst), [
+    "payload",
+    "version",
+    "type",
+    "request_id",
+    "method"
+  ]);
+}
+
 console.log("EXT-02 Native Messaging connection manager tests passed");

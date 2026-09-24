@@ -146,7 +146,9 @@ export class NativeConnectionManager {
     this.routes.set(requestId, owner);
 
     try {
-      port.postMessage(request);
+      // The host echoes only an ID it read before a malformed or too-deep
+      // member (docs/protocol/v1.md §8.4), so request_id is serialized first.
+      port.postMessage({ request_id: requestId, ...request });
     } catch (error) {
       if (this.port === port) {
         this.handleDisconnect(
