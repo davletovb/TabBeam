@@ -6,6 +6,7 @@ export default [
       sourceType: "module",
       globals: {
         chrome: "readonly",
+        console: "readonly",
         document: "readonly",
         window: "readonly",
         URL: "readonly",

@@ -32,7 +32,8 @@ const TERMINAL_EVENTS = new Set([
  * @typedef {{
  *   connectNative: (hostName: string) => NativePort,
  *   hostName?: string,
- *   getLastError?: () => string | null
+ *   getLastError?: () => string | null,
+ *   reportError?: (context: string, error: unknown) => void
  * }} NativeConnectionOptions
  */
 
@@ -53,6 +54,11 @@ export class NativeConnectionManager {
     this.connectNative = options.connectNative;
     this.hostName = options.hostName ?? NATIVE_HOST_NAME;
     this.getLastError = options.getLastError ?? (() => null);
+    this.reportError =
+      options.reportError ??
+      ((context, error) => {
+        console.error(`Pervue native connection: ${context} failed`, error);
+      });
 
     /** @type {NativePort | null} */
     this.port = null;
@@ -97,10 +103,13 @@ export class NativeConnectionManager {
     };
 
     const onDisconnect = () => {
+      // Read lastError even for a replaced port, so Chrome does not log it as
+      // an unchecked runtime.lastError.
+      const message = this.getLastError();
       if (this.port !== port) {
         return;
       }
-      this.handleDisconnect(this.getLastError());
+      this.handleDisconnect(message);
     };
 
     port.onMessage.addListener(onMessage);
@@ -181,8 +190,11 @@ export class NativeConnectionManager {
       return;
     }
 
-    this.handleDisconnect(message);
-    port.disconnect();
+    try {
+      this.handleDisconnect(message);
+    } finally {
+      port.disconnect();
+    }
   }
 
   /** @param {any} event */
@@ -191,7 +203,7 @@ export class NativeConnectionManager {
 
     if (requestId === null) {
       for (const listener of this.lifecycleListeners) {
-        listener(event);
+        this.invokeCallback("lifecycle listener", () => listener(event));
       }
       return;
     }
@@ -205,13 +217,12 @@ export class NativeConnectionManager {
       return;
     }
 
-    try {
-      owner.onEvent?.(event);
-    } finally {
-      if (TERMINAL_EVENTS.has(event?.event)) {
-        this.routes.delete(requestId);
-      }
+    // Retire a finished request before its owner runs, so the owner can reuse
+    // the ID or disconnect without the request still counting as in flight.
+    if (TERMINAL_EVENTS.has(event?.event)) {
+      this.routes.delete(requestId);
     }
+    this.invokeCallback("request event handler", () => owner.onEvent?.(event));
   }
 
   /** @param {string | null} message */
@@ -223,12 +234,29 @@ export class NativeConnectionManager {
     this.routes.clear();
 
     for (const [requestId, owner] of owners) {
-      owner.onDisconnect?.({ requestId, message });
+      this.invokeCallback("request disconnect handler", () =>
+        owner.onDisconnect?.({ requestId, message })
+      );
     }
 
     const details = { message, requestIds };
     for (const listener of this.disconnectListeners) {
-      listener(details);
+      this.invokeCallback("disconnect listener", () => listener(details));
+    }
+  }
+
+  /**
+   * Runs requester or listener code so that a throw cannot skip the other
+   * callbacks or the manager's own cleanup. Failures are reported, not hidden.
+   *
+   * @param {string} context
+   * @param {() => void} callback
+   */
+  invokeCallback(context, callback) {
+    try {
+      callback();
+    } catch (error) {
+      this.reportError(context, error);
     }
   }
 }

@@ -504,10 +504,10 @@ Reached after **Milestone H**:
 - Lazy Native Messaging port manager: `extension/src/background/native-connection.js`
 - Service-worker-owned singleton, independent of popup lifetime: `extension/src/background/service-worker.js`
 - Required MV3 permission: `extension/manifest.json`
-- Mock-port lifecycle, multiplexing, disconnect/reconnect, stale-port, manual-disconnect, and post failure tests: `extension/tests/native-connection-manager.mjs`
+- Mock-port lifecycle, multiplexing, disconnect/reconnect, stale-port, manual-disconnect, post-failure, connect-failure, `request.cancelled`, throwing-callback isolation, and terminal-route ordering tests: `extension/tests/native-connection-manager.mjs`
 - Service-worker smoke test proves import/health handling does not eagerly call `connectNative`: `extension/tests/manifest-smoke.mjs`
 - Canonical host name centralized as `com.pervue.host`; later packaging/registration must use the same identifier.
-- CI verification remains pending until this PR's extension checks and full repository matrix complete successfully.
+- Moves to VERIFIED once merged.
 
 ### EXT-03 — Implement minimal popup ask/stream UI
 **Area:** Extension  
