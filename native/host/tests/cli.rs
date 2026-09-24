@@ -32,13 +32,31 @@ fn version_flag_prints_the_host_version() {
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "0.1.0-dev");
 }
 
+const HOST_READY: &str = r#"{"version":1,"type":"event","request_id":null,"event":"host.ready","payload":{"host_version":"0.1.0-dev","protocol_versions":[1]}}"#;
+
 #[test]
 fn chrome_launch_shape_runs_the_host() {
     let output = run_host(&["chrome-extension://pervue-test-extension/"], b"");
     assert_eq!(output.status.code(), Some(0));
+    assert_eq!(output.stdout, frame(HOST_READY));
+}
 
-    let host_ready = r#"{"version":1,"type":"event","request_id":null,"event":"host.ready","payload":{"host_version":"0.1.0-dev","protocol_versions":[1]}}"#;
-    assert_eq!(output.stdout, frame(host_ready));
+#[test]
+fn chrome_windows_launch_shape_runs_the_host() {
+    // Chrome on Windows appends the calling window's handle; it is 0 when the
+    // caller is a service worker.
+    for parent_window in [
+        "--parent-window=0",
+        "--parent-window=132658",
+        "--parent-window=-2147483648",
+    ] {
+        let output = run_host(
+            &["chrome-extension://pervue-test-extension/", parent_window],
+            b"",
+        );
+        assert_eq!(output.status.code(), Some(0), "{parent_window}");
+        assert_eq!(output.stdout, frame(HOST_READY), "{parent_window}");
+    }
 }
 
 #[test]
@@ -71,6 +89,13 @@ fn unexpected_arguments_print_usage() {
         &["https://example.com/"],
         &["--version", "extra"],
         &["chrome-extension://id/", "extra"],
+        &["--parent-window=0"],
+        &["--parent-window=0", "chrome-extension://id/"],
+        &["chrome-extension://id/", "--parent-window="],
+        &["chrome-extension://id/", "--parent-window=-"],
+        &["chrome-extension://id/", "--parent-window=12ab"],
+        &["chrome-extension://id/", "--parent-window", "0"],
+        &["chrome-extension://id/", "--parent-window=0", "extra"],
     ] {
         let output = run_host(args, b"");
         assert_eq!(output.status.code(), Some(64), "{args:?}");

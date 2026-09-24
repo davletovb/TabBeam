@@ -7,6 +7,9 @@
 //! syntax error, request IDs are echoed as their raw JSON bytes, and depth
 //! overflow is classified differently inside and outside the method payload.
 
+use std::borrow::Cow;
+use std::collections::HashSet;
+
 /// Maximum container nesting accepted by [`Reader::skip_value`].
 pub const MAX_DEPTH: usize = 128;
 
@@ -15,6 +18,9 @@ pub const MAX_DEPTH: usize = 128;
 pub enum JsonError {
     Syntax,
     DepthExceeded,
+    /// An object repeats a member name. Only reported by readers created with
+    /// [`Reader::rejecting_duplicate_members`].
+    DuplicateMember,
 }
 
 /// A validated JSON string token, still in its raw escaped form (the bytes
@@ -54,6 +60,38 @@ impl<'a> JsonStr<'a> {
     pub(crate) fn next_ascii(self, position: &mut usize) -> Option<Option<u8>> {
         (*position < self.raw.len()).then(|| decode_next_ascii(self.raw, position))
     }
+
+    /// The string with its escapes resolved. A token without escapes is
+    /// borrowed rather than copied.
+    pub fn decode(self) -> Cow<'a, str> {
+        if !self.raw.contains(&b'\\') {
+            // `parse_string` validated the UTF-8, so nothing is replaced.
+            return String::from_utf8_lossy(self.raw);
+        }
+
+        let mut decoded = Vec::with_capacity(self.raw.len());
+        let mut position = 0;
+        while let Some(&byte) = self.raw.get(position) {
+            position += 1;
+            if byte != b'\\' {
+                decoded.push(byte);
+                continue;
+            }
+            match decode_escape(self.raw, &mut position) {
+                Some(character) => {
+                    let mut buffer = [0; 4];
+                    decoded.extend_from_slice(character.encode_utf8(&mut buffer).as_bytes());
+                }
+                // Unreachable for tokens from `parse_string`, which rejects
+                // malformed escapes.
+                None => break,
+            }
+        }
+        Cow::Owned(match String::from_utf8(decoded) {
+            Ok(text) => text,
+            Err(error) => String::from_utf8_lossy(error.as_bytes()).into_owned(),
+        })
+    }
 }
 
 /// Pull reader over one JSON text.
@@ -62,6 +100,7 @@ pub struct Reader<'a> {
     data: &'a [u8],
     position: usize,
     depth: usize,
+    reject_duplicate_members: bool,
 }
 
 impl<'a> Reader<'a> {
@@ -70,6 +109,18 @@ impl<'a> Reader<'a> {
             data,
             position: 0,
             depth: 0,
+            reject_duplicate_members: false,
+        }
+    }
+
+    /// A reader whose [`Reader::skip_value`] also fails with
+    /// [`JsonError::DuplicateMember`] when any object repeats a member name,
+    /// comparing names after decoding escapes. A duplicate is reported as soon
+    /// as it is seen, so use this on input whose syntax is already validated.
+    pub fn rejecting_duplicate_members(data: &'a [u8]) -> Self {
+        Self {
+            reject_duplicate_members: true,
+            ..Self::new(data)
         }
     }
 
@@ -317,8 +368,12 @@ impl<'a> Reader<'a> {
         if self.consume(b'}') {
             return Ok(());
         }
+        let mut names = HashSet::new();
         loop {
-            self.parse_string()?;
+            let name = self.parse_string()?;
+            if self.reject_duplicate_members && !names.insert(name.decode()) {
+                return Err(JsonError::DuplicateMember);
+            }
             self.skip_whitespace();
             if !self.consume(b':') {
                 return Err(JsonError::Syntax);
@@ -383,6 +438,38 @@ fn utf8_sequence_end(data: &[u8], position: usize) -> Option<usize> {
         return None;
     }
     Some(position + length)
+}
+
+/// Decodes the escape sequence that follows a backslash at `position`,
+/// joining a UTF-16 surrogate pair into one character. Returns `None` for a
+/// malformed escape.
+fn decode_escape(raw: &[u8], position: &mut usize) -> Option<char> {
+    let escaped = *raw.get(*position)?;
+    *position += 1;
+    match escaped {
+        b'"' | b'\\' | b'/' => Some(char::from(escaped)),
+        b'b' => Some('\u{8}'),
+        b'f' => Some('\u{c}'),
+        b'n' => Some('\n'),
+        b'r' => Some('\r'),
+        b't' => Some('\t'),
+        b'u' => {
+            let first = parse_hex4(raw, position)?;
+            if !(0xd800..=0xdbff).contains(&first) {
+                return char::from_u32(first);
+            }
+            if raw.get(*position..*position + 2) != Some(&b"\\u"[..]) {
+                return None;
+            }
+            *position += 2;
+            let second = parse_hex4(raw, position)?;
+            if !(0xdc00..=0xdfff).contains(&second) {
+                return None;
+            }
+            char::from_u32(0x1_0000 + ((first - 0xd800) << 10) + (second - 0xdc00))
+        }
+        _ => None,
+    }
 }
 
 /// Decodes one character of a raw string token as ASCII. Returns `None` for
@@ -539,5 +626,60 @@ mod tests {
     fn depth_is_released_after_each_container() {
         let siblings = vec![nested(MAX_DEPTH - 1); 3].join(",");
         assert_eq!(skip(&format!("[{siblings}]")), Ok(()));
+    }
+
+    #[test]
+    fn decode_resolves_escapes_and_borrows_plain_tokens() {
+        let plain = string("\"caf\u{e9} plain\"".as_bytes()).unwrap();
+        assert!(matches!(plain.decode(), Cow::Borrowed("caf\u{e9} plain")));
+
+        let escaped = string(br#""\"\\\/\b\f\n\r\t \u0041\u00e9\u20ac\ud83d\ude00""#).unwrap();
+        assert_eq!(
+            escaped.decode(),
+            "\"\\/\u{8}\u{c}\n\r\t A\u{e9}\u{20ac}\u{1f600}"
+        );
+    }
+
+    #[test]
+    fn decode_matches_serde_json() {
+        for text in [
+            "",
+            "plain",
+            "tab\tnew\nline",
+            "quote\" backslash\\ slash/",
+            "control \u{1} \u{1f}",
+            "caf\u{e9} \u{20ac} \u{1f600} \u{10ffff}",
+        ] {
+            // serde_json escapes quotes, backslashes, and control characters.
+            let serde_escaped = serde_json::to_string(text).unwrap();
+            // Escape every character, as `\uXXXX` units, to cover surrogate pairs.
+            let mut all_escaped = String::from("\"");
+            for unit in text.encode_utf16() {
+                all_escaped.push_str(&format!("\\u{unit:04x}"));
+            }
+            all_escaped.push('"');
+
+            for encoded in [serde_escaped, all_escaped] {
+                let token = string(encoded.as_bytes()).unwrap();
+                let expected: String = serde_json::from_str(&encoded).unwrap();
+                assert_eq!(token.decode(), expected, "{encoded}");
+            }
+        }
+    }
+
+    #[test]
+    fn duplicate_members_are_rejected_only_on_request() {
+        let duplicated = br#"{"a":1,"b":{"c":[{"d":1,"d":2}]}}"#;
+        assert_eq!(Reader::new(duplicated).skip_value(), Ok(()));
+        assert_eq!(
+            Reader::rejecting_duplicate_members(duplicated).skip_value(),
+            Err(JsonError::DuplicateMember)
+        );
+
+        let unique = br#"{"a":{"a":{"a":1}},"b":[{"a":1},{"a":2}]}"#;
+        assert_eq!(
+            Reader::rejecting_duplicate_members(unique).skip_value(),
+            Ok(())
+        );
     }
 }

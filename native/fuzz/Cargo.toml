@@ -26,6 +26,11 @@ test = false
 doc = false
 bench = false
 
+# The fuzz crate has its own workspace, so it does not inherit the main
+# workspace's lints; it forbids `unsafe` itself.
+[lints.rust]
+unsafe_code = "forbid"
+
 # Fuzz targets need nightly and libFuzzer, so they build in their own
 # workspace instead of the main one.
 [workspace]

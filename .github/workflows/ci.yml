@@ -97,6 +97,10 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Test
         run: cargo test --workspace --locked
+      # Packaged hosts ship the release profile, where overflow checks are off.
+      - name: Test release profile
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test --workspace --locked --release
 
   native-fuzz:
     name: Native fuzz smoke

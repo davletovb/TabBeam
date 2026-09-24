@@ -317,9 +317,9 @@ mod tests {
     fn request_ids_are_echoed_byte_for_byte() {
         assert_eq!(
             failure_event(
-                r#"{"version":2,"type":"request","request_id":"req_v2","method":"provider.status","payload":{}}"#
+                r#"{"version":2,"type":"request","request_id":"r\u0065q_v2","method":"provider.status","payload":{}}"#
             ),
-            r#"{"version":1,"type":"event","request_id":"req_v2","event":"response.failed","payload":{"error":{"code":"INVALID_REQUEST","reason":"UNSUPPORTED_PROTOCOL_VERSION","message":"Unsupported protocol version.","retryable":false},"protocol":{"received_version":2,"supported_versions":[1]}}}"#
+            r#"{"version":1,"type":"event","request_id":"r\u0065q_v2","event":"response.failed","payload":{"error":{"code":"INVALID_REQUEST","reason":"UNSUPPORTED_PROTOCOL_VERSION","message":"Unsupported protocol version.","retryable":false},"protocol":{"received_version":2,"supported_versions":[1]}}}"#
         );
     }
 

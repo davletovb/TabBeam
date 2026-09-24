@@ -360,8 +360,9 @@ Reached after **Milestone H**:
 - Host entry point: `native/host/src/main.rs`
 - Foundation host core: `native/host/src/host.rs`
 - Startup, stream-lifecycle, and exit-status tests: `native/host/src/host.rs` + `native/host/tests/cli.rs`
+- Accepts Chrome's launch shapes, including the Windows `--parent-window=<handle>` argument after the origin: `native/host/src/main.rs` + `native/host/tests/cli.rs`
 - Local validation: `cargo fmt --check`, `cargo clippy -- -D warnings` (Linux, plus Windows and macOS target checks), and `cargo test --workspace` on stable and Rust 1.85 all pass.
-- Ported from C to Rust (framework §9.7). Before the C sources were removed, the Rust host matched the C host byte-for-byte, including exit statuses, on about 2.3 million differential inputs. CI verification of the port is pending.
+- Ported from C to Rust (ADR-0001). Before the C sources were removed, the Rust host matched the C host byte-for-byte, including exit statuses, on about 2.3 million differential inputs. Moves to VERIFIED once the port merges.
 
 ### TST-01 — Establish CI/build/test baseline
 **Milestone:** Foundation  
@@ -386,7 +387,7 @@ Reached after **Milestone H**:
 - Protocol schema/fixture validation: `scripts/validate_protocol.py`
 - Native CI runs `cargo fmt`, `cargo clippy`, and `cargo test --workspace` on Linux, macOS, and Windows with stable Rust, plus a Rust 1.85 minimum-version job and a cargo-fuzz smoke job.
 - Warnings fail CI through `RUSTFLAGS=-D warnings` and `cargo clippy -- -D warnings`.
-- CI verification of the Rust port remains pending until its workflow completes successfully and the change is merged.
+- Moves to VERIFIED once the Rust port merges.
 
 ---
 
@@ -421,7 +422,7 @@ Reached after **Milestone H**:
 - Host-level oversized/truncated framing checks: `native/host/src/host.rs` + `native/host/tests/cli.rs`
 - cargo-fuzz harness and structured corpus generator: `native/fuzz/fuzz_targets/frame_reader.rs` + `native/fuzz/create_corpus.py`
 - Project frame cap: 1 MiB, enforced before payload allocation and before writes.
-- Ported from C to Rust (framework §9.7). Before the C sources were removed, the Rust host matched the C host byte-for-byte, including exit statuses, on about 2.3 million differential inputs. CI verification of the port is pending.
+- Ported from C to Rust (ADR-0001). Before the C sources were removed, the Rust host matched the C host byte-for-byte, including exit statuses, on about 2.3 million differential inputs. Moves to VERIFIED once the port merges.
 
 ### NAT-03 — Implement JSON validation and request router
 **Area:** Native  
@@ -443,13 +444,14 @@ Reached after **Milestone H**:
 **Implementation evidence**
 - Strict bounded JSON syntax reader: `native/host/src/protocol/json.rs`
 - Protocol request model and strict top-level/method-payload validation: `native/host/src/protocol/request.rs`
+- Duplicate member names are rejected in every object of a method payload, compared after decoding escapes (v1 §1 rule 9): `native/host/src/protocol/request.rs` + `native/host/src/protocol/json.rs`
 - Method router: `native/host/src/protocol/router.rs`
 - Protocol event/error emission with the typed DOC-02 error and capability vocabulary: `native/host/src/protocol/events.rs`
 - Host emits exactly one `host.ready`, keeps running after malformed requests, and routes the local fake conversation provider: `native/host/src/host.rs`
 - Parser/router/integration tests cover malformed JSON, duplicate/missing/extra/wrong fields, 128/129-character request-ID boundaries, escaped identifiers, unsupported versions, unknown methods, depth limits, recovered-ID malformed failures, invalid method payloads, and fake conversation dispatch: `native/host/src/protocol/` + `native/host/src/host.rs`
 - Protocol fuzz target runs each input through the whole host and asserts every emitted frame is a JSON object; golden-derived corpus: `native/fuzz/fuzz_targets/protocol.rs` + `native/fuzz/create_protocol_corpus.py`
 - Built-host contract harness validates emitted frames against the frozen event/error/provider-status schemas and golden event sequences: `scripts/validate_host_protocol.py`
-- Ported from C to Rust (framework §9.7). Before the C sources were removed, the Rust host matched the C host byte-for-byte, including exit statuses, on about 2.3 million differential inputs. CI verification of the port is pending.
+- Ported from C to Rust (ADR-0001). Before the C sources were removed, the Rust host matched the C host byte-for-byte, including exit statuses, on about 2.3 million differential inputs. Moves to VERIFIED once the port merges.
 
 ### TST-02 — Build deterministic fake streaming provider
 **Area:** Testing  
@@ -478,7 +480,7 @@ Reached after **Milestone H**:
 - Rust's standard streams pass bytes through unchanged on Windows pipes, so fixture bytes are deterministic across platforms without a binary-mode switch.
 - POSIX signal tests prove `hang` terminates on SIGTERM while `ignore-cancel` survives SIGTERM until SIGKILL cleanup: `native/test_provider/tests/signals.rs`
 - The fake provider is a separate workspace crate outside the default build, so `cargo build` produces only the host while `cargo test --workspace` builds and tests the fixture.
-- Ported from C to Rust (framework §9.7). Before they were removed, the original CMake mode harness and C signal test both passed against the Rust binary. CI verification of the port is pending.
+- Ported from C to Rust (ADR-0001). Before they were removed, the original CMake mode harness and C signal test both passed against the Rust binary. Moves to VERIFIED once the port merges.
 
 ### EXT-02 — Implement service-worker Native Messaging connection manager
 **Area:** Extension  

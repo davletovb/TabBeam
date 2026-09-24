@@ -1,6 +1,6 @@
 # Browser AI Extension — Product & Engineering Framework
 
-**Status:** Framework v0.2 (native host moved from C to Rust; see §9.7)  
+**Status:** Framework v0.2 (native host moved from C to Rust; see [ADR-0001](../architecture/adr-0001-native-host-in-rust.md))  
 **Purpose:** Define the product, architecture, engineering principles, reusable native library boundaries, and acceptance criteria that will later be converted into an implementation plan and tracker.
 
 ---
@@ -442,7 +442,7 @@ A component should be promoted into the reusable library only when one of these 
 
 ### 9.7 Implementation language
 
-The native host is written in Rust. The first implementation was C; it was ported before provider integration (NAT-04 onward) because the remaining native work is concurrent, cross-platform process and stream handling over untrusted input, where Rust removes memory-safety bugs by construction and one implementation covers macOS, Windows, and Linux. The port was verified byte-for-byte against the C host before the C sources were removed.
+The native host is written in Rust. [ADR-0001](../architecture/adr-0001-native-host-in-rust.md) records the decision to replace the C host specified by Framework v0.1, with its context, the alternative considered, and its consequences.
 
 If a non-Rust application ever needs the reusable library, it can be exposed through a C ABI (`extern "C"` with generated headers) without changing the Rust API.
 

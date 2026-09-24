@@ -20,6 +20,7 @@ The repository is currently in the **planning / foundation** stage. Implementati
 
 - [Product & Engineering Framework](docs/product/browser-ai-extension-framework.md)
 - [Implementation Plan & Tracker](docs/product/browser-ai-implementation-plan-tracker.md)
+- [ADR-0001: Write the native host in Rust](docs/architecture/adr-0001-native-host-in-rust.md)
 
 The implementation tracker is the source of truth for work sequencing, dependencies, acceptance criteria, verification, and milestone status.
 

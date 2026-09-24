@@ -275,7 +275,7 @@ mod tests {
             "{not-json",
             r#"{"version":1,"type":"request","request_id":"req_malformed_flow","method":"provider.status","payload":{}}x"#,
             r#"{"version":1,"type":"request","request_id":"req_flow","method":"conversation.send","payload":{"provider_id":"fake","input":{"text":"Hello"}}}"#,
-            r#"{"version":2,"type":"request","request_id":"req_v2","method":"provider.status","payload":{}}"#,
+            r#"{"version":2,"type":"request","request_id":"r\u0065q_v2","method":"provider.status","payload":{}}"#,
             r#"{"version":1,"type":"request","request_id":"req_unknown","method":"unknown.method","payload":{}}"#,
         ]);
         let malformed = r#"{"error":{"code":"INVALID_REQUEST","reason":"MALFORMED_MESSAGE","message":"Malformed request.","retryable":false}}"#;
@@ -305,7 +305,7 @@ mod tests {
                 ),
                 event(r#""req_flow""#, "response.completed", "{}"),
                 event(
-                    r#""req_v2""#,
+                    r#""r\u0065q_v2""#,
                     "response.failed",
                     r#"{"error":{"code":"INVALID_REQUEST","reason":"UNSUPPORTED_PROTOCOL_VERSION","message":"Unsupported protocol version.","retryable":false},"protocol":{"received_version":2,"supported_versions":[1]}}"#
                 ),

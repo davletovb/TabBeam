@@ -127,6 +127,13 @@ pub fn parse_request(data: &[u8]) -> Result<Request<'_>, RequestFailure<'_>> {
         return Err(fail(FailureKind::UnknownMethod, request_id));
     };
 
+    // v1 §1 rule 9: no object in a method payload may repeat a member name,
+    // including members this host does not interpret. The payload's syntax is
+    // already validated, so this pass can only find duplicates.
+    Reader::rejecting_duplicate_members(payload)
+        .skip_value()
+        .map_err(|error| fail(payload_error(error), request_id))?;
+
     let method = match method {
         MethodName::ConversationSend => parse_conversation_payload(payload),
         MethodName::ProviderStatus => parse_status_payload(payload),
@@ -220,10 +227,7 @@ fn parse_envelope<'a>(data: &'a [u8], envelope: &mut Envelope<'a>) -> Result<(),
             if reader.peek() == Some(b'{') {
                 // v1 §1 rule 11: depth overflow inside the payload is a payload error.
                 let start = reader.position();
-                reader.skip_value().map_err(|error| match error {
-                    JsonError::DepthExceeded => FailureKind::InvalidPayload,
-                    JsonError::Syntax => FailureKind::Malformed,
-                })?;
+                reader.skip_value().map_err(payload_error)?;
                 envelope.payload = Some(&data[start..reader.position()]);
             } else {
                 reader.skip_value().map_err(malformed)?;
@@ -265,28 +269,20 @@ fn method_name(value: JsonStr<'_>) -> Option<MethodName> {
 fn parse_conversation_payload(payload: &[u8]) -> Result<Method<'_>, FailureKind> {
     let mut provider_id = None;
     let mut conversation_id = None;
-    let (mut saw_provider, mut saw_input, mut saw_conversation, mut saw_context) =
-        (false, false, false, false);
+    let mut saw_input = false;
     let mut invalid = false;
 
     let has_members = walk_payload_object(payload, |key, reader| {
         if key.equals_ascii("provider_id") {
-            invalid |= saw_provider;
-            saw_provider = true;
             provider_id = read_nonempty_string(reader)?;
             invalid |= provider_id.is_none();
         } else if key.equals_ascii("input") {
-            invalid |= saw_input;
             saw_input = true;
             invalid |= read_object(reader)?.is_none_or(|input| parse_input(input).is_err());
         } else if key.equals_ascii("conversation_id") {
-            invalid |= saw_conversation;
-            saw_conversation = true;
             conversation_id = read_nonempty_string(reader)?;
             invalid |= conversation_id.is_none();
         } else if key.equals_ascii("context") {
-            invalid |= saw_context;
-            saw_context = true;
             invalid |= read_object(reader)?.is_none();
         } else {
             reader.skip_value().map_err(payload_error)?;
@@ -309,7 +305,6 @@ fn parse_input(input: &[u8]) -> Result<(), FailureKind> {
 
     let has_members = walk_payload_object(input, |key, reader| {
         if key.equals_ascii("text") {
-            invalid |= saw_text;
             saw_text = true;
             invalid |= read_nonempty_string(reader)?.is_none();
         } else {
@@ -327,13 +322,10 @@ fn parse_input(input: &[u8]) -> Result<(), FailureKind> {
 
 fn parse_status_payload(payload: &[u8]) -> Result<Method<'_>, FailureKind> {
     let mut provider_id = None;
-    let mut saw_provider = false;
     let mut invalid = false;
 
     walk_payload_object(payload, |key, reader| {
         if key.equals_ascii("provider_id") {
-            invalid |= saw_provider;
-            saw_provider = true;
             provider_id = read_nonempty_string(reader)?;
             invalid |= provider_id.is_none();
         } else {
@@ -351,13 +343,10 @@ fn parse_status_payload(payload: &[u8]) -> Result<Method<'_>, FailureKind> {
 
 fn parse_cancel_payload(payload: &[u8]) -> Result<Method<'_>, FailureKind> {
     let mut target_request_id = None;
-    let mut saw_target = false;
     let mut invalid = false;
 
     walk_payload_object(payload, |key, reader| {
         if key.equals_ascii("target_request_id") {
-            invalid |= saw_target;
-            saw_target = true;
             target_request_id = read_string(reader)
                 .map_err(payload_error)?
                 .and_then(RequestId::parse);
@@ -376,7 +365,8 @@ fn parse_cancel_payload(payload: &[u8]) -> Result<Method<'_>, FailureKind> {
 
 /// Walks the members of a method-payload object, handing each key to `visit`
 /// with the reader positioned at the member's value, which `visit` must
-/// consume. Returns whether the object had any members.
+/// consume. Returns whether the object had any members. Member names are
+/// unique: `parse_request` rejects payloads with duplicates before walking.
 fn walk_payload_object<'a>(
     object: &'a [u8],
     mut visit: impl FnMut(JsonStr<'a>, &mut Reader<'a>) -> Result<(), FailureKind>,
@@ -419,7 +409,7 @@ fn walk_payload_object<'a>(
 
 fn payload_error(error: JsonError) -> FailureKind {
     match error {
-        JsonError::DepthExceeded => FailureKind::InvalidPayload,
+        JsonError::DepthExceeded | JsonError::DuplicateMember => FailureKind::InvalidPayload,
         JsonError::Syntax => FailureKind::Malformed,
     }
 }
@@ -567,6 +557,68 @@ mod tests {
     }
 
     #[test]
+    fn rejects_duplicate_names_in_every_payload_object() {
+        for payload in [
+            // Members the host does not interpret, at every level.
+            r#"{"provider_id":"fake","input":{"text":"Hi"},"future":1,"future":2}"#,
+            r#"{"provider_id":"fake","input":{"text":"Hi","future":1,"future":2}}"#,
+            r#"{"provider_id":"fake","input":{"text":"Hi"},"context":{"page":1,"page":2}}"#,
+            r#"{"provider_id":"fake","input":{"text":"Hi"},"context":{"page":{"url":"a","url":"b"}}}"#,
+            r#"{"provider_id":"fake","input":{"text":"Hi"},"future":[{"k":1},{"k":1,"k":2}]}"#,
+            // Names are compared after decoding escapes.
+            r#"{"provider_id":"fake","input":{"text":"Hi"},"future":1,"futur\u0065":2}"#,
+            r#"{"provider_id":"fake","provider_\u0069d":"fake","input":{"text":"Hi"}}"#,
+            "{\"provider_id\":\"fake\",\"input\":{\"text\":\"Hi\"},\"caf\\u00e9\":1,\"caf\u{e9}\":2}",
+            "{\"provider_id\":\"fake\",\"input\":{\"text\":\"Hi\"},\"\\ud83d\\ude00\":1,\"\u{1f600}\":2}",
+        ] {
+            expect_failure(
+                &envelope("req_dup", "conversation.send", payload),
+                FailureKind::InvalidPayload,
+                Some("req_dup"),
+            );
+        }
+
+        for (method, payload) in [
+            ("provider.status", r#"{"x":1,"x":2}"#),
+            (
+                "request.cancel",
+                r#"{"target_request_id":"req_1","x":{},"x":[]}"#,
+            ),
+        ] {
+            expect_failure(
+                &envelope("req_dup", method, payload),
+                FailureKind::InvalidPayload,
+                Some("req_dup"),
+            );
+        }
+    }
+
+    #[test]
+    fn a_name_may_repeat_across_different_objects() {
+        let input = envelope(
+            "req_names",
+            "conversation.send",
+            r#"{"provider_id":"fake","input":{"text":"Hi"},"context":{"text":"x","items":[{"k":1},{"k":2}]},"k":{"k":{"k":1}}}"#,
+        );
+        assert!(parse_request(input.as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn payload_duplicates_rank_below_syntax_and_envelope_failures() {
+        let duplicated = r#"{"x":1,"x":2}"#;
+        expect_failure(
+            &format!("{}x", envelope("req_rank", "provider.status", duplicated)),
+            FailureKind::Malformed,
+            Some("req_rank"),
+        );
+        expect_failure(
+            &envelope("req_rank", "unknown.method", duplicated),
+            FailureKind::UnknownMethod,
+            Some("req_rank"),
+        );
+    }
+
+    #[test]
     fn version_must_be_the_integer_token_one() {
         for version in ["1.0", "1e0", "\"1\"", "true", "99999999999999999999"] {
             expect_failure(
@@ -618,12 +670,12 @@ mod tests {
     #[test]
     fn escaped_names_and_ids_are_decoded_for_matching() {
         let input = envelope(
-            r"req_escape",
-            r"conversation.send",
-            r#"{"provider_id":"fake","input":{"text":"Hello"}}"#,
+            r"r\u0065q_escape",
+            r"conversation.sen\u0064",
+            r#"{"provider_id":"fak\u0065","input":{"text":"Hello"}}"#,
         );
         let request = parse_request(input.as_bytes()).unwrap();
-        assert_eq!(request.request_id.raw(), br"req_escape");
+        assert_eq!(request.request_id.raw(), br"r\u0065q_escape");
         let Method::ConversationSend { provider_id, .. } = request.method else {
             panic!("unexpected method: {:?}", request.method);
         };
