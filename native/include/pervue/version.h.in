@@ -1,6 +1,0 @@
-#ifndef PERVUE_VERSION_H
-#define PERVUE_VERSION_H
-
-#define PERVUE_HOST_VERSION "@PERVUE_HOST_VERSION@"
-
-#endif

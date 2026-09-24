@@ -1,8 +1,8 @@
 # Browser AI Extension — Implementation Plan & Tracker
 
 **Status:** Active implementation tracker  
-**Derived from:** `browser-ai-extension-framework.md` (Framework v0.1)  
-**Tracker version:** v0.1  
+**Derived from:** `browser-ai-extension-framework.md` (Framework v0.2)  
+**Tracker version:** v0.2  
 **Scope rule:** This tracker converts the framework into implementation sequence. It intentionally does not add cloud accounts, browser-cookie scraping, autonomous browser automation, or other capabilities outside the framework.
 
 ---
@@ -38,7 +38,7 @@ H — Search + citations
 Milestones E–H are ordered to protect the framework's "product before abstraction" rule:
 
 - do not stabilize the reusable provider interface before two real providers work;
-- do not extract a generalized C library before real reuse exists;
+- do not extract a generalized native library before real reuse exists;
 - do not let web search delay the first useful provider-backed browser experience;
 - do not treat packaging as finished until a non-developer can install and use the product without a terminal.
 
@@ -128,7 +128,7 @@ Reached after **Milestone H**:
 | D — Browser context | Selection/current-page context is intentionally captured, bounded, and attached to requests. |
 | MVP closure | All MVP entry points, theme, health/failure UX, accessibility baseline, and end-to-end regression suite are green. |
 | E — Second provider | Claude works through the same normalized adapter contract and exposes capabilities without UI hard-coding. |
-| F — Reusable native core | Reused process/messaging/stream/provider primitives are extracted behind documented C APIs. |
+| F — Reusable native core | Reused process/messaging/stream/provider primitives are extracted behind documented library APIs. |
 | G — Installable product | Clean-machine macOS installation works without terminal; Windows path is implemented and verified next. |
 | H — Search/citations | Search is provider-independent and returns normalized, grounded, cited responses. |
 
@@ -141,7 +141,7 @@ Reached after **Milestone H**:
 | DOC-01 | Freeze protocol v1 envelope and event contract | Foundation | Documentation / Protocol | — | IMPLEMENTED — VERIFY |
 | DOC-02 | Freeze normalized error taxonomy and capability vocabulary | Foundation | Documentation / Protocol | DOC-01 | IMPLEMENTED — VERIFY |
 | EXT-01 | Scaffold Manifest V3 extension surfaces | Foundation | Extension | — | IMPLEMENTED — VERIFY |
-| NAT-01 | Scaffold native C host and build system | Foundation | Native | — | IMPLEMENTED — VERIFY |
+| NAT-01 | Scaffold native host and build system | Foundation | Native | — | IMPLEMENTED — VERIFY |
 | TST-01 | Establish CI/build/test baseline | Foundation | Testing | EXT-01, NAT-01 | IMPLEMENTED — VERIFY |
 | NAT-02 | Implement bounded Native Messaging frame reader/writer | A | Native | NAT-01, DOC-01 | IMPLEMENTED — VERIFY |
 | NAT-03 | Implement JSON validation and request router | A | Native | NAT-02, DOC-01, DOC-02 | IMPLEMENTED — VERIFY |
@@ -194,7 +194,7 @@ Reached after **Milestone H**:
 | LIB-03 | Extract reusable stream primitives | F | Native Library | NAT-05, TST-10 | BACKLOG |
 | LIB-04 | Extract reusable provider/protocol primitives | F | Native Library | PRO-07, LIB-01, LIB-03 | BACKLOG |
 | LIB-05 | Extract reusable platform/diagnostics primitives where justified | F | Native Library | OBS-01, PRO-05 | BACKLOG |
-| DOC-03 | Document reusable C ownership/API boundaries | F | Documentation | LIB-01, LIB-02, LIB-03, LIB-04 | BACKLOG |
+| DOC-03 | Document reusable library ownership/API boundaries | F | Documentation | LIB-01, LIB-02, LIB-03, LIB-04 | BACKLOG |
 | TST-11 | Add standalone native-library unit/ABI tests | F | Testing | LIB-01, LIB-02, LIB-03, LIB-04 | BACKLOG |
 | PKG-01 | Build macOS companion package and host registration | G | Packaging | TST-08, EXT-13, LIB-02, LIB-05 | BACKLOG |
 | PKG-02 | Add macOS provider discovery/setup guidance | G | Packaging | PKG-01, PRO-07 | BACKLOG |
@@ -333,36 +333,36 @@ Reached after **Milestone H**:
 - Manifest/service-worker smoke test: `extension/tests/manifest-smoke.mjs`
 - Development loading instructions: `extension/README.md`
 
-### NAT-01 — Scaffold native C host and build system
+### NAT-01 — Scaffold native host and build system
 **Milestone:** Foundation  
 **Area:** Native  
-**Goal:** Establish a portable C project that can read stdin/write stdout and compile with strict diagnostics.  
+**Goal:** Establish a portable native project that can read stdin/write stdout and compile with strict diagnostics.  
 **Dependencies:** None
 
 **Implementation notes**
-- Treat compiler warnings as errors for project code.
-- Enable ASan/UBSan in supported development configurations.
+- Treat compiler and Clippy warnings as errors for project code in CI.
+- Forbid `unsafe` code in project crates.
 - Create module boundaries aligned with the framework, without prematurely publishing a reusable library API.
 
 **Acceptance criteria**
 - Native host builds locally and in CI.
-- Development sanitizer build exists.
+- Project crates forbid `unsafe` code.
 - Host starts and exits cleanly.
 
 **Tests required**
 - Build matrix smoke test.
-- Sanitizer startup test.
+- Host startup test.
 
 **Status:** IMPLEMENTED — VERIFY
 
 **Implementation evidence**
-- CMake build: `native/CMakeLists.txt`
-- Development/sanitizer presets: `native/CMakePresets.json`
-- Host entry point: `native/host/main.c`
-- Foundation host core: `native/host/host.c`
-- Internal public header for current host boundary: `native/include/pervue/host.h`
-- Startup/std-stream unit test: `native/tests/host_startup_test.c`
-- Local validation after review fixes: strict-warning GCC build passed; CTest 3/3 passed; ASan+UBSan build and CTest 3/3 passed; Clang build and CTest 3/3 passed.
+- Cargo workspace (Rust 1.85+, `unsafe_code = "forbid"`): `native/Cargo.toml` + `native/host/Cargo.toml`
+- Host entry point: `native/host/src/main.rs`
+- Foundation host core: `native/host/src/host.rs`
+- Startup, stream-lifecycle, and exit-status tests: `native/host/src/host.rs` + `native/host/tests/cli.rs`
+- Accepts Chrome's launch shapes, including the Windows `--parent-window=<handle>` argument after the origin: `native/host/src/main.rs` + `native/host/tests/cli.rs`
+- Local validation: `cargo fmt --check`, `cargo clippy -- -D warnings` (Linux, plus Windows and macOS target checks), and `cargo test --workspace` on stable and Rust 1.85 all pass.
+- Ported from C to Rust (ADR-0001). Before the C sources were removed, the Rust host matched the C host byte-for-byte, including exit statuses, on about 2.3 million differential inputs. Moves to VERIFIED once the port merges.
 
 ### TST-01 — Establish CI/build/test baseline
 **Milestone:** Foundation  
@@ -373,8 +373,8 @@ Reached after **Milestone H**:
 **Acceptance criteria**
 - Extension lint/type/build checks run automatically.
 - Native build/unit tests run automatically.
-- Sanitizer-capable native test job exists.
-- Project fails CI on compiler warnings in project C code.
+- Native parsers are fuzzed in CI under AddressSanitizer.
+- Project fails CI on compiler or Clippy warnings in project code.
 
 **Status:** IMPLEMENTED — VERIFY
 
@@ -385,9 +385,9 @@ Reached after **Milestone H**:
 - Extension JS type checking: `extension/jsconfig.json` + `extension/types/chrome.d.ts`
 - Deterministic unpacked build: `extension/scripts/build.mjs`
 - Protocol schema/fixture validation: `scripts/validate_protocol.py`
-- Native CI covers Linux GCC, Linux Clang, macOS Clang, Windows MSVC, plus an ASan+UBSan job.
-- Native warning-as-error flags remain enforced by the NAT-01 CMake targets.
-- CI verification remains pending until this PR's workflow completes successfully and the change is merged.
+- Native CI runs `cargo fmt`, `cargo clippy`, and `cargo test --workspace` on Linux, macOS, and Windows with stable Rust, plus a Rust 1.85 minimum-version job and a cargo-fuzz smoke job.
+- Warnings fail CI through `RUSTFLAGS=-D warnings` and `cargo clippy -- -D warnings`.
+- Moves to VERIFIED once the Rust port merges.
 
 ---
 
@@ -416,14 +416,13 @@ Reached after **Milestone H**:
 **Status:** IMPLEMENTED — VERIFY
 
 **Implementation evidence**
-- Bounded frame API: `native/include/pervue/frame.h`
-- Native Messaging reader/writer: `native/framing/frame.c`
-- Host framing integration and deterministic error mapping: `native/host/host.c`
-- Unit coverage for normal, empty, maximum-size, oversized, truncated, EOF, invalid-argument, literal native-byte-order, and forced short-read/short-write cases: `native/tests/frame_test.c`
-- Host-level oversized/truncated framing checks: `native/tests/host_startup_test.c`
-- Opt-in Clang/libFuzzer harness with runtime capability probe and structured corpus generator: `native/fuzz/frame_reader_fuzz.c` + `native/fuzz/create_corpus.py`
+- Bounded Native Messaging reader/writer: `native/host/src/framing.rs`
+- Host framing integration and deterministic exit statuses: `native/host/src/host.rs`
+- Unit coverage for normal, empty, maximum-size, oversized, truncated, EOF, I/O-error, interrupted-read, literal native-byte-order, and forced short-read/short-write cases: `native/host/src/framing.rs`
+- Host-level oversized/truncated framing checks: `native/host/src/host.rs` + `native/host/tests/cli.rs`
+- cargo-fuzz harness and structured corpus generator: `native/fuzz/fuzz_targets/frame_reader.rs` + `native/fuzz/create_corpus.py`
 - Project frame cap: 1 MiB, enforced before payload allocation and before writes.
-- CI verification completed successfully on the merged implementation PR.
+- Ported from C to Rust (ADR-0001). Before the C sources were removed, the Rust host matched the C host byte-for-byte, including exit statuses, on about 2.3 million differential inputs. Moves to VERIFIED once the port merges.
 
 ### NAT-03 — Implement JSON validation and request router
 **Area:** Native  
@@ -443,16 +442,16 @@ Reached after **Milestone H**:
 **Status:** IMPLEMENTED — VERIFY
 
 **Implementation evidence**
-- Strict bounded JSON syntax reader: `native/protocol/json.c`
-- Protocol request model/API: `native/include/pervue/protocol.h`
-- Strict top-level and method-payload validation: `native/protocol/request.c`
-- Method router: `native/protocol/router.c`
-- Protocol event/error emission: `native/protocol/events.c`
-- Host emits exactly one `host.ready`, keeps running after malformed requests, and routes the local fake conversation provider: `native/host/host.c`
-- Parser/router/integration tests cover malformed JSON, duplicate/missing/extra/wrong fields, 128/129-character request-ID boundaries, escaped identifiers, unsupported versions, unknown methods, depth limits, recovered-ID malformed failures, invalid method payloads, and fake conversation dispatch: `native/tests/protocol_test.c`
-- Parser fuzz target + golden-derived corpus: `native/fuzz/protocol_fuzz.c` + `native/fuzz/create_protocol_corpus.py`
+- Strict bounded JSON syntax reader: `native/host/src/protocol/json.rs`
+- Protocol request model and strict top-level/method-payload validation: `native/host/src/protocol/request.rs`
+- Duplicate member names are rejected in every object of a method payload, compared after decoding escapes (v1 §1 rule 9): `native/host/src/protocol/request.rs` + `native/host/src/protocol/json.rs`
+- Method router: `native/host/src/protocol/router.rs`
+- Protocol event/error emission with the typed DOC-02 error and capability vocabulary: `native/host/src/protocol/events.rs`
+- Host emits exactly one `host.ready`, keeps running after malformed requests, and routes the local fake conversation provider: `native/host/src/host.rs`
+- Parser/router/integration tests cover malformed JSON, duplicate/missing/extra/wrong fields, 128/129-character request-ID boundaries, escaped identifiers, unsupported versions, unknown methods, depth limits, recovered-ID malformed failures, invalid method payloads, and fake conversation dispatch: `native/host/src/protocol/` + `native/host/src/host.rs`
+- Protocol fuzz target runs each input through the whole host and asserts every emitted frame is a JSON object; golden-derived corpus: `native/fuzz/fuzz_targets/protocol.rs` + `native/fuzz/create_protocol_corpus.py`
 - Built-host contract harness validates emitted frames against the frozen event/error/provider-status schemas and golden event sequences: `scripts/validate_host_protocol.py`
-- CI verification: full 8-job matrix green, including Windows/MSVC, ASan+UBSan, minimum CMake, host conformance, frame fuzzing, and 2,000 protocol-fuzzer smoke runs.
+- Ported from C to Rust (ADR-0001). Before the C sources were removed, the Rust host matched the C host byte-for-byte, including exit statuses, on about 2.3 million differential inputs. Moves to VERIFIED once the port merges.
 
 ### TST-02 — Build deterministic fake streaming provider
 **Area:** Testing  
@@ -474,15 +473,14 @@ Reached after **Milestone H**:
 **Status:** IMPLEMENTED — VERIFY
 
 **Implementation evidence**
-- Standalone native fake provider executable: `native/test_provider/fake_provider.c`
+- Standalone fake provider executable: `native/test_provider/src/main.rs`
 - Test-only mode contract/documentation: `native/test_provider/README.md`
-- Cross-platform behavior harness: `native/tests/check_fake_provider.cmake`
-- CMake/CTest integration: `native/CMakeLists.txt`
-- Harness verifies normal streaming, deliberately slow streaming with deterministic timeout/flush probes, stderr output, exit 42 with empty stdout, bounded timeout for hanging behavior, cancellation-ignore behavior, malformed output, exactly 2 MiB of large stdout, and invalid CLI shapes.
-- Windows stdin/stdout/stderr are switched to binary mode so fixture bytes are deterministic across platforms.
-- POSIX signal test proves `hang` terminates on SIGTERM while `ignore-cancel` survives SIGTERM until SIGKILL cleanup.
-- Fake-provider binaries are created only under `BUILD_TESTING=ON`, keeping test fixtures out of non-test builds.
-- Review-hardening CI run #40 is green across all 8 jobs, including GCC, Clang, macOS, Windows/MSVC, minimum CMake, ASan+UBSan, protocol, and extension checks; merge remains pending.
+- Cross-platform behavior tests: `native/test_provider/tests/modes.rs`
+- Tests verify normal streaming, deliberately slow streaming with deterministic timeout/flush probes, stderr output, exit 42 with empty stdout, bounded timeout for hanging behavior, cancellation-ignore behavior, malformed output, exactly 2 MiB of large stdout, and invalid CLI shapes.
+- Rust's standard streams pass bytes through unchanged on Windows pipes, so fixture bytes are deterministic across platforms without a binary-mode switch.
+- POSIX signal tests prove `hang` terminates on SIGTERM while `ignore-cancel` survives SIGTERM until SIGKILL cleanup: `native/test_provider/tests/signals.rs`
+- The fake provider is a separate workspace crate outside the default build, so `cargo build` produces only the host while `cargo test --workspace` builds and tests the fixture.
+- Ported from C to Rust (ADR-0001). Before they were removed, the original CMake mode harness and C signal test both passed against the Rust binary. Moves to VERIFIED once the port merges.
 
 ### EXT-02 — Implement service-worker Native Messaging connection manager
 **Area:** Extension  
@@ -1117,14 +1115,14 @@ Measure product-level responsiveness, not microbenchmarks.
 
 **Status:** BACKLOG
 
-### DOC-03 — Document reusable C ownership/API boundaries
+### DOC-03 — Document reusable library ownership/API boundaries
 **Area:** Documentation  
 **Dependencies:** LIB-01, LIB-02, LIB-03, LIB-04
 
 **Acceptance criteria**
 - Ownership/lifetime rules are explicit.
 - Error ownership and cleanup conventions are explicit.
-- Public vs internal headers are separated.
+- Public vs internal items are separated.
 - Extraction rule from the framework is documented beside the library.
 
 **Status:** BACKLOG
@@ -1135,7 +1133,7 @@ Measure product-level responsiveness, not microbenchmarks.
 
 **Exit proof for Milestone F**
 - Reusable library modules can be tested without launching the extension.
-- Sanitizer builds are green.
+- Library fuzz targets are green.
 - API/ABI compatibility policy is documented for packaged host releases.
 
 **Status:** BACKLOG
@@ -1392,7 +1390,7 @@ An implementation item is not `VERIFIED` unless all applicable conditions are tr
 - new protocol behavior has fixtures or contract tests;
 - new user-facing failure modes map to normalized errors;
 - native code has deterministic ownership/cleanup;
-- sanitizer-enabled native tests remain green where supported;
+- native fuzz smoke runs remain green;
 - documentation is updated when a public protocol/API/installer behavior changes.
 
 Documentation-only completion does not count as implementation completion unless the tracker item is explicitly documentation work.
@@ -1410,7 +1408,7 @@ Documentation-only completion does not count as implementation completion unless
 - [ ] Native host registration restricts the extension identity/origin.
 - [ ] UI escapes untrusted text/URLs safely.
 - [ ] Cancellation/timeout leaves no leaked native process/resource.
-- [ ] New C code follows centralized ownership/cleanup conventions.
+- [ ] New native code adds no `unsafe` (any exception documents its safety argument and has targeted tests).
 
 ---
 
