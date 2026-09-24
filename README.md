@@ -10,7 +10,7 @@ and, when deeper work is needed:
 
 > **Invoke → Ask → Deepen → Continue in full view**
 
-The initial architecture uses a thin Chrome Manifest V3 extension and a native C companion/host that bridges to authenticated AI runtimes such as Codex/OpenAI and Claude through a normalized provider interface.
+The initial architecture uses a thin Chrome Manifest V3 extension and a native Rust companion/host that bridges to authenticated AI runtimes such as Codex/OpenAI and Claude through a normalized provider interface.
 
 ## Project status
 
@@ -20,6 +20,7 @@ The repository is currently in the **planning / foundation** stage. Implementati
 
 - [Product & Engineering Framework](docs/product/browser-ai-extension-framework.md)
 - [Implementation Plan & Tracker](docs/product/browser-ai-implementation-plan-tracker.md)
+- [ADR-0001: Write the native host in Rust](docs/architecture/adr-0001-native-host-in-rust.md)
 
 The implementation tracker is the source of truth for work sequencing, dependencies, acceptance criteria, verification, and milestone status.
 
@@ -35,7 +36,7 @@ Chrome Extension
           │
           │ Chrome Native Messaging
           ▼
-Native C Host / Companion
+Native Rust Host / Companion
   ├─ Message framing
   ├─ Request router
   ├─ Provider registry
@@ -57,7 +58,7 @@ Build the product before extracting a framework:
 2. integrate one real provider;
 3. add conversation continuity and browser context;
 4. prove the provider abstraction with a second provider;
-5. only then extract reusable native C primitives.
+5. only then extract reusable native primitives into a library crate.
 
 See the tracker for the complete execution order.
 

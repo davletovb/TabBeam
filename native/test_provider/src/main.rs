@@ -1,0 +1,172 @@
+//! Test-only fake provider. See README.md for the mode contract.
+
+use std::ffi::{OsStr, OsString};
+use std::io::{self, BufRead, Read, Write};
+use std::path::Path;
+use std::process::ExitCode;
+use std::thread;
+use std::time::Duration;
+
+const EXIT_FAILURE: u8 = 1;
+const EXIT_NONZERO_MODE: u8 = 42;
+const EXIT_USAGE: u8 = 64;
+
+const LARGE_OUTPUT_SIZE: usize = 2 * 1024 * 1024;
+const SLOW_DELAY: Duration = Duration::from_millis(700);
+
+const NORMAL_LINES: [&str; 3] = [
+    r#"{"type":"delta","text":"alpha"}"#,
+    r#"{"type":"delta","text":" beta"}"#,
+    r#"{"type":"completed"}"#,
+];
+const READY_LINE: &str = r#"{"type":"ready"}"#;
+
+#[derive(Debug, Clone, Copy)]
+enum Mode {
+    Normal,
+    Slow,
+    Stderr,
+    ExitNonzero,
+    Hang,
+    IgnoreCancel,
+    Malformed,
+    Large,
+}
+
+impl Mode {
+    fn parse(name: &OsStr) -> Option<Self> {
+        Some(match name.to_str()? {
+            "normal" => Self::Normal,
+            "slow" => Self::Slow,
+            "stderr" => Self::Stderr,
+            "exit-nonzero" => Self::ExitNonzero,
+            "hang" => Self::Hang,
+            "ignore-cancel" => Self::IgnoreCancel,
+            "malformed" => Self::Malformed,
+            "large" => Self::Large,
+            _ => return None,
+        })
+    }
+}
+
+fn main() -> ExitCode {
+    let mut args = std::env::args_os();
+    let program = args
+        .next()
+        .unwrap_or_else(|| OsString::from("pervue-fake-provider"));
+    let arguments: Vec<OsString> = args.collect();
+
+    let mode = match arguments.as_slice() {
+        [flag, mode] if flag == OsStr::new("--mode") => Mode::parse(mode),
+        _ => None,
+    };
+    let Some(mode) = mode else {
+        let _ = writeln!(
+            io::stderr(),
+            "usage: {} --mode <normal|slow|stderr|exit-nonzero|hang|ignore-cancel|malformed|large>",
+            Path::new(&program).display()
+        );
+        return ExitCode::from(EXIT_USAGE);
+    };
+
+    match run(mode) {
+        Ok(status) => ExitCode::from(status),
+        Err(_) => ExitCode::from(EXIT_FAILURE),
+    }
+}
+
+fn run(mode: Mode) -> io::Result<u8> {
+    match mode {
+        Mode::Normal => stream_lines(false)?,
+        Mode::Slow => stream_lines(true)?,
+        Mode::Stderr => {
+            write_line(
+                &mut io::stderr(),
+                "fake-provider: deterministic stderr message",
+            )?;
+            stream_lines(false)?;
+        }
+        Mode::ExitNonzero => {
+            write_line(&mut io::stderr(), "fake-provider: exiting with status 42")?;
+            return Ok(EXIT_NONZERO_MODE);
+        }
+        Mode::Hang => {
+            write_line(&mut io::stdout(), READY_LINE)?;
+            hang_forever();
+        }
+        Mode::IgnoreCancel => {
+            // Ignore SIGTERM before announcing readiness so a supervisor that
+            // signals right after the ready line always hits the ignored state.
+            ignore_termination_signal()?;
+            write_line(&mut io::stdout(), READY_LINE)?;
+            if read_command().starts_with(b"cancel") {
+                write_line(&mut io::stderr(), "fake-provider: cancellation ignored")?;
+            }
+            hang_forever();
+        }
+        Mode::Malformed => write_line(&mut io::stdout(), "{not-json")?,
+        Mode::Large => write_large_output()?,
+    }
+    Ok(0)
+}
+
+/// Writes one line and flushes it so supervisors observe each line promptly.
+fn write_line<W: Write>(stream: &mut W, line: &str) -> io::Result<()> {
+    stream.write_all(line.as_bytes())?;
+    stream.write_all(b"\n")?;
+    stream.flush()
+}
+
+fn stream_lines(slow: bool) -> io::Result<()> {
+    let mut stdout = io::stdout();
+    for (index, line) in NORMAL_LINES.iter().enumerate() {
+        write_line(&mut stdout, line)?;
+        if slow && index + 1 < NORMAL_LINES.len() {
+            thread::sleep(SLOW_DELAY);
+        }
+    }
+    Ok(())
+}
+
+/// Emits exactly [`LARGE_OUTPUT_SIZE`] bytes with no newline.
+fn write_large_output() -> io::Result<()> {
+    let block = [b'x'; 4096];
+    let mut stdout = io::stdout().lock();
+    let mut remaining = LARGE_OUTPUT_SIZE;
+    while remaining > 0 {
+        let count = remaining.min(block.len());
+        stdout.write_all(&block[..count])?;
+        remaining -= count;
+    }
+    stdout.flush()
+}
+
+/// Reads one command line from stdin, up to 63 bytes.
+fn read_command() -> Vec<u8> {
+    let mut command = Vec::new();
+    // End of input or a read error both mean "no command".
+    let _ = io::stdin().lock().take(63).read_until(b'\n', &mut command);
+    command
+}
+
+fn hang_forever() -> ! {
+    loop {
+        thread::sleep(Duration::from_secs(1));
+    }
+}
+
+/// Keeps SIGTERM from terminating the process; only SIGKILL stops it.
+#[cfg(unix)]
+fn ignore_termination_signal() -> io::Result<()> {
+    use nix::sys::signal::{SigSet, Signal};
+
+    let mut signals = SigSet::empty();
+    signals.add(Signal::SIGTERM);
+    signals.thread_block().map_err(io::Error::from)
+}
+
+/// Windows has no catchable termination signal; `TerminateProcess` always wins.
+#[cfg(not(unix))]
+fn ignore_termination_signal() -> io::Result<()> {
+    Ok(())
+}

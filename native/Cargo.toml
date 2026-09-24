@@ -1,0 +1,16 @@
+[workspace]
+members = ["host", "test_provider"]
+# `cargo build` produces only the shippable host; the fake provider is a test
+# fixture and is built by `cargo test --workspace`.
+default-members = ["host"]
+exclude = ["fuzz"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0-dev"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
