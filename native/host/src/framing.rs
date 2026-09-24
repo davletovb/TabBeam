@@ -7,11 +7,10 @@
 
 use std::io::{self, Read, Write};
 
+use crate::limits::MAX_FRAME_SIZE;
+
 /// Size of the length prefix that precedes every payload.
 pub const PREFIX_SIZE: usize = 4;
-
-/// Largest payload accepted or emitted by the host (1 MiB).
-pub const MAX_FRAME_SIZE: usize = 1024 * 1024;
 
 /// Why a frame could not be read or written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

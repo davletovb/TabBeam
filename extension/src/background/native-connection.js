@@ -1,8 +1,22 @@
+import { MAX_NATIVE_MESSAGE_BYTES, utf8ByteLength } from "../shared/limits.js";
+
 export const NATIVE_HOST_NAME = "com.pervue.host";
 
 // Protocol v1 request-ID grammar (docs/protocol/v1.md §2). The host rejects any
 // other ID without being able to echo it back, so its route could never finish.
 export const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+
+/** A request larger than the native host accepts. Nothing was sent. */
+export class RequestTooLargeError extends RangeError {
+  /** @param {number} bytes */
+  constructor(bytes) {
+    super(
+      `request is ${bytes} bytes; the native host accepts at most ${MAX_NATIVE_MESSAGE_BYTES}`
+    );
+    this.name = "RequestTooLargeError";
+    this.bytes = bytes;
+  }
+}
 
 const TERMINAL_EVENTS = new Set([
   "response.completed",
@@ -142,13 +156,23 @@ export class NativeConnectionManager {
       throw new Error(`request_id already in flight: ${requestId}`);
     }
 
+    // The host echoes only an ID it read before a malformed or too-deep
+    // member (docs/protocol/v1.md §8.4), so request_id is serialized first.
+    const message = { request_id: requestId, ...request };
+
+    // Chrome sends JSON.stringify(message) as UTF-8. The host closes the whole
+    // connection on a frame over its limit, failing every request in flight,
+    // so an oversized or unserializable request fails here, on its own.
+    const bytes = utf8ByteLength(JSON.stringify(message));
+    if (bytes > MAX_NATIVE_MESSAGE_BYTES) {
+      throw new RequestTooLargeError(bytes);
+    }
+
     const port = this.ensurePort();
     this.routes.set(requestId, owner);
 
     try {
-      // The host echoes only an ID it read before a malformed or too-deep
-      // member (docs/protocol/v1.md §8.4), so request_id is serialized first.
-      port.postMessage({ request_id: requestId, ...request });
+      port.postMessage(message);
     } catch (error) {
       if (this.port === port) {
         this.handleDisconnect(

@@ -1,0 +1,7 @@
+# SEC-01: nothing from a request may become an executable path or a shell
+# command. The host starts no processes yet; the provider process manager
+# (NAT-04) will allow this in one place, starting only executables resolved
+# from the provider registry, with argument arrays.
+disallowed-methods = [
+    { path = "std::process::Command::new", reason = "only the provider process manager may start processes (SEC-01)" },
+]

@@ -148,7 +148,7 @@ Reached after **Milestone H**:
 | TST-02 | Build deterministic fake streaming provider | A | Testing | NAT-01 | IMPLEMENTED — VERIFY |
 | EXT-02 | Implement service-worker Native Messaging connection manager | A | Extension | EXT-01, DOC-01 | IMPLEMENTED — VERIFY |
 | EXT-03 | Implement minimal popup ask/stream UI | A | Extension | EXT-01, EXT-02 | IMPLEMENTED — VERIFY |
-| SEC-01 | Enforce browser/native trust-boundary limits | A | Security | NAT-02, NAT-03 | BACKLOG |
+| SEC-01 | Enforce browser/native trust-boundary limits | A | Security | NAT-02, NAT-03 | IMPLEMENTED — VERIFY |
 | OBS-01 | Add structured native lifecycle diagnostics | A | Observability | NAT-03, DOC-02 | BACKLOG |
 | TST-03 | Add extension ↔ host streamed round-trip integration test | A | Testing | TST-02, EXT-02, EXT-03, NAT-03 | BACKLOG |
 | NAT-04 | Implement provider process manager | B | Native | NAT-03 | BACKLOG |
@@ -548,7 +548,17 @@ Reached after **Milestone H**:
 - Untrusted values are never used as executable paths or shell command strings.
 - Invalid payloads fail before provider/process work begins.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- The host generates its Native Messaging manifest for exact extension IDs only (32 characters `a`–`p`; wildcards, patterns, and full origins are refused) and starts only for an exact `chrome-extension://<id>/` caller origin: `native/host/src/manifest.rs` + `native/host/src/main.rs`, tested in `native/host/src/manifest.rs` + `native/host/tests/cli.rs`
+- Frame, nesting, and request-ID limits defined once per side (`native/host/src/limits.rs`, `extension/src/shared/limits.js`) and recorded in `docs/protocol/native-messaging-v1.json`, which contract tests on both sides and the fuzz-corpus generator read
+- The extension refuses a request over the 1 MiB frame limit, or one JSON can't represent, before the native port opens or is used, so one bad request can't end the host for every request in flight. The popup reports `INVALID_REQUEST` / `REQUEST_TOO_LARGE` and pre-checks the question: `extension/src/background/native-connection.js`, `extension/src/background/ask-bridge.js`, `extension/src/popup/ask-form.js`, with manager, bridge, and popup tests
+- Provider IDs are compared exactly with the registry; path- and shell-like IDs are unknown providers (`native/host/src/host.rs` tests), and `native/host/clippy.toml` makes any `std::process::Command::new` in the host a CI error until NAT-04's process manager allows it in one place
+- A test feeds every validation failure kind through the host loop and shows none reaches a handler: `invalid_requests_never_reach_a_handler` in `native/host/src/host.rs`
+- Trust-boundary summary: `docs/security/trust-boundaries.md`
+- Checked in Chromium: the generated manifest admits the unpacked extension and one generated for another ID locks it out; a 2 MiB question is refused while the host keeps running, where on `main` it ended the host
+- Moves to VERIFIED once merged.
 
 ### OBS-01 — Add structured native lifecycle diagnostics
 **Area:** Observability  
@@ -1483,7 +1493,7 @@ Update this section whenever item statuses change.
 | Stage | Total | Verified | Implemented — Verify | In Progress | Ready | Backlog | Blocked | Deferred |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | Foundation | 5 | 0 | 5 | 0 | 0 | 0 | 0 | 0 |
-| A — Native round trip | 8 | 0 | 5 | 0 | 0 | 3 | 0 | 0 |
+| A — Native round trip | 8 | 0 | 6 | 0 | 0 | 2 | 0 | 0 |
 | B — First provider | 10 | 0 | 0 | 0 | 0 | 10 | 0 | 0 |
 | C — Conversation continuity | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
 | D — Browser context | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 |
@@ -1493,7 +1503,7 @@ Update this section whenever item statuses change.
 | G — Installable product | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 |
 | H — Search/citations | 8 | 0 | 0 | 0 | 0 | 8 | 0 | 0 |
 | Post-milestone | 6 | 0 | 0 | 0 | 0 | 4 | 0 | 2 |
-| **Total** | **81** | **0** | **10** | **0** | **0** | **69** | **0** | **2** |
+| **Total** | **81** | **0** | **11** | **0** | **0** | **68** | **0** | **2** |
 
 ### Milestone completion rule
 

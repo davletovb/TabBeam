@@ -9,7 +9,8 @@ import {
   REQUEST_ID_PATTERN,
   createNativeConnectionManager
 } from "../src/background/native-connection.js";
-import { ASK_PORT_NAME } from "../src/shared/ask-port.js";
+import { ASK_PORT_NAME, QUESTION_TOO_LONG } from "../src/shared/ask-port.js";
+import { MAX_NATIVE_MESSAGE_BYTES } from "../src/shared/limits.js";
 import { MockPort } from "./support/mock-port.mjs";
 
 const POPUP_URL = "chrome-extension://pervue-test/src/popup/index.html";
@@ -349,6 +350,26 @@ function errorOf(message) {
     });
     assert.equal(page.disconnectCalls, 1);
   }
+}
+
+{
+  // A question too large for the native host fails before a native port
+  // opens, as INVALID_REQUEST / REQUEST_TOO_LARGE.
+  const { manager, nativePorts, openPage } = makeWorker();
+  const page = openPage();
+  page.emitMessage({ type: "ask", text: "x".repeat(MAX_NATIVE_MESSAGE_BYTES) });
+
+  assert.equal(nativePorts.length, 0);
+  assert.equal(manager.pendingRequestCount, 0);
+  assert.equal(page.messages.length, 1);
+  assert.equal(page.messages[0].request_id, "req_test_1");
+  assert.deepEqual(errorOf(page.messages[0]), {
+    code: "INVALID_REQUEST",
+    reason: "REQUEST_TOO_LARGE",
+    message: QUESTION_TOO_LONG.message,
+    retryable: false
+  });
+  assert.equal(page.disconnectCalls, 1);
 }
 
 {

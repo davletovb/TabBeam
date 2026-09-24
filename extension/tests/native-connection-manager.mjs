@@ -5,8 +5,10 @@ import { fileURLToPath } from "node:url";
 import {
   NATIVE_HOST_NAME,
   REQUEST_ID_PATTERN,
+  RequestTooLargeError,
   createNativeConnectionManager
 } from "../src/background/native-connection.js";
+import { MAX_NATIVE_MESSAGE_BYTES } from "../src/shared/limits.js";
 
 class MockEvent {
   constructor() {
@@ -615,6 +617,84 @@ function request(id, method = "provider.status") {
     "request_id",
     "method"
   ]);
+}
+
+{
+  // A request is measured the way Chrome sends it: UTF-8 JSON with
+  // request_id first. The host closes the connection on a frame over its
+  // limit, so a request one byte over fails before the port opens.
+  /** @param {string} id @param {string} text */
+  const question = (id, text) => ({
+    version: 1,
+    type: "request",
+    request_id: id,
+    method: "conversation.send",
+    payload: { provider_id: "fake", input: { text } }
+  });
+  const overhead = new TextEncoder().encode(
+    JSON.stringify(question("req_size", ""))
+  ).byteLength;
+
+  const atLimit = makeHarness();
+  atLimit.manager.send(
+    question("req_size", "x".repeat(MAX_NATIVE_MESSAGE_BYTES - overhead))
+  );
+  assert.equal(atLimit.ports.length, 1);
+  assert.equal(atLimit.manager.pendingRequestCount, 1);
+
+  const { manager, ports } = makeHarness();
+  /** @type {unknown} */
+  let thrown;
+  try {
+    manager.send(
+      question("req_size", "x".repeat(MAX_NATIVE_MESSAGE_BYTES - overhead + 1))
+    );
+  } catch (error) {
+    thrown = error;
+  }
+  assert.ok(thrown instanceof RequestTooLargeError);
+  assert.equal(
+    /** @type {RequestTooLargeError} */ (thrown).bytes,
+    MAX_NATIVE_MESSAGE_BYTES + 1
+  );
+
+  // The limit is in bytes, not characters: two-byte characters overflow it
+  // with a string far shorter than the limit.
+  const twoByte = String.fromCharCode(0xe9);
+  const text = twoByte.repeat(Math.ceil((MAX_NATIVE_MESSAGE_BYTES - overhead + 1) / 2));
+  assert.ok(text.length < MAX_NATIVE_MESSAGE_BYTES);
+  assert.throws(() => manager.send(question("req_size", text)), RequestTooLargeError);
+
+  assert.equal(ports.length, 0);
+  assert.equal(manager.pendingRequestCount, 0);
+}
+
+{
+  // A request JSON can't represent fails on its own; it no longer reaches
+  // postMessage, where a throw would close the port under every other request.
+  const { manager, ports } = makeHarness();
+  manager.send(request("req_alive"));
+
+  assert.throws(
+    () => manager.send({ ...request("req_bigint"), payload: { count: 1n } }),
+    TypeError
+  );
+  assert.equal(ports.length, 1);
+  assert.equal(ports[0].disconnectCalls, 0);
+  assert.equal(manager.pendingRequestCount, 1);
+}
+
+{
+  // The host name and limits match the shared contract that the native host's
+  // tests also check (docs/protocol/native-messaging-v1.json).
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+  const contract = JSON.parse(
+    fs.readFileSync(path.join(root, "docs/protocol/native-messaging-v1.json"), "utf8")
+  );
+  assert.equal(NATIVE_HOST_NAME, contract.host_name);
+  assert.equal(MAX_NATIVE_MESSAGE_BYTES, contract.max_frame_bytes);
+  assert.ok(REQUEST_ID_PATTERN.test("a".repeat(contract.max_request_id_length)));
+  assert.ok(!REQUEST_ID_PATTERN.test("a".repeat(contract.max_request_id_length + 1)));
 }
 
 console.log("EXT-02 Native Messaging connection manager tests passed");

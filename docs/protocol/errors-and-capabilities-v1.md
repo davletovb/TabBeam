@@ -139,6 +139,8 @@ Required v1 protocol reasons include:
 - `DUPLICATE_REQUEST_ID`
 - `UNKNOWN_TARGET_REQUEST`
 
+The extension also reports `REQUEST_TOO_LARGE` when it refuses to send a request that would exceed the Native Messaging frame limit (SEC-01, `docs/protocol/native-messaging-v1.json`). The host never receives such a request.
+
 Default retryability: **false** unless the caller changes the request.
 
 ### `INTERNAL_ERROR`

@@ -15,7 +15,8 @@ export default [
         HTMLElement: "readonly",
         HTMLButtonElement: "readonly",
         HTMLFormElement: "readonly",
-        HTMLTextAreaElement: "readonly"
+        HTMLTextAreaElement: "readonly",
+        TextEncoder: "readonly"
       }
     },
     rules: {
@@ -34,6 +35,7 @@ export default [
         console: "readonly",
         globalThis: "readonly",
         process: "readonly",
+        TextEncoder: "readonly",
         URL: "readonly"
       }
     },

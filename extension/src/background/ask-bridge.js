@@ -1,4 +1,5 @@
-import { ASK_TERMINAL_EVENTS } from "../shared/ask-port.js";
+import { ASK_TERMINAL_EVENTS, QUESTION_TOO_LONG } from "../shared/ask-port.js";
+import { RequestTooLargeError } from "./native-connection.js";
 
 /** @typedef {import("../shared/ask-port.js").AskPort} AskPort */
 /** @typedef {import("./native-connection.js").RequestOwner} RequestOwner */
@@ -152,10 +153,15 @@ export function serveAskPort(port, options) {
         onDisconnect: ({ message }) =>
           forward(failed(requestId, hostDisconnectError(message)))
       });
-    } catch {
+    } catch (error) {
       // A post failure has already reported a disconnect; forward() ignores
       // anything after the first terminal event.
-      forward(failed(requestId, HOST_START_FAILED));
+      forward(
+        failed(
+          requestId,
+          error instanceof RequestTooLargeError ? QUESTION_TOO_LONG : HOST_START_FAILED
+        )
+      );
     }
   });
 }

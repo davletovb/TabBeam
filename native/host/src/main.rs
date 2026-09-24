@@ -3,10 +3,11 @@ use std::io::{self, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
+use pervue_host::manifest::{self, is_extension_origin};
 use pervue_host::{HOST_VERSION, host};
 
+const EXIT_IO: u8 = 2;
 const EXIT_USAGE: u8 = 64;
-const CHROME_EXTENSION_ORIGIN_PREFIX: &[u8] = b"chrome-extension://";
 const PARENT_WINDOW_PREFIX: &[u8] = b"--parent-window=";
 
 fn main() -> ExitCode {
@@ -20,14 +21,19 @@ fn main() -> ExitCode {
             let _ = writeln!(io::stdout(), "{HOST_VERSION}");
             return ExitCode::SUCCESS;
         }
+        [flag, extension_ids @ ..]
+            if flag == OsStr::new("--print-manifest") && !extension_ids.is_empty() =>
+        {
+            return print_manifest(extension_ids);
+        }
         // Chrome passes the caller origin first. On Windows it also passes
         // `--parent-window=<decimal handle>`, which is 0 when the caller is a
-        // service worker. Origin allowlisting is enforced by the Native
-        // Messaging registration and hardened by SEC-01/packaging work; here
-        // only the launch shape is checked.
-        [origin] if is_chrome_extension_origin(origin) => {}
+        // service worker. Chrome starts the host only for origins its manifest
+        // allows; the host still accepts nothing but an exact extension origin.
+        [origin] if is_extension_origin(origin.as_encoded_bytes()) => {}
         [origin, parent_window]
-            if is_chrome_extension_origin(origin) && is_parent_window_flag(parent_window) => {}
+            if is_extension_origin(origin.as_encoded_bytes())
+                && is_parent_window_flag(parent_window) => {}
         _ => return usage(&program),
     }
 
@@ -39,10 +45,36 @@ fn main() -> ExitCode {
     }
 }
 
-fn is_chrome_extension_origin(argument: &OsStr) -> bool {
-    let bytes = argument.as_encoded_bytes();
-    bytes.len() > CHROME_EXTENSION_ORIGIN_PREFIX.len()
-        && bytes.starts_with(CHROME_EXTENSION_ORIGIN_PREFIX)
+/// Prints the Native Messaging manifest that registers this executable for
+/// exactly `extension_ids`.
+fn print_manifest(extension_ids: &[OsString]) -> ExitCode {
+    let ids: Vec<String> = extension_ids
+        .iter()
+        .map(|id| id.to_string_lossy().into_owned())
+        .collect();
+    let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+
+    let host_path = match std::env::current_exe() {
+        Ok(path) => path,
+        Err(error) => {
+            let _ = writeln!(
+                io::stderr(),
+                "pervue-host: cannot locate this executable: {error}"
+            );
+            return ExitCode::from(EXIT_IO);
+        }
+    };
+
+    match manifest::manifest_json(&host_path, &ids) {
+        Ok(json) => match writeln!(io::stdout(), "{json}") {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(_) => ExitCode::from(EXIT_IO),
+        },
+        Err(error) => {
+            let _ = writeln!(io::stderr(), "pervue-host: {error}");
+            ExitCode::from(EXIT_USAGE)
+        }
+    }
 }
 
 /// Whether `argument` is `--parent-window=<decimal handle>`. Chrome prints the
@@ -61,7 +93,7 @@ fn is_parent_window_flag(argument: &OsStr) -> bool {
 fn usage(program: &OsStr) -> ExitCode {
     let _ = writeln!(
         io::stderr(),
-        "usage: {} [--version | chrome-extension://<extension-id>/ [--parent-window=<handle>]]",
+        "usage: {} [--version | --print-manifest <extension-id>... | chrome-extension://<extension-id>/ [--parent-window=<handle>]]",
         Path::new(program).display()
     );
     ExitCode::from(EXIT_USAGE)
