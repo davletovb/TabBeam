@@ -41,8 +41,14 @@ export function bindAskForm(elements, runtime) {
 
   input.addEventListener("keydown", (event) => {
     // Enter asks and Shift+Enter adds a line. An Enter that confirms an IME
-    // composition does neither.
-    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+    // composition does neither; some IMEs report that keypress only through
+    // the legacy keyCode 229.
+    if (
+      event.key === "Enter" &&
+      !event.shiftKey &&
+      !event.isComposing &&
+      event.keyCode !== 229
+    ) {
       event.preventDefault();
       form.requestSubmit();
     }

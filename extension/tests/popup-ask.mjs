@@ -144,7 +144,7 @@ function openPopup() {
     /**
      * Types into the input and presses Enter.
      * @param {string} text
-     * @param {{shiftKey?: boolean, isComposing?: boolean}} [modifiers]
+     * @param {{shiftKey?: boolean, isComposing?: boolean, keyCode?: number}} [modifiers]
      */
     ask(text, modifiers = {}) {
       elements.input.value = text;
@@ -215,7 +215,7 @@ function hostEvent(event, payload = {}) {
 
 {
   // Shift+Enter adds a line, and Enter that ends an IME composition is not a
-  // submit.
+  // submit, whether the composition shows in isComposing or in keyCode 229.
   const popup = openPopup();
 
   const shiftEnter = popup.ask("line one", { shiftKey: true });
@@ -223,6 +223,9 @@ function hostEvent(event, payload = {}) {
 
   const composing = popup.ask("日本", { isComposing: true });
   assert.equal(composing.defaultPrevented, false);
+
+  const legacyComposing = popup.ask("日本", { keyCode: 229 });
+  assert.equal(legacyComposing.defaultPrevented, false);
 
   assert.equal(popup.ports.length, 0);
 }
