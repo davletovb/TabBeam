@@ -111,6 +111,7 @@ function openPopup() {
   const connectInfos = [];
   /** @type {Error | null} */
   let connectError = null;
+  let postThrows = false;
 
   const runtime = {
     /** @param {{name: string}} connectInfo */
@@ -120,6 +121,7 @@ function openPopup() {
         throw connectError;
       }
       const port = new MockPort(connectInfo.name);
+      port.throwOnPost = postThrows;
       ports.push(port);
       return port;
     }
@@ -134,6 +136,10 @@ function openPopup() {
     /** @param {Error | null} error */
     failConnect(error) {
       connectError = error;
+    },
+    /** @param {boolean} value whether new ports throw on postMessage */
+    failPost(value) {
+      postThrows = value;
     },
     /**
      * Types into the input and presses Enter.
@@ -417,6 +423,31 @@ function hostEvent(event, payload = {}) {
   popup.failConnect(null);
   popup.ask("Worker back");
   assert.equal(popup.ports.length, 1);
+  assert.equal(popup.busy, true);
+}
+
+{
+  // If the first postMessage throws (in Chrome, for example, a question over
+  // the 64 MiB message limit), the question fails instead of leaving the
+  // popup busy, and the next question gets a new port.
+  const popup = openPopup();
+  popup.failPost(true);
+  popup.ask("Too large to send");
+
+  assert.equal(popup.ports.length, 1);
+  assert.equal(
+    popup.statusText,
+    "Pervue's background service stopped. Reopen the popup and try again."
+  );
+  assert.equal(popup.statusState, "failed");
+  assert.equal(popup.busy, false);
+  assert.equal(popup.answer.getAttribute("aria-busy"), "false");
+  assert.equal(popup.ports[0].disconnectCalls, 1);
+
+  popup.failPost(false);
+  popup.ask("Small enough");
+  assert.equal(popup.ports.length, 2);
+  assert.deepEqual(popup.ports[1].messages, [{ type: "ask", text: "Small enough" }]);
   assert.equal(popup.busy, true);
 }
 

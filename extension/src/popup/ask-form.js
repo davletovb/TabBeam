@@ -89,7 +89,13 @@ export function bindAskForm(elements, runtime) {
         finish(port, WORKER_LOST, "failed");
       }
     });
-    port.postMessage({ type: "ask", text });
+    try {
+      port.postMessage({ type: "ask", text });
+    } catch {
+      // No events will follow a question the port couldn't carry, such as
+      // one over Chrome's 64 MiB message limit, so fail it now.
+      finish(port, WORKER_LOST, "failed");
+    }
   }
 
   /**
