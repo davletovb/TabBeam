@@ -54,6 +54,12 @@ class FakeElement {
     /** @param {Record<string, any>} next */
     async set(next) { Object.assign(values, next); }
   };
+  /** @type {((changes: Record<string, any>, area: string) => void)[]} */
+  const changeListeners = [];
+  const storageChanges = {
+    /** @param {(changes: Record<string, any>, area: string) => void} callback */
+    addListener(callback) { changeListeners.push(callback); }
+  };
   const root = new FakeElement();
   const select = new FakeElement();
 
@@ -62,7 +68,8 @@ class FakeElement {
   await bindThemeSelect(
     /** @type {any} */ (select),
     storage,
-    /** @type {any} */ (root)
+    /** @type {any} */ (root),
+    storageChanges
   );
   assert.equal(select.value, "system");
 
@@ -78,6 +85,10 @@ class FakeElement {
     "dark"
   );
   assert.equal(secondRoot.getAttribute("data-theme"), "dark");
+
+  changeListeners[0]({ [THEME_STORAGE_KEY]: { newValue: "light" } }, "local");
+  assert.equal(select.value, "light");
+  assert.equal(root.getAttribute("data-theme"), "light");
 }
 
 {
