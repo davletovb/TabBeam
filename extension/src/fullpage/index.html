@@ -8,9 +8,19 @@
   </head>
   <body>
     <main class="page-shell">
-      <header>
-        <p class="eyebrow">Pervue</p>
-        <h1>Conversation</h1>
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Pervue</p>
+          <h1>Conversation</h1>
+        </div>
+        <label class="theme-control" for="theme-select">
+          <span>Theme</span>
+          <select id="theme-select" aria-label="Theme">
+            <option value="system">System</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        </label>
       </header>
       <nav class="conversation-nav" aria-label="Conversations">
         <label for="recent-conversations">Recent conversations</label>
@@ -22,9 +32,13 @@
       <form id="ask-form" class="composer">
         <label for="ask-input">Ask a follow-up</label>
         <textarea id="ask-input" rows="4" placeholder="Ask anything…"></textarea>
-        <button id="ask-submit" type="submit" aria-disabled="false">Ask</button>
+        <div class="request-actions">
+          <button id="ask-submit" type="submit" aria-disabled="false">Ask</button>
+          <button id="ask-cancel" class="secondary" type="button" hidden>Stop</button>
+          <button id="ask-retry" class="secondary" type="button" hidden>Retry</button>
+        </div>
       </form>
-      <p id="status" class="status" role="status" aria-live="polite"></p>
+      <p id="status" class="status" role="status" aria-live="polite" aria-atomic="true"></p>
     </main>
     <script type="module" src="./fullpage.js"></script>
   </body>
