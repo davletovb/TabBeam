@@ -1,5 +1,7 @@
 //! Protocol-v1 request validation (`docs/protocol/v1.md` §1, §2, §5, §8).
 
+use std::borrow::Cow;
+
 use super::PROTOCOL_VERSION;
 use super::json::{JsonError, JsonStr, Reader};
 use crate::limits::MAX_REQUEST_ID_LENGTH;
@@ -17,6 +19,12 @@ impl<'a> RequestId<'a> {
     /// The ID exactly as it appeared between the quotes of the request.
     pub fn raw(self) -> &'a [u8] {
         self.0.raw()
+    }
+
+    /// The ID with any escapes resolved. Validation limits it to
+    /// `[A-Za-z0-9][A-Za-z0-9._:-]*`.
+    pub fn decode(self) -> Cow<'a, str> {
+        self.0.decode()
     }
 
     fn parse(token: JsonStr<'a>) -> Option<Self> {
@@ -46,6 +54,17 @@ pub enum Method<'a> {
     },
 }
 
+impl Method<'_> {
+    /// The method's protocol name.
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::ConversationSend { .. } => "conversation.send",
+            Self::ProviderStatus { .. } => "provider.status",
+            Self::RequestCancel { .. } => "request.cancel",
+        }
+    }
+}
+
 /// Why a request was rejected. Each kind maps to one `INVALID_REQUEST` reason.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FailureKind {
@@ -54,6 +73,19 @@ pub enum FailureKind {
     InvalidPayload,
     UnknownMethod,
     UnsupportedVersion,
+}
+
+impl FailureKind {
+    /// The `INVALID_REQUEST` reason reported for this kind (DOC-02).
+    pub const fn reason(self) -> &'static str {
+        match self {
+            Self::Malformed => "MALFORMED_MESSAGE",
+            Self::InvalidEnvelope => "INVALID_ENVELOPE",
+            Self::InvalidPayload => "INVALID_PAYLOAD",
+            Self::UnknownMethod => "UNKNOWN_METHOD",
+            Self::UnsupportedVersion => "UNSUPPORTED_PROTOCOL_VERSION",
+        }
+    }
 }
 
 /// A rejected request.
