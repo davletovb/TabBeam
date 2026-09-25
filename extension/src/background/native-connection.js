@@ -74,8 +74,10 @@ export class NativeConnectionManager {
     this.getLastError = options.getLastError ?? (() => null);
     this.reportError =
       options.reportError ??
-      ((context, error) => {
-        console.error(`Pervue native connection: ${context} failed`, error);
+      ((_context, _error) => {
+        // Callback errors may contain page text in their messages or stacks.
+        // Default diagnostics record the failure only, never raw content.
+        console.error("Pervue native connection callback failed.");
       });
 
     /** @type {NativePort | null} */

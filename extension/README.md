@@ -15,8 +15,8 @@ The current foundation provides:
 - full-page extension route;
 - MV3 module service worker;
 - HTTP/HTTPS content script for explicit selection and readable-page capture;
-- keyboard-command scaffold;
-- context-menu scaffold;
+- keyboard shortcut to the focused popup composer;
+- selection and current-page context-menu actions;
 - service-worker-owned Native Messaging connection manager;
 - popup ask/stream UI backed by the native host;
 - dependency-free smoke/lifecycle validation.
@@ -57,7 +57,9 @@ The popup asks the native host one question at a time and streams the answer bac
 
 The popup starts with **No context**. To attach context, click **Use selection** after selecting text on the page, or **Use this page** to extract readable text. The popup shows the page title, sanitized URL, a text preview, and whether capture was truncated. Press **Ask** to send the question and the chosen context together; **No context** clears it. A fresh popup starts without context. No capture happens on popup open or a normal Ask.
 
-The content script responds only to explicit capture messages. Selection supports regular text and focused text-field selections, up to 16 KiB of UTF-8. Page extraction prefers readable text from `main` or `article`, falls back to `body` when those are empty, skips scripts, navigation, hidden content, and form/editable surfaces, and stops at 64 KiB of UTF-8 or 5,000 text nodes in total. Capture is limited to the top frame. The service worker checks the response size again, gets the active tab's title and URL, keeps at most 256 title code points and 2,048 URL bytes, removes URL credentials, query, and fragment, and rejects unsupported pages. Failed capture leaves Ask usable without context. Permission and unavailability outcomes use `CONTEXT_UNAVAILABLE`, and site access is used only for the explicit popup action; the choice is not persisted.
+Right-click selected text and choose **Ask Pervue about selection**, or right-click a page and choose **Ask Pervue about this page**. The menu opens the popup with that context previewed; it does not ask automatically. Chrome's menu selection includes text selected within frames. The handoff belongs to the clicked tab, expires after 30 seconds, and can be claimed once. If Chrome cannot open the action popup, the same composer opens in a tab with only an opaque handoff token in its URL. **Alt+Shift+P** (or **Command+Shift+P** on macOS) invokes the popup directly and focuses the input; Chrome users can change the shortcut under `chrome://extensions/shortcuts`.
+
+The content script responds only to explicit capture messages. Selection supports regular text and focused text-field selections, up to 16 KiB of UTF-8. Page extraction prefers readable text from `main` or `article`, falls back to `body` when those are empty, skips scripts, navigation, hidden content, and form/editable surfaces, and stops at 64 KiB of UTF-8, 5,000 text nodes, or 512 Ki UTF-16 units examined in total. Direct popup capture is limited to the top frame; the menu selection comes from Chrome's click event. The service worker checks the response size again, gets the tab's title and URL, keeps at most 256 title code points and 2,048 URL bytes, removes URL credentials, query, and fragment, and rejects unsupported pages. Failed capture leaves Ask usable without context. Permission and unavailability outcomes use `CONTEXT_UNAVAILABLE`, and site access is used only for explicit popup/menu actions; the choice is not persisted. Page/provider output is rendered as text, and callback errors omit raw content from logs.
 
 ### Trying it against the local host
 

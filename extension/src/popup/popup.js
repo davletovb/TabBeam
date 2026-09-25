@@ -1,5 +1,6 @@
 import { bindAskForm } from "./ask-form.js";
 import { bindContextControls } from "./context-controls.js";
+import { preloadMenuContext } from "./menu-preload.js";
 
 /**
  * @template {HTMLElement} T
@@ -25,6 +26,7 @@ const contextControls = bindContextControls(
   },
   chrome.runtime
 );
+void preloadMenuContext(chrome.runtime, contextControls, window.location.search);
 
 bindAskForm(
   {

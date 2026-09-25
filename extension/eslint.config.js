@@ -8,6 +8,7 @@ export default [
         chrome: "readonly",
         console: "readonly",
         crypto: "readonly",
+        Date: "readonly",
         document: "readonly",
         window: "readonly",
         URL: "readonly",
@@ -17,7 +18,8 @@ export default [
         HTMLFormElement: "readonly",
         HTMLTextAreaElement: "readonly",
         TextEncoder: "readonly",
-        NodeFilter: "readonly"
+        NodeFilter: "readonly",
+        WeakMap: "readonly"
       }
     },
     rules: {

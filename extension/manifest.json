@@ -29,12 +29,11 @@
     }
   ],
   "commands": {
-    "open-pervue-full-page": {
+    "_execute_action": {
       "suggested_key": {
         "default": "Alt+Shift+P",
         "mac": "Command+Shift+P"
-      },
-      "description": "Open the Pervue full-page surface"
+      }
     }
   }
 }
