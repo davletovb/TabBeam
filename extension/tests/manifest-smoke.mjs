@@ -17,7 +17,8 @@ assert.equal(manifest.background.type, "module");
 assert.ok(manifest.permissions.includes("contextMenus"));
 assert.ok(manifest.permissions.includes("nativeMessaging"));
 assert.ok(manifest.permissions.includes("activeTab"));
-assert.ok(manifest.commands["open-pervue-full-page"]);
+assert.ok(manifest.commands._execute_action?.suggested_key);
+assert.equal(manifest.commands["open-pervue-full-page"], undefined);
 const popupMarkup = fs.readFileSync(path.join(root, manifest.action.default_popup), "utf8");
 for (const id of ["context-none", "context-selection", "context-page", "context-preview"]) {
   assert.ok(popupMarkup.includes(`id="${id}"`), `missing popup context control: ${id}`);
@@ -34,9 +35,11 @@ const referencedFiles = [
   "src/background/native-connection.js",
   "src/background/ask-bridge.js",
   "src/background/selection-capture.js",
+  "src/background/entry-actions.js",
   "src/shared/ask-port.js",
   "src/shared/limits.js",
   "src/popup/context-controls.js",
+  "src/popup/menu-preload.js",
   "src/popup/ask-form.js",
   "src/fullpage/index.html",
   "src/popup/popup.js",
@@ -59,6 +62,8 @@ const listeners = {
 };
 
 let nativeConnectCalls = 0;
+/** @type {any[]} */
+const menuItems = [];
 
 globalThis.chrome = /** @type {any} */ ({
   runtime: {
@@ -90,8 +95,9 @@ globalThis.chrome = /** @type {any} */ ({
         listeners.contextMenuClicks.push(fn)
     },
     removeAll: async () => {},
-    create: () => 1
+    create: (/** @type {any} */ properties) => { menuItems.push(properties); return properties.id; }
   },
+  action: { openPopup: async () => {} },
   tabs: {
     create: async () => ({ id: 1 })
   }
@@ -105,8 +111,13 @@ assert.equal(nativeConnectCalls, 0);
 assert.equal(listeners.installed.length, 1);
 assert.equal(listeners.connects.length, 1);
 assert.equal(listeners.messages.length, 1);
-assert.equal(listeners.commands.length, 1);
+assert.equal(listeners.commands.length, 0, "the reserved action command opens the popup in Chrome");
 assert.equal(listeners.contextMenuClicks.length, 1);
+await listeners.installed[0]();
+assert.deepEqual(menuItems.map(({ id, contexts }) => ({ id, contexts })), [
+  { id: "pervue-use-selection", contexts: ["selection"] },
+  { id: "pervue-use-page", contexts: ["page"] }
+]);
 
 /** @type {any} */
 let healthResponse;

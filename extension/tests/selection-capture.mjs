@@ -9,7 +9,7 @@ import {
   handleContextCapture
 } from "../src/background/selection-capture.js";
 import { bindContextControls } from "../src/popup/context-controls.js";
-import { MAX_PAGE_BYTES, MAX_PAGE_TEXT_NODES, MAX_SELECTION_BYTES } from "../src/shared/limits.js";
+import { MAX_PAGE_BYTES, MAX_PAGE_SCAN_CHARS, MAX_PAGE_TEXT_NODES, MAX_SELECTION_BYTES } from "../src/shared/limits.js";
 
 const source = fs.readFileSync(
   path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../src/content/content-script.js"),
@@ -46,6 +46,9 @@ function contentScript() {
   };
   const window = {
     location: { href: "https://example.com/" },
+    getComputedStyle(/** @type {any} */ element) {
+      return { display: element.cssHidden ? "none" : "block", visibility: "visible" };
+    },
     getSelection() {
       reads += 1;
       return { toString: () => selection };
@@ -64,10 +67,10 @@ function contentScript() {
     document,
     get reads() { return reads; },
     setSelection(/** @type {string} */ value) { selection = value; },
-    setNodes(/** @type {{text: string, excluded?: boolean, editable?: boolean}[]} */ entries) {
-      nodes = entries.map(({ text, excluded, editable }) => ({
+    setNodes(/** @type {{text: string, excluded?: boolean, editable?: boolean, cssHidden?: boolean}[]} */ entries) {
+      nodes = entries.map(({ text, excluded, editable, cssHidden }) => ({
         nodeValue: text,
-        parentElement: { isContentEditable: editable === true, closest: () => excluded ? {} : null }
+        parentElement: { isContentEditable: editable === true, cssHidden, closest: () => excluded ? {} : null }
       }));
     },
     setMainNodes(/** @type {{text: string, excluded?: boolean}[] | null} */ entries) {
@@ -149,6 +152,13 @@ function contentScript() {
   assert.equal(nodeCap.truncated, true);
   page.setNodes([{ text: "hidden", excluded: true }]);
   assert.equal(page.request("pervue.page.read").reason, "PAGE_EXTRACTION_FAILED");
+  page.setNodes([{ text: "CSS secret", cssHidden: true }, { text: "Visible paragraph" }]);
+  assert.equal(page.request("pervue.page.read").text, "Visible paragraph");
+  page.setNodes([{ text: "First" }, { text: " ".repeat(MAX_PAGE_SCAN_CHARS) + "hidden tail" }]);
+  const scanCap = page.request("pervue.page.read");
+  assert.equal(scanCap.text, "First");
+  assert.equal(scanCap.truncated, true);
+  assert.ok(!scanCap.text.includes("hidden tail"));
 }
 
 {
@@ -306,6 +316,24 @@ function workerRequest(message, sender, tabs) {
   });
   await stale;
   assert.equal(state.getContext(), null, "clearing during a read must discard its late reply");
+
+  const finishHandoff = state.beginMenuHandoff();
+  assert.equal(state.isPending(), true);
+  assert.equal(controls.selection.disabled, false, "the menu handoff must not block an explicit choice");
+  assert.equal(controls.page.disabled, false);
+  const replacement = clicks.selection();
+  assert.equal(calls, 3, "the explicit choice starts a fresh capture");
+  finishHandoff({
+    available: true,
+    result: { ok: true, context: { mode: "page", text: "stale menu context", page: { title: "X", url: "https://example.com" } } }
+  });
+  assert.equal(state.isPending(), true, "a late menu result cannot finish the explicit capture");
+  resolveCapture({
+    ok: true, context: { mode: "selection", text: "fresh selection", page: { title: "X", url: "https://example.com" } }
+  });
+  await replacement;
+  assert.equal(state.getContext().text, "fresh selection");
+  assert.equal(state.isPending(), false);
 }
 
 console.log("CTX-01/02/03/04 browser-context capture tests passed");

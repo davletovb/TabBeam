@@ -5,8 +5,18 @@ import {
   createNativeConnectionManager
 } from "./native-connection.js";
 import { handleContextCapture } from "./selection-capture.js";
+import {
+  MENU_CONSUME_MESSAGE,
+  MENU_PAGE_ID,
+  MENU_SELECTION_ID,
+  createEntryActions
+} from "./entry-actions.js";
 
-const MENU_ID = "pervue-open-full-page";
+const entryActions = createEntryActions({
+  tabs: chrome.tabs,
+  action: chrome.action,
+  popupUrl: chrome.runtime.getURL("src/popup/index.html")
+});
 
 const nativeConnectionManager = createNativeConnectionManager({
   connectNative: (hostName) => chrome.runtime.connectNative(hostName),
@@ -25,26 +35,21 @@ async function openFullPage(entry) {
 chrome.runtime.onInstalled.addListener(async () => {
   await chrome.contextMenus.removeAll();
   chrome.contextMenus.create({
-    id: MENU_ID,
-    title: "Open in Pervue",
-    contexts: ["page", "selection"]
+    id: MENU_SELECTION_ID,
+    title: "Ask Pervue about selection",
+    contexts: ["selection"]
+  });
+  chrome.contextMenus.create({
+    id: MENU_PAGE_ID,
+    title: "Ask Pervue about this page",
+    contexts: ["page"]
   });
 });
 
-chrome.commands.onCommand.addListener(
-  async (/** @type {string} */ command) => {
-    if (command === "open-pervue-full-page") {
-      await openFullPage("command");
-    }
-  }
-);
-
 chrome.contextMenus.onClicked.addListener(
-  async (/** @type {{ menuItemId: string | number }} */ info) => {
-    if (info.menuItemId === MENU_ID) {
-      await openFullPage("context-menu");
-    }
-  }
+  (/** @type {{menuItemId: string | number, selectionText?: string}} */ info,
+    /** @type {{id?: number, url?: string, title?: string} | undefined} */ tab) =>
+    entryActions.onMenuClick(info, tab)
 );
 
 chrome.runtime.onMessage.addListener(
@@ -60,6 +65,10 @@ chrome.runtime.onMessage.addListener(
         version: chrome.runtime.getManifest().version
       });
       return;
+    }
+    if (message?.type === MENU_CONSUME_MESSAGE) {
+      entryActions.consume(message, sender).then(sendResponse);
+      return true;
     }
     return handleContextCapture(
       message,
@@ -87,7 +96,8 @@ chrome.runtime.onConnect.addListener(
 );
 
 export {
-  MENU_ID,
+  MENU_PAGE_ID,
+  MENU_SELECTION_ID,
   NATIVE_HOST_NAME,
   nativeConnectionManager,
   openFullPage

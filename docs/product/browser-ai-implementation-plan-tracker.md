@@ -172,11 +172,11 @@ Reached after **Milestone H**:
 | CTX-02 | Capture current-tab title/URL metadata | D | Context | EXT-01 | IMPLEMENTED — VERIFY |
 | CTX-03 | Implement bounded readable-page extraction | D | Context | CTX-02 | IMPLEMENTED — VERIFY |
 | CTX-04 | Implement explicit page-context permission/intent policy | D | Context / Security | CTX-01, CTX-03 | IMPLEMENTED — VERIFY |
-| EXT-08 | Add context mode/control to popup request flow | D | Extension | CTX-01, CTX-03, CTX-04, EXT-05 | BACKLOG |
-| EXT-09 | Add selection/current-page context-menu actions | D | Extension | CTX-01, CTX-03 | BACKLOG |
-| EXT-10 | Add keyboard command entry path | D | Extension | EXT-03 | BACKLOG |
-| SEC-03 | Add context size limits, minimization, and safe UI/log handling | D | Security | CTX-03, CTX-04 | BACKLOG |
-| TST-07 | Add browser-context extraction and permission tests | D | Testing | CTX-01, CTX-03, CTX-04 | BACKLOG |
+| EXT-08 | Add context mode/control to popup request flow | D | Extension | CTX-01, CTX-03, CTX-04, EXT-05 | BLOCKED |
+| EXT-09 | Add selection/current-page context-menu actions | D | Extension | CTX-01, CTX-03 | IMPLEMENTED — VERIFY |
+| EXT-10 | Add keyboard command entry path | D | Extension | EXT-03 | IMPLEMENTED — VERIFY |
+| SEC-03 | Add context size limits, minimization, and safe UI/log handling | D | Security | CTX-03, CTX-04 | IMPLEMENTED — VERIFY |
+| TST-07 | Add browser-context extraction and permission tests | D | Testing | CTX-01, CTX-03, CTX-04 | IMPLEMENTED — VERIFY |
 | EXT-11 | Add light/dark/system theme support | MVP closure | Extension | EXT-03, EXT-06 | BACKLOG |
 | EXT-12 | Add response cancellation and retry UX | MVP closure | Extension | PRO-04, EXT-05 | BACKLOG |
 | EXT-13 | Add companion health/install state UX | MVP closure | Extension | EXT-04 | BACKLOG |
@@ -972,7 +972,7 @@ Reached after **Milestone H**:
 - Popup can initiate Ask, Selection, and This Page behavior without cluttering the command surface.
 - Attached context is visible enough that the user understands what will be sent.
 
-**Status:** BACKLOG
+**Status:** BLOCKED — awaiting EXT-05 popup follow-up flow
 
 **Existing foundation**
 - CTX-01–04 already provide the popup's No context, Use selection, and Use this page controls, capture preview, and structured context on the first Ask. This item remains for the EXT-05 follow-up flow and its context behavior; reuse those controls rather than rebuilding them.
@@ -986,7 +986,11 @@ Reached after **Milestone H**:
 - Current-page action preloads/starts a This Page interaction.
 - No accidental duplicate popup/full-page conversations are created.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- Dedicated selection/page menu items prepare bounded context from the clicked tab, open the popup, and hand off the result once. The selection uses Chrome's click-event text, including frame selections; the page action requests top-frame readable text. No question is sent on a menu click: `extension/src/background/entry-actions.js`, `extension/src/background/selection-capture.js`, `extension/src/popup/menu-preload.js`.
+- The handoff is short-lived in worker memory and restricted to the originating active tab or a one-time opaque fallback-tab token. `extension/tests/browser-context-journey.mjs` exercises both actions, the fallback, rejection of unauthorized claims, and exactly one Ask request.
 
 ### EXT-10 — Add keyboard command entry path
 **Area:** Extension  
@@ -997,7 +1001,10 @@ Reached after **Milestone H**:
 - Focus lands in the input.
 - Workflow is usable without mouse.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- The MV3 `_execute_action` shortcut opens the working popup instead of the placeholder full-page route; the ask form focuses the input on load. `extension/manifest.json`, `extension/src/popup/ask-form.js`, and `extension/tests/manifest-smoke.mjs` / `extension/tests/browser-context-journey.mjs` cover registration and keyboard-ready focus. Browser shortcut assignment remains user-configurable.
 
 ### SEC-03 — Add context size limits, minimization, and safe UI/log handling
 **Area:** Security  
@@ -1009,7 +1016,11 @@ Reached after **Milestone H**:
 - UI rendering escapes untrusted page/provider text safely.
 - URL/title/text are treated as untrusted data end to end.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `extension/src/shared/limits.js` owns extension context limits (16 KiB selection, 64 KiB page, 5,000 text nodes, 512 Ki UTF-16 units scanned). The classic content script mirrors those values because it cannot import an ES module; the background and ask bridge enforce the byte limits again. Menu selections are bounded and repaired before handoff.
+- The worker retains menu content only for a one-time, 30-second handoff; raw content is absent from URLs and logs. Native callback logging omits exception messages/stacks. Untrusted context and provider output render with `textContent`/text nodes, and sanitized tab metadata excludes URL credentials, query, and fragment. `extension/tests/browser-context-journey.mjs` covers these boundaries.
 
 ### TST-07 — Add browser-context extraction and permission tests
 **Area:** Testing  
@@ -1022,7 +1033,11 @@ Reached after **Milestone H**:
 - Oversized content truncates safely.
 - Ask mode does not send page text when context is off.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `extension/tests/selection-capture.mjs` covers lazy selection/page extraction, byte/node/scan bounds, Unicode, unsupported pages, permission denials, and clearing a stale capture.
+- `extension/tests/browser-context-journey.mjs` drives menu click → popup handoff → Ask → native request for selection/current page, verifies an ordinary No context Ask sends no page text, and checks unsupported/oversized responses and one-time intent. Browser verification remains before `VERIFIED`.
 
 ---
 
@@ -1596,14 +1611,14 @@ Update this section whenever item statuses change.
 | A — Native round trip | 8 | 0 | 8 | 0 | 0 | 0 | 0 | 0 |
 | B — First provider | 10 | 0 | 6 | 0 | 0 | 4 | 0 | 0 |
 | C — Conversation continuity | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
-| D — Browser context | 9 | 0 | 4 | 0 | 0 | 5 | 0 | 0 |
+| D — Browser context | 9 | 0 | 8 | 0 | 0 | 0 | 1 | 0 |
 | MVP closure | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
 | E — Second provider | 5 | 0 | 0 | 0 | 0 | 5 | 0 | 0 |
 | F — Reusable native core | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
 | G — Installable product | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 |
 | H — Search/citations | 8 | 0 | 0 | 0 | 0 | 8 | 0 | 0 |
 | Post-milestone | 6 | 0 | 0 | 0 | 0 | 4 | 0 | 2 |
-| **Total** | **81** | **0** | **23** | **0** | **0** | **56** | **0** | **2** |
+| **Total** | **81** | **0** | **27** | **0** | **0** | **51** | **1** | **2** |
 
 ### Milestone completion rule
 
