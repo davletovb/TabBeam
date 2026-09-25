@@ -45,6 +45,7 @@ class Form extends Element {
 globalThis.performance.clearMeasures();
 
 const popupStarted = globalThis.performance.now();
+/** @type {MockPort[]} */
 const ports = [];
 const elements = {
   form: new Form(),
