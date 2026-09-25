@@ -14,7 +14,7 @@ export function sanitizedFailure(error) {
   }
   return {
     code: error.code,
-    reason: error.reason.slice(0, 96),
+    reason: /^[A-Z][A-Z0-9_]{0,63}$/.test(error.reason) ? error.reason : "UNKNOWN",
     retryable: error.retryable
   };
 }
@@ -32,7 +32,9 @@ export function sanitizedHostReady(event) {
     return null;
   }
   return {
-    version: event.payload.host_version,
+    version: /^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/.test(event.payload.host_version)
+      ? event.payload.host_version
+      : "unknown",
     protocol_versions: [...event.payload.protocol_versions]
   };
 }
