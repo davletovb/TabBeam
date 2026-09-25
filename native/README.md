@@ -15,6 +15,7 @@ native/
 │       ├── framing.rs   bounded length-prefixed frame reader/writer
 │       ├── limits.rs    every bound on browser input (frame size, nesting, request IDs)
 │       ├── manifest.rs  caller-origin checks and the Native Messaging manifest
+│       ├── process.rs   provider process manager: start, stream, stop, clean up
 │       ├── protocol/    strict request validation, routing, and event emission
 │       ├── host.rs      request loop and fake-provider scaffold routes
 │       └── main.rs      command-line entry point
@@ -36,7 +37,7 @@ cargo test --workspace
 
 `cargo build` builds only the host (`target/debug/pervue-host`); the fake provider is a test fixture, so `cargo test --workspace` builds and tests it.
 
-All project crates forbid `unsafe` code. The host crate's `clippy.toml` also bans `std::process::Command::new`, so the host can't start a process outside the future provider process manager (NAT-04; see `docs/security/trust-boundaries.md`). CI treats compiler and Clippy warnings as errors and checks formatting:
+All project crates forbid `unsafe` code. The host crate's `clippy.toml` also bans `std::process::Command::new`, so only the provider process manager (`host/src/process.rs`, NAT-04) starts processes, through one explicitly allowed call (see `docs/security/trust-boundaries.md`). CI treats compiler and Clippy warnings as errors and checks formatting:
 
 ```bash
 cargo fmt --all --check
@@ -56,7 +57,7 @@ Pervue uses Chrome Native Messaging framing:
 - partial prefix/payload EOF is a truncated-frame error;
 - short reads and writes are retried until the frame is complete or the stream fails.
 
-NAT-02 validates and transports frames. NAT-03 validates protocol-v1 JSON envelopes/payloads, emits normalized protocol failures, and routes known methods. Provider process execution remains deferred to NAT-04/NAT-05.
+NAT-02 validates and transports frames. NAT-03 validates protocol-v1 JSON envelopes/payloads, emits normalized protocol failures, and routes known methods. NAT-04 adds the provider process manager (see [Provider processes](#provider-processes)); no request starts a provider yet.
 
 A framing failure ends the host with a deterministic exit status, and the host's last diagnostics record (`host.stopped`, see [Diagnostics](#diagnostics)) names the reason and the exit status.
 
@@ -95,7 +96,7 @@ No object in a request may repeat a member name, including members the host does
 
 Requests are validated by a strict pull reader (`host/src/protocol/json.rs`) rather than a serde deserializer, because protocol v1 depends on details serde hides: duplicate member names must be rejected, member order decides whether a request ID was recovered before a syntax error, request IDs are echoed byte-for-byte, and depth overflow is classified by where it happens. Outbound event payloads are serialized with serde_json.
 
-For NAT-03, `provider_id: "fake"` is a deliberately local scaffold route that emits a deterministic conversation event sequence. Real provider discovery and execution begin in NAT-04/NAT-05. Rust's standard streams pass bytes through unchanged, including Windows pipes, so no binary-mode switch is needed before framing.
+For NAT-03, `provider_id: "fake"` is a deliberately local scaffold route that emits a deterministic conversation event sequence. The provider process manager is in place (NAT-04), but no request reaches it yet: provider discovery and execution arrive with PRO-02 and PRO-03. Rust's standard streams pass bytes through unchanged, including Windows pipes, so no binary-mode switch is needed before framing.
 
 ## Registering the host
 
@@ -133,6 +134,42 @@ Every record has `ts` (RFC 3339 UTC, with milliseconds) and `event`. A field tha
 A record never contains request content: no prompt text, page context, other payload members, raw frame bytes, or error messages. Every identifier it records is cut to 128 characters, and JSON escaping keeps each record on one line whatever they contain. Redacting provider output and credentials comes with real providers (SEC-02).
 
 Command-line errors, such as a usage error or an invalid `--print-manifest` ID, are plain text on stderr, because no session is running.
+
+## Provider processes
+
+`host/src/process.rs` is the provider process manager (NAT-04). It is the only code in the host that starts a process. No request reaches it yet: provider discovery and the first adapter (PRO-02, PRO-03) will be its first callers.
+
+```rust
+let mut process = Process::spawn(&ProcessSpec::new(executable).args(["exec", "--json"]))?;
+process.write(prompt.as_bytes())?;
+process.close_stdin();
+
+let deadline = Instant::now() + timeout;
+while let Some(event) = process.next_event(deadline) {
+    match event {
+        Event::Stdout(bytes) => { /* provider output */ }
+        Event::Stderr(bytes) => { /* provider diagnostics */ }
+        Event::Exited(exit) => return Ok(exit),
+    }
+}
+let exit = process.terminate(Duration::from_secs(2)); // the deadline passed
+```
+
+- **Starting.** The program must be an absolute path, and each argument is its own argv element: there is no shell and no `PATH` search. stdin, stdout, and stderr are always three separate pipes, so a provider never gets the host's own Native Messaging streams.
+- **Input.** `write` queues bytes for a helper thread and returns at once, so a provider that isn't reading can't block the host. `close_stdin` sends end of file after the queued input.
+- **Output.** `next_event` returns stdout and stderr chunks of at most 8 KiB (`MAX_CHUNK_BYTES`) as the provider writes them, then one final `Exited`. At most 16 chunks are read ahead of the caller; beyond that the provider waits on its own writes, so a flood can't grow the host's memory. Chunks end wherever a read did, so they can split lines and UTF-8 sequences; reassembling them is the stream manager's job (NAT-05).
+- **Timeouts.** `next_event` returns `None` once its deadline passes, and the caller decides what happens next.
+- **Stopping.** `terminate(grace)` closes stdin, sends SIGTERM to the provider's process group, waits up to `grace`, and then kills the group with SIGKILL. `kill()` sends SIGKILL at once. Both reap the provider and return its `Exit`: the status, whether it exited on its own (`Natural`), after the request (`Stopped`), or was `Killed`, and whether its output closed.
+- **Cleanup.** Dropping a `Process` kills and reaps it, so no provider outlives its `Process`, not even as a zombie. The provider leads its own process group, so stopping it stops everything it started, and when it exits on its own the host kills whatever it left in the group, which would otherwise live on as an orphan and could hold its output open.
+
+What it can't do yet:
+
+- A descendant that leaves the process group, for example with `setsid`, is out of reach. If it holds the output open, the host stops waiting one second after the provider exits and reports `output_closed: false`.
+- On Windows only the provider process itself is stopped; stopping its descendants too needs a Job Object (ADR-0001). Windows has no SIGTERM, so closing stdin is the only stop request there.
+- If the host itself is killed outright, it can't clean up. A provider that reads stdin sees end of file.
+- Providers inherit the host's environment and working directory. SEC-02 narrows what they receive.
+
+The fake provider's crate tests the manager, because only it can locate the fake provider binary: `test_provider/tests/process_manager.rs` covers success, a nonzero exit, a crash, a timeout, a graceful stop, an ignored stop escalated to SIGKILL, input written while output flows, and descendants that stay in the group, outlive the provider, or leave the group. `test_provider/tests/process_stress.rs` spawns and stops 120 providers at different points and checks that each was reaped and that no pipe or thread was left behind.
 
 ## Fuzz targets
 

@@ -55,12 +55,14 @@ name = "pervue-fake-provider"
 version = "0.1.0-dev"
 dependencies = [
  "nix",
+ "pervue-host",
 ]
 
 [[package]]
 name = "pervue-host"
 version = "0.1.0-dev"
 dependencies = [
+ "nix",
  "serde",
  "serde_json",
 ]

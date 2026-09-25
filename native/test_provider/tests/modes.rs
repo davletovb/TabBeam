@@ -164,6 +164,31 @@ fn large_emits_exactly_two_mebibytes_without_newlines() {
 }
 
 #[test]
+fn crash_ends_abnormally() {
+    let outcome = run_mode("crash", b"", DEFAULT_TIMEOUT);
+    let status = outcome
+        .status
+        .expect("process should exit before the deadline");
+    assert!(!status.success());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(
+            status.signal(),
+            Some(nix::sys::signal::Signal::SIGABRT as i32)
+        );
+    }
+    assert!(outcome.stdout.is_empty());
+}
+
+#[test]
+fn echo_copies_stdin_to_stdout() {
+    let outcome = run_mode("echo", b"one\ntwo\n\x00\xff", DEFAULT_TIMEOUT);
+    assert_eq!(exit_code(&outcome), Some(0));
+    assert_eq!(outcome.stdout, b"one\ntwo\n\x00\xff");
+}
+
+#[test]
 fn invalid_arguments_print_usage() {
     for args in [
         &[][..],

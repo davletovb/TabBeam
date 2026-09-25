@@ -11,7 +11,11 @@ name = "pervue-fake-provider"
 path = "src/main.rs"
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.31", default-features = false, features = ["signal"] }
+nix = { version = "0.31", default-features = false, features = ["resource", "signal"] }
+
+[dev-dependencies]
+# The process manager (NAT-04) is tested here, against this crate's binary.
+pervue-host = { path = "../host" }
 
 [target.'cfg(unix)'.dev-dependencies]
 nix = { version = "0.31", default-features = false, features = ["process", "signal"] }

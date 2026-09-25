@@ -3,7 +3,7 @@
 use std::ffi::{OsStr, OsString};
 use std::io::{self, BufRead, Read, Write};
 use std::path::Path;
-use std::process::ExitCode;
+use std::process::{Command, ExitCode, Stdio};
 use std::thread;
 use std::time::Duration;
 
@@ -31,6 +31,12 @@ enum Mode {
     IgnoreCancel,
     Malformed,
     Large,
+    Crash,
+    Echo,
+    Tree,
+    Orphan,
+    Escape,
+    Detached,
 }
 
 impl Mode {
@@ -44,6 +50,12 @@ impl Mode {
             "ignore-cancel" => Self::IgnoreCancel,
             "malformed" => Self::Malformed,
             "large" => Self::Large,
+            "crash" => Self::Crash,
+            "echo" => Self::Echo,
+            "tree" => Self::Tree,
+            "orphan" => Self::Orphan,
+            "escape" => Self::Escape,
+            "detached" => Self::Detached,
             _ => return None,
         })
     }
@@ -63,7 +75,7 @@ fn main() -> ExitCode {
     let Some(mode) = mode else {
         let _ = writeln!(
             io::stderr(),
-            "usage: {} --mode <normal|slow|stderr|exit-nonzero|hang|ignore-cancel|malformed|large>",
+            "usage: {} --mode <normal|slow|stderr|exit-nonzero|hang|ignore-cancel|malformed|large|crash|echo|tree|orphan|escape|detached>",
             Path::new(&program).display()
         );
         return ExitCode::from(EXIT_USAGE);
@@ -106,8 +118,39 @@ fn run(mode: Mode) -> io::Result<u8> {
         }
         Mode::Malformed => write_line(&mut io::stdout(), "{not-json")?,
         Mode::Large => write_large_output()?,
+        Mode::Crash => {
+            disable_core_dumps();
+            std::process::abort();
+        }
+        Mode::Echo => {
+            io::copy(&mut io::stdin().lock(), &mut io::stdout().lock())?;
+            io::stdout().flush()?;
+        }
+        Mode::Tree => {
+            spawn_descendant("hang")?;
+            write_line(&mut io::stdout(), READY_LINE)?;
+            hang_forever();
+        }
+        Mode::Orphan => spawn_descendant("hang")?,
+        Mode::Escape => spawn_descendant("detached")?,
+        Mode::Detached => {
+            leave_process_group()?;
+            let line = format!(r#"{{"type":"detached","pid":{}}}"#, std::process::id());
+            write_line(&mut io::stdout(), &line)?;
+            hang_forever();
+        }
     }
     Ok(0)
+}
+
+/// Starts this executable in `mode` as a child that shares this process's
+/// stdout and stderr, and leaves it running.
+fn spawn_descendant(mode: &str) -> io::Result<()> {
+    Command::new(std::env::current_exe()?)
+        .args(["--mode", mode])
+        .stdin(Stdio::null())
+        .spawn()?;
+    Ok(())
 }
 
 /// Writes one line and flushes it so supervisors observe each line promptly.
@@ -168,5 +211,28 @@ fn ignore_termination_signal() -> io::Result<()> {
 /// Windows has no catchable termination signal; `TerminateProcess` always wins.
 #[cfg(not(unix))]
 fn ignore_termination_signal() -> io::Result<()> {
+    Ok(())
+}
+
+/// Keeps `crash` from leaving a core file behind.
+#[cfg(unix)]
+fn disable_core_dumps() {
+    use nix::sys::resource::{Resource, setrlimit};
+
+    let _ = setrlimit(Resource::RLIMIT_CORE, 0, 0);
+}
+
+#[cfg(not(unix))]
+fn disable_core_dumps() {}
+
+/// Moves this process into a new session, out of its parent's process group,
+/// so signals sent to that group no longer reach it.
+#[cfg(unix)]
+fn leave_process_group() -> io::Result<()> {
+    nix::unistd::setsid().map(drop).map_err(io::Error::from)
+}
+
+#[cfg(not(unix))]
+fn leave_process_group() -> io::Result<()> {
     Ok(())
 }

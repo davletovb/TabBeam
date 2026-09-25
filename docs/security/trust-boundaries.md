@@ -38,9 +38,11 @@ The values are defined once per language, in `native/host/src/limits.rs` and `ex
 ## 3. Executables and commands
 
 - Nothing from a request is used as an executable path, a shell argument, or a command string. Provider IDs are opaque names compared exactly with the host's provider registry, which today holds only the `fake` scaffold. IDs that look like paths or shell commands (`/bin/sh`, `../../bin/sh`, `C:\Windows\System32\cmd.exe`, `$(id)`, embedded NUL) are unknown providers: `PROVIDER_NOT_FOUND` / `PROVIDER_NOT_INSTALLED`.
-- The host starts no processes yet. `native/host/clippy.toml` bans `std::process::Command::new` in the host crate, so any process spawn fails CI's Clippy step. The provider process manager (NAT-04) will allow it in one audited place, launching only executables resolved from the provider registry with argument arrays. SEC-02 hardens provider invocation.
+- Only the provider process manager (`native/host/src/process.rs`, NAT-04) starts processes. `native/host/clippy.toml` bans `std::process::Command::new` in the host crate, and the manager's single call carries an explicit `allow`, so any other spawn fails CI's Clippy step.
+- The manager takes an absolute executable path and an argument array. There is no shell and no `PATH` search, and each argument reaches the provider as its own argv element. Each provider gets its own stdin, stdout, and stderr pipes, never the host's Native Messaging streams.
+- No request reaches the manager yet. The provider registry (PRO-02) will resolve which executables it starts, and SEC-02 hardens provider invocation, including the environment providers inherit.
 
-Tests: `provider_ids_are_names_not_paths_or_commands` in `native/host/src/host.rs`.
+Tests: `provider_ids_are_names_not_paths_or_commands` in `native/host/src/host.rs`; `a_relative_program_path_is_refused_before_anything_starts` and `arguments_are_kept_as_separate_elements` in `native/host/src/process.rs`.
 
 ## 4. Validation before work
 

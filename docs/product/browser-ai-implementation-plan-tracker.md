@@ -151,7 +151,7 @@ Reached after **Milestone H**:
 | SEC-01 | Enforce browser/native trust-boundary limits | A | Security | NAT-02, NAT-03 | IMPLEMENTED — VERIFY |
 | OBS-01 | Add structured native lifecycle diagnostics | A | Observability | NAT-03, DOC-02 | IMPLEMENTED — VERIFY |
 | TST-03 | Add extension ↔ host streamed round-trip integration test | A | Testing | TST-02, EXT-02, EXT-03, NAT-03 | BACKLOG |
-| NAT-04 | Implement provider process manager | B | Native | NAT-03 | BACKLOG |
+| NAT-04 | Implement provider process manager | B | Native | NAT-03 | IMPLEMENTED — VERIFY |
 | NAT-05 | Implement native stream manager | B | Native | NAT-04 | BACKLOG |
 | PRO-01 | Implement provisional provider adapter contract | B | Provider | DOC-02, NAT-04, NAT-05 | BACKLOG |
 | PRO-02 | Implement Codex/OpenAI discovery and authentication status | B | Provider | PRO-01 | BACKLOG |
@@ -615,7 +615,16 @@ Reached after **Milestone H**:
 - Process lifecycle tests using fake executables.
 - Repeated spawn/cancel stress test.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `native/host/src/process.rs`: `Process::spawn` starts an absolute executable path with an argument array, with no shell and no `PATH` search, on three separate pipes. `write` queues input for a helper thread, `next_event(deadline)` returns bounded stdout/stderr chunks and then the exit, `terminate(grace)` escalates from a stop request to a kill, `kill` kills at once, and dropping a `Process` kills and reaps it. It is the host's only process spawn (`native/host/clippy.toml`); no request reaches it until PRO-02/PRO-03.
+- POSIX: the provider leads its own process group. A stop reaches everything it started, and whatever it leaves in the group when it exits is killed. Windows: only the provider itself is stopped so far, and closing stdin is the only stop request; stopping the whole tree needs a Job Object (ADR-0001).
+- Lifecycle tests with the fake provider (`native/test_provider/tests/process_manager.rs`): success, nonzero exit, crash (SIGABRT), a deadline passing, a graceful stop, an ignored stop escalated to SIGKILL, kill, a drop that reaps, 1 MiB of input written while its echo is read, 2 MiB of output in chunks of at most 8 KiB, process-group leadership, and descendants that stay in the group, outlive the provider, or leave the group.
+- Stress test (`native/test_provider/tests/process_stress.rs`): 120 spawn/stop rounds across modes, start points, and ways of stopping. Each process is reaped (no zombie), and no pipe or thread is left behind.
+- New fake provider modes: `crash`, `echo`, `tree`, `orphan`, `escape`, `detached` (`native/test_provider/README.md`).
+- Documented in `native/README.md` (Provider processes) and `docs/security/trust-boundaries.md` §3.
+- Moves to VERIFIED once merged.
 
 ### NAT-05 — Implement native stream manager
 **Area:** Native  
@@ -1506,7 +1515,7 @@ Update this section whenever item statuses change.
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | Foundation | 5 | 0 | 5 | 0 | 0 | 0 | 0 | 0 |
 | A — Native round trip | 8 | 0 | 7 | 0 | 0 | 1 | 0 | 0 |
-| B — First provider | 10 | 0 | 0 | 0 | 0 | 10 | 0 | 0 |
+| B — First provider | 10 | 0 | 1 | 0 | 0 | 9 | 0 | 0 |
 | C — Conversation continuity | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
 | D — Browser context | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 |
 | MVP closure | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
@@ -1515,7 +1524,7 @@ Update this section whenever item statuses change.
 | G — Installable product | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 |
 | H — Search/citations | 8 | 0 | 0 | 0 | 0 | 8 | 0 | 0 |
 | Post-milestone | 6 | 0 | 0 | 0 | 0 | 4 | 0 | 2 |
-| **Total** | **81** | **0** | **12** | **0** | **0** | **67** | **0** | **2** |
+| **Total** | **81** | **0** | **13** | **0** | **0** | **66** | **0** | **2** |
 
 ### Milestone completion rule
 
