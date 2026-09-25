@@ -143,7 +143,7 @@ type Conversations = Rc<RefCell<HashMap<String, String>>>;
 pub struct Codex {
     search: SearchPath,
     work_dir: PathBuf,
-    session_dir: PathBuf,
+    session_dir: Option<PathBuf>,
     limits: Limits,
     conversations: Conversations,
 }
@@ -164,7 +164,7 @@ impl Codex {
     pub fn new(search: SearchPath, work_dir: PathBuf) -> Self {
         Self {
             search,
-            session_dir: work_dir.join("sessions"),
+            session_dir: Some(work_dir.with_extension("sessions")),
             work_dir,
             limits: LIMITS,
             conversations: Rc::default(),
@@ -181,7 +181,7 @@ impl Codex {
     /// Overrides the native mapping directory, for isolated host tests.
     #[must_use]
     pub fn with_session_dir(mut self, session_dir: PathBuf) -> Self {
-        self.session_dir = session_dir;
+        self.session_dir = Some(session_dir);
         self
     }
 
@@ -229,6 +229,8 @@ impl Provider for Codex {
         }
         let mut conversation_id = request.conversation_id;
         let mut prompt = request.text;
+        let mut fallback_prompt = (!request.history.is_empty())
+            .then(|| normalized_prompt(&request.history, &prompt));
         let resume = match &conversation_id {
             None => None,
             Some(conversation_id) => match self
@@ -236,7 +238,7 @@ impl Provider for Codex {
                 .borrow()
                 .get(conversation_id)
                 .cloned()
-                .or_else(|| read_thread(&self.session_dir, conversation_id))
+                .or_else(|| self.session_dir.as_deref().and_then(|dir| read_thread(dir, conversation_id)))
             {
                 Some(thread_id) => Some(thread_id),
                 None if !request.history.is_empty() => None,
@@ -246,7 +248,7 @@ impl Provider for Codex {
         if resume.is_none() && !request.history.is_empty() {
             // If a provider has no native session (or its mapping was lost),
             // the ordered, bounded dialogue still reaches the new turn.
-            prompt = normalized_prompt(&request.history, &prompt);
+            prompt = fallback_prompt.take().expect("history is present");
             conversation_id = None;
         }
         let mut turn = Turn {
@@ -255,6 +257,7 @@ impl Provider for Codex {
             work_dir: self.work_dir.clone(),
             session_dir: self.session_dir.clone(),
             prompt,
+            fallback_prompt,
             resume,
             conversation_id,
             conversations: Rc::clone(&self.conversations),
@@ -328,7 +331,7 @@ fn after(duration: Duration) -> Instant {
     now.checked_add(duration).unwrap_or(now)
 }
 
-fn installed_session_dir() -> PathBuf {
+fn installed_session_dir() -> Option<PathBuf> {
     #[cfg(windows)]
     let base = std::env::var_os("LOCALAPPDATA").or_else(|| std::env::var_os("APPDATA"));
     #[cfg(not(windows))]
@@ -338,9 +341,7 @@ fn installed_session_dir() -> PathBuf {
             std::env::var_os("HOME")
                 .map(|home| PathBuf::from(home).join(".local/share").into_os_string())
         });
-    base.map(PathBuf::from)
-        .unwrap_or_else(|| std::env::temp_dir().join("pervue-data"))
-        .join("pervue/codex-sessions")
+    base.map(PathBuf::from).map(|path| path.join("pervue/codex-sessions"))
 }
 
 fn session_name(id: &str) -> bool {
@@ -446,8 +447,10 @@ struct Turn {
     stage: Stage,
     executable: PathBuf,
     work_dir: PathBuf,
-    session_dir: PathBuf,
+    session_dir: Option<PathBuf>,
     prompt: String,
+    /// Used once if a mapped Codex thread no longer exists before the turn starts.
+    fallback_prompt: Option<String>,
     /// The Codex thread to resume, when continuing a conversation.
     resume: Option<String>,
     conversation_id: Option<String>,
@@ -559,7 +562,7 @@ impl Turn {
             Some(conversation_id) => conversation_id.clone(),
             None => {
                 let conversation_id = new_conversation_id(&self.conversations.borrow());
-                if save_thread(&self.session_dir, &conversation_id, &thread_id).is_err() {
+                if self.session_dir.as_deref().is_none_or(|dir| save_thread(dir, &conversation_id, &thread_id).is_err()) {
                     return self.end(Update::Failed(SESSION_STORE_FAILED));
                 }
                 self.conversations
@@ -625,6 +628,16 @@ impl Exchange for Turn {
                         .map_or(deadline, |finish_by| deadline.min(finish_by));
                     match stream.next(wait) {
                         Some(Output::Line(line)) => self.on_line(&line),
+                        Some(Output::Final(_)) if !self.cancelled && !self.started
+                            && self.resume.is_some() && self.fallback_prompt.is_some() => {
+                            self.resume = None;
+                            self.conversation_id = None;
+                            self.thread_id = None;
+                            self.outcome = None;
+                            self.finish_by = None;
+                            self.prompt = self.fallback_prompt.take().expect("checked above");
+                            self.start();
+                        }
                         Some(Output::Final(exit) | Output::Stopped(exit)) => {
                             let update = if self.cancelled {
                                 Update::Stopped

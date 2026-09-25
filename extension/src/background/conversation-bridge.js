@@ -1,15 +1,11 @@
-import { DEFAULT_PROVIDER_ID, createRequestId, hostDisconnectError, isValidContext } from "./ask-bridge.js";
+import {
+  DEFAULT_PROVIDER_ID, EMPTY_QUESTION, INVALID_CONTEXT, HOST_START_FAILED,
+  copyContext, createRequestId, failed, hostDisconnectError, isValidContext
+} from "./ask-bridge.js";
 import { RequestTooLargeError } from "./native-connection.js";
 import { dialogueHistory, CONVERSATION_ID_PATTERN } from "../shared/conversation-model.js";
 import { ASK_TERMINAL_EVENTS, QUESTION_TOO_LONG } from "../shared/ask-port.js";
 
-const FAILURE = Object.freeze({
-  code: "INVALID_REQUEST", reason: "INVALID_PAYLOAD", message: "Type a question first.", retryable: false
-});
-const INVALID_CONTEXT = Object.freeze({
-  code: "INVALID_REQUEST", reason: "INVALID_PAYLOAD",
-  message: "The selected page context is invalid. Choose a source again or use No context.", retryable: false
-});
 const NOT_FOUND = Object.freeze({
   code: "INVALID_REQUEST", reason: "UNKNOWN_CONVERSATION",
   message: "Conversation not found. Start a new one.", retryable: false
@@ -22,15 +18,6 @@ const STORAGE_FAILED = Object.freeze({
   code: "INTERNAL_ERROR", reason: "CONVERSATION_STORE_FAILED",
   message: "Conversation history couldn't be saved. Check browser storage and try again.", retryable: true
 });
-const HOST_START_FAILED = Object.freeze({
-  code: "HOST_UNAVAILABLE", reason: "HOST_START_FAILED",
-  message: "Pervue's companion app couldn't start. Try again.", retryable: true
-});
-
-/** @param {string | null} requestId @param {any} error */
-function failed(requestId, error) {
-  return { version: 1, type: "event", request_id: requestId, event: "response.failed", payload: { error } };
-}
 
 /**
  * Owns one question, including the extension's stable conversation ID and
@@ -44,6 +31,8 @@ export function serveConversationAskPort(port, options) {
   let open = true;
   let asked = false;
   let finished = false;
+  let stopped = false;
+  let nativePending = false;
   /** @type {string | null} */
   let conversationId = null;
   /** @type {string | null} */
@@ -57,11 +46,10 @@ export function serveConversationAskPort(port, options) {
 
   /** @param {any} event */
   function forward(event) {
-    if (finished || !open) return;
-    try {
-      port.postMessage(event);
-    } catch {
-      open = false;
+    if (finished) return;
+    if (open) {
+      try { port.postMessage(event); }
+      catch { open = false; }
     }
     if (ASK_TERMINAL_EVENTS.has(event.event)) {
       finished = true;
@@ -71,17 +59,31 @@ export function serveConversationAskPort(port, options) {
 
   /** @param {string | null} requestId @param {any} error */
   async function stop(requestId, error) {
-    if (finished) return;
+    if (stopped || finished) return;
+    stopped = true;
+    if (nativePending && requestId) {
+      try {
+        manager.send({
+          version: 1, type: "request", request_id: nextRequestId(),
+          method: "request.cancel", payload: { target_request_id: requestId }
+        });
+      } catch { /* Original request still owns the lock until terminal/disconnect. */ }
+    }
     if (conversationId && assistantId) {
       try { await store.finish(conversationId, assistantId, answer, sources, error); }
       catch { error = STORAGE_FAILED; }
     }
-    if (conversationId) inFlight.delete(conversationId);
+    if (conversationId && !nativePending) inFlight.delete(conversationId);
     forward(failed(requestId, error));
   }
 
   /** @param {any} event */
   async function onNativeEvent(event) {
+    if (ASK_TERMINAL_EVENTS.has(event?.event)) nativePending = false;
+    if (stopped) {
+      if (conversationId && !nativePending) inFlight.delete(conversationId);
+      return;
+    }
     if (finished) return;
     if (event?.event === "conversation.created") {
       const providerSessionId = event.payload?.conversation_id;
@@ -130,7 +132,7 @@ export function serveConversationAskPort(port, options) {
     asked = true;
     const text = message?.type === "ask" ? message.text : undefined;
     if (typeof text !== "string" || !text.trim()) {
-      forward(failed(null, FAILURE));
+      forward(failed(null, EMPTY_QUESTION));
       return;
     }
     question = text;
@@ -177,22 +179,28 @@ export function serveConversationAskPort(port, options) {
             provider_id: selectedProvider,
             ...(sessionId ? { conversation_id: sessionId } : {}),
             input: { text: question, ...(history.length ? { history } : {}) },
-            ...(context === undefined ? {} : { context: {
-              mode: context.mode, text: context.text, truncated: context.truncated,
-              page: { title: context.page.title, url: context.page.url }
-            } })
+            ...(context === undefined ? {} : { context: copyContext(context) })
           }
         };
         sending = true;
+        nativePending = true;
         manager.send(request, {
           onEvent(/** @type {any} */ event) {
             work = work.then(() => onNativeEvent(event)).catch(() => stop(requestId, STORAGE_FAILED));
           },
           onDisconnect(/** @type {{message: string | null}} */ { message: reason }) {
-            work = work.then(() => stop(requestId, hostDisconnectError(reason)));
+            nativePending = false;
+            work = work.then(() => {
+              if (stopped) {
+                if (conversationId) inFlight.delete(conversationId);
+                return;
+              }
+              return stop(requestId, hostDisconnectError(reason));
+            });
           }
         });
       } catch (error) {
+        if (sending) nativePending = false;
         const reason = error instanceof RequestTooLargeError ? QUESTION_TOO_LONG
           : error instanceof Error && error.message === "Conversation not found." ? NOT_FOUND
             : sending ? HOST_START_FAILED : STORAGE_FAILED;

@@ -44,7 +44,8 @@ const view = bindAskForm(
   {
     onConversationId(id) { fullView.disabled = !id; },
     onSaved() { void recentIndex.refresh(); },
-    onRequestStarted() { interacted = true; }
+    onRequestStarted() { interacted = true; },
+    storageChanges: chrome.storage.onChanged
   }
 );
 const recentIndex = bindRecentConversations(recent, chrome.runtime, view);

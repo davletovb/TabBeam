@@ -6,8 +6,10 @@
  * @param {{getConversationId(): string | null, loadConversation(id: string): Promise<boolean>}} view
  */
 export function bindRecentConversations(select, runtime, view) {
-  select.addEventListener("change", () => {
-    if (select.value) void view.loadConversation(select.value);
+  select.addEventListener("change", async () => {
+    if (select.value && !await view.loadConversation(select.value)) {
+      select.value = view.getConversationId() ?? "";
+    }
   });
 
   async function refresh() {

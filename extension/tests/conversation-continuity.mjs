@@ -4,6 +4,7 @@ import { serveConversationAskPort } from "../src/background/conversation-bridge.
 import { createConversationStore } from "../src/background/conversation-store.js";
 import { dialogueHistory } from "../src/shared/conversation-model.js";
 import { ASK_PORT_NAME } from "../src/shared/ask-port.js";
+import { MAX_HISTORY_BYTES, MAX_HISTORY_MESSAGES, utf8ByteLength } from "../src/shared/limits.js";
 import { MockPort } from "./support/mock-port.mjs";
 
 const ownerDocument = { createElement: () => new Element() };
@@ -49,10 +50,19 @@ let nextUuid = 0;
 const uuid = () => `00000000-0000-4000-8000-${String(++nextUuid).padStart(12, "0")}`;
 /** @type {Record<string, any>} */
 let saved = {};
+/** @type {((changes: any, area: string) => void)[]} */
+const storageListeners = [];
 const storage = {
   async get() { return structuredClone(saved); },
   /** @param {any} update */
-  async set(update) { saved = { ...saved, ...structuredClone(update) }; }
+  async set(update) {
+    saved = { ...saved, ...structuredClone(update) };
+    for (const listener of storageListeners) {
+      listener(Object.fromEntries(Object.keys(update).map((key) => [key, { newValue: update[key] }])), "local");
+    }
+  },
+  /** @param {string} key */
+  async remove(key) { delete saved[key]; }
 };
 let store = createConversationStore(storage, uuid);
 let inFlight = new Set();
@@ -96,7 +106,9 @@ function openView() {
       throw new Error("unexpected worker message");
     }
   };
-  const view = bindAskForm(/** @type {any} */ (elements), runtime);
+  const view = bindAskForm(/** @type {any} */ (elements), runtime, undefined, {
+    storageChanges: { addListener(listener) { storageListeners.push(listener); } }
+  });
   return {
     view, elements, ports,
     /** @param {string} question */
@@ -187,16 +199,43 @@ assert.equal(fullPage.elements.history.children.length, 6);
 reopened.ask("One more");
 await settle();
 assert.equal(native.length, 4);
+const handoff = openView();
+assert.equal(await handoff.view.loadConversation(id), true);
+assert.equal(handoff.elements.history.children.at(-1)?.attributes.get("data-state"), "pending");
 fullPage.ask("Conflicting follow up");
 await settle();
 assert.equal(native.length, 4);
 assert.equal(fullPage.elements.status.textContent.includes("another question"), true);
 answerRequest(3, "Fourth answer");
 await settle();
+assert.equal(handoff.elements.history.children.at(-1)?.children[1].textContent, "Fourth answer");
+assert.equal(handoff.elements.history.children.at(-1)?.attributes.get("data-state"), "complete");
+
+// A first request can fail before a native conversation exists. A retry must
+// not leave phantom pending prompts in the transcript.
+const unavailable = openView();
+unavailable.ask("First attempt");
+await settle();
+native[4].owner.onEvent({ version: 1, type: "event", request_id: native[4].request.request_id,
+  event: "response.failed", payload: { error: { code: "PROVIDER_NOT_FOUND", reason: "EXECUTABLE_NOT_FOUND",
+    message: "Install Codex.", retryable: false } } });
+await settle();
+assert.equal(unavailable.elements.history.children.length, 0);
+assert.equal(unavailable.elements.status.textContent, "Install Codex.");
+unavailable.ask("Retry");
+await settle();
+assert.equal(unavailable.elements.history.children.length, 1);
+
+// The input remains editable while answering; completion must preserve the
+// next prompt the user started typing.
+unavailable.elements.input.value = "Draft follow up";
+answerRequest(5, "Working now", "host_session_2");
+await settle();
+assert.equal(unavailable.elements.input.value, "Draft follow up");
 
 // Unknown schema versions are refused without silently replacing the data.
 const original = structuredClone(saved);
-saved["pervue.conversations"].schema_version = 2;
+saved["pervue.conversations"].schema_version = 3;
 let rejected = false;
 try {
   await store.list();
@@ -204,7 +243,27 @@ try {
   rejected = /compatible Pervue version/.test(/** @type {Error} */ (error).message);
 }
 assert.equal(rejected, true, "a future schema version must not be discarded");
-assert.equal(saved["pervue.conversations"].schema_version, 2);
+assert.equal(saved["pervue.conversations"].schema_version, 3);
 saved = original;
+
+const longConversation = { messages: Array.from({ length: 40 }, (_, i) => [
+  { role: "user", text: `question ${i}` },
+  { role: "assistant", text: `answer ${i}`, status: "complete" }
+]).flat() };
+const recentHistory = dialogueHistory(longConversation);
+assert.equal(recentHistory.length, MAX_HISTORY_MESSAGES);
+assert.equal(recentHistory[0].text, "question 24");
+assert.equal(recentHistory.at(-1)?.text, "answer 39");
+longConversation.messages.push(
+  { role: "user", text: "Large answer?" },
+  { role: "assistant", text: "x".repeat(MAX_HISTORY_BYTES + 2000), status: "complete" }
+);
+const boundedHistory = dialogueHistory(longConversation);
+assert.equal(boundedHistory.length, 2);
+assert.ok(boundedHistory.at(-1)?.text.length > 0);
+assert.ok(boundedHistory.reduce((sum, message) => sum + utf8ByteLength(message.text), 0) <= MAX_HISTORY_BYTES);
+longConversation.messages.push({ role: "user", text: "pending" },
+  { role: "assistant", text: "incomplete", status: "pending" });
+assert.deepEqual(dialogueHistory(longConversation), boundedHistory);
 
 console.log("CON-01/02/03, EXT-05/06/07, TST-06 conversation continuity passed");

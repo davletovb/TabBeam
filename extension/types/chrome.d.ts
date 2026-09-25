@@ -65,7 +65,9 @@ interface PervueChrome {
     local: {
       get(key: string): Promise<Record<string, any>>;
       set(values: Record<string, any>): Promise<void>;
+      remove(key: string): Promise<void>;
     };
+    onChanged: { addListener(callback: (changes: Record<string, any>, area: string) => void): void };
   };
 }
 

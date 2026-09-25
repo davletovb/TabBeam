@@ -28,8 +28,8 @@ const WORKER_LOST =
  *
  * @param {AskElements} elements
  * @param {{connect(connectInfo: {name: string}): AskPort, sendMessage?(message: any): Promise<any>}} runtime
- * @param {{getContext(): any | null, isPending(): boolean, clear?(): void}} [contextControls]
- * @param {{onConversationId?(id: string | null): void, onSaved?(): void, onRequestStarted?(): void}} [options]
+ * @param {{getContext(): any | null, isPending(): boolean, consume?(context: any): void}} [contextControls]
+ * @param {{onConversationId?(id: string | null): void, onSaved?(): void, onRequestStarted?(): void, storageChanges?: {addListener(callback: (changes: any, area: string) => void): void}}} [options]
  */
 export function bindAskForm(elements, runtime, contextControls, options = {}) {
   const { form, input, submit, status, answer } = elements;
@@ -37,15 +37,20 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
   /** @type {string | null} */
   let conversationId = null;
   let viewGeneration = 0;
+  let loadPending = false;
+  let submittedText = "";
+  /** @type {any} */
+  let submittedContext = null;
 
   // The port of the question in flight, or null when idle.
   /** @type {AskPort | null} */
   let active = null;
 
   /** @param {string} id */
-  async function loadConversation(id) {
+  async function loadConversation(id, preserveStatus = false) {
     if (!history || typeof runtime.sendMessage !== "function" || active) return false;
     const generation = ++viewGeneration;
+    loadPending = true;
     try {
       const result = await runtime.sendMessage?.({ type: "pervue.conversations.get", conversation_id: id });
       if (generation !== viewGeneration || active) return false;
@@ -57,10 +62,19 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
       options.onConversationId?.(conversationId);
       return true;
     } catch {
-      if (generation === viewGeneration) setStatus("Conversation history unavailable.", "failed");
+      if (generation === viewGeneration && !preserveStatus) setStatus("Conversation history unavailable.", "failed");
       return false;
+    } finally {
+      if (generation === viewGeneration) loadPending = false;
     }
   }
+
+  options.storageChanges?.addListener((changes, area) => {
+    if (area === "local" && conversationId && !active && !loadPending &&
+        changes[`pervue.conversation.${conversationId}`]) {
+      void loadConversation(conversationId, true);
+    }
+  });
 
   /** @param {any[]} messages */
   function renderHistory(messages) {
@@ -85,6 +99,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
   function newConversation() {
     if (active) return false;
     ++viewGeneration;
+    loadPending = false;
     conversationId = null;
     history?.replaceChildren();
     answer.textContent = "";
@@ -121,7 +136,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
   function ask() {
     // Duplicate-submit guard: a question in flight blocks every other submit
     // path (Enter, the button, requestSubmit), not just the button.
-    if (active !== null) {
+    if (active !== null || loadPending) {
       return;
     }
     if (contextControls?.isPending()) {
@@ -152,6 +167,8 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
 
     active = port;
     ++viewGeneration;
+    submittedText = text;
+    submittedContext = contextControls?.getContext();
     options.onRequestStarted?.();
     if (history) history.append(bubble("user", text, "pending"));
     answer.textContent = "";
@@ -170,7 +187,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
       }
     });
     try {
-      const context = contextControls?.getContext();
+      const context = submittedContext;
       port.postMessage({
         type: "ask", text,
         ...(history && conversationId ? { conversation_id: conversationId } : {}),
@@ -207,10 +224,12 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
         break;
       case "response.completed":
         finish(port, "Answer complete.", "done");
-        if (history) input.value = "";
+        if (history && input.value === submittedText) input.value = "";
+        contextControls?.consume?.(submittedContext);
         break;
       case "response.failed":
-        finish(port, failureMessage(event.payload?.error), "failed");
+        finish(port, failureMessage(event.payload?.error), "failed",
+          event.payload?.error?.reason === "UNKNOWN_CONVERSATION");
         break;
       default:
         // Sources are persisted by the background worker for later display.
@@ -223,17 +242,17 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
    * @param {string} message
    * @param {string} state
    */
-  function finish(port, message, state) {
+  function finish(port, message, state, skipReload = false) {
     active = null;
     port.disconnect();
     setBusy(false);
     setStatus(message, state);
-    if (history && conversationId) {
-      void loadConversation(conversationId).then((loaded) => {
+    if (history && !conversationId && state === "failed") history.replaceChildren();
+    if (history && conversationId && !skipReload) {
+      void loadConversation(conversationId, state === "failed").then((loaded) => {
         if (loaded) options.onSaved?.();
       });
     }
-    contextControls?.clear?.();
   }
 
   /** @param {boolean} busy */

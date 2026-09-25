@@ -843,7 +843,7 @@ Reached after **Milestone H**:
 **Status:** IMPLEMENTED — VERIFY
 
 **Implementation evidence**
-- `extension/src/background/conversation-store.js` serializes writes to versioned `chrome.storage.local` data and indexes the 30 most recent conversations. Both views load history through service-worker messages; `extension/tests/conversation-continuity.mjs` reopens a thread after simulating a worker restart.
+- `extension/src/background/conversation-store.js` serializes writes to versioned per-conversation `chrome.storage.local` records with a small recent index, bounded content, and quota eviction. Both views load history through service-worker messages; `extension/tests/conversation-continuity.mjs` reopens a thread after simulating a worker restart, and `extension/tests/conversation-store-quota.mjs` exercises quota recovery.
 
 ### CON-03 — Implement native provider-session bridge
 **Area:** Conversation  
@@ -912,7 +912,7 @@ Reached after **Milestone H**:
 **Status:** IMPLEMENTED — VERIFY
 
 **Implementation evidence**
-- `extension/tests/conversation-continuity.mjs` exercises popup Ask, popup follow-up, worker restart, full-page load and follow-up, stable ID, ordered messages, native continuation metadata, concurrent-turn refusal, and schema mismatch. Native adapter tests cover persisted thread recovery and dialogue fallback. Extension `npm test`, lint, typecheck, and build pass; native test execution still requires a Rust toolchain and CI.
+- `extension/tests/conversation-continuity.mjs` exercises popup Ask, popup follow-up, worker restart, full-page load and follow-up, stable ID, ordered messages, pending handoff refresh, bounded dialogue, native continuation metadata, concurrent-turn refusal, and schema mismatch. `extension/tests/conversation-bridge-failures.mjs` covers the production bridge's invalid context, disconnect, size refusal, and storage failure lock; quota tests cover eviction. Native adapter tests cover persisted thread recovery and dialogue fallback. Extension `npm test`, lint, typecheck, and build pass; native test execution requires CI in this workspace.
 
 ---
 

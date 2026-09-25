@@ -11,21 +11,21 @@ import { MAX_PAGE_BYTES, MAX_SELECTION_BYTES, utf8ByteLength } from "../shared/l
 // with EXT-04.
 export const DEFAULT_PROVIDER_ID = "codex";
 
-const EMPTY_QUESTION = Object.freeze({
+export const EMPTY_QUESTION = Object.freeze({
   code: "INVALID_REQUEST",
   reason: "INVALID_PAYLOAD",
   message: "Type a question first.",
   retryable: false
 });
 
-const INVALID_CONTEXT = Object.freeze({
+export const INVALID_CONTEXT = Object.freeze({
   code: "INVALID_REQUEST",
   reason: "INVALID_PAYLOAD",
   message: "The selected page context is invalid. Choose a source again or use No context.",
   retryable: false
 });
 
-const HOST_START_FAILED = Object.freeze({
+export const HOST_START_FAILED = Object.freeze({
   code: "HOST_UNAVAILABLE",
   reason: "HOST_START_FAILED",
   message: "Pervue's companion app couldn't start. Try again.",
@@ -92,6 +92,14 @@ export function isExtensionPage(sender, extensionBaseUrl) {
   return typeof sender?.url === "string" && sender.url.startsWith(extensionBaseUrl);
 }
 
+/** @param {any} context Copy only validated context fields across the boundary. */
+export function copyContext(context) {
+  return {
+    mode: context.mode, text: context.text, truncated: context.truncated,
+    page: { title: context.page.title, url: context.page.url }
+  };
+}
+
 /**
  * Serves one question from a UI page (see ../shared/ask-port.js): sends one
  * `conversation.send` and forwards its events to the page in order, ending
@@ -151,12 +159,7 @@ export function serveAskPort(port, options) {
       forward(failed(null, INVALID_CONTEXT));
       return;
     }
-    const safeContext = context === undefined ? undefined : {
-      mode: context.mode,
-      text: context.text,
-      truncated: context.truncated,
-      page: { title: context.page.title, url: context.page.url }
-    };
+    const safeContext = context === undefined ? undefined : copyContext(context);
 
     const requestId = nextRequestId();
     const request = {
@@ -233,7 +236,7 @@ export function isValidContext(context) {
  * @param {string | null} requestId
  * @param {ErrorBody} error
  */
-function failed(requestId, error) {
+export function failed(requestId, error) {
   return {
     version: 1,
     type: "event",

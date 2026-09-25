@@ -3,10 +3,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { ASK_PORT_NAME } from "../src/shared/ask-port.js";
+import { MAX_HISTORY_BYTES, MAX_HISTORY_MESSAGES } from "../src/shared/limits.js";
 import { MockPort } from "./support/mock-port.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const manifestPath = path.join(root, "manifest.json");
+const contract = JSON.parse(fs.readFileSync(path.join(root, "../docs/protocol/native-messaging-v1.json"), "utf8"));
+assert.equal(contract.max_history_messages, MAX_HISTORY_MESSAGES);
+assert.equal(contract.max_history_bytes, MAX_HISTORY_BYTES);
 /** @type {any} */
 const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
 

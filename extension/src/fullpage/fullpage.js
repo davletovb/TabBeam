@@ -25,7 +25,8 @@ const view = bindAskForm({
     window.history.replaceState(null, "", url);
   },
   onSaved() { void recentIndex.refresh(); },
-  onRequestStarted() { interacted = true; }
+  onRequestStarted() { interacted = true; },
+  storageChanges: chrome.storage.onChanged
 });
 const recentIndex = bindRecentConversations(recent, chrome.runtime, view);
 

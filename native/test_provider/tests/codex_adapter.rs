@@ -427,7 +427,7 @@ fn a_new_host_recovers_the_codex_thread_without_exposing_it() {
     let Update::ConversationCreated(conversation_id) = &first[0] else {
         panic!("expected a conversation: {first:?}");
     };
-    let stored = std::fs::read_to_string(codex.dir.join("work/sessions").join(conversation_id))
+    let stored = std::fs::read_to_string(codex.dir.join("work.sessions").join(conversation_id))
         .expect("the native mapping survives the host");
     assert!(!conversation_id.contains(stored.as_str()));
 
@@ -585,6 +585,34 @@ fn a_lost_codex_session_fails_as_a_process_exit() {
         failure(&updates),
         (ErrorCode::ProviderFailed, "PROCESS_EXITED")
     );
+}
+
+#[test]
+fn a_lost_codex_thread_retries_once_with_dialogue() {
+    let codex = FakeCodex::install("answers", "signed-in");
+    let adapter = codex.adapter();
+    let first = visible(&run_to_end(adapter.send(ask("first")).as_mut()));
+    let Update::ConversationCreated(conversation_id) = first[0].clone() else {
+        panic!("expected a conversation");
+    };
+    codex.set("resume-fails", "signed-in");
+    let updates = visible(&run_to_end(
+        adapter
+            .send(SendRequest {
+                conversation_id: Some(conversation_id.clone()),
+                history: vec![
+                    HistoryMessage { role: Role::User, text: "first".to_owned() },
+                    HistoryMessage { role: Role::Assistant, text: "first answer".to_owned() },
+                ],
+                ..ask("again")
+            })
+            .as_mut(),
+    ));
+    assert!(matches!(&updates[0], Update::ConversationCreated(id) if id != &conversation_id));
+    assert!(matches!(updates.last(), Some(Update::Completed)));
+    assert!(codex.invocations().iter().any(|line| line.contains("resume thread-")));
+    assert!(codex.prompts().last().unwrap().contains("first answer"));
+    codex.assert_nothing_left_running();
 }
 
 #[test]

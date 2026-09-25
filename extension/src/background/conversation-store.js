@@ -1,140 +1,183 @@
 import {
-  CONVERSATION_ID_PATTERN,
-  CONVERSATION_SCHEMA_VERSION,
-  contextMetadata,
-  conversationTitle,
-  publicConversation
+  CONVERSATION_ID_PATTERN, CONVERSATION_SCHEMA_VERSION, contextMetadata,
+  conversationTitle, publicConversation
 } from "../shared/conversation-model.js";
+import { boundedUtf8Text, utf8ByteLength } from "../shared/limits.js";
 
 export const CONVERSATIONS_KEY = "pervue.conversations";
+const RECORD_PREFIX = "pervue.conversation.";
 const MAX_RECENT = 30;
-/** @typedef {{schema_version: number, recent_ids: string[], conversations: Record<string, any>}} ConversationState */
+// Chrome's default local-storage quota is 10 MiB. Leave room for settings and overhead.
+const MAX_STORED_BYTES = 6 * 1024 * 1024;
+const MAX_CONVERSATION_BYTES = 512 * 1024;
+const MAX_MESSAGE_BYTES = 96 * 1024;
+/** @typedef {{schema_version: number, recent_ids: string[], items: Record<string, any>, sizes: Record<string, number>}} ConversationIndex */
+
+/** @param {string} id */
+function recordKey(id) { return RECORD_PREFIX + id; }
+/** @param {any} value */
+function size(value) { return utf8ByteLength(JSON.stringify(value)); }
+/** @param {string} value */
+function storedText(value) {
+  const result = boundedUtf8Text(value, MAX_MESSAGE_BYTES);
+  return result.truncated ? result.text + "\n[Stored excerpt truncated]" : result.text;
+}
+/** @param {any} conversation */
+function boundRecord(conversation) {
+  for (const message of conversation.messages) {
+    message.text = storedText(message.text);
+    if (message.sources) {
+      message.sources = message.sources.slice(-16).map((/** @type {any} */ source) =>
+        size(source) <= 16 * 1024 ? source : { id: source.id, truncated: true });
+    }
+  }
+  conversation.sources = conversation.sources.slice(-16).map((/** @type {any} */ source) =>
+    size(source) <= 16 * 1024 ? source : { id: source.id, truncated: true });
+  while (size(conversation) > MAX_CONVERSATION_BYTES && conversation.messages.length > 2) {
+    conversation.messages.splice(0, 2);
+    conversation.dropped_message_count = (conversation.dropped_message_count ?? 0) + 2;
+  }
+  return conversation;
+}
 
 /**
- * Storage runs only in the worker. Writes are serialized so two UI surfaces
- * cannot overwrite each other's recent index or conversation updates.
- * @param {{get(key: string): Promise<any>, set(values: object): Promise<void>}} storage
+ * Serialized worker-owned persistence. Each conversation has a separate key,
+ * so normal turns never read and rewrite every saved answer.
+ * @param {{get(key: string): Promise<any>, set(values: object): Promise<void>, remove(key: string): Promise<void>}} storage
  * @param {() => string} [newId]
  * @param {() => string} [now]
  */
 export function createConversationStore(storage, newId = () => crypto.randomUUID(), now = () => new Date().toISOString()) {
   let queue = Promise.resolve();
-
-  /** @returns {Promise<ConversationState>} */
-  async function read() {
+  /** @returns {Promise<ConversationIndex>} */
+  async function readIndex() {
     const value = (await storage.get(CONVERSATIONS_KEY))[CONVERSATIONS_KEY];
     if (value === undefined) {
-      return { schema_version: CONVERSATION_SCHEMA_VERSION, recent_ids: [], conversations: {} };
+      return { schema_version: CONVERSATION_SCHEMA_VERSION, recent_ids: [], items: {}, sizes: {} };
     }
     if (value?.schema_version !== CONVERSATION_SCHEMA_VERSION ||
-        !Array.isArray(value.recent_ids) || !value.conversations ||
-        typeof value.conversations !== "object" || Array.isArray(value.conversations)) {
+        !Array.isArray(value.recent_ids) || !value.items || !value.sizes ||
+        typeof value.items !== "object" || typeof value.sizes !== "object") {
       throw new Error("Stored conversations need a compatible Pervue version.");
     }
-    return /** @type {ConversationState} */ (value);
+    return /** @type {ConversationIndex} */ (value);
   }
-
-  /** @template T @param {(state: ConversationState) => T} change @returns {Promise<T>} */
-  function write(change) {
-    const task = queue.then(async () => {
-      const state = await read();
-      const result = change(state);
-      await storage.set({ [CONVERSATIONS_KEY]: state });
-      return result;
-    });
+  /** @param {ConversationIndex} index @param {string} id */
+  async function readRecord(index, id) {
+    if (!CONVERSATION_ID_PATTERN.test(id) || !index.items[id]) throw new Error("Conversation not found.");
+    const value = (await storage.get(recordKey(id)))[recordKey(id)];
+    if (!value) throw new Error("Conversation not found.");
+    return value;
+  }
+  /** @param {ConversationIndex} index @param {string} protectedId */
+  async function evictOldest(index, protectedId) {
+    const victim = [...index.recent_ids].reverse().find((id) => id !== protectedId);
+    if (!victim) return false;
+    index.recent_ids = index.recent_ids.filter((id) => id !== victim);
+    delete index.items[victim];
+    delete index.sizes[victim];
+    await storage.remove(recordKey(victim));
+    return true;
+  }
+  /** @param {ConversationIndex} index @param {any} conversation */
+  async function save(index, conversation) {
+    boundRecord(conversation);
+    const id = conversation.id;
+    index.items[id] = {
+      id, title: conversation.title, provider_id: conversation.provider_id,
+      created_at: conversation.created_at, updated_at: conversation.updated_at
+    };
+    index.sizes[id] = size(conversation);
+    index.recent_ids = [id, ...index.recent_ids.filter((old) => old !== id)];
+    while (index.recent_ids.length > MAX_RECENT ||
+        Object.values(index.sizes).reduce((total, value) => total + value, 0) > MAX_STORED_BYTES) {
+      if (!await evictOldest(index, id)) break;
+    }
+    for (;;) {
+      try {
+        await storage.set({ [recordKey(id)]: conversation });
+        await storage.set({ [CONVERSATIONS_KEY]: index });
+        return;
+      } catch (error) {
+        if (!/quota|MAX_WRITE/i.test(String(error)) || !await evictOldest(index, id)) throw error;
+      }
+    }
+  }
+  /** @template T @param {(index: ConversationIndex) => Promise<T>} operation */
+  function serialized(operation) {
+    const task = queue.then(async () => operation(await readIndex()));
     queue = task.then(() => undefined, () => undefined);
     return task;
-  }
-
-  /** @param {ConversationState} state @param {string} id */
-  function bump(state, id) {
-    state.recent_ids = [id, ...state.recent_ids.filter((existing) => existing !== id)].slice(0, MAX_RECENT);
-    for (const old of Object.keys(state.conversations)) {
-      if (!state.recent_ids.includes(old)) delete state.conversations[old];
-    }
-  }
-
-  /** @param {ConversationState} state @param {string} id */
-  function requireConversation(state, id) {
-    if (!CONVERSATION_ID_PATTERN.test(id) || !state.conversations[id]) {
-      throw new Error("Conversation not found.");
-    }
-    return state.conversations[id];
   }
 
   return {
     async list() {
       await queue;
-      const state = await read();
-      return state.recent_ids.map((id) => state.conversations[id]).filter(Boolean).map((conversation) => ({
-        id: conversation.id, title: conversation.title, provider_id: conversation.provider_id,
-        created_at: conversation.created_at, updated_at: conversation.updated_at
-      }));
+      const index = await readIndex();
+      return index.recent_ids.map((id) => index.items[id]).filter(Boolean);
     },
     /** @param {string} id */
     async get(id) {
       await queue;
-      const state = await read();
-      return publicConversation(requireConversation(state, id));
+      return publicConversation(await readRecord(await readIndex(), id));
     },
-    /** Native metadata stays in the worker. */
     /** @param {string} id */
     async getPrivate(id) {
       await queue;
-      const state = await read();
-      return structuredClone(requireConversation(state, id));
+      return structuredClone(await readRecord(await readIndex(), id));
     },
     /** @param {{providerId: string, providerSessionId: string, text: string, context?: any}} details */
     create({ providerId, providerSessionId, text, context }) {
-      return write((state) => {
-        const id = `conv_${newId()}`;
+      return serialized(async (index) => {
+        const id = "conv_" + newId();
         const timestamp = now();
-        const assistantId = `msg_${newId()}`;
-        state.conversations[id] = {
+        const assistantId = "msg_" + newId();
+        const conversation = {
           id, created_at: timestamp, updated_at: timestamp,
           title: conversationTitle(text), provider_id: providerId,
           provider_session_id: providerSessionId,
           messages: [
-            { id: `msg_${newId()}`, role: "user", text, timestamp, status: "complete" },
+            { id: "msg_" + newId(), role: "user", text, timestamp, status: "complete" },
             { id: assistantId, role: "assistant", text: "", timestamp, status: "pending" }
           ],
           sources: [],
           ...(context ? { page_context_metadata: contextMetadata(context) } : {})
         };
-        bump(state, id);
+        await save(index, conversation);
         return { id, assistantId };
       });
     },
     /** @param {string} id @param {string} text @param {any} [context] */
     begin(id, text, context) {
-      return write((state) => {
-        const conversation = requireConversation(state, id);
+      return serialized(async (index) => {
+        const conversation = await readRecord(index, id);
         const timestamp = now();
-        // After a worker restart an abandoned response cannot remain pending.
         for (const message of conversation.messages) {
           if (message.status === "pending") message.status = "failed";
         }
-        const assistantId = `msg_${newId()}`;
+        const assistantId = "msg_" + newId();
         conversation.messages.push(
-          { id: `msg_${newId()}`, role: "user", text, timestamp, status: "complete" },
+          { id: "msg_" + newId(), role: "user", text, timestamp, status: "complete" },
           { id: assistantId, role: "assistant", text: "", timestamp, status: "pending" }
         );
         if (context) conversation.page_context_metadata = contextMetadata(context);
         conversation.updated_at = timestamp;
-        bump(state, id);
+        await save(index, conversation);
         return { assistantId };
       });
     },
     /** @param {string} id @param {string} providerSessionId */
     setSession(id, providerSessionId) {
-      return write((state) => {
-        requireConversation(state, id).provider_session_id = providerSessionId;
+      return serialized(async (index) => {
+        const conversation = await readRecord(index, id);
+        conversation.provider_session_id = providerSessionId;
+        await save(index, conversation);
       });
     },
     /** @param {string} id @param {string} assistantId @param {string} text @param {any[]} sources @param {any} [error] */
     finish(id, assistantId, text, sources, error) {
-      return write((state) => {
-        const conversation = requireConversation(state, id);
+      return serialized(async (index) => {
+        const conversation = await readRecord(index, id);
         const message = conversation.messages.find((/** @type {any} */ item) => item.id === assistantId);
         if (!message) throw new Error("Response message not found.");
         message.text = text;
@@ -145,7 +188,7 @@ export function createConversationStore(storage, newId = () => crypto.randomUUID
           conversation.sources.push(...sources);
         }
         conversation.updated_at = now();
-        bump(state, id);
+        await save(index, conversation);
       });
     }
   };
