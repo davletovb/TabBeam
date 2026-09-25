@@ -1,4 +1,4 @@
-import { captureContext } from "./selection-capture.js";
+import { captureContext, metadataForTab } from "./selection-capture.js";
 
 export const MENU_SELECTION_ID = "pervue-use-selection";
 export const MENU_PAGE_ID = "pervue-use-page";
@@ -10,13 +10,13 @@ const HANDOFF_MS = 30_000;
  * it. No content is put into URLs or persistent storage; the popup must be
  * from the clicked tab (or carry the opaque fallback-tab token).
  * @param {{
- *   tabs: {query(query: object): Promise<{id?: number}[]>, create(properties: {url: string}): Promise<unknown>, sendMessage(tabId: number, message: any, options: object): Promise<any>},
+ *   tabs: {query(query: object): Promise<{id?: number, url?: string, title?: string}[]>, create(properties: {url: string}): Promise<unknown>, sendMessage(tabId: number, message: any, options: object): Promise<any>},
  *   action: {openPopup?(): Promise<void>},
  *   popupUrl: string
  * }} options
  */
 export function createEntryActions({ tabs, action, popupUrl }) {
-  /** @type {{tabId: number | undefined, token: string, expires: number, result: Promise<any>} | null} */
+  /** @type {{tabId: number | undefined, pageUrl: string | null, token: string, expires: number, result: Promise<any>} | null} */
   let pending = null;
 
   /**
@@ -31,8 +31,10 @@ export function createEntryActions({ tabs, action, popupUrl }) {
 
     // Start the capture and open the popup while the context-menu gesture is
     // still active. Awaiting extraction first could lose the user gesture.
+    const metadata = metadataForTab(tab);
     const entry = {
       tabId: tab?.id,
+      pageUrl: metadata.ok ? metadata.page.url : null,
       token: crypto.randomUUID(),
       expires: Date.now() + HANDOFF_MS,
       result: captureContext(tabs, mode, tab ?? {}, mode === "selection" ? info.selectionText ?? "" : undefined)
@@ -69,7 +71,15 @@ export function createEntryActions({ tabs, action, popupUrl }) {
       if (sender?.url !== popupUrl || message.token !== null) return { available: false };
       try {
         const [active] = await tabs.query({ active: true, currentWindow: true });
-        if (active?.id !== entry.tabId || pending !== entry) return { available: false };
+        const activeMetadata = metadataForTab(active);
+        if (active?.id !== entry.tabId ||
+            (entry.pageUrl !== null && (!activeMetadata.ok || activeMetadata.page.url !== entry.pageUrl))) {
+          // A different tab or navigation invalidates the one-time capture;
+          // reopening the popup later cannot silently attach stale content.
+          if (pending === entry) pending = null;
+          return { available: false };
+        }
+        if (pending !== entry) return { available: false };
       } catch {
         return { available: false };
       }
