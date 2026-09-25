@@ -3,6 +3,7 @@
 const MAX_SELECTION_BYTES = 16 * 1024;
 const MAX_PAGE_BYTES = 64 * 1024;
 const MAX_PAGE_TEXT_NODES = 5000;
+const MAX_PAGE_SCAN_CHARS = 512 * 1024;
 
 function selectedText() {
   const active = /** @type {HTMLInputElement | HTMLTextAreaElement | null} */ (
@@ -48,39 +49,51 @@ function boundedText(value, maxBytes) {
 // editable fields, scripts, and other non-reading surfaces.
 function readablePage() {
   let inspected = 0;
+  let scanned = 0;
   const roots = [document.querySelector("main"), document.querySelector("article"), document.body];
   for (const [index, root] of roots.entries()) {
-    if (!root || roots.indexOf(root) !== index || inspected >= MAX_PAGE_TEXT_NODES) {
+    if (!root || roots.indexOf(root) !== index ||
+        inspected >= MAX_PAGE_TEXT_NODES || scanned >= MAX_PAGE_SCAN_CHARS) {
       continue;
     }
-    const result = readableFrom(root, MAX_PAGE_TEXT_NODES - inspected);
+    const result = readableFrom(root, MAX_PAGE_TEXT_NODES - inspected, MAX_PAGE_SCAN_CHARS - scanned);
     inspected += result.inspected;
+    scanned += result.scanned;
     if (result.ok) {
-      return { ...result, inspected };
+      return { ok: true, text: result.text, truncated: result.truncated, inspected };
     }
   }
   return { ok: false, reason: "PAGE_EXTRACTION_FAILED" };
 }
 
-/** @param {Element} root @param {number} maxNodes */
-function readableFrom(root, maxNodes) {
+/** @param {Element} root @param {number} maxNodes @param {number} maxChars */
+function readableFrom(root, maxNodes, maxChars) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const hiddenByStyle = new WeakMap();
   /** @type {string[]} */
   const parts = [];
   let bytes = 0;
   let inspected = 0;
+  let scanned = 0;
+  let clipped = false;
   /** @type {Node | null} */
   let node;
-  while (inspected < maxNodes && (node = walker.nextNode())) {
+  while (inspected < maxNodes && scanned < maxChars && (node = walker.nextNode())) {
     inspected += 1;
     const parent = node.parentElement;
     // isContentEditable respects the nearest contenteditable value: a
     // contenteditable="false" island inside an editor is readable.
-    if (parent?.isContentEditable || parent?.closest("script,style,noscript,template,svg,nav,footer,aside,form,[hidden],[aria-hidden='true']")) {
+    if (parent?.isContentEditable || parent?.closest("script,style,noscript,template,svg,nav,footer,aside,form,[hidden],[aria-hidden='true']") ||
+        (parent && hasHiddenStyle(parent, hiddenByStyle))) {
       continue;
     }
-    const value = node.nodeValue?.replace(/\s+/gu, " ").trim();
+    const raw = node.nodeValue ?? "";
+    const slice = raw.slice(0, maxChars - scanned);
+    scanned += slice.length;
+    clipped = slice.length < raw.length;
+    const value = slice.replace(/\s+/gu, " ").trim();
     if (!value) {
+      if (clipped) break;
       continue;
     }
     const separator = parts.length ? "\n" : "";
@@ -90,19 +103,46 @@ function readableFrom(root, maxNodes) {
       parts.push(bounded.text);
       bytes += new TextEncoder().encode(bounded.text).length;
     }
-    if (bounded.truncated) {
-      return { ok: true, text: parts.join(""), truncated: true, inspected };
+    if (bounded.truncated || clipped) {
+      return { ok: true, text: parts.join(""), truncated: true, inspected, scanned };
     }
   }
   if (!parts.length) {
-    return { ok: false, inspected };
+    return { ok: false, inspected, scanned };
   }
   return {
     ok: true,
     text: parts.join(""),
-    truncated: inspected === maxNodes && walker.nextNode() !== null,
-    inspected
+    truncated: clipped ||
+      ((inspected === maxNodes || scanned === maxChars) && walker.nextNode() !== null),
+    inspected,
+    scanned
   };
+}
+
+/** @param {Element} element @param {WeakMap<Element, boolean>} cache */
+function hasHiddenStyle(element, cache) {
+  /** @type {Element[]} */
+  const visited = [];
+  /** @type {Element | null} */
+  let current = element;
+  let hidden = false;
+  while (current) {
+    const cached = cache.get(current);
+    if (cached !== undefined) {
+      hidden = cached;
+      break;
+    }
+    visited.push(current);
+    const style = window.getComputedStyle(current);
+    if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse") {
+      hidden = true;
+      break;
+    }
+    current = current.parentElement;
+  }
+  for (const node of visited) cache.set(node, hidden);
+  return hidden;
 }
 
 chrome.runtime.onMessage.addListener(

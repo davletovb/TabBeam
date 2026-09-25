@@ -12,6 +12,7 @@ export function bindContextControls(elements, runtime) {
   /** @type {any | null} */
   let context = null;
   let pending = false;
+  let handoffPending = false;
   let generation = 0;
 
   /** @param {"none" | "selection" | "page"} mode */
@@ -24,6 +25,7 @@ export function bindContextControls(elements, runtime) {
   function clear() {
     generation += 1;
     pending = false;
+    handoffPending = false;
     context = null;
     selection.disabled = false;
     page.disabled = false;
@@ -33,12 +35,60 @@ export function bindContextControls(elements, runtime) {
     status.textContent = "No context attached. Choose a source to grant access for this question.";
   }
 
+  /** @param {any} result @param {"selection" | "page"} mode */
+  function showCapture(result, mode) {
+    if (
+      result?.ok !== true || result.context?.mode !== mode ||
+      typeof result.context?.text !== "string" ||
+      typeof result.context?.page?.title !== "string" ||
+      typeof result.context?.page?.url !== "string"
+    ) {
+      const permission = result?.permission === "denied" ? "Page access denied. " : "";
+      status.textContent = permission + (result?.error?.message ?? "Context is unavailable.");
+      return;
+    }
+    context = result.context;
+    setChoice(mode);
+    const excerpt = [...context.text].slice(0, 240).join("");
+    preview.textContent =
+      `${context.page.title} • ${context.page.url}\n${excerpt}` +
+      (context.text.length > excerpt.length ? "…" : "");
+    preview.hidden = false;
+    status.textContent =
+      `Page access granted. ${mode === "page" ? "Current page" : "Selection"} attached` +
+      (context.truncated ? " (truncated)." : ".");
+  }
+
+  // A menu opens the popup while extraction may still be running. Keep Ask
+  // blocked until its one-time handoff completes; an explicit choice replaces it.
+  function beginMenuHandoff() {
+    const current = ++generation;
+    pending = true;
+    handoffPending = true;
+    status.textContent = "Preparing browser context…";
+    /** @param {{available?: boolean, result?: any} | null} handoff */
+    return (handoff) => {
+      if (generation !== current) return;
+      pending = false;
+      handoffPending = false;
+      selection.disabled = false;
+      page.disabled = false;
+      if (handoff?.available) {
+        const mode = handoff.result?.context?.mode;
+        showCapture(handoff.result, mode === "selection" ? "selection" : "page");
+      } else {
+        clear();
+      }
+    };
+  }
+
   /** @param {"selection" | "page"} mode */
   async function capture(mode) {
-    if (pending) {
+    if (pending && !handoffPending) {
       return;
     }
     const current = ++generation;
+    handoffPending = false;
     context = null;
     setChoice("none");
     pending = true;
@@ -56,21 +106,7 @@ export function bindContextControls(elements, runtime) {
       if (generation !== current) {
         return;
       }
-      if (result?.ok !== true || typeof result.context?.text !== "string") {
-        const permission = result?.permission === "denied" ? "Page access denied. " : "";
-        status.textContent = permission + (result?.error?.message ?? "Context is unavailable.");
-        return;
-      }
-      context = result.context;
-      setChoice(mode);
-      const excerpt = [...context.text].slice(0, 240).join("");
-      preview.textContent =
-        `${context.page.title} • ${context.page.url}\n${excerpt}` +
-        (context.text.length > excerpt.length ? "…" : "");
-      preview.hidden = false;
-      status.textContent =
-        `Page access granted. ${mode === "page" ? "Current page" : "Selection"} attached` +
-        (context.truncated ? " (truncated)." : ".");
+      showCapture(result, mode);
     } catch {
       if (generation === current) {
         status.textContent = "Page access unavailable. Try again or choose No context.";
@@ -90,6 +126,7 @@ export function bindContextControls(elements, runtime) {
   clear();
   return {
     getContext: () => context,
-    isPending: () => pending
+    isPending: () => pending,
+    beginMenuHandoff
   };
 }

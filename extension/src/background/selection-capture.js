@@ -1,4 +1,4 @@
-import { MAX_PAGE_BYTES, MAX_SELECTION_BYTES, utf8ByteLength } from "../shared/limits.js";
+import { MAX_PAGE_BYTES, MAX_SELECTION_BYTES, boundedUtf8Text, utf8ByteLength } from "../shared/limits.js";
 
 export const CONTEXT_CAPTURE_MESSAGE = "pervue.context.capture";
 const CONTENT_MESSAGES = Object.freeze({
@@ -27,6 +27,15 @@ function failure(reason, permission = "granted") {
 export async function getActiveTabMetadata(tabs) {
   try {
     const [tab] = await tabs.query({ active: true, currentWindow: true });
+    return metadataForTab(tab);
+  } catch {
+    return failure("PAGE_NOT_SCRIPTABLE", "unsupported");
+  }
+}
+
+/** @param {{id?: number, url?: string, title?: string} | undefined} tab */
+export function metadataForTab(tab) {
+  try {
     if (typeof tab?.id !== "number" || !Number.isInteger(tab.id)) {
       return failure("PAGE_NOT_SCRIPTABLE", "unsupported");
     }
@@ -37,8 +46,7 @@ export async function getActiveTabMetadata(tabs) {
     if (url.protocol !== "http:" && url.protocol !== "https:") {
       return failure("PAGE_NOT_SCRIPTABLE", "unsupported");
     }
-    // Omit credentials, query, and fragment before page metadata can reach a
-    // provider. Context is fetched only for an explicit popup action.
+    // Omit credentials, query, and fragment before page metadata can reach a provider.
     url.username = "";
     url.password = "";
     url.search = "";
@@ -78,15 +86,34 @@ export function handleContextCapture(message, sender, sendResponse, tabs, popupU
     sendResponse(failure("PAGE_NOT_SCRIPTABLE", "unsupported"));
     return false;
   }
-  capture(tabs, message.mode).then(sendResponse);
+  captureContext(tabs, message.mode).then(sendResponse);
   return true;
 }
 
-/** @param {Parameters<typeof handleContextCapture>[3]} tabs @param {"selection" | "page"} mode */
-async function capture(tabs, mode) {
-  const metadata = await getActiveTabMetadata(tabs);
+/**
+ * Shared capture path for popup clicks and browser context-menu clicks. A menu
+ * selection comes from Chrome's click event (including selections in frames),
+ * while a popup selection is read from the top-frame content script.
+ * @param {Parameters<typeof handleContextCapture>[3]} tabs
+ * @param {"selection" | "page"} mode
+ * @param {{id?: number, url?: string, title?: string}} [tab]
+ * @param {string} [menuSelection]
+ */
+export async function captureContext(tabs, mode, tab, menuSelection) {
+  const metadata = tab ? metadataForTab(tab) : await getActiveTabMetadata(tabs);
   if (!metadata.ok) {
     return metadata;
+  }
+  if (mode === "selection" && menuSelection !== undefined) {
+    if (menuSelection.trim() === "") {
+      return failure("SELECTION_UNAVAILABLE");
+    }
+    const bounded = boundedUtf8Text(menuSelection, MAX_SELECTION_BYTES);
+    return {
+      ok: true,
+      permission: "granted",
+      context: { mode, ...bounded, page: metadata.page }
+    };
   }
   try {
     const response = await tabs.sendMessage(

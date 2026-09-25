@@ -44,7 +44,7 @@ interface PervueChrome {
   };
   contextMenus: {
     onClicked: PervueChromeEvent<
-      (info: { menuItemId: string | number }) => void | Promise<void>
+      (info: { menuItemId: string | number; selectionText?: string }, tab?: { id?: number; url?: string; title?: string }) => void | Promise<void>
     >;
     removeAll(): Promise<void>;
     create(properties: {
@@ -57,6 +57,9 @@ interface PervueChrome {
     create(properties: { url: string }): Promise<unknown>;
     query(query: { active: boolean; currentWindow: boolean }): Promise<{ id?: number; url?: string; title?: string }[]>;
     sendMessage(tabId: number, message: any, options: { frameId: number }): Promise<any>;
+  };
+  action: {
+    openPopup(): Promise<void>;
   };
 }
 
