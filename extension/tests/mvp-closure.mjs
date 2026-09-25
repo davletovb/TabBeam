@@ -49,7 +49,9 @@ class FakeElement {
   /** @type {Record<string, any>} */
   const values = {};
   const storage = {
+    /** @param {string} key */
     async get(key) { return { [key]: values[key] }; },
+    /** @param {Record<string, any>} next */
     async set(next) { Object.assign(values, next); }
   };
   const root = new FakeElement();
