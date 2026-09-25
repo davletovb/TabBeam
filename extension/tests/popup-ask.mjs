@@ -21,6 +21,7 @@ class FakeElement {
     this.textContent = "";
     this.hidden = false;
     this.focused = false;
+    this.disabled = false;
   }
 
   /**
@@ -117,7 +118,9 @@ function openPopup(contextControls, outcomes = []) {
     input: new FakeTextArea(),
     submit: new FakeElement(),
     status: new FakeElement(),
-    answer: new FakeElement()
+    answer: new FakeElement(),
+    cancel: new FakeElement(),
+    retry: new FakeElement()
   };
   // As in index.html, the answer region starts hidden.
   elements.answer.hidden = true;
@@ -180,6 +183,12 @@ function openPopup(contextControls, outcomes = []) {
     /** Clicking the submit button submits the form, even when aria-disabled. */
     clickAsk() {
       return elements.form.dispatch("submit", cancellableEvent({}));
+    },
+    clickCancel() {
+      return elements.cancel.dispatch("click", cancellableEvent({}));
+    },
+    clickRetry() {
+      return elements.retry.dispatch("click", cancellableEvent({}));
     },
     get statusText() {
       return elements.status.textContent;
@@ -327,6 +336,46 @@ function hostEvent(event, payload = {}) {
   assert.equal(popup.busy, false);
   assert.equal(popup.answer.getAttribute("aria-busy"), "false");
   assert.equal(port.disconnectCalls, 1);
+}
+
+{
+  // EXT-12: Stop sends a cancellation request over the same UI port. The
+  // target's normalized cancellation makes Retry available, and Retry starts
+  // a fresh request with the original question rather than duplicating an
+  // assistant message locally.
+  const popup = openPopup();
+  popup.ask("Long answer");
+  const first = popup.ports[0];
+  assert.equal(popup.cancel.hidden, false);
+  assert.equal(popup.retry.hidden, true);
+
+  popup.clickCancel();
+  assert.deepEqual(first.messages, [
+    { type: "ask", text: "Long answer" },
+    { type: "cancel" }
+  ]);
+  assert.equal(popup.statusText, "Stopping…");
+  assert.equal(popup.statusState, "cancelled");
+  assert.equal(popup.cancel.disabled, true);
+
+  first.emitMessage(hostEvent("response.failed", {
+    error: {
+      code: "REQUEST_CANCELLED",
+      reason: "USER_CANCELLED",
+      message: "Stopped. You can ask again.",
+      retryable: true
+    }
+  }));
+  assert.equal(popup.busy, false);
+  assert.equal(popup.cancel.hidden, true);
+  assert.equal(popup.retry.hidden, false);
+
+  popup.input.value = "edited after stop";
+  popup.clickRetry();
+  assert.equal(popup.ports.length, 2);
+  assert.deepEqual(popup.ports[1].messages, [{ type: "ask", text: "Long answer" }]);
+  assert.equal(popup.retry.hidden, true);
+  assert.equal(popup.cancel.hidden, false);
 }
 
 {
