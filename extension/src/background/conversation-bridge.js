@@ -24,7 +24,7 @@ const STORAGE_FAILED = Object.freeze({
  * Owns one question, including the extension's stable conversation ID and
  * the native host's opaque continuation ID. No page receives the latter.
  * @param {import("../shared/ask-port.js").AskPort} port
- * @param {{manager: {send(request: any, owner?: any): void}, store: any, inFlight: Set<string>, providerId?: string, createRequestId?: () => string}} options
+ * @param {{manager: {send(request: any, owner?: any): void}, store: any, inFlight: Set<string>, providerId?: string, createRequestId?: () => string, onFailure?: (error: any) => void}} options
  */
 export function serveConversationAskPort(port, options) {
   const { manager, store, inFlight, providerId = DEFAULT_PROVIDER_ID } = options;
@@ -34,6 +34,8 @@ export function serveConversationAskPort(port, options) {
   let finished = false;
   let stopped = false;
   let nativePending = false;
+  /** @type {string | null} */
+  let activeRequestId = null;
   /** @type {string | null} */
   let conversationId = null;
   /** @type {string | null} */
@@ -62,6 +64,7 @@ export function serveConversationAskPort(port, options) {
   async function stop(requestId, error) {
     if (stopped || finished) return;
     stopped = true;
+    options.onFailure?.(error);
     if (nativePending && requestId) {
       try {
         manager.send({
@@ -80,7 +83,10 @@ export function serveConversationAskPort(port, options) {
 
   /** @param {any} event */
   async function onNativeEvent(event) {
-    if (ASK_TERMINAL_EVENTS.has(event?.event)) nativePending = false;
+    if (ASK_TERMINAL_EVENTS.has(event?.event)) {
+      nativePending = false;
+      activeRequestId = null;
+    }
     if (stopped) {
       if (conversationId && !nativePending) inFlight.delete(conversationId);
       return;
@@ -113,6 +119,7 @@ export function serveConversationAskPort(port, options) {
       sources.push({ id: event.payload.source_id, data: event.payload.data });
     }
     if (ASK_TERMINAL_EVENTS.has(event?.event)) {
+      if (event.event === "response.failed") options.onFailure?.(event.payload?.error);
       if (conversationId && assistantId) {
         await store.finish(conversationId, assistantId, answer, sources,
           event.event === "response.failed" ? event.payload?.error ?? HOST_START_FAILED : undefined);
@@ -129,7 +136,23 @@ export function serveConversationAskPort(port, options) {
   let context;
 
   port.onMessage.addListener((/** @type {any} */ message) => {
-    if (asked) return;
+    if (asked) {
+      if (message?.type === "cancel" && activeRequestId && nativePending && !stopped && !finished) {
+        try {
+          manager.send({
+            version: 1,
+            type: "request",
+            request_id: nextRequestId(),
+            method: "request.cancel",
+            payload: { target_request_id: activeRequestId }
+          });
+        } catch {
+          // The target still reports its own terminal event or disconnect.
+        }
+      }
+      return;
+    }
+    if (message?.type !== "ask") return;
     asked = true;
     const text = message?.type === "ask" ? message.text : undefined;
     if (typeof text !== "string" || !text.trim()) {
@@ -155,6 +178,7 @@ export function serveConversationAskPort(port, options) {
 
     void (async () => {
       const requestId = nextRequestId();
+      activeRequestId = requestId;
       let sending = false;
       try {
         let sessionId;
