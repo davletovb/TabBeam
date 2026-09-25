@@ -532,7 +532,7 @@ Reached after **Milestone H**:
 - Popup ↔ service-worker contract, one runtime port per question: `extension/src/shared/ask-port.js`
 - Service-worker bridge sending one `conversation.send` per question, forwarding its events in order to one terminal event, reporting a missing or unregistered host as `HOST_NOT_INSTALLED` and a host that can't start or disconnects as `HOST_UNAVAILABLE`, and serving only the extension's own pages: `extension/src/background/ask-bridge.js`, `extension/src/background/service-worker.js`
 - Popup lifecycle, incremental rendering, duplicate-submit, text-only rendering, failure, and lost-worker tests: `extension/tests/popup-ask.mjs`
-- Bridge tests for request shape, event order, concurrent pages, native disconnect and its host-error classification, connect and post failures, closed pages, empty questions, and sender checks: `extension/tests/ask-bridge.mjs`
+- Bridge tests for request shape, event order, concurrent pages, native disconnect, context forwarding, size refusal, storage errors, and sender checks: `extension/tests/conversation-continuity.mjs`, `extension/tests/conversation-bridge-failures.mjs`, `extension/tests/browser-context-journey.mjs`.
 - Service-worker wiring smoke test: `extension/tests/manifest-smoke.mjs`
 - Milestone A asks the host's deterministic `fake` provider; provider selection arrives with Milestone B.
 - Development host registration for trying the popup: `extension/README.md`
@@ -933,7 +933,7 @@ Reached after **Milestone H**:
 - The popup's explicit **Use selection** action requests capture only on click, shows a preview, and attaches it only on a later Ask; **No context** clears it: `extension/src/popup/context-controls.js`, `extension/src/popup/ask-form.js`.
 - The service worker accepts capture only from the popup, requests the active tab's top-frame content script, normalizes unavailable pages and empty selections as `CONTEXT_UNAVAILABLE`, and checks the size of the response: `extension/src/background/selection-capture.js`.
 - The content script reads regular selections and focused text-field selections only upon the capture message, limits UTF-8 text to 16 KiB without splitting Unicode characters, and reports truncation: `extension/src/content/content-script.js`.
-- `extension/tests/selection-capture.mjs` covers explicit gating, bounds, Unicode, input selection, restricted pages, unauthorized callers, and clear-during-capture behavior; `extension/tests/ask-bridge.mjs` covers request attachment.
+- `extension/tests/selection-capture.mjs` covers explicit gating, bounds, Unicode, input selection, restricted pages, unauthorized callers, and clear-during-capture behavior; `extension/tests/browser-context-journey.mjs` covers request attachment through the production bridge.
 
 ### CTX-02 — Capture current-tab title/URL metadata
 **Area:** Context  
@@ -983,7 +983,7 @@ Reached after **Milestone H**:
 **Implementation evidence**
 - The popup begins with No context, shows explicit selection/page choices, permission outcome and preview, permits clearing while capture is pending, and keeps context only in popup memory: `extension/src/popup/context-controls.js`.
 - The service worker accepts capture requests only from the popup with explicit click intent, uses the active tab's top frame, and never stores access decisions; the ask bridge validates and attaches only chosen structured context: `extension/src/background/selection-capture.js`, `extension/src/background/ask-bridge.js`.
-- `extension/tests/selection-capture.mjs`, `extension/tests/popup-ask.mjs`, and `extension/tests/ask-bridge.mjs` cover intent, failure, no-context Ask, and attached context.
+- `extension/tests/selection-capture.mjs`, `extension/tests/popup-ask.mjs`, `extension/tests/browser-context-journey.mjs`, and `extension/tests/conversation-bridge-failures.mjs` cover intent, failure, no-context Ask, and attached context.
 
 ### EXT-08 — Add context mode/control to popup request flow
 **Area:** Extension  

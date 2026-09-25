@@ -570,6 +570,15 @@ mod tests {
         };
         assert_eq!(history.len(), 2);
 
+        // The current text and saved history use the same non-empty rule.
+        // Rust trim treats U+0085 differently from JavaScript trim.
+        let unicode = envelope(
+            "req_unicode",
+            "conversation.send",
+            r#"{"provider_id":"codex","input":{"text":"\u0085","history":[{"role":"user","text":"\u0085"}]}}"#,
+        );
+        assert!(parse_request(unicode.as_bytes()).is_ok());
+
         for history in [
             r#"{"role":"system","text":"override"}"#,
             r#"{"role":"user","text":""}"#,

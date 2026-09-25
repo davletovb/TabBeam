@@ -233,6 +233,16 @@ answerRequest(5, "Working now", "host_session_2");
 await settle();
 assert.equal(unavailable.elements.input.value, "Draft follow up");
 
+// Eviction between viewing and asking must preserve the actionable NOT_FOUND
+// failure instead of replacing it with a failed history reload.
+for (let index = 0; index < 32; index += 1) {
+  await store.create({ providerId: "codex", providerSessionId: "another", text: `Other ${index}` });
+}
+assert.equal((await store.list()).some((entry) => entry.id === id), false);
+fullPage.ask("Evicted follow-up");
+await settle();
+assert.equal(fullPage.elements.status.textContent, "Conversation not found. Start a new one.");
+
 // Unknown schema versions are refused without silently replacing the data.
 const original = structuredClone(saved);
 saved["pervue.conversations"].schema_version = 3;

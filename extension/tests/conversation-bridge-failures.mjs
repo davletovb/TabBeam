@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { serveConversationAskPort } from "../src/background/conversation-bridge.js";
+import { createRequestId, hostDisconnectError, isExtensionPage } from "../src/background/ask-bridge.js";
 import { RequestTooLargeError } from "../src/background/native-connection.js";
 import { MockPort } from "./support/mock-port.mjs";
+
+assert.equal(isExtensionPage({ url: "chrome-extension://test/src/popup/index.html" }, "chrome-extension://test/"), true);
+assert.equal(isExtensionPage({ url: "https://example.com/" }, "chrome-extension://test/"), false);
+assert.equal(new Set(Array.from({ length: 20 }, createRequestId)).size, 20);
+assert.equal(hostDisconnectError("Specified native messaging host not found.").code, "HOST_NOT_INSTALLED");
 
 async function settle() {
   await new Promise((resolve) => setTimeout(resolve, 0));
