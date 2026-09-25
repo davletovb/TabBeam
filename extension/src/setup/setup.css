@@ -1,0 +1,13 @@
+:root {
+  color-scheme: light dark;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: Canvas; color: CanvasText; }
+main { width: min(720px, calc(100% - 32px)); margin: 0 auto; padding: 48px 0 72px; line-height: 1.6; }
+.eyebrow { margin: 0 0 8px; font-size: 13px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.65; }
+h1 { margin: 0 0 20px; font-size: clamp(30px, 7vw, 48px); line-height: 1.1; }
+ol { padding-left: 24px; }
+li { margin: 12px 0; }
+code { padding: 2px 5px; border-radius: 5px; background: color-mix(in srgb, CanvasText 9%, transparent); overflow-wrap: anywhere; }
+:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
