@@ -34,6 +34,8 @@ export function serveConversationAskPort(port, options) {
   let finished = false;
   let stopped = false;
   let nativePending = false;
+  let cancelRequested = false;
+  let cancelSent = false;
   /** @type {string | null} */
   let activeRequestId = null;
   /** @type {string | null} */
@@ -46,6 +48,24 @@ export function serveConversationAskPort(port, options) {
   let work = Promise.resolve();
 
   port.onDisconnect.addListener(() => { open = false; });
+
+  function requestNativeCancel() {
+    if (!cancelRequested || cancelSent || !activeRequestId || !nativePending || stopped || finished) {
+      return;
+    }
+    cancelSent = true;
+    try {
+      manager.send({
+        version: 1,
+        type: "request",
+        request_id: nextRequestId(),
+        method: "request.cancel",
+        payload: { target_request_id: activeRequestId }
+      });
+    } catch {
+      // The target still reports its own terminal event or disconnect.
+    }
+  }
 
   /** @param {any} event */
   function forward(event) {
@@ -137,18 +157,9 @@ export function serveConversationAskPort(port, options) {
 
   port.onMessage.addListener((/** @type {any} */ message) => {
     if (asked) {
-      if (message?.type === "cancel" && activeRequestId && nativePending && !stopped && !finished) {
-        try {
-          manager.send({
-            version: 1,
-            type: "request",
-            request_id: nextRequestId(),
-            method: "request.cancel",
-            payload: { target_request_id: activeRequestId }
-          });
-        } catch {
-          // The target still reports its own terminal event or disconnect.
-        }
+      if (message?.type === "cancel") {
+        cancelRequested = true;
+        requestNativeCancel();
       }
       return;
     }
@@ -224,6 +235,7 @@ export function serveConversationAskPort(port, options) {
             });
           }
         });
+        requestNativeCancel();
       } catch (error) {
         if (sending) nativePending = false;
         const reason = error instanceof RequestTooLargeError ? QUESTION_TOO_LONG
