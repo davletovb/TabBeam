@@ -316,6 +316,24 @@ function workerRequest(message, sender, tabs) {
   });
   await stale;
   assert.equal(state.getContext(), null, "clearing during a read must discard its late reply");
+
+  const finishHandoff = state.beginMenuHandoff();
+  assert.equal(state.isPending(), true);
+  assert.equal(controls.selection.disabled, false, "the menu handoff must not block an explicit choice");
+  assert.equal(controls.page.disabled, false);
+  const replacement = clicks.selection();
+  assert.equal(calls, 3, "the explicit choice starts a fresh capture");
+  finishHandoff({
+    available: true,
+    result: { ok: true, context: { mode: "page", text: "stale menu context", page: { title: "X", url: "https://example.com" } } }
+  });
+  assert.equal(state.isPending(), true, "a late menu result cannot finish the explicit capture");
+  resolveCapture({
+    ok: true, context: { mode: "selection", text: "fresh selection", page: { title: "X", url: "https://example.com" } }
+  });
+  await replacement;
+  assert.equal(state.getContext().text, "fresh selection");
+  assert.equal(state.isPending(), false);
 }
 
 console.log("CTX-01/02/03/04 browser-context capture tests passed");
