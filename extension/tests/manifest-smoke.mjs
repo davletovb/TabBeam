@@ -16,11 +16,12 @@ assert.equal(manifest.background.service_worker, "src/background/service-worker.
 assert.equal(manifest.background.type, "module");
 assert.ok(manifest.permissions.includes("contextMenus"));
 assert.ok(manifest.permissions.includes("nativeMessaging"));
+assert.ok(manifest.permissions.includes("activeTab"));
 assert.ok(manifest.commands["open-pervue-full-page"]);
-assert.ok(
-  fs.readFileSync(path.join(root, manifest.action.default_popup), "utf8")
-    .includes('id="insert-selection"')
-);
+const popupMarkup = fs.readFileSync(path.join(root, manifest.action.default_popup), "utf8");
+for (const id of ["context-none", "context-selection", "context-page", "context-preview"]) {
+  assert.ok(popupMarkup.includes(`id="${id}"`), `missing popup context control: ${id}`);
+}
 
 const contentScript = manifest.content_scripts[0];
 assert.deepEqual(contentScript.matches, ["http://*/*", "https://*/*"]);
@@ -35,7 +36,7 @@ const referencedFiles = [
   "src/background/selection-capture.js",
   "src/shared/ask-port.js",
   "src/shared/limits.js",
-  "src/popup/selection-insert.js",
+  "src/popup/context-controls.js",
   "src/popup/ask-form.js",
   "src/fullpage/index.html",
   "src/popup/popup.js",

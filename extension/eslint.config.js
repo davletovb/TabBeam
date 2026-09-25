@@ -16,7 +16,8 @@ export default [
         HTMLButtonElement: "readonly",
         HTMLFormElement: "readonly",
         HTMLTextAreaElement: "readonly",
-        TextEncoder: "readonly"
+        TextEncoder: "readonly",
+        NodeFilter: "readonly"
       }
     },
     rules: {

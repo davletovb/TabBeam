@@ -1,5 +1,5 @@
 import { bindAskForm } from "./ask-form.js";
-import { bindSelectionInsert } from "./selection-insert.js";
+import { bindContextControls } from "./context-controls.js";
 
 /**
  * @template {HTMLElement} T
@@ -15,6 +15,17 @@ function requireElement(selector, type) {
   return node;
 }
 
+const contextControls = bindContextControls(
+  {
+    none: requireElement("#context-none", HTMLButtonElement),
+    selection: requireElement("#context-selection", HTMLButtonElement),
+    page: requireElement("#context-page", HTMLButtonElement),
+    status: requireElement("#context-status", HTMLElement),
+    preview: requireElement("#context-preview", HTMLElement)
+  },
+  chrome.runtime
+);
+
 bindAskForm(
   {
     form: requireElement("#ask-form", HTMLFormElement),
@@ -23,14 +34,8 @@ bindAskForm(
     status: requireElement("#status", HTMLElement),
     answer: requireElement("#answer", HTMLElement)
   },
-  chrome.runtime
-);
-
-bindSelectionInsert(
-  requireElement("#insert-selection", HTMLButtonElement),
-  requireElement("#ask-input", HTMLTextAreaElement),
-  requireElement("#selection-status", HTMLElement),
-  chrome.runtime
+  chrome.runtime,
+  contextControls
 );
 
 requireElement("#open-full-page", HTMLButtonElement).addEventListener(

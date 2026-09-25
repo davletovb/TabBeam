@@ -1,89 +1,126 @@
-import { MAX_SELECTION_BYTES, utf8ByteLength } from "../shared/limits.js";
+import { MAX_PAGE_BYTES, MAX_SELECTION_BYTES, utf8ByteLength } from "../shared/limits.js";
 
-export const SELECTION_CAPTURE_MESSAGE = "pervue.selection.capture";
-const CONTENT_SELECTION_MESSAGE = "pervue.selection.read";
-
-const ERRORS = Object.freeze({
-  PAGE_ACCESS_DENIED: Object.freeze({
-    code: "CONTEXT_UNAVAILABLE",
-    reason: "PAGE_ACCESS_DENIED",
-    message: "Selection can only be inserted from the Pervue popup."
-  }),
-  PAGE_NOT_SCRIPTABLE: Object.freeze({
-    code: "CONTEXT_UNAVAILABLE",
-    reason: "PAGE_NOT_SCRIPTABLE",
-    message: "This page does not support selected-text capture."
-  }),
-  SELECTION_UNAVAILABLE: Object.freeze({
-    code: "CONTEXT_UNAVAILABLE",
-    reason: "SELECTION_UNAVAILABLE",
-    message: "Select some text on the page first."
-  }),
-  CONTEXT_TOO_LARGE: Object.freeze({
-    code: "CONTEXT_UNAVAILABLE",
-    reason: "CONTEXT_TOO_LARGE",
-    message: "The page returned too much selected text."
-  })
+export const CONTEXT_CAPTURE_MESSAGE = "pervue.context.capture";
+const CONTENT_MESSAGES = Object.freeze({
+  selection: "pervue.selection.read",
+  page: "pervue.page.read"
 });
 
-/** @param {keyof typeof ERRORS} reason */
-function failure(reason) {
-  return { ok: false, error: ERRORS[reason] };
+const ERRORS = Object.freeze({
+  PAGE_ACCESS_DENIED: "Pervue cannot access this tab. Allow site access and try again.",
+  PAGE_NOT_SCRIPTABLE: "This page does not support context capture.",
+  SELECTION_UNAVAILABLE: "Select some text on the page first.",
+  PAGE_EXTRACTION_FAILED: "No readable text was found on this page.",
+  CONTEXT_TOO_LARGE: "The page returned more context than Pervue can accept."
+});
+
+/** @param {keyof typeof ERRORS} reason @param {"denied" | "unsupported" | "granted"} permission */
+function failure(reason, permission = "granted") {
+  return {
+    ok: /** @type {false} */ (false),
+    permission,
+    error: { code: "CONTEXT_UNAVAILABLE", reason, message: ERRORS[reason], retryable: false }
+  };
+}
+
+/** @param {{query(query: object): Promise<{id?: number, url?: string, title?: string}[]>}} tabs */
+export async function getActiveTabMetadata(tabs) {
+  try {
+    const [tab] = await tabs.query({ active: true, currentWindow: true });
+    if (typeof tab?.id !== "number" || !Number.isInteger(tab.id)) {
+      return failure("PAGE_NOT_SCRIPTABLE", "unsupported");
+    }
+    if (typeof tab.url !== "string") {
+      return failure("PAGE_ACCESS_DENIED", "denied");
+    }
+    const url = new URL(tab.url);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return failure("PAGE_NOT_SCRIPTABLE", "unsupported");
+    }
+    // Omit credentials, query, and fragment before page metadata can reach a
+    // provider. Context is fetched only for an explicit popup action.
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    if (utf8ByteLength(url.href) > 2048) {
+      return failure("CONTEXT_TOO_LARGE");
+    }
+    const title = typeof tab.title === "string"
+      ? [...tab.title].slice(0, 256).join("")
+      : url.hostname;
+    return { ok: /** @type {true} */ (true), permission: "granted", tabId: tab.id, page: { title, url: url.href } };
+  } catch {
+    return failure("PAGE_NOT_SCRIPTABLE", "unsupported");
+  }
 }
 
 /**
- * The caller must be the popup, where a button click initiates this request.
- * No page selection is read during navigation, popup startup, or an Ask submit.
+ * Only the popup's explicit action can request content. Context is ephemeral:
+ * no content or per-site permission state is stored here.
  *
  * @param {any} message
  * @param {{url?: string}} sender
  * @param {(response: any) => void} sendResponse
- * @param {{query(query: object): Promise<{id?: number}[]>, sendMessage(tabId: number, message: any, options: object): Promise<any>}} tabs
+ * @param {{query(query: object): Promise<{id?: number, url?: string, title?: string}[]>, sendMessage(tabId: number, message: any, options: object): Promise<any>}} tabs
  * @param {string} popupUrl
- * @returns {boolean} whether Chrome must keep the response channel open
+ * @returns {boolean}
  */
-export function handleSelectionCapture(message, sender, sendResponse, tabs, popupUrl) {
-  if (message?.type !== SELECTION_CAPTURE_MESSAGE) {
+export function handleContextCapture(message, sender, sendResponse, tabs, popupUrl) {
+  if (message?.type !== CONTEXT_CAPTURE_MESSAGE) {
     return false;
   }
-  if (sender?.url !== popupUrl) {
-    sendResponse(failure("PAGE_ACCESS_DENIED"));
+  if (sender?.url !== popupUrl || message.intent !== "user_click") {
+    sendResponse(failure("PAGE_ACCESS_DENIED", "denied"));
     return false;
   }
-  capture(tabs).then(sendResponse);
+  if (message.mode !== "selection" && message.mode !== "page") {
+    sendResponse(failure("PAGE_NOT_SCRIPTABLE", "unsupported"));
+    return false;
+  }
+  capture(tabs, message.mode).then(sendResponse);
   return true;
 }
 
-/** @param {{query(query: object): Promise<{id?: number}[]>, sendMessage(tabId: number, message: any, options: object): Promise<any>}} tabs */
-async function capture(tabs) {
+/** @param {Parameters<typeof handleContextCapture>[3]} tabs @param {"selection" | "page"} mode */
+async function capture(tabs, mode) {
+  const metadata = await getActiveTabMetadata(tabs);
+  if (!metadata.ok) {
+    return metadata;
+  }
   try {
-    const [tab] = await tabs.query({ active: true, currentWindow: true });
-    if (typeof tab?.id !== "number" || !Number.isInteger(tab.id)) {
-      return failure("PAGE_NOT_SCRIPTABLE");
-    }
-    // This script runs only in the top frame; request it explicitly so later
-    // frame support cannot turn this capture into an ambiguous first reply.
     const response = await tabs.sendMessage(
-      tab.id,
-      { type: CONTENT_SELECTION_MESSAGE },
+      metadata.tabId,
+      { type: CONTENT_MESSAGES[mode] },
       { frameId: 0 }
     );
-    if (response?.ok === false && response.reason === "SELECTION_UNAVAILABLE") {
-      return failure("SELECTION_UNAVAILABLE");
+    if (response?.ok === false) {
+      if (mode === "selection" && response.reason === "SELECTION_UNAVAILABLE") {
+        return failure("SELECTION_UNAVAILABLE");
+      }
+      return failure("PAGE_EXTRACTION_FAILED");
     }
     if (response?.ok !== true || typeof response.text !== "string") {
-      return failure("PAGE_NOT_SCRIPTABLE");
+      return failure("PAGE_EXTRACTION_FAILED");
     }
     if (response.text.trim() === "") {
-      return failure("SELECTION_UNAVAILABLE");
+      return failure(mode === "selection" ? "SELECTION_UNAVAILABLE" : "PAGE_EXTRACTION_FAILED");
     }
-    if (utf8ByteLength(response.text) > MAX_SELECTION_BYTES) {
+    const limit = mode === "selection" ? MAX_SELECTION_BYTES : MAX_PAGE_BYTES;
+    if (utf8ByteLength(response.text) > limit) {
       return failure("CONTEXT_TOO_LARGE");
     }
-    return { ok: true, text: response.text, truncated: response.truncated === true };
+    return {
+      ok: true,
+      permission: "granted",
+      context: {
+        mode,
+        text: response.text,
+        truncated: response.truncated === true,
+        page: metadata.page
+      }
+    };
   } catch {
-    // Chrome rejects sendMessage on internal pages and on tabs without our
-    // content script. Never return its raw error string or page data.
-    return failure("PAGE_NOT_SCRIPTABLE");
+    return failure("PAGE_ACCESS_DENIED", "denied");
   }
 }

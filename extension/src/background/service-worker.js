@@ -4,7 +4,7 @@ import {
   NATIVE_HOST_NAME,
   createNativeConnectionManager
 } from "./native-connection.js";
-import { handleSelectionCapture } from "./selection-capture.js";
+import { handleContextCapture } from "./selection-capture.js";
 
 const MENU_ID = "pervue-open-full-page";
 
@@ -61,7 +61,7 @@ chrome.runtime.onMessage.addListener(
       });
       return;
     }
-    return handleSelectionCapture(
+    return handleContextCapture(
       message,
       sender,
       sendResponse,

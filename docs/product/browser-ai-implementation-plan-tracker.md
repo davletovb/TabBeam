@@ -169,9 +169,9 @@ Reached after **Milestone H**:
 | EXT-07 | Implement popup → full-page continuation handoff | C | Extension | EXT-05, EXT-06 | BACKLOG |
 | TST-06 | Add conversation continuity end-to-end tests | C | Testing | EXT-07, CON-03 | BACKLOG |
 | CTX-01 | Capture selected text safely | D | Context | EXT-01 | IMPLEMENTED — VERIFY |
-| CTX-02 | Capture current-tab title/URL metadata | D | Context | EXT-01 | BACKLOG |
-| CTX-03 | Implement bounded readable-page extraction | D | Context | CTX-02 | BACKLOG |
-| CTX-04 | Implement explicit page-context permission/intent policy | D | Context / Security | CTX-01, CTX-03 | BACKLOG |
+| CTX-02 | Capture current-tab title/URL metadata | D | Context | EXT-01 | IMPLEMENTED — VERIFY |
+| CTX-03 | Implement bounded readable-page extraction | D | Context | CTX-02 | IMPLEMENTED — VERIFY |
+| CTX-04 | Implement explicit page-context permission/intent policy | D | Context / Security | CTX-01, CTX-03 | IMPLEMENTED — VERIFY |
 | EXT-08 | Add context mode/control to popup request flow | D | Extension | CTX-01, CTX-03, CTX-04, EXT-05 | BACKLOG |
 | EXT-09 | Add selection/current-page context-menu actions | D | Extension | CTX-01, CTX-03 | BACKLOG |
 | EXT-10 | Add keyboard command entry path | D | Extension | EXT-03 | BACKLOG |
@@ -849,10 +849,10 @@ Reached after **Milestone H**:
 **Status:** IMPLEMENTED — VERIFY
 
 **Implementation evidence**
-- The popup's explicit **Insert selected text** button requests capture only on click and inserts the selected text into the visible, editable composer; asking remains a separate user action: `extension/src/popup/selection-insert.js`.
+- The popup's explicit **Use selection** action requests capture only on click, shows a preview, and attaches it only on a later Ask; **No context** clears it: `extension/src/popup/context-controls.js`, `extension/src/popup/ask-form.js`.
 - The service worker accepts capture only from the popup, requests the active tab's top-frame content script, normalizes unavailable pages and empty selections as `CONTEXT_UNAVAILABLE`, and checks the size of the response: `extension/src/background/selection-capture.js`.
 - The content script reads regular selections and focused text-field selections only upon the capture message, limits UTF-8 text to 16 KiB without splitting Unicode characters, and reports truncation: `extension/src/content/content-script.js`.
-- `extension/tests/selection-capture.mjs` covers explicit gating, bounds, Unicode, input selection, restricted pages, unauthorized callers, double click, and visible insertion.
+- `extension/tests/selection-capture.mjs` covers explicit gating, bounds, Unicode, input selection, restricted pages, unauthorized callers, and clear-during-capture behavior; `extension/tests/ask-bridge.mjs` covers request attachment.
 
 ### CTX-02 — Capture current-tab title/URL metadata
 **Area:** Context  
@@ -862,7 +862,11 @@ Reached after **Milestone H**:
 - Current tab title/URL are available to request construction where permissions allow.
 - Unsupported/internal pages fail as `CONTEXT_UNAVAILABLE`, not as generic internal errors.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- Active-tab metadata is read only after a popup capture action, under the temporary `activeTab` grant; HTTP/HTTPS titles and URLs are bounded, credentials/query/fragment removed, and unsupported or inaccessible tabs return `CONTEXT_UNAVAILABLE`: `extension/src/background/selection-capture.js`, `extension/manifest.json`.
+- `extension/tests/selection-capture.mjs` covers missing access, internal pages, sanitized metadata, and bounds.
 
 ### CTX-03 — Implement bounded readable-page extraction
 **Area:** Context  
@@ -878,7 +882,11 @@ Reached after **Milestone H**:
 - Extracted text respects a configured size ceiling.
 - Extraction failure does not break normal Ask mode.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- The content script lazily walks readable page text, prefers `main`/`article`, skips hidden/navigation/form/editable content, caps output at 64 KiB and traversal at 5,000 text nodes, and reports truncation: `extension/src/content/content-script.js`.
+- Empty or inaccessible extraction is normalized as `CONTEXT_UNAVAILABLE`; `extension/tests/selection-capture.mjs` covers page extraction and limits.
 
 ### CTX-04 — Implement explicit page-context permission/intent policy
 **Area:** Context / Security  
@@ -889,7 +897,12 @@ Reached after **Milestone H**:
 - Permission state is explicit and persists only where appropriate.
 - Context is never silently attached simply because a content script is present.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- The popup begins with No context, shows explicit selection/page choices, permission outcome and preview, permits clearing while capture is pending, and keeps context only in popup memory: `extension/src/popup/context-controls.js`.
+- The service worker accepts capture requests only from the popup with explicit click intent, uses the active tab's top frame, and never stores access decisions; the ask bridge validates and attaches only chosen structured context: `extension/src/background/selection-capture.js`, `extension/src/background/ask-bridge.js`.
+- `extension/tests/selection-capture.mjs`, `extension/tests/popup-ask.mjs`, and `extension/tests/ask-bridge.mjs` cover intent, failure, no-context Ask, and attached context.
 
 ### EXT-08 — Add context mode/control to popup request flow
 **Area:** Extension  
@@ -1520,14 +1533,14 @@ Update this section whenever item statuses change.
 | A — Native round trip | 8 | 0 | 8 | 0 | 0 | 0 | 0 | 0 |
 | B — First provider | 10 | 0 | 0 | 0 | 0 | 10 | 0 | 0 |
 | C — Conversation continuity | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
-| D — Browser context | 9 | 0 | 1 | 0 | 0 | 8 | 0 | 0 |
+| D — Browser context | 9 | 0 | 4 | 0 | 0 | 5 | 0 | 0 |
 | MVP closure | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
 | E — Second provider | 5 | 0 | 0 | 0 | 0 | 5 | 0 | 0 |
 | F — Reusable native core | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
 | G — Installable product | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 |
 | H — Search/citations | 8 | 0 | 0 | 0 | 0 | 8 | 0 | 0 |
 | Post-milestone | 6 | 0 | 0 | 0 | 0 | 4 | 0 | 2 |
-| **Total** | **81** | **0** | **14** | **0** | **0** | **65** | **0** | **2** |
+| **Total** | **81** | **0** | **17** | **0** | **0** | **62** | **0** | **2** |
 
 ### Milestone completion rule
 

@@ -16,11 +16,17 @@
       <form id="ask-form" class="composer">
         <label class="sr-only" for="ask-input">Ask anything</label>
         <textarea id="ask-input" rows="3" placeholder="Ask anything…"></textarea>
-        <button id="insert-selection" class="secondary" type="button">Insert selected text</button>
+        <fieldset class="context-choices">
+          <legend>Context for this question</legend>
+          <button id="context-none" class="secondary" type="button">No context</button>
+          <button id="context-selection" class="secondary" type="button">Use selection</button>
+          <button id="context-page" class="secondary" type="button">Use this page</button>
+        </fieldset>
+        <p id="context-status" class="status" role="status" aria-live="polite"></p>
+        <section id="context-preview" class="context-preview" aria-label="Context preview" hidden></section>
         <button id="ask-submit" type="submit" aria-disabled="false">Ask</button>
       </form>
 
-      <p id="selection-status" class="status" role="status" aria-live="polite"></p>
       <p id="status" class="status" role="status" aria-live="polite"></p>
 
       <section id="answer" class="answer" aria-label="Answer" aria-busy="false" hidden></section>
