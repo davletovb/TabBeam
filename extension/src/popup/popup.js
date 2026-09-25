@@ -1,4 +1,5 @@
 import { bindAskForm } from "./ask-form.js";
+import { bindSelectionInsert } from "./selection-insert.js";
 
 /**
  * @template {HTMLElement} T
@@ -22,6 +23,13 @@ bindAskForm(
     status: requireElement("#status", HTMLElement),
     answer: requireElement("#answer", HTMLElement)
   },
+  chrome.runtime
+);
+
+bindSelectionInsert(
+  requireElement("#insert-selection", HTMLButtonElement),
+  requireElement("#ask-input", HTMLTextAreaElement),
+  requireElement("#selection-status", HTMLElement),
   chrome.runtime
 );
 

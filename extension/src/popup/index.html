@@ -16,9 +16,11 @@
       <form id="ask-form" class="composer">
         <label class="sr-only" for="ask-input">Ask anything</label>
         <textarea id="ask-input" rows="3" placeholder="Ask anything…"></textarea>
+        <button id="insert-selection" class="secondary" type="button">Insert selected text</button>
         <button id="ask-submit" type="submit" aria-disabled="false">Ask</button>
       </form>
 
+      <p id="selection-status" class="status" role="status" aria-live="polite"></p>
       <p id="status" class="status" role="status" aria-live="polite"></p>
 
       <section id="answer" class="answer" aria-label="Answer" aria-busy="false" hidden></section>

@@ -53,6 +53,12 @@ The popup asks the native host one question at a time and streams the answer bac
 - Only the extension's own pages can open the ask port. The service worker disconnects ports from content scripts.
 - Milestone A always asks the host's deterministic `fake` provider (`DEFAULT_PROVIDER_ID` in `src/background/ask-bridge.js`). Provider selection comes with Milestone B.
 
+## Selected text (CTX-01)
+
+Click **Insert selected text** in the popup after selecting text on the current page. The extension reads the selection only for that click and inserts it as visible quoted text in the composer. Review or edit it, then press **Ask** if you want to send it. It is not silently added to a question.
+
+The content script reads a normal page selection or selected text in a focused text field. It returns at most 16 KiB of UTF-8 text, with a truncation flag shown in the popup; the service worker checks the size again before accepting it. Empty selections produce `CONTEXT_UNAVAILABLE / SELECTION_UNAVAILABLE`. Pages without the content script, including internal browser pages, produce `CONTEXT_UNAVAILABLE / PAGE_NOT_SCRIPTABLE`. Capture is currently limited to the top frame. Formal context modes and structured request context are tracked separately under EXT-08.
+
 ### Trying it against the local host
 
 Until packaging registers the host (Milestone G), register a development build by hand:

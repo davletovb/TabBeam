@@ -168,7 +168,7 @@ Reached after **Milestone H**:
 | EXT-06 | Implement full-page conversation UI | C | Extension | CON-01, CON-02 | BACKLOG |
 | EXT-07 | Implement popup → full-page continuation handoff | C | Extension | EXT-05, EXT-06 | BACKLOG |
 | TST-06 | Add conversation continuity end-to-end tests | C | Testing | EXT-07, CON-03 | BACKLOG |
-| CTX-01 | Capture selected text safely | D | Context | EXT-01 | BACKLOG |
+| CTX-01 | Capture selected text safely | D | Context | EXT-01 | IMPLEMENTED — VERIFY |
 | CTX-02 | Capture current-tab title/URL metadata | D | Context | EXT-01 | BACKLOG |
 | CTX-03 | Implement bounded readable-page extraction | D | Context | CTX-02 | BACKLOG |
 | CTX-04 | Implement explicit page-context permission/intent policy | D | Context / Security | CTX-01, CTX-03 | BACKLOG |
@@ -846,7 +846,13 @@ Reached after **Milestone H**:
 - Selection length is bounded.
 - Empty/unavailable selection has a deterministic outcome.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- The popup's explicit **Insert selected text** button requests capture only on click and inserts the selected text into the visible, editable composer; asking remains a separate user action: `extension/src/popup/selection-insert.js`.
+- The service worker accepts capture only from the popup, requests the active tab's top-frame content script, normalizes unavailable pages and empty selections as `CONTEXT_UNAVAILABLE`, and checks the size of the response: `extension/src/background/selection-capture.js`.
+- The content script reads regular selections and focused text-field selections only upon the capture message, limits UTF-8 text to 16 KiB without splitting Unicode characters, and reports truncation: `extension/src/content/content-script.js`.
+- `extension/tests/selection-capture.mjs` covers explicit gating, bounds, Unicode, input selection, restricted pages, unauthorized callers, double click, and visible insertion.
 
 ### CTX-02 — Capture current-tab title/URL metadata
 **Area:** Context  
@@ -1514,14 +1520,14 @@ Update this section whenever item statuses change.
 | A — Native round trip | 8 | 0 | 8 | 0 | 0 | 0 | 0 | 0 |
 | B — First provider | 10 | 0 | 0 | 0 | 0 | 10 | 0 | 0 |
 | C — Conversation continuity | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
-| D — Browser context | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 |
+| D — Browser context | 9 | 0 | 1 | 0 | 0 | 8 | 0 | 0 |
 | MVP closure | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
 | E — Second provider | 5 | 0 | 0 | 0 | 0 | 5 | 0 | 0 |
 | F — Reusable native core | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
 | G — Installable product | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 |
 | H — Search/citations | 8 | 0 | 0 | 0 | 0 | 8 | 0 | 0 |
 | Post-milestone | 6 | 0 | 0 | 0 | 0 | 4 | 0 | 2 |
-| **Total** | **81** | **0** | **13** | **0** | **0** | **66** | **0** | **2** |
+| **Total** | **81** | **0** | **14** | **0** | **0** | **65** | **0** | **2** |
 
 ### Milestone completion rule
 

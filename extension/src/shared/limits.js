@@ -5,6 +5,9 @@
 /** Largest Native Messaging payload the host accepts, in UTF-8 bytes. */
 export const MAX_NATIVE_MESSAGE_BYTES = 1024 * 1024;
 
+/** Largest selected-text payload returned from a page (UTF-8 bytes). */
+export const MAX_SELECTION_BYTES = 16 * 1024;
+
 /** @param {string} text */
 export function utf8ByteLength(text) {
   return new TextEncoder().encode(text).byteLength;
