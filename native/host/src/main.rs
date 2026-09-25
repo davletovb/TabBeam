@@ -3,6 +3,7 @@ use std::io::{self, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
+use pervue_host::diagnostics::Diagnostics;
 use pervue_host::manifest::{self, is_extension_origin};
 use pervue_host::{HOST_VERSION, host};
 
@@ -38,8 +39,10 @@ fn main() -> ExitCode {
     }
 
     // Rust's standard streams pass bytes through unchanged, including Windows
-    // pipes, so no binary-mode switch is needed before framing.
-    match host::run(&mut io::stdin().lock(), &mut io::stdout().lock()) {
+    // pipes, so no binary-mode switch is needed before framing. Frames go to
+    // stdout only; diagnostics go to stderr, one JSON object per line.
+    let mut log = Diagnostics::new(io::stderr());
+    match host::run(&mut io::stdin().lock(), &mut io::stdout().lock(), &mut log) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => ExitCode::from(error.exit_code()),
     }

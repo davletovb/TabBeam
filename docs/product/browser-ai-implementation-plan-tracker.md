@@ -149,7 +149,7 @@ Reached after **Milestone H**:
 | EXT-02 | Implement service-worker Native Messaging connection manager | A | Extension | EXT-01, DOC-01 | IMPLEMENTED — VERIFY |
 | EXT-03 | Implement minimal popup ask/stream UI | A | Extension | EXT-01, EXT-02 | IMPLEMENTED — VERIFY |
 | SEC-01 | Enforce browser/native trust-boundary limits | A | Security | NAT-02, NAT-03 | IMPLEMENTED — VERIFY |
-| OBS-01 | Add structured native lifecycle diagnostics | A | Observability | NAT-03, DOC-02 | BACKLOG |
+| OBS-01 | Add structured native lifecycle diagnostics | A | Observability | NAT-03, DOC-02 | IMPLEMENTED — VERIFY |
 | TST-03 | Add extension ↔ host streamed round-trip integration test | A | Testing | TST-02, EXT-02, EXT-03, NAT-03 | BACKLOG |
 | NAT-04 | Implement provider process manager | B | Native | NAT-03 | BACKLOG |
 | NAT-05 | Implement native stream manager | B | Native | NAT-04 | BACKLOG |
@@ -569,7 +569,16 @@ Reached after **Milestone H**:
 - Full prompts, page content, credentials, and provider auth files are excluded by default.
 - stderr diagnostics do not corrupt stdout Native Messaging frames.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- JSON-lines diagnostics with timestamp, lifecycle event, request ID, method, provider ID, conversation ID, duration, exit code, and normalized error (code and reason): `native/host/src/diagnostics.rs`
+- The host records `host.started`, `request.completed`, `request.failed`, `request.rejected`, and `host.stopped`. Handlers report each request's outcome to the loop: `native/host/src/host.rs`, `native/host/src/protocol/router.rs`
+- Records never copy prompt text, page context, other payload members, raw frames, or error messages. Request identifiers are cut to 128 characters and JSON-escaped: `diagnostics_never_copy_request_content` and the `diagnostics.rs` unit tests
+- Diagnostics go only to stderr, and a failing stderr is ignored: `diagnostics_go_to_stderr_and_never_into_the_frames` and `the_logged_exit_code_matches_the_process` in `native/host/tests/cli.rs`, and `diagnostics_do_not_change_the_frames` in `native/host/src/host.rs`
+- The protocol fuzz target checks that every input yields three well-formed records (`native/fuzz/fuzz_targets/protocol.rs`), and `scripts/validate_host_protocol.py` checks the built host's stderr on the golden requests
+- Format and fields documented in `native/README.md` (Diagnostics)
+- Moves to VERIFIED once merged.
 
 ### TST-03 — Add extension ↔ host streamed round-trip integration test
 **Area:** Testing  
@@ -1496,7 +1505,7 @@ Update this section whenever item statuses change.
 | Stage | Total | Verified | Implemented — Verify | In Progress | Ready | Backlog | Blocked | Deferred |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | Foundation | 5 | 0 | 5 | 0 | 0 | 0 | 0 | 0 |
-| A — Native round trip | 8 | 0 | 6 | 0 | 0 | 2 | 0 | 0 |
+| A — Native round trip | 8 | 0 | 7 | 0 | 0 | 1 | 0 | 0 |
 | B — First provider | 10 | 0 | 0 | 0 | 0 | 10 | 0 | 0 |
 | C — Conversation continuity | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
 | D — Browser context | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 |
@@ -1506,7 +1515,7 @@ Update this section whenever item statuses change.
 | G — Installable product | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 |
 | H — Search/citations | 8 | 0 | 0 | 0 | 0 | 8 | 0 | 0 |
 | Post-milestone | 6 | 0 | 0 | 0 | 0 | 4 | 0 | 2 |
-| **Total** | **81** | **0** | **11** | **0** | **0** | **68** | **0** | **2** |
+| **Total** | **81** | **0** | **12** | **0** | **0** | **67** | **0** | **2** |
 
 ### Milestone completion rule
 

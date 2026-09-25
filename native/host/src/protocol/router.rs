@@ -2,11 +2,34 @@
 
 use std::io::Write;
 
-use super::events::EventError;
+use super::events::{ErrorBody, ErrorCode, EventError};
 use super::json::JsonStr;
 use super::request::{Method, Request, RequestId};
 
-/// Handlers for the v1 methods. Each handler writes the request's events.
+/// How a handler's request ended, for diagnostics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Outcome {
+    /// The request's last event was its successful terminal event.
+    Completed,
+    /// The request ended with `response.failed` carrying this error.
+    Failed {
+        code: ErrorCode,
+        reason: &'static str,
+    },
+}
+
+impl Outcome {
+    /// The outcome of a request that failed with `error`.
+    pub const fn failed(error: &ErrorBody<'static>) -> Self {
+        Self::Failed {
+            code: error.code,
+            reason: error.reason,
+        }
+    }
+}
+
+/// Handlers for the v1 methods. Each handler writes the request's events and
+/// reports how the request ended.
 pub trait Handlers {
     fn conversation_send<W: Write + ?Sized>(
         &mut self,
@@ -14,21 +37,21 @@ pub trait Handlers {
         request_id: RequestId<'_>,
         provider_id: JsonStr<'_>,
         conversation_id: Option<JsonStr<'_>>,
-    ) -> Result<(), EventError>;
+    ) -> Result<Outcome, EventError>;
 
     fn provider_status<W: Write + ?Sized>(
         &mut self,
         output: &mut W,
         request_id: RequestId<'_>,
         provider_id: Option<JsonStr<'_>>,
-    ) -> Result<(), EventError>;
+    ) -> Result<Outcome, EventError>;
 
     fn request_cancel<W: Write + ?Sized>(
         &mut self,
         output: &mut W,
         request_id: RequestId<'_>,
         target_request_id: RequestId<'_>,
-    ) -> Result<(), EventError>;
+    ) -> Result<Outcome, EventError>;
 }
 
 /// Routes `request` to the handler for its method.
@@ -36,7 +59,7 @@ pub fn dispatch<H: Handlers, W: Write + ?Sized>(
     handlers: &mut H,
     output: &mut W,
     request: &Request<'_>,
-) -> Result<(), EventError> {
+) -> Result<Outcome, EventError> {
     match request.method {
         Method::ConversationSend {
             provider_id,
@@ -70,10 +93,10 @@ mod tests {
             _request_id: RequestId<'_>,
             provider_id: JsonStr<'_>,
             _conversation_id: Option<JsonStr<'_>>,
-        ) -> Result<(), EventError> {
+        ) -> Result<Outcome, EventError> {
             assert!(provider_id.equals_ascii("fake"));
             self.conversation_calls += 1;
-            Ok(())
+            Ok(Outcome::Completed)
         }
 
         fn provider_status<W: Write + ?Sized>(
@@ -81,9 +104,9 @@ mod tests {
             _output: &mut W,
             _request_id: RequestId<'_>,
             _provider_id: Option<JsonStr<'_>>,
-        ) -> Result<(), EventError> {
+        ) -> Result<Outcome, EventError> {
             self.status_calls += 1;
-            Ok(())
+            Ok(Outcome::Completed)
         }
 
         fn request_cancel<W: Write + ?Sized>(
@@ -91,9 +114,9 @@ mod tests {
             _output: &mut W,
             _request_id: RequestId<'_>,
             _target_request_id: RequestId<'_>,
-        ) -> Result<(), EventError> {
+        ) -> Result<Outcome, EventError> {
             self.cancel_calls += 1;
-            Ok(())
+            Ok(Outcome::Completed)
         }
     }
 

@@ -47,7 +47,11 @@ Tests: `provider_ids_are_names_not_paths_or_commands` in `native/host/src/host.r
 - The host validates each request completely (framing, JSON syntax, envelope, version, method, and method payload) before routing it. Handlers, where provider work starts, only ever receive validated, typed requests. Test: `invalid_requests_never_reach_a_handler` in `native/host/src/host.rs`.
 - The extension checks a request's ID grammar, size, and serializability before the native port opens or is used. A request that fails any of these checks fails on its own; it can't close the port for other requests in flight. The ask bridge also refuses an empty question before building a request.
 
-## 5. Covered elsewhere
+## 5. Diagnostics
+
+The host's stderr diagnostics (OBS-01) record identifiers, timings, and normalized outcomes. They never copy request content: no prompt text, page context, other payload members, raw frames, or error messages. Identifiers copied from a request are cut to 128 characters and JSON-escaped, so a request can't forge or split a record. Diagnostics go only to stderr, never into the stdout frames. Tests: `diagnostics_never_copy_request_content` in `native/host/src/host.rs`, and `diagnostics_go_to_stderr_and_never_into_the_frames` in `native/host/tests/cli.rs`.
+
+## 6. Covered elsewhere
 
 - Page-context size and intent limits: CTX-03, CTX-04.
 - Provider process invocation and log redaction: SEC-02.

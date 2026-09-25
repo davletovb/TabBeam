@@ -11,6 +11,7 @@ native/
 ├── Cargo.toml       Cargo workspace: shared version, Rust 1.85+, `unsafe` forbidden
 ├── host/            pervue-host: the Native Messaging host (binary + library)
 │   └── src/
+│       ├── diagnostics.rs  structured lifecycle diagnostics (JSON lines on stderr)
 │       ├── framing.rs   bounded length-prefixed frame reader/writer
 │       ├── limits.rs    every bound on browser input (frame size, nesting, request IDs)
 │       ├── manifest.rs  caller-origin checks and the Native Messaging manifest
@@ -57,7 +58,7 @@ Pervue uses Chrome Native Messaging framing:
 
 NAT-02 validates and transports frames. NAT-03 validates protocol-v1 JSON envelopes/payloads, emits normalized protocol failures, and routes known methods. Provider process execution remains deferred to NAT-04/NAT-05.
 
-At this milestone framing failures are exposed as deterministic exit statuses. Structured stderr/lifecycle diagnostics are intentionally deferred to **OBS-01** so NAT-02 does not create an ad-hoc diagnostics format that later observability work must replace.
+A framing failure ends the host with a deterministic exit status, and the host's last diagnostics record (`host.stopped`, see [Diagnostics](#diagnostics)) names the reason and the exit status.
 
 | Exit status | Meaning |
 |---|---|
@@ -105,6 +106,32 @@ Chrome starts the host only for the extensions its Native Messaging manifest lis
 ```
 
 The output names `com.pervue.host`, points `path` at the absolute path the host was run from, and lists one `chrome-extension://<id>/` origin per ID. Anything that isn't a 32-character `a`–`p` ID, such as a wildcard or a full origin, is refused with status 64. The path isn't canonicalized: on macOS a symlink or `..` is kept as typed, while Linux reports the resolved path. That is deliberate, because a stable symlink can be the right path to register, where its versioned target would break on upgrade. Installers should run the host from the path they want registered (PKG-01). `extension/README.md` shows where to save the manifest for development; installers register it later (PKG-01).
+
+## Diagnostics
+
+While it serves a session, the host writes structured diagnostics to stderr, one JSON object per line (OBS-01). stdout carries only Native Messaging frames, so diagnostics can't corrupt them. If stderr fails or is closed, the host ignores the failure and carries on. Chrome passes a host's stderr through to its own, so starting Chrome with `--enable-logging=stderr` shows them.
+
+```text
+{"ts":"2026-09-25T01:21:49.903Z","event":"host.started","host_version":"0.1.0-dev","pid":1764}
+{"ts":"2026-09-25T01:21:49.903Z","event":"request.completed","request_id":"req_a","method":"conversation.send","provider_id":"fake","conversation_id":"conv_1","duration_ms":0}
+{"ts":"2026-09-25T01:21:49.903Z","event":"request.failed","request_id":"req_b","method":"provider.status","provider_id":"codex","duration_ms":0,"error":{"code":"PROVIDER_NOT_FOUND","reason":"PROVIDER_NOT_INSTALLED"}}
+{"ts":"2026-09-25T01:21:49.903Z","event":"request.rejected","error":{"code":"INVALID_REQUEST","reason":"MALFORMED_MESSAGE"}}
+{"ts":"2026-09-25T01:21:49.903Z","event":"host.stopped","duration_ms":0,"reason":"end_of_input","exit_code":0,"requests":2,"rejected":1}
+```
+
+Every record has `ts` (RFC 3339 UTC, with milliseconds) and `event`. A field that doesn't apply is left out.
+
+| Event | Written when | Fields |
+|---|---|---|
+| `host.started` | Before `host.ready` | `host_version`, `pid` |
+| `request.completed` | A handler finished the request successfully | `request_id`, `method`, `provider_id`, `conversation_id`, `duration_ms` |
+| `request.failed` | A handler ended the request with `response.failed` | The same fields, plus `error` (`code` and `reason`) |
+| `request.rejected` | The request failed validation and never reached a handler | `request_id` if one was recovered, and `error` (`INVALID_REQUEST` and its reason) |
+| `host.stopped` | The host is about to exit | `reason` (`end_of_input`, `io_error`, `frame_truncated`, `frame_too_large` or `allocation_failed`), `exit_code`, `duration_ms` (uptime), `requests` and `rejected` |
+
+A record never contains request content: no prompt text, page context, other payload members, raw frame bytes, or error messages. The identifiers it copies from a request (`provider_id` and `conversation_id`) are cut to 128 characters, and JSON escaping keeps each record on one line whatever they contain. Redacting provider output and credentials comes with real providers (SEC-02).
+
+Command-line errors, such as a usage error or an invalid `--print-manifest` ID, are plain text on stderr, because no session is running.
 
 ## Fuzz targets
 
