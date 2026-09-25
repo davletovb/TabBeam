@@ -2,6 +2,7 @@
 //! frame until the extension closes the stream, recording the session's
 //! lifecycle as diagnostics.
 
+use std::borrow::Cow;
 use std::io::{Read, Write};
 use std::time::{Duration, Instant};
 
@@ -15,7 +16,7 @@ use crate::protocol::events::{
 };
 use crate::protocol::json::JsonStr;
 use crate::protocol::request::{self, Method, Request, RequestFailure, RequestId};
-use crate::protocol::router::{self, Handlers, Outcome};
+use crate::protocol::router::{self, End, Handlers, Outcome};
 
 /// Why the host stopped before a clean end of stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -133,11 +134,12 @@ fn serve<H: Handlers, R: Read + ?Sized, W: Write + ?Sized, L: Write>(
 }
 
 /// The record of a request a handler finished. It names the request's
-/// identifiers, never its input, context, or other payload members.
+/// identifiers, never its input, context, or other payload members. Its
+/// conversation is the one the request continued or the one it created.
 fn finished<'a>(request: &Request<'a>, outcome: Outcome, elapsed: Duration) -> Record<'a> {
-    let (event, error) = match outcome {
-        Outcome::Completed => (LifecycleEvent::RequestCompleted, None),
-        Outcome::Failed { code, reason } => (
+    let (event, error) = match outcome.end {
+        End::Completed => (LifecycleEvent::RequestCompleted, None),
+        End::Failed { code, reason } => (
             LifecycleEvent::RequestFailed,
             Some(LoggedError { code, reason }),
         ),
@@ -155,7 +157,10 @@ fn finished<'a>(request: &Request<'a>, outcome: Outcome, elapsed: Duration) -> R
     record.request_id = Some(request.request_id.decode());
     record.method = Some(request.method.name());
     record.provider_id = provider_id.map(|id| loggable_id(id.decode()));
-    record.conversation_id = conversation_id.map(|id| loggable_id(id.decode()));
+    record.conversation_id = outcome
+        .created_conversation_id
+        .or_else(|| conversation_id.map(JsonStr::decode))
+        .map(loggable_id);
     record.duration_ms = Some(millis(elapsed));
     record.error = error;
     record
@@ -174,6 +179,7 @@ fn rejected<'a>(failure: &RequestFailure<'a>) -> Record<'a> {
 }
 
 const FAKE_PROVIDER_ID: &str = "fake";
+const FAKE_CONVERSATION_ID: &str = "fake-conversation";
 
 const PROVIDER_NOT_INSTALLED: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::ProviderNotFound,
@@ -216,10 +222,9 @@ impl Handlers for ScaffoldHandlers {
             return fail(output, request_id, PROVIDER_NOT_INSTALLED);
         }
 
-        if conversation_id.is_none() {
-            let created = ConversationCreated {
-                conversation_id: "fake-conversation",
-            };
+        let created_conversation_id = conversation_id.is_none().then_some(FAKE_CONVERSATION_ID);
+        if let Some(conversation_id) = created_conversation_id {
+            let created = ConversationCreated { conversation_id };
             events::write_event(output, request_id, Event::ConversationCreated, &created)?;
         }
         let started = ResponseStarted {
@@ -236,7 +241,10 @@ impl Handlers for ScaffoldHandlers {
             Event::ResponseCompleted,
             &ResponseCompleted {},
         )?;
-        Ok(Outcome::Completed)
+        Ok(Outcome {
+            created_conversation_id: created_conversation_id.map(Cow::Borrowed),
+            ..Outcome::COMPLETED
+        })
     }
 
     fn provider_status<W: Write + ?Sized>(
@@ -261,7 +269,7 @@ impl Handlers for ScaffoldHandlers {
             Event::ResponseCompleted,
             &ResponseCompleted {},
         )?;
-        Ok(Outcome::Completed)
+        Ok(Outcome::COMPLETED)
     }
 
     fn request_cancel<W: Write + ?Sized>(
@@ -506,7 +514,7 @@ mod tests {
         fn record(&mut self, request_id: RequestId<'_>) -> Result<Outcome, EventError> {
             self.request_ids
                 .push(String::from_utf8_lossy(request_id.raw()).into_owned());
-            Ok(Outcome::Completed)
+            Ok(Outcome::COMPLETED)
         }
     }
 
@@ -731,6 +739,8 @@ mod tests {
     fn request_records_agree_with_each_terminal_event() {
         // Across every handler path, a request is recorded as failed exactly
         // when its last frame is response.failed, with the same code and reason.
+        // Its conversation is the one conversation.created announced, or else
+        // the one the request continued.
         let requests = [
             r#"{"version":1,"type":"request","request_id":"send_new","method":"conversation.send","payload":{"provider_id":"fake","input":{"text":"hi"}}}"#,
             r#"{"version":1,"type":"request","request_id":"send_existing","method":"conversation.send","payload":{"provider_id":"fake","conversation_id":"c1","input":{"text":"hi"}}}"#,
@@ -743,17 +753,37 @@ mod tests {
         let (result, frames, records) = run_logged(&framed(&requests));
         assert_eq!(result, Ok(()));
 
+        let mut conversations = std::collections::HashMap::new();
+        for request in requests {
+            let request: serde_json::Value = serde_json::from_str(request).unwrap();
+            let conversation_id = request["payload"].get("conversation_id").cloned();
+            conversations.insert(
+                request["request_id"].as_str().unwrap().to_owned(),
+                conversation_id,
+            );
+        }
         let mut last_frames = std::collections::HashMap::new();
         for frame in &frames[1..] {
             let frame: serde_json::Value = serde_json::from_str(frame).unwrap();
-            last_frames.insert(frame["request_id"].as_str().unwrap().to_owned(), frame);
+            let request_id = frame["request_id"].as_str().unwrap().to_owned();
+            if frame["event"] == "conversation.created" {
+                let created = frame["payload"]["conversation_id"].clone();
+                conversations.insert(request_id.clone(), Some(created));
+            }
+            last_frames.insert(request_id, frame);
         }
         let request_records = &records[1..records.len() - 1];
         assert_eq!(request_records.len(), requests.len());
 
         let mut failures = 0;
         for record in request_records {
-            let last = &last_frames[record["request_id"].as_str().unwrap()];
+            let request_id = record["request_id"].as_str().unwrap();
+            assert_eq!(
+                record.get("conversation_id"),
+                conversations[request_id].as_ref(),
+                "{record}"
+            );
+            let last = &last_frames[request_id];
             if last["event"] == "response.failed" {
                 failures += 1;
                 assert_eq!(record["event"], "request.failed", "{record}");
@@ -765,6 +795,8 @@ mod tests {
             }
         }
         assert_eq!(failures, 3);
+        assert_eq!(request_records[0]["conversation_id"], "fake-conversation");
+        assert_eq!(request_records[1]["conversation_id"], "c1");
     }
 
     #[test]

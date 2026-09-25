@@ -119,7 +119,7 @@ While it serves a session, the host writes structured diagnostics to stderr, one
 {"ts":"2026-09-25T01:21:49.903Z","event":"host.stopped","duration_ms":0,"reason":"end_of_input","exit_code":0,"requests":2,"rejected":1}
 ```
 
-Every record has `ts` (RFC 3339 UTC, with milliseconds) and `event`. A field that doesn't apply is left out.
+Every record has `ts` (RFC 3339 UTC, with milliseconds) and `event`. A field that doesn't apply is left out. A request's `conversation_id` is the conversation it continued or, when it started one, the ID its `conversation.created` event announced, so the first request of a conversation correlates with the ones that follow.
 
 | Event | Written when | Fields |
 |---|---|---|
@@ -129,7 +129,7 @@ Every record has `ts` (RFC 3339 UTC, with milliseconds) and `event`. A field tha
 | `request.rejected` | The request failed validation and never reached a handler | `request_id` if one was recovered, and `error` (`INVALID_REQUEST` and its reason) |
 | `host.stopped` | The host is about to exit | `reason` (`end_of_input`, `io_error`, `frame_truncated`, `frame_too_large` or `allocation_failed`), `exit_code`, `duration_ms` (uptime), `requests` and `rejected` |
 
-A record never contains request content: no prompt text, page context, other payload members, raw frame bytes, or error messages. The identifiers it copies from a request (`provider_id` and `conversation_id`) are cut to 128 characters, and JSON escaping keeps each record on one line whatever they contain. Redacting provider output and credentials comes with real providers (SEC-02).
+A record never contains request content: no prompt text, page context, other payload members, raw frame bytes, or error messages. The `provider_id` and `conversation_id` it records are cut to 128 characters, and JSON escaping keeps each record on one line whatever they contain. Redacting provider output and credentials comes with real providers (SEC-02).
 
 Command-line errors, such as a usage error or an invalid `--print-manifest` ID, are plain text on stderr, because no session is running.
 

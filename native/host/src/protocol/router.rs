@@ -1,14 +1,24 @@
 //! Dispatches validated requests to per-method handlers.
 
+use std::borrow::Cow;
 use std::io::Write;
 
 use super::events::{ErrorBody, ErrorCode, EventError};
 use super::json::JsonStr;
 use super::request::{Method, Request, RequestId};
 
-/// How a handler's request ended, for diagnostics.
+/// What a handler's request did, for diagnostics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Outcome {
+    pub end: End,
+    /// The ID announced by the request's `conversation.created` event, if it
+    /// sent one.
+    pub created_conversation_id: Option<Cow<'static, str>>,
+}
+
+/// How a request's events ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Outcome {
+pub enum End {
     /// The request's last event was its successful terminal event.
     Completed,
     /// The request ended with `response.failed` carrying this error.
@@ -19,17 +29,26 @@ pub enum Outcome {
 }
 
 impl Outcome {
-    /// The outcome of a request that failed with `error`.
+    /// A request that completed without creating a conversation.
+    pub const COMPLETED: Self = Self {
+        end: End::Completed,
+        created_conversation_id: None,
+    };
+
+    /// A request that failed with `error` without creating a conversation.
     pub const fn failed(error: &ErrorBody<'static>) -> Self {
-        Self::Failed {
-            code: error.code,
-            reason: error.reason,
+        Self {
+            end: End::Failed {
+                code: error.code,
+                reason: error.reason,
+            },
+            created_conversation_id: None,
         }
     }
 }
 
 /// Handlers for the v1 methods. Each handler writes the request's events and
-/// reports how the request ended.
+/// reports how the request ended and any conversation it created.
 pub trait Handlers {
     fn conversation_send<W: Write + ?Sized>(
         &mut self,
@@ -96,7 +115,7 @@ mod tests {
         ) -> Result<Outcome, EventError> {
             assert!(provider_id.equals_ascii("fake"));
             self.conversation_calls += 1;
-            Ok(Outcome::Completed)
+            Ok(Outcome::COMPLETED)
         }
 
         fn provider_status<W: Write + ?Sized>(
@@ -106,7 +125,7 @@ mod tests {
             _provider_id: Option<JsonStr<'_>>,
         ) -> Result<Outcome, EventError> {
             self.status_calls += 1;
-            Ok(Outcome::Completed)
+            Ok(Outcome::COMPLETED)
         }
 
         fn request_cancel<W: Write + ?Sized>(
@@ -116,7 +135,7 @@ mod tests {
             _target_request_id: RequestId<'_>,
         ) -> Result<Outcome, EventError> {
             self.cancel_calls += 1;
-            Ok(Outcome::Completed)
+            Ok(Outcome::COMPLETED)
         }
     }
 

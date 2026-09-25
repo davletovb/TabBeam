@@ -218,6 +218,8 @@ fn diagnostics_go_to_stderr_and_never_into_the_frames() {
             "host.stopped"
         ]
     );
+    // req_a started a conversation, so its record names the created one.
+    assert_eq!(records[1]["conversation_id"], "fake-conversation");
     assert_eq!(records[4]["exit_code"], 0);
 }
 

@@ -49,7 +49,7 @@ Tests: `provider_ids_are_names_not_paths_or_commands` in `native/host/src/host.r
 
 ## 5. Diagnostics
 
-The host's stderr diagnostics (OBS-01) record identifiers, timings, and normalized outcomes. They never copy request content: no prompt text, page context, other payload members, raw frames, or error messages. Identifiers copied from a request are cut to 128 characters and JSON-escaped, so a request can't forge or split a record. Diagnostics go only to stderr, never into the stdout frames. Tests: `diagnostics_never_copy_request_content` in `native/host/src/host.rs`, and `diagnostics_go_to_stderr_and_never_into_the_frames` in `native/host/tests/cli.rs`.
+The host's stderr diagnostics (OBS-01) record identifiers, timings, and normalized outcomes. They never copy request content: no prompt text, page context, other payload members, raw frames, or error messages. Provider and conversation IDs are cut to 128 characters and JSON-escaped, so a request can't forge or split a record. Diagnostics go only to stderr, never into the stdout frames. Tests: `diagnostics_never_copy_request_content` in `native/host/src/host.rs`, and `diagnostics_go_to_stderr_and_never_into_the_frames` in `native/host/tests/cli.rs`.
 
 ## 6. Covered elsewhere
 

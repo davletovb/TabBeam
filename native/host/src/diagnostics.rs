@@ -4,7 +4,7 @@
 //! Native Messaging frames, so diagnostics can never corrupt them. A record
 //! names identifiers, timings, and outcomes, but never request content: no
 //! prompt text, page context, unknown payload members, or raw frame bytes.
-//! Identifiers taken from a request are truncated, and JSON escaping keeps each
+//! Provider and conversation IDs are truncated, and JSON escaping keeps each
 //! record on one line whatever they contain.
 
 use std::borrow::Cow;
@@ -15,7 +15,7 @@ use serde::Serialize;
 
 use crate::protocol::events::ErrorCode;
 
-/// Longest identifier, in characters, copied from a request into a record.
+/// Longest provider or conversation ID, in characters, copied into a record.
 pub const MAX_LOGGED_ID_CHARS: usize = 128;
 
 /// Lifecycle events a record can describe.
