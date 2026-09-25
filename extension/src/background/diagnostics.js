@@ -9,26 +9,36 @@ import {
  * provider state, and normalized error identifiers only: no prompt, page,
  * selection, provider stderr, or raw Native Messaging text.
  */
+/**
+ * @param {string} extensionVersion
+ * @param {() => number} [now]
+ */
 export function createDiagnosticsState(extensionVersion, now = () => Date.now()) {
+  /** @type {{state: string, version: string | null, protocol_versions: number[]}} */
   let host = { state: "unknown", version: null, protocol_versions: [] };
+  /** @type {{provider_id: string | null, availability: string, authentication: string}} */
   let provider = {
     provider_id: null,
     availability: "unknown",
     authentication: "unknown"
   };
+  /** @type {{code: string, reason: string, retryable: boolean, at: number} | null} */
   let recentFailure = null;
 
+  /** @param {any} error */
   function noteFailure(error) {
     const safe = sanitizedFailure(error);
     if (safe) recentFailure = { ...safe, at: now() };
   }
 
   return {
+    /** @param {any} event */
     noteLifecycle(event) {
       const ready = sanitizedHostReady(event);
       if (ready) host = { state: "available", ...ready };
     },
 
+    /** @param {any} response */
     noteProvider(response) {
       if (typeof response?.provider_id === "string") {
         provider = { ...provider, provider_id: response.provider_id };
