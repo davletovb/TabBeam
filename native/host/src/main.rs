@@ -16,7 +16,6 @@ fn main() -> ExitCode {
     let arguments: Vec<OsString> = args.collect();
 
     match arguments.as_slice() {
-        [] => {}
         [flag] if flag == OsStr::new("--version") => {
             let _ = writeln!(io::stdout(), "{HOST_VERSION}");
             return ExitCode::SUCCESS;
@@ -26,10 +25,11 @@ fn main() -> ExitCode {
         {
             return print_manifest(extension_ids);
         }
-        // Chrome passes the caller origin first. On Windows it also passes
-        // `--parent-window=<decimal handle>`, which is 0 when the caller is a
-        // service worker. Chrome starts the host only for origins its manifest
-        // allows; the host still accepts nothing but an exact extension origin.
+        // Chrome always passes the caller origin first. On Windows it also
+        // passes `--parent-window=<decimal handle>`, which is 0 when the caller
+        // is a service worker. Chrome starts the host only for origins its
+        // manifest allows; the host still runs only in this launch shape, never
+        // without an exact extension origin.
         [origin] if is_extension_origin(origin.as_encoded_bytes()) => {}
         [origin, parent_window]
             if is_extension_origin(origin.as_encoded_bytes())

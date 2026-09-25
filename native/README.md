@@ -66,7 +66,7 @@ At this milestone framing failures are exposed as deterministic exit statuses. S
 | 3 | The stream ended inside a frame |
 | 4 | A frame length exceeded the 1 MiB cap |
 | 5 | A frame buffer could not be allocated |
-| 64 | Unexpected command-line arguments, including a caller origin or extension ID that isn't exact |
+| 64 | Missing or unexpected command-line arguments, including a caller origin or extension ID that isn't exact |
 
 ## Host behavior at this milestone
 
@@ -84,7 +84,7 @@ Chrome launches Native Messaging hosts with the caller origin as the first posit
 
 On Windows, Chrome also passes the calling window's handle as a second argument, `--parent-window=<decimal handle>` (0 when the caller is a service worker). The host accepts that shape and ignores the handle.
 
-The caller origin must be exactly `chrome-extension://<extension-id>/`, where the ID is 32 characters from `a` to `p`. Any other origin is rejected with usage status 64 before a frame is read, as are unknown flags and extra positional arguments.
+The caller origin is required and must be exactly `chrome-extension://<extension-id>/`, where the ID is 32 characters from `a` to `p`. With no arguments, any other origin, unknown flags, or extra positional arguments, the host exits with usage status 64 before reading a frame. To drive the host by hand, pass a well-formed origin such as `chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/`.
 
 Normal execution first emits exactly one `host.ready` event, then reads bounded Native Messaging frames until EOF. Each frame must contain exactly one valid protocol-v1 JSON request object.
 

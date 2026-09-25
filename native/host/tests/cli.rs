@@ -63,9 +63,9 @@ fn chrome_windows_launch_shape_runs_the_host() {
 }
 
 #[test]
-fn no_arguments_run_the_host() {
+fn the_chrome_launch_shape_serves_requests() {
     let request = r#"{"version":1,"type":"request","request_id":"req_cli","method":"provider.status","payload":{"provider_id":"codex"}}"#;
-    let output = run_host(&[], &frame(request));
+    let output = run_host(&[ORIGIN], &frame(request));
     assert_eq!(output.status.code(), Some(0));
 
     let failure = r#"{"version":1,"type":"event","request_id":"req_cli","event":"response.failed","payload":{"error":{"code":"PROVIDER_NOT_FOUND","reason":"PROVIDER_NOT_INSTALLED","message":"The selected provider runtime is not installed.","retryable":false}}}"#;
@@ -78,16 +78,18 @@ fn no_arguments_run_the_host() {
 
 #[test]
 fn framing_failures_set_the_exit_status() {
-    assert_eq!(run_host(&[], &[0x01, 0x00]).status.code(), Some(3));
+    assert_eq!(run_host(&[ORIGIN], &[0x01, 0x00]).status.code(), Some(3));
 
     let oversized = (1024_u32 * 1024 + 1).to_ne_bytes();
-    assert_eq!(run_host(&[], &oversized).status.code(), Some(4));
+    assert_eq!(run_host(&[ORIGIN], &oversized).status.code(), Some(4));
 }
 
 #[test]
 fn unexpected_arguments_print_usage() {
     for args in [
-        &["--bogus"][..],
+        // Without a caller origin the host serves nothing (SEC-01).
+        &[][..],
+        &["--bogus"],
         &["chrome-extension://"],
         &["https://example.com/"],
         &["--version", "extra"],

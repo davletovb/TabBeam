@@ -13,6 +13,10 @@ ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_DIR = ROOT / "docs" / "protocol" / "schemas"
 FIXTURE_PATH = ROOT / "docs" / "protocol" / "fixtures" / "v1-golden.json"
 
+# Chrome launches the host with the caller's origin, and the host refuses to
+# run without one (SEC-01). Any well-formed extension ID works here.
+CALLER_ORIGIN = "chrome-extension://" + "a" * 32 + "/"
+
 
 def load_json(path: Path):
     return json.loads(path.read_text(encoding="utf-8"))
@@ -95,7 +99,7 @@ def main() -> None:
         driven.append(("invalid", fixture))
 
     proc = subprocess.run(
-        [str(args.host)],
+        [str(args.host), CALLER_ORIGIN],
         input=bytes(input_bytes),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

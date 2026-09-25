@@ -17,7 +17,7 @@ Web page ──untrusted──▶ content script ──▶ extension pages / ser
   ```
 
   It lists exact `chrome-extension://<id>/` origins only. Each ID must be 32 characters from `a` to `p`, so a wildcard, a pattern, a full origin, or another scheme is refused with status 64. The `path` is the absolute path of the binary that printed it.
-- The host starts only when its caller-origin argument is exactly `chrome-extension://<id>/`, optionally followed by Chrome's Windows `--parent-window=<handle>` flag. On Linux, Chromium was observed to pass exactly one argument of that form.
+- The host starts only when its caller-origin argument is exactly `chrome-extension://<id>/`, optionally followed by Chrome's Windows `--parent-window=<handle>` flag, and never without one. On Linux, Chromium was observed to pass exactly one argument of that form. The argument isn't authenticated: a local process can pass any well-formed origin. The check therefore keeps the host to Chrome's launch shape, and Chrome's `allowed_origins` check remains what ties the host to Pervue's extension.
 - Inside the extension, the service worker serves ask ports only to the extension's own pages. Ports from content scripts, which run inside web pages, are disconnected (EXT-03).
 - Registering the production extension ID and verifying packaged manifests belong to PKG-01 and SEC-04.
 
