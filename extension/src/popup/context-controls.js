@@ -14,6 +14,13 @@ export function bindContextControls(elements, runtime) {
   let pending = false;
   let generation = 0;
 
+  /** @param {"none" | "selection" | "page"} mode */
+  function setChoice(mode) {
+    none.setAttribute("aria-pressed", String(mode === "none"));
+    selection.setAttribute("aria-pressed", String(mode === "selection"));
+    page.setAttribute("aria-pressed", String(mode === "page"));
+  }
+
   function clear() {
     generation += 1;
     pending = false;
@@ -22,6 +29,7 @@ export function bindContextControls(elements, runtime) {
     page.disabled = false;
     preview.hidden = true;
     preview.textContent = "";
+    setChoice("none");
     status.textContent = "No context attached. Choose a source to grant access for this question.";
   }
 
@@ -32,6 +40,7 @@ export function bindContextControls(elements, runtime) {
     }
     const current = ++generation;
     context = null;
+    setChoice("none");
     pending = true;
     selection.disabled = true;
     page.disabled = true;
@@ -53,6 +62,7 @@ export function bindContextControls(elements, runtime) {
         return;
       }
       context = result.context;
+      setChoice(mode);
       const excerpt = [...context.text].slice(0, 240).join("");
       preview.textContent =
         `${context.page.title} • ${context.page.url}\n${excerpt}` +

@@ -914,6 +914,9 @@ Reached after **Milestone H**:
 
 **Status:** BACKLOG
 
+**Existing foundation**
+- CTX-01–04 already provide the popup's No context, Use selection, and Use this page controls, capture preview, and structured context on the first Ask. This item remains for the EXT-05 follow-up flow and its context behavior; reuse those controls rather than rebuilding them.
+
 ### EXT-09 — Add selection/current-page context-menu actions
 **Area:** Extension  
 **Dependencies:** CTX-01, CTX-03

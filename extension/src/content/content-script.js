@@ -47,10 +47,23 @@ function boundedText(value, maxBytes) {
 // preferring the page's main content and skipping navigation, hidden content,
 // editable fields, scripts, and other non-reading surfaces.
 function readablePage() {
-  const root = document.querySelector("main, article") ?? document.body;
-  if (!root) {
-    return { ok: false, reason: "PAGE_EXTRACTION_FAILED" };
+  let inspected = 0;
+  const roots = [document.querySelector("main"), document.querySelector("article"), document.body];
+  for (const [index, root] of roots.entries()) {
+    if (!root || roots.indexOf(root) !== index || inspected >= MAX_PAGE_TEXT_NODES) {
+      continue;
+    }
+    const result = readableFrom(root, MAX_PAGE_TEXT_NODES - inspected);
+    inspected += result.inspected;
+    if (result.ok) {
+      return { ...result, inspected };
+    }
   }
+  return { ok: false, reason: "PAGE_EXTRACTION_FAILED" };
+}
+
+/** @param {Element} root @param {number} maxNodes */
+function readableFrom(root, maxNodes) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   /** @type {string[]} */
   const parts = [];
@@ -58,7 +71,7 @@ function readablePage() {
   let inspected = 0;
   /** @type {Node | null} */
   let node;
-  while (inspected < MAX_PAGE_TEXT_NODES && (node = walker.nextNode())) {
+  while (inspected < maxNodes && (node = walker.nextNode())) {
     inspected += 1;
     const parent = node.parentElement;
     // isContentEditable respects the nearest contenteditable value: a
@@ -82,12 +95,12 @@ function readablePage() {
     }
   }
   if (!parts.length) {
-    return { ok: false, reason: "PAGE_EXTRACTION_FAILED" };
+    return { ok: false, inspected };
   }
   return {
     ok: true,
     text: parts.join(""),
-    truncated: inspected === MAX_PAGE_TEXT_NODES && walker.nextNode() !== null,
+    truncated: inspected === maxNodes && walker.nextNode() !== null,
     inspected
   };
 }
@@ -114,11 +127,7 @@ chrome.runtime.onMessage.addListener(
     if (message?.type === "pervue.ping") {
       sendResponse({
         ok: true,
-        surface: "content",
-        page: {
-          title: document.title,
-          url: window.location.href
-        }
+        surface: "content"
       });
     }
   }

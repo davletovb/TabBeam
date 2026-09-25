@@ -22,6 +22,10 @@ function contentScript() {
   let listener;
   let selection = "";
   let reads = 0;
+  /** @type {any[] | null} */
+  let mainNodes = null;
+  /** @type {any[] | null} */
+  let articleNodes = null;
   /** @type {{nodeValue: string, parentElement: {isContentEditable: boolean, closest(selector: string): object | null}}[]} */
   let nodes = [];
   /** @type {any} */
@@ -29,10 +33,15 @@ function contentScript() {
     title: "Page",
     activeElement: null,
     body: {},
-    querySelector() { return null; },
-    createTreeWalker() {
+    querySelector(/** @type {string} */ selector) {
+      if (selector === "main" && mainNodes) return { nodes: mainNodes };
+      if (selector === "article" && articleNodes) return { nodes: articleNodes };
+      return null;
+    },
+    createTreeWalker(/** @type {any} */ root) {
       let index = 0;
-      return { nextNode: () => nodes[index++] ?? null };
+      const entries = root.nodes ?? nodes;
+      return { nextNode: () => entries[index++] ?? null };
     }
   };
   const window = {
@@ -60,6 +69,16 @@ function contentScript() {
         nodeValue: text,
         parentElement: { isContentEditable: editable === true, closest: () => excluded ? {} : null }
       }));
+    },
+    setMainNodes(/** @type {{text: string, excluded?: boolean}[] | null} */ entries) {
+      mainNodes = entries?.map(({ text, excluded }) => ({
+        nodeValue: text, parentElement: { isContentEditable: false, closest: () => excluded ? {} : null }
+      })) ?? null;
+    },
+    setArticleNodes(/** @type {{text: string, excluded?: boolean}[] | null} */ entries) {
+      articleNodes = entries?.map(({ text, excluded }) => ({
+        nodeValue: text, parentElement: { isContentEditable: false, closest: () => excluded ? {} : null }
+      })) ?? null;
     },
     /** @param {string} type */
     request(type) {
@@ -130,6 +149,23 @@ function contentScript() {
   assert.equal(nodeCap.truncated, true);
   page.setNodes([{ text: "hidden", excluded: true }]);
   assert.equal(page.request("pervue.page.read").reason, "PAGE_EXTRACTION_FAILED");
+}
+
+{
+  // Empty or excluded preferred roots fall back to article and then body,
+  // while all attempts share one traversal budget.
+  const page = contentScript();
+  page.setNodes([{ text: "Body paragraph" }]);
+  page.setMainNodes([{ text: " " }]);
+  page.setArticleNodes([{ text: "Article paragraph" }]);
+  assert.equal(page.request("pervue.page.read").text, "Article paragraph");
+  page.setArticleNodes([{ text: "hidden", excluded: true }]);
+  const body = page.request("pervue.page.read");
+  assert.equal(body.text, "Body paragraph");
+  assert.equal(body.inspected, 3);
+  page.setMainNodes(Array.from({ length: MAX_PAGE_TEXT_NODES }, () => ({ text: " " })));
+  assert.equal(page.request("pervue.page.read").reason, "PAGE_EXTRACTION_FAILED");
+  assert.deepEqual({ ...page.request("pervue.ping") }, { ok: true, surface: "content" });
 }
 
 const popupUrl = "chrome-extension://test/src/popup/index.html";
@@ -213,8 +249,11 @@ function workerRequest(message, sender, tabs) {
   /** @type {Record<string, () => void | Promise<void>>} */
   const clicks = {};
   function button(/** @type {string} */ name) {
+    const attributes = new Map();
     return {
       disabled: false,
+      setAttribute(/** @type {string} */ key, /** @type {string} */ value) { attributes.set(key, value); },
+      getAttribute(/** @type {string} */ key) { return attributes.get(key); },
       addEventListener(/** @type {string} */ type, /** @type {() => void | Promise<void>} */ handler) {
         assert.equal(type, "click");
         clicks[name] = handler;
@@ -238,6 +277,7 @@ function workerRequest(message, sender, tabs) {
   });
   assert.equal(calls, 0, "opening the popup must never capture context");
   assert.equal(state.getContext(), null);
+  assert.equal(controls.none.getAttribute("aria-pressed"), "true");
   const pending = clicks.selection();
   assert.equal(state.isPending(), true);
   await clicks.selection();
@@ -251,11 +291,13 @@ function workerRequest(message, sender, tabs) {
   });
   await pending;
   assert.equal(state.getContext().text, "<untrusted>");
+  assert.equal(controls.selection.getAttribute("aria-pressed"), "true");
   assert.equal(controls.preview.textContent.includes("<untrusted>"), true);
   assert.equal(controls.preview.hidden, false);
   assert.equal(controls.status.textContent.startsWith("Page access granted."), true);
   clicks.none();
   assert.equal(state.getContext(), null);
+  assert.equal(controls.none.getAttribute("aria-pressed"), "true");
   assert.equal(controls.preview.hidden, true);
   const stale = clicks.page();
   clicks.none();

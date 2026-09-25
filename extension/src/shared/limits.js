@@ -1,6 +1,5 @@
-// Trust-boundary limits shared with the native host (SEC-01). The values are
-// recorded in docs/protocol/native-messaging-v1.json, and tests on both sides
-// keep them equal.
+// Native Messaging's frame limit is recorded in the protocol contract (SEC-01).
+// Browser-context limits below are extension policy and are not host limits.
 
 /** Largest Native Messaging payload the host accepts, in UTF-8 bytes. */
 export const MAX_NATIVE_MESSAGE_BYTES = 1024 * 1024;
