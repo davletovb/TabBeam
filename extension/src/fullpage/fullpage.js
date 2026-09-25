@@ -1,5 +1,6 @@
 import { bindAskForm } from "../popup/ask-form.js";
 import { bindRecentConversations } from "../shared/recent-conversations.js";
+import { bindThemeSelect } from "../shared/theme.js";
 
 /** @template {HTMLElement} T @param {string} selector @param {{new (): T}} type @returns {T} */
 function requireElement(selector, type) {
@@ -16,7 +17,9 @@ const view = bindAskForm({
   submit: requireElement("#ask-submit", HTMLButtonElement),
   status: requireElement("#status", HTMLElement),
   answer: requireElement("#answer", HTMLElement),
-  history: requireElement("#conversation-history", HTMLElement)
+  history: requireElement("#conversation-history", HTMLElement),
+  cancel: requireElement("#ask-cancel", HTMLButtonElement),
+  retry: requireElement("#ask-retry", HTMLButtonElement)
 }, chrome.runtime, undefined, {
   onConversationId(id) {
     const url = new URL(window.location.href);
@@ -29,6 +32,12 @@ const view = bindAskForm({
   storageChanges: chrome.storage.onChanged
 });
 const recentIndex = bindRecentConversations(recent, chrome.runtime, view);
+
+void bindThemeSelect(
+  requireElement("#theme-select", HTMLSelectElement),
+  chrome.storage.local,
+  document.documentElement
+);
 
 requireElement("#new-conversation", HTMLButtonElement).addEventListener("click", () => {
   if (view.newConversation()) {
