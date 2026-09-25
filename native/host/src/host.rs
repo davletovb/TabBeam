@@ -1,22 +1,38 @@
-//! The host loop: emit `host.ready`, then validate and route one request per
-//! frame until the extension closes the stream, recording the session's
-//! lifecycle as diagnostics.
+//! The host loop: emit `host.ready`, then serve requests until the extension
+//! closes the stream, recording the session's lifecycle as diagnostics.
+//!
+//! A reader thread delivers Chrome's frames, and this loop owns everything
+//! else. Each valid request becomes an [`Exchange`] with a provider, which the
+//! loop pumps without ever blocking on it, so requests run side by side and a
+//! `request.cancel` is read while its target is still streaming. A new request
+//! is pumped before the next frame is read, so a request that is answered at
+//! once, such as the fake scaffold's, completes in order.
+//!
+//! The loop enforces the request lifecycle: request IDs are unique among the
+//! requests in flight; a cancelled request ends with `REQUEST_CANCELLED` before
+//! its cancellation is confirmed; a provider that takes too long ends with
+//! `REQUEST_TIMEOUT`; and nothing is sent for a request after its terminal
+//! event.
 
 use std::borrow::Cow;
 use std::io::{Read, Write};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
+use std::thread;
 use std::time::{Duration, Instant};
+
+use serde::Serialize;
 
 use crate::HOST_VERSION;
 use crate::diagnostics::{Diagnostics, LifecycleEvent, LoggedError, Record, loggable_id, millis};
 use crate::framing::{self, FrameError};
+use crate::limits::MAX_FRAME_SIZE;
 use crate::protocol::events::{
-    self, Authentication, Availability, Capabilities, Capability, ConversationCreated, ErrorBody,
-    ErrorCode, Event, EventError, ProviderState, ProviderStatus, ResponseCompleted, ResponseDelta,
-    ResponseStarted,
+    self, ConversationCreated, ErrorBody, ErrorCode, Event, ProviderStatus, RequestCancelled,
+    ResponseCompleted, ResponseDelta, ResponseStarted,
 };
-use crate::protocol::json::JsonStr;
-use crate::protocol::request::{self, Method, Request, RequestFailure, RequestId};
-use crate::protocol::router::{self, End, Handlers, Outcome};
+use crate::protocol::request::{self, Method, RequestFailure, RequestId};
+use crate::providers::{Exchange, Providers, Scripted, SendRequest, StatusOfAll, Timeouts, Update};
+use crate::stream::split_text;
 
 /// Why the host stopped before a clean end of stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,16 +80,113 @@ impl From<FrameError> for HostError {
     }
 }
 
-/// Runs the host until `input` reaches a clean end of stream, recording its
-/// lifecycle in `log` (OBS-01).
+/// How often the loop checks running requests while it waits for a frame.
+const TICK: Duration = Duration::from_millis(10);
+
+/// Largest `response.delta` text. JSON escaping at most sixfolds text, so a
+/// delta this size always fits in one frame.
+const MAX_DELTA_BYTES: usize = MAX_FRAME_SIZE / 16;
+
+/// How long requests still running at the end of input get to stop. Chrome
+/// kills a host soon after closing its stdin, so this is short.
+const SHUTDOWN_GRACE: Duration = Duration::from_millis(250);
+
+/// How long a cancelled `provider.status` check gets to stop.
+const STATUS_STOP_GRACE: Duration = Duration::from_millis(250);
+
+/// How long past its grace period a stopping request may take before the host
+/// drops it, which kills its processes. Adapters stop within the grace
+/// period; this bounds a broken one.
+const STOP_SLACK: Duration = Duration::from_secs(1);
+
+const PROVIDER_NOT_INSTALLED: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::ProviderNotFound,
+    reason: "PROVIDER_NOT_INSTALLED",
+    message: "The selected provider runtime is not installed.",
+    retryable: false,
+};
+
+const UNKNOWN_TARGET_REQUEST: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::InvalidRequest,
+    reason: "UNKNOWN_TARGET_REQUEST",
+    message: "The target request is not in flight.",
+    retryable: false,
+};
+
+const DUPLICATE_REQUEST_ID: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::InvalidRequest,
+    reason: "DUPLICATE_REQUEST_ID",
+    message: "Another request with this ID is still in flight.",
+    retryable: false,
+};
+
+const CANCELLED: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::RequestCancelled,
+    reason: "USER_CANCELLED",
+    message: "The request was cancelled.",
+    retryable: true,
+};
+
+const INPUT_CLOSED: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::RequestCancelled,
+    reason: "INPUT_CLOSED",
+    message: "The extension closed the connection before the request finished.",
+    retryable: true,
+};
+
+const START_TIMEOUT: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::RequestTimeout,
+    reason: "PROVIDER_START_TIMEOUT",
+    message: "The provider took too long to start answering.",
+    retryable: true,
+};
+
+const RESPONSE_TIMEOUT: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::RequestTimeout,
+    reason: "PROVIDER_RESPONSE_TIMEOUT",
+    message: "The provider stopped responding.",
+    retryable: true,
+};
+
+/// An exchange ended as if cancelled when nothing cancelled it: a bug in
+/// the adapter.
+const STOPPED_UNASKED: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::InternalError,
+    reason: "INTERNAL_STATE_ERROR",
+    message: "The request stopped unexpectedly.",
+    retryable: false,
+};
+
+/// Runs the host with the providers of an installed host until `input`
+/// reaches a clean end of stream, recording its lifecycle in `log` (OBS-01).
 ///
 /// Invalid requests are answered with `response.failed` and do not stop the
 /// host; only framing and I/O failures do.
-pub fn run<R: Read + ?Sized, W: Write + ?Sized, L: Write>(
+pub fn run<R, W, L>(
     input: &mut R,
     output: &mut W,
     log: &mut Diagnostics<L>,
-) -> Result<(), HostError> {
+) -> Result<(), HostError>
+where
+    R: Read + Send + ?Sized,
+    W: Write + ?Sized,
+    L: Write,
+{
+    run_with(&Providers::installed(), input, output, log)
+}
+
+/// Runs the host as [`run`] does, serving `providers`.
+pub fn run_with<R, W, L>(
+    providers: &Providers,
+    input: &mut R,
+    output: &mut W,
+    log: &mut Diagnostics<L>,
+) -> Result<(), HostError>
+where
+    R: Read + Send + ?Sized,
+    W: Write + ?Sized,
+    L: Write,
+{
     let started = Instant::now();
     let mut record = Record::new(LifecycleEvent::HostStarted);
     record.host_version = Some(HOST_VERSION);
@@ -81,7 +194,20 @@ pub fn run<R: Read + ?Sized, W: Write + ?Sized, L: Write>(
     log.record(&record);
 
     let mut counts = Counts::default();
-    let result = serve(&mut ScaffoldHandlers, input, output, log, &mut counts);
+    let result = thread::scope(|scope| {
+        // The reader hands over one frame at a time, so a flood of requests
+        // waits in the pipe rather than in memory.
+        let (sender, frames) = mpsc::sync_channel(0);
+        scope.spawn(move || read_frames(input, &sender));
+        let mut session = Session {
+            providers,
+            output,
+            log: &mut *log,
+            counts: &mut counts,
+            running: Vec::new(),
+        };
+        session.serve(&frames)
+    });
 
     let mut record = Record::new(LifecycleEvent::HostStopped);
     record.reason = Some(result.map_or_else(HostError::reason, |()| "end_of_input"));
@@ -96,102 +222,550 @@ pub fn run<R: Read + ?Sized, W: Write + ?Sized, L: Write>(
 /// What the loop has handled, for the `host.stopped` record.
 #[derive(Default)]
 struct Counts {
-    /// Requests that passed validation and reached a handler.
+    /// Requests that passed validation and were served.
     requests: u64,
-    /// Requests that failed validation.
+    /// Requests that failed validation or reused an ID in flight.
     rejected: u64,
 }
 
-/// The request loop behind [`run`]. A request reaches `handlers` only after it
-/// has passed validation, so provider work never starts for an invalid one
-/// (SEC-01).
-fn serve<H: Handlers, R: Read + ?Sized, W: Write + ?Sized, L: Write>(
-    handlers: &mut H,
-    input: &mut R,
-    output: &mut W,
-    log: &mut Diagnostics<L>,
-    counts: &mut Counts,
-) -> Result<(), HostError> {
-    events::write_host_ready(output).map_err(|_| HostError::Io)?;
-
-    // Every request read gets one record, even when the host stops while
-    // answering it.
-    while let Some(frame) = framing::read_frame(input)? {
-        match request::parse_request(&frame) {
-            Ok(request) => {
-                let started = Instant::now();
-                let (record, result) = match router::dispatch(handlers, output, &request) {
-                    Ok(outcome) => (finished(&request, outcome, started.elapsed()), Ok(())),
-                    Err(_) => (
-                        aborted(&request, HostError::Io, started.elapsed()),
-                        Err(HostError::Io),
-                    ),
-                };
-                counts.requests += 1;
-                log.record(&record);
-                result?;
-            }
-            Err(failure) => {
-                let written = events::write_request_failure(output, &failure);
-                counts.rejected += 1;
-                log.record(&rejected(&failure));
-                written.map_err(|_| HostError::Io)?;
-            }
-        }
-    }
-    Ok(())
+/// What the reader thread delivers.
+enum Inbound {
+    Frame(Vec<u8>),
+    End,
+    Broken(FrameError),
 }
 
-/// The record of a request that reached a handler, before its outcome is
-/// known. It names the request's identifiers, never its input, context, or
-/// other payload members.
-fn handled<'a>(event: LifecycleEvent, request: &Request<'a>, elapsed: Duration) -> Record<'a> {
-    let mut record = Record::new(event);
-    record.request_id = Some(loggable_id(request.request_id.decode()));
-    record.method = Some(request.method.name());
-    match request.method {
-        Method::ConversationSend {
+fn read_frames<R: Read + ?Sized>(input: &mut R, frames: &SyncSender<Inbound>) {
+    loop {
+        let (inbound, last) = match framing::read_frame(input) {
+            Ok(Some(frame)) => (Inbound::Frame(frame), false),
+            Ok(None) => (Inbound::End, true),
+            Err(error) => (Inbound::Broken(error), true),
+        };
+        if frames.send(inbound).is_err() || last {
+            return;
+        }
+    }
+}
+
+/// An event could not be written: the extension can no longer be reached.
+#[derive(Debug)]
+struct Undeliverable;
+
+/// A request ID kept after its frame is released: the raw token to echo byte
+/// for byte, and the decoded value that identifies the request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Id {
+    raw: Vec<u8>,
+    value: String,
+}
+
+impl Id {
+    fn new(request_id: RequestId<'_>) -> Self {
+        Self {
+            raw: request_id.raw().to_vec(),
+            value: request_id.decode().into_owned(),
+        }
+    }
+}
+
+/// A `request.cancel` waiting for its target to stop.
+struct Canceller {
+    id: Id,
+    target: String,
+    started_at: Instant,
+}
+
+impl Canceller {
+    fn record(&self, event: LifecycleEvent, error: Option<ErrorBody<'static>>) -> Record<'_> {
+        let mut record = Record::new(event);
+        record.request_id = Some(loggable_id(Cow::Borrowed(&self.id.value)));
+        record.method = Some("request.cancel");
+        record.target_request_id = Some(loggable_id(Cow::Borrowed(&self.target)));
+        record.duration_ms = Some(millis(self.started_at.elapsed()));
+        record.error = error.as_ref().map(logged);
+        record
+    }
+}
+
+/// Why a running request is being stopped.
+enum Stop {
+    Cancelled(Vec<Canceller>),
+    TimedOut(ErrorBody<'static>),
+    InputClosed,
+}
+
+/// A request being served.
+struct Running {
+    id: Id,
+    method: &'static str,
+    provider_id: Option<String>,
+    conversation_id: Option<String>,
+    /// The provider's limits for a `conversation.send`; none for status checks.
+    timeouts: Option<Timeouts>,
+    stop_grace: Duration,
+    started_at: Instant,
+    last_update: Instant,
+    response_started: bool,
+    stop: Option<Stop>,
+    /// When a stopping request is dropped if it still hasn't ended.
+    stop_limit: Option<Instant>,
+    exchange: Box<dyn Exchange>,
+}
+
+impl Running {
+    fn new(
+        id: Id,
+        method: &'static str,
+        provider_id: Option<String>,
+        conversation_id: Option<String>,
+        timeouts: Option<Timeouts>,
+        exchange: Box<dyn Exchange>,
+    ) -> Self {
+        let now = Instant::now();
+        Self {
+            id,
+            method,
             provider_id,
             conversation_id,
+            timeouts,
+            stop_grace: timeouts.map_or(STATUS_STOP_GRACE, |timeouts| timeouts.stop_grace),
+            started_at: now,
+            last_update: now,
+            response_started: false,
+            stop: None,
+            stop_limit: None,
+            exchange,
+        }
+    }
+
+    /// The timeout this request has run into, if any.
+    fn expired(&self, now: Instant) -> Option<ErrorBody<'static>> {
+        let timeouts = self.timeouts?;
+        if self.response_started {
+            (now.saturating_duration_since(self.last_update) >= timeouts.idle)
+                .then_some(RESPONSE_TIMEOUT)
+        } else {
+            (now.saturating_duration_since(self.started_at) >= timeouts.start)
+                .then_some(START_TIMEOUT)
+        }
+    }
+
+    /// Stops the request for `stop`, unless it is already stopping.
+    fn stop(&mut self, stop: Stop, grace: Duration) {
+        if self.stop.is_none() {
+            self.exchange.cancel(grace);
+            self.stop = Some(stop);
+            let now = Instant::now();
+            self.stop_limit = Some(now.checked_add(grace + STOP_SLACK).unwrap_or(now));
+        }
+    }
+
+    /// This request's record: identifiers and timing, never its content.
+    fn record(&self, event: LifecycleEvent, error: Option<ErrorBody<'static>>) -> Record<'_> {
+        let mut record = Record::new(event);
+        record.request_id = Some(loggable_id(Cow::Borrowed(&self.id.value)));
+        record.method = Some(self.method);
+        record.provider_id = self
+            .provider_id
+            .as_deref()
+            .map(|id| loggable_id(Cow::Borrowed(id)));
+        record.conversation_id = self
+            .conversation_id
+            .as_deref()
+            .map(|id| loggable_id(Cow::Borrowed(id)));
+        record.duration_ms = Some(millis(self.started_at.elapsed()));
+        record.error = error.as_ref().map(logged);
+        record
+    }
+}
+
+fn logged(error: &ErrorBody<'static>) -> LoggedError {
+    LoggedError {
+        code: error.code,
+        reason: error.reason,
+    }
+}
+
+/// The state of one host session.
+struct Session<'a, W: ?Sized, L: Write> {
+    providers: &'a Providers,
+    output: &'a mut W,
+    log: &'a mut Diagnostics<L>,
+    counts: &'a mut Counts,
+    running: Vec<Running>,
+}
+
+impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
+    fn serve(&mut self, frames: &Receiver<Inbound>) -> Result<(), HostError> {
+        let ended = match self.read_until_input_ends(frames) {
+            Ok(ended) => ended,
+            Err(Undeliverable) => return Err(self.abort()),
+        };
+        match self.shut_down() {
+            Ok(()) => ended,
+            Err(Undeliverable) => Err(self.abort()),
+        }
+    }
+
+    /// Serves frames until the input ends, cleanly or with a framing error.
+    fn read_until_input_ends(
+        &mut self,
+        frames: &Receiver<Inbound>,
+    ) -> Result<Result<(), HostError>, Undeliverable> {
+        events::write_host_ready(self.output).map_err(|_| Undeliverable)?;
+        loop {
+            let inbound = if self.running.is_empty() {
+                frames.recv().unwrap_or(Inbound::End)
+            } else {
+                match frames.recv_timeout(TICK) {
+                    Ok(inbound) => inbound,
+                    Err(RecvTimeoutError::Timeout) => {
+                        self.pump()?;
+                        continue;
+                    }
+                    Err(RecvTimeoutError::Disconnected) => Inbound::End,
+                }
+            };
+            match inbound {
+                Inbound::Frame(frame) => self.handle(&frame)?,
+                Inbound::End => return Ok(Ok(())),
+                Inbound::Broken(error) => return Ok(Err(error.into())),
+            }
+            self.pump()?;
+        }
+    }
+
+    /// Validates one frame and starts serving it.
+    fn handle(&mut self, frame: &[u8]) -> Result<(), Undeliverable> {
+        let request = match request::parse_request(frame) {
+            Ok(request) => request,
+            Err(failure) => {
+                self.counts.rejected += 1;
+                let written =
+                    events::write_request_failure(self.output, &failure).map_err(|_| Undeliverable);
+                self.log.record(&rejected(&failure));
+                return written;
+            }
+        };
+
+        let id = Id::new(request.request_id);
+        if self.in_flight(&id.value) {
+            // v1 §2: IDs are unique among requests in flight. The duplicate
+            // is refused; the request already running is unaffected.
+            self.counts.rejected += 1;
+            let written = write_failure(self.output, &id.raw, DUPLICATE_REQUEST_ID);
+            let mut record = Record::new(LifecycleEvent::RequestRejected);
+            record.request_id = Some(loggable_id(Cow::Borrowed(&id.value)));
+            record.method = Some(request.method.name());
+            record.error = Some(logged(&DUPLICATE_REQUEST_ID));
+            self.log.record(&record);
+            return written;
+        }
+
+        self.counts.requests += 1;
+        let running = match request.method {
+            Method::ConversationSend {
+                provider_id,
+                conversation_id,
+                text,
+                has_context,
+            } => {
+                let provider_id = provider_id.decode().into_owned();
+                let conversation_id = conversation_id.map(|id| id.decode().into_owned());
+                let (exchange, timeouts): (Box<dyn Exchange>, _) =
+                    match self.providers.get(&provider_id) {
+                        Some(provider) => (
+                            provider.send(SendRequest {
+                                text: text.decode().into_owned(),
+                                conversation_id: conversation_id.clone(),
+                                has_context,
+                            }),
+                            Some(provider.timeouts()),
+                        ),
+                        None => (Box::new(Scripted::failed(PROVIDER_NOT_INSTALLED)), None),
+                    };
+                Running::new(
+                    id,
+                    "conversation.send",
+                    Some(provider_id),
+                    conversation_id,
+                    timeouts,
+                    exchange,
+                )
+            }
+            Method::ProviderStatus { provider_id } => {
+                let provider_id = provider_id.map(|id| id.decode().into_owned());
+                let exchange: Box<dyn Exchange> = match &provider_id {
+                    None => Box::new(StatusOfAll::new(self.providers)),
+                    Some(provider_id) => match self.providers.get(provider_id) {
+                        Some(provider) => provider.status(),
+                        None => Box::new(Scripted::failed(PROVIDER_NOT_INSTALLED)),
+                    },
+                };
+                Running::new(id, "provider.status", provider_id, None, None, exchange)
+            }
+            Method::RequestCancel { target_request_id } => {
+                return self.cancel(Canceller {
+                    id,
+                    target: target_request_id.decode().into_owned(),
+                    started_at: Instant::now(),
+                });
+            }
+        };
+        self.running.push(running);
+        Ok(())
+    }
+
+    /// Whether a request or a pending cancellation already uses `id`.
+    fn in_flight(&self, id: &str) -> bool {
+        self.running.iter().any(|running| {
+            running.id.value == id
+                || matches!(&running.stop, Some(Stop::Cancelled(cancellers))
+                    if cancellers.iter().any(|canceller| canceller.id.value == id))
+        })
+    }
+
+    /// Starts cancelling the target of `canceller`, or refuses the
+    /// cancellation when the target isn't running.
+    fn cancel(&mut self, canceller: Canceller) -> Result<(), Undeliverable> {
+        let target = self
+            .running
+            .iter_mut()
+            .find(|running| running.id.value == canceller.target);
+        match target {
+            Some(target) if matches!(target.stop, None | Some(Stop::Cancelled(_))) => {
+                match &mut target.stop {
+                    Some(Stop::Cancelled(cancellers)) => cancellers.push(canceller),
+                    _ => {
+                        let grace = target.stop_grace;
+                        target.stop(Stop::Cancelled(vec![canceller]), grace);
+                    }
+                }
+                Ok(())
+            }
+            // Not running, or already ending for another reason.
+            _ => {
+                let written = write_failure(self.output, &canceller.id.raw, UNKNOWN_TARGET_REQUEST);
+                let record =
+                    canceller.record(LifecycleEvent::RequestFailed, Some(UNKNOWN_TARGET_REQUEST));
+                log_outcome(self.log, record, written)
+            }
+        }
+    }
+
+    /// Delivers what every running request has ready, and applies timeouts.
+    fn pump(&mut self) -> Result<(), Undeliverable> {
+        let mut index = 0;
+        while index < self.running.len() {
+            if !self.pump_one(index)? {
+                index += 1;
+            }
+        }
+        Ok(())
+    }
+
+    /// Delivers what request `index` has ready. Returns whether it finished,
+    /// in which case it has been removed.
+    fn pump_one(&mut self, index: usize) -> Result<bool, Undeliverable> {
+        let now = Instant::now();
+        let running = &mut self.running[index];
+        if let Some(error) = running.expired(now) {
+            let grace = running.stop_grace;
+            running.stop(Stop::TimedOut(error), grace);
+        }
+        loop {
+            let running = &mut self.running[index];
+            let Some(update) = running.exchange.next(now) else {
+                if running.stop_limit.is_some_and(|limit| now >= limit) {
+                    // The adapter didn't stop in time: end the request anyway.
+                    let running = self.running.remove(index);
+                    self.finish(running, Update::Stopped)?;
+                    return Ok(true);
+                }
+                return Ok(false);
+            };
+            running.last_update = Instant::now();
+            if update.is_terminal() {
+                let running = self.running.remove(index);
+                self.finish(running, update)?;
+                return Ok(true);
+            }
+            forward(&mut *self.output, &mut self.running[index], update)?;
+        }
+    }
+
+    /// Writes the terminal event of `running`, and confirms its cancellations.
+    fn finish(&mut self, running: Running, update: Update) -> Result<(), Undeliverable> {
+        let failure = match (&running.stop, update) {
+            (Some(Stop::Cancelled(_)), _) => Some(CANCELLED),
+            (Some(Stop::TimedOut(error)), _) => Some(*error),
+            (Some(Stop::InputClosed), _) => Some(INPUT_CLOSED),
+            (None, Update::Failed(error)) => Some(error),
+            (None, Update::Completed) => None,
+            (None, _) => Some(STOPPED_UNASKED),
+        };
+        let (written, record) = match failure {
+            None => (
+                write_event(
+                    self.output,
+                    &running.id.raw,
+                    Event::ResponseCompleted,
+                    &ResponseCompleted {},
+                ),
+                running.record(LifecycleEvent::RequestCompleted, None),
+            ),
+            Some(error) => (
+                write_failure(self.output, &running.id.raw, error),
+                running.record(LifecycleEvent::RequestFailed, Some(error)),
+            ),
+        };
+        let mut result = log_outcome(self.log, record, written);
+
+        // v1 §7.6: the target has ended, so each cancellation is confirmed.
+        if let Some(Stop::Cancelled(cancellers)) = &running.stop {
+            for canceller in cancellers {
+                let written = if result.is_ok() {
+                    let payload = RequestCancelled {
+                        target_request_id: &canceller.target,
+                    };
+                    write_event(
+                        self.output,
+                        &canceller.id.raw,
+                        Event::RequestCancelled,
+                        &payload,
+                    )
+                } else {
+                    Err(Undeliverable)
+                };
+                let record = canceller.record(LifecycleEvent::RequestCompleted, None);
+                result = log_outcome(self.log, record, written);
+            }
+        }
+        result
+    }
+
+    /// Stops every request still running at the end of input and waits for
+    /// them to finish.
+    fn shut_down(&mut self) -> Result<(), Undeliverable> {
+        for running in &mut self.running {
+            running.stop(Stop::InputClosed, SHUTDOWN_GRACE);
+        }
+        loop {
+            self.pump()?;
+            if self.running.is_empty() {
+                return Ok(());
+            }
+            thread::sleep(TICK);
+        }
+    }
+
+    /// Ends every running request without a terminal event, once the
+    /// extension can no longer be reached. Dropping each exchange kills its
+    /// processes.
+    fn abort(&mut self) -> HostError {
+        for running in self.running.drain(..) {
+            let record = running.record(LifecycleEvent::RequestAborted, None);
+            let _ = log_outcome(self.log, record, Err(Undeliverable));
+            if let Some(Stop::Cancelled(cancellers)) = &running.stop {
+                for canceller in cancellers {
+                    let record = canceller.record(LifecycleEvent::RequestAborted, None);
+                    let _ = log_outcome(self.log, record, Err(Undeliverable));
+                }
+            }
+        }
+        HostError::Io
+    }
+}
+
+/// Writes one non-terminal update of `running`. Nothing is written once the
+/// request is being stopped, except, later, its terminal event.
+fn forward<W: Write + ?Sized>(
+    output: &mut W,
+    running: &mut Running,
+    update: Update,
+) -> Result<(), Undeliverable> {
+    if running.stop.is_some() {
+        return Ok(());
+    }
+    let raw = &running.id.raw;
+    match update {
+        Update::ConversationCreated(conversation_id) => {
+            let payload = ConversationCreated {
+                conversation_id: &conversation_id,
+            };
+            let written = write_event(output, raw, Event::ConversationCreated, &payload);
+            running.conversation_id = Some(conversation_id);
+            written
+        }
+        Update::Started { conversation_id } => {
+            running.response_started = true;
+            let payload = ResponseStarted {
+                provider_id: running.provider_id.as_deref().unwrap_or_default(),
+                conversation_id: conversation_id.as_deref(),
+            };
+            let written = write_event(output, raw, Event::ResponseStarted, &payload);
+            if conversation_id.is_some() {
+                running.conversation_id = conversation_id;
+            }
+            written
+        }
+        Update::Delta(text) => {
+            for piece in split_text(&text, MAX_DELTA_BYTES) {
+                write_event(
+                    output,
+                    raw,
+                    Event::ResponseDelta,
+                    &ResponseDelta { text: piece },
+                )?;
+            }
+            Ok(())
+        }
+        Update::Status {
+            provider_id,
+            status,
         } => {
-            record.provider_id = Some(loggable_id(provider_id.decode()));
-            record.conversation_id = conversation_id.map(|id| loggable_id(id.decode()));
+            let payload = ProviderStatus {
+                provider_id: &provider_id,
+                status,
+            };
+            write_event(output, raw, Event::ProviderStatus, &payload)
         }
-        Method::ProviderStatus { provider_id } => {
-            record.provider_id = provider_id.map(|id| loggable_id(id.decode()));
-        }
-        Method::RequestCancel { target_request_id } => {
-            record.target_request_id = Some(loggable_id(target_request_id.decode()));
-        }
+        Update::Activity | Update::Completed | Update::Failed(_) | Update::Stopped => Ok(()),
     }
-    record.duration_ms = Some(millis(elapsed));
-    record
 }
 
-/// The record of a request a handler finished. Its conversation is the one the
-/// request created, if it created one, or else the one it continued.
-fn finished<'a>(request: &Request<'a>, outcome: Outcome, elapsed: Duration) -> Record<'a> {
-    let (event, error) = match outcome.end {
-        End::Completed => (LifecycleEvent::RequestCompleted, None),
-        End::Failed { code, reason } => (
-            LifecycleEvent::RequestFailed,
-            Some(LoggedError { code, reason }),
-        ),
-    };
-    let mut record = handled(event, request, elapsed);
-    if let Some(created) = outcome.created_conversation_id {
-        record.conversation_id = Some(loggable_id(created));
-    }
-    record.error = error;
-    record
+fn write_event<W: Write + ?Sized, P: Serialize + ?Sized>(
+    output: &mut W,
+    raw_request_id: &[u8],
+    event: Event,
+    payload: &P,
+) -> Result<(), Undeliverable> {
+    events::write_event(output, raw_request_id, event, payload).map_err(|_| Undeliverable)
 }
 
-/// The record of a request whose handler stopped with `error` before the
-/// request ended, such as when stdout closed mid-answer.
-fn aborted<'a>(request: &Request<'a>, error: HostError, elapsed: Duration) -> Record<'a> {
-    let mut record = handled(LifecycleEvent::RequestAborted, request, elapsed);
-    record.reason = Some(error.reason());
-    record
+fn write_failure<W: Write + ?Sized>(
+    output: &mut W,
+    raw_request_id: &[u8],
+    error: ErrorBody<'_>,
+) -> Result<(), Undeliverable> {
+    events::write_failure(output, raw_request_id, error).map_err(|_| Undeliverable)
+}
+
+/// Records `record`, or records the request as aborted if its event could
+/// not be written. Returns `written`.
+fn log_outcome<L: Write>(
+    log: &mut Diagnostics<L>,
+    mut record: Record<'_>,
+    written: Result<(), Undeliverable>,
+) -> Result<(), Undeliverable> {
+    if written.is_err() {
+        record.event = LifecycleEvent::RequestAborted;
+        record.error = None;
+        record.reason = Some(HostError::Io.reason());
+    }
+    log.record(&record);
+    written
 }
 
 /// The record of a request that failed validation. The frame itself is never
@@ -206,132 +780,20 @@ fn rejected<'a>(failure: &RequestFailure<'a>) -> Record<'a> {
     record
 }
 
-const FAKE_PROVIDER_ID: &str = "fake";
-const FAKE_CONVERSATION_ID: &str = "fake-conversation";
-
-const PROVIDER_NOT_INSTALLED: ErrorBody<'static> = ErrorBody {
-    code: ErrorCode::ProviderNotFound,
-    reason: "PROVIDER_NOT_INSTALLED",
-    message: "The selected provider runtime is not installed.",
-    retryable: false,
-};
-
-const FAKE_PROVIDER_STATUS: ProviderStatus<'static> = ProviderStatus {
-    provider_id: FAKE_PROVIDER_ID,
-    status: ProviderState {
-        availability: Availability::Available,
-        authentication: Authentication::Authenticated,
-        capabilities: Capabilities {
-            streaming: Capability::Supported,
-            continuation: Capability::Supported,
-            web_search: Capability::Unsupported,
-            page_context: Capability::Supported,
-            attachments: Capability::Unsupported,
-            model_selection: Capability::Unsupported,
-            cancellation: Capability::Unsupported,
-        },
-    },
-};
-
-/// Local scaffold routes: `provider_id: "fake"` answers with a deterministic
-/// event sequence and every other provider is reported as not installed. Real
-/// provider execution begins with NAT-04/NAT-05.
-struct ScaffoldHandlers;
-
-impl Handlers for ScaffoldHandlers {
-    fn conversation_send<W: Write + ?Sized>(
-        &mut self,
-        output: &mut W,
-        request_id: RequestId<'_>,
-        provider_id: JsonStr<'_>,
-        conversation_id: Option<JsonStr<'_>>,
-    ) -> Result<Outcome, EventError> {
-        if !provider_id.equals_ascii(FAKE_PROVIDER_ID) {
-            return fail(output, request_id, PROVIDER_NOT_INSTALLED);
-        }
-
-        let created_conversation_id = conversation_id.is_none().then_some(FAKE_CONVERSATION_ID);
-        if let Some(conversation_id) = created_conversation_id {
-            let created = ConversationCreated { conversation_id };
-            events::write_event(output, request_id, Event::ConversationCreated, &created)?;
-        }
-        let started = ResponseStarted {
-            provider_id: FAKE_PROVIDER_ID,
-        };
-        events::write_event(output, request_id, Event::ResponseStarted, &started)?;
-        let delta = ResponseDelta {
-            text: "Fake provider response.",
-        };
-        events::write_event(output, request_id, Event::ResponseDelta, &delta)?;
-        events::write_event(
-            output,
-            request_id,
-            Event::ResponseCompleted,
-            &ResponseCompleted {},
-        )?;
-        Ok(Outcome {
-            created_conversation_id: created_conversation_id.map(Cow::Borrowed),
-            ..Outcome::COMPLETED
-        })
-    }
-
-    fn provider_status<W: Write + ?Sized>(
-        &mut self,
-        output: &mut W,
-        request_id: RequestId<'_>,
-        provider_id: Option<JsonStr<'_>>,
-    ) -> Result<Outcome, EventError> {
-        if provider_id.is_some_and(|id| !id.equals_ascii(FAKE_PROVIDER_ID)) {
-            return fail(output, request_id, PROVIDER_NOT_INSTALLED);
-        }
-
-        events::write_event(
-            output,
-            request_id,
-            Event::ProviderStatus,
-            &FAKE_PROVIDER_STATUS,
-        )?;
-        events::write_event(
-            output,
-            request_id,
-            Event::ResponseCompleted,
-            &ResponseCompleted {},
-        )?;
-        Ok(Outcome::COMPLETED)
-    }
-
-    fn request_cancel<W: Write + ?Sized>(
-        &mut self,
-        output: &mut W,
-        request_id: RequestId<'_>,
-        _target_request_id: RequestId<'_>,
-    ) -> Result<Outcome, EventError> {
-        let error = ErrorBody {
-            code: ErrorCode::InvalidRequest,
-            reason: "UNKNOWN_TARGET_REQUEST",
-            message: "The target request is not in flight.",
-            retryable: false,
-        };
-        fail(output, request_id, error)
-    }
-}
-
-/// Ends the request with `response.failed` carrying `error`.
-fn fail<W: Write + ?Sized>(
-    output: &mut W,
-    request_id: RequestId<'_>,
-    error: ErrorBody<'static>,
-) -> Result<Outcome, EventError> {
-    events::write_failure(output, Some(request_id), error)?;
-    Ok(Outcome::failed(&error))
-}
-
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+    use std::io::Cursor;
+    use std::rc::Rc;
+
+    use serde_json::{Value, json};
+
     use super::*;
     use crate::HOST_VERSION;
     use crate::framing::PREFIX_SIZE;
     use crate::limits::MAX_FRAME_SIZE;
+    use crate::providers::{Provider, fake};
 
     fn framed(payloads: &[&str]) -> Vec<u8> {
         let mut wire = Vec::new();
@@ -341,16 +803,68 @@ mod tests {
         wire
     }
 
-    fn run_host(input: &[u8]) -> (Result<(), HostError>, Vec<String>) {
-        let (result, frames, _) = run_logged(input);
-        (result, frames)
+    fn request(request_id: &str, method: &str, payload: &str) -> String {
+        format!(
+            r#"{{"version":1,"type":"request","request_id":"{request_id}","method":"{method}","payload":{payload}}}"#
+        )
     }
 
-    /// Runs the host and returns its frames and its diagnostics records.
-    fn run_logged(input: &[u8]) -> (Result<(), HostError>, Vec<String>, Vec<serde_json::Value>) {
+    fn send(request_id: &str, provider_id: &str) -> String {
+        request(
+            request_id,
+            "conversation.send",
+            &format!(r#"{{"provider_id":"{provider_id}","input":{{"text":"hi"}}}}"#),
+        )
+    }
+
+    fn cancel(request_id: &str, target: &str) -> String {
+        request(
+            request_id,
+            "request.cancel",
+            &format!(r#"{{"target_request_id":"{target}"}}"#),
+        )
+    }
+
+    struct Session {
+        result: Result<(), HostError>,
+        frames: Vec<String>,
+        records: Vec<Value>,
+    }
+
+    impl Session {
+        /// The frames as JSON, `host.ready` first.
+        fn events(&self) -> Vec<Value> {
+            self.frames
+                .iter()
+                .map(|frame| serde_json::from_str(frame).unwrap())
+                .collect()
+        }
+
+        /// `(request_id, event)` for every frame after `host.ready`.
+        fn sequence(&self) -> Vec<(String, String)> {
+            self.events()[1..]
+                .iter()
+                .map(|event| {
+                    (
+                        event["request_id"].as_str().unwrap_or("null").to_owned(),
+                        event["event"].as_str().unwrap().to_owned(),
+                    )
+                })
+                .collect()
+        }
+
+        fn record_events(&self) -> Vec<&str> {
+            self.records
+                .iter()
+                .map(|record| record["event"].as_str().unwrap())
+                .collect()
+        }
+    }
+
+    fn run_session<R: Read + Send>(providers: &Providers, mut input: R) -> Session {
         let mut output = Vec::new();
         let mut log = Diagnostics::new(Vec::new());
-        let result = run(&mut &input[..], &mut output, &mut log);
+        let result = run_with(providers, &mut input, &mut output, &mut log);
 
         let mut wire = output.as_slice();
         let mut frames = Vec::new();
@@ -362,7 +876,15 @@ mod tests {
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
             .collect();
-        (result, frames, records)
+        Session {
+            result,
+            frames,
+            records,
+        }
+    }
+
+    fn run_host(input: &[u8]) -> Session {
+        run_session(&Providers::scaffold(), input)
     }
 
     fn event(request_id: &str, event: &str, payload: &str) -> String {
@@ -379,9 +901,204 @@ mod tests {
         )
     }
 
+    fn pairs(expected: &[(&str, &str)]) -> Vec<(String, String)> {
+        expected
+            .iter()
+            .map(|(id, event)| ((*id).to_owned(), (*event).to_owned()))
+            .collect()
+    }
+
+    /// Input that ends only after `linger`, so timeouts can fire first.
+    struct LingeringInput {
+        data: Cursor<Vec<u8>>,
+        linger: Duration,
+    }
+
+    impl Read for LingeringInput {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            let count = self.data.read(buffer)?;
+            if count == 0 && !self.linger.is_zero() {
+                thread::sleep(std::mem::take(&mut self.linger));
+            }
+            Ok(count)
+        }
+    }
+
+    fn lingering(payloads: &[&str], linger: Duration) -> LingeringInput {
+        LingeringInput {
+            data: Cursor::new(framed(payloads)),
+            linger,
+        }
+    }
+
+    /// How a [`Controlled`] exchange behaves.
+    #[derive(Clone, Copy, Default)]
+    struct Script {
+        /// Reports `Started`.
+        starts: bool,
+        /// Then reports this answer and completes.
+        answer: Option<&'static str>,
+        /// Reports `Stopped` without being cancelled.
+        stops_unasked: bool,
+        /// After a cancel, still reports a delta.
+        talks_after_cancel: bool,
+        /// After a cancel, takes this long to report `Stopped`; `None` never.
+        stop_delay: Option<Duration>,
+    }
+
+    impl Script {
+        /// Starts, then waits until cancelled.
+        fn waits() -> Self {
+            Self {
+                starts: true,
+                stop_delay: Some(Duration::ZERO),
+                ..Self::default()
+            }
+        }
+
+        /// Never starts; waits until cancelled.
+        fn never_starts() -> Self {
+            Self {
+                stop_delay: Some(Duration::ZERO),
+                ..Self::default()
+            }
+        }
+
+        /// Starts, answers `text`, and completes.
+        fn answers(text: &'static str) -> Self {
+            Self {
+                starts: true,
+                answer: Some(text),
+                ..Self::default()
+            }
+        }
+
+        fn stopping_after(mut self, delay: Option<Duration>) -> Self {
+            self.stop_delay = delay;
+            self
+        }
+    }
+
+    struct Controlled {
+        script: Script,
+        started: bool,
+        answered: bool,
+        talked: bool,
+        cancelled_at: Option<Instant>,
+        done: bool,
+    }
+
+    impl Exchange for Controlled {
+        fn next(&mut self, _deadline: Instant) -> Option<Update> {
+            if self.done {
+                return None;
+            }
+            if let Some(cancelled_at) = self.cancelled_at {
+                if self.script.talks_after_cancel && !self.talked {
+                    self.talked = true;
+                    return Some(Update::Delta("after cancel".to_owned()));
+                }
+                let delay = self.script.stop_delay?;
+                if cancelled_at.elapsed() < delay {
+                    return None;
+                }
+                self.done = true;
+                return Some(Update::Stopped);
+            }
+            if self.script.starts && !self.started {
+                self.started = true;
+                return Some(Update::Started {
+                    conversation_id: None,
+                });
+            }
+            if self.script.stops_unasked {
+                self.done = true;
+                return Some(Update::Stopped);
+            }
+            let answer = self.script.answer?;
+            if !self.answered {
+                self.answered = true;
+                return Some(Update::Delta(answer.to_owned()));
+            }
+            self.done = true;
+            Some(Update::Completed)
+        }
+
+        fn cancel(&mut self, _grace: Duration) {
+            if !self.done && self.cancelled_at.is_none() {
+                self.cancelled_at = Some(Instant::now());
+            }
+        }
+    }
+
+    /// A test provider that follows `script` and records what it was asked.
+    struct TestProvider {
+        id: &'static str,
+        script: Script,
+        timeouts: Timeouts,
+        calls: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl TestProvider {
+        fn new(id: &'static str, script: Script) -> Self {
+            Self {
+                id,
+                script,
+                timeouts: Timeouts {
+                    start: Duration::from_secs(60),
+                    idle: Duration::from_secs(60),
+                    stop_grace: Duration::ZERO,
+                },
+                calls: Rc::default(),
+            }
+        }
+    }
+
+    impl Provider for TestProvider {
+        fn id(&self) -> &str {
+            self.id
+        }
+
+        fn timeouts(&self) -> Timeouts {
+            self.timeouts
+        }
+
+        fn status(&self) -> Box<dyn Exchange> {
+            self.calls.borrow_mut().push("status".to_owned());
+            Box::new(Scripted::new([
+                Update::Status {
+                    provider_id: self.id.to_owned(),
+                    status: fake::STATUS,
+                },
+                Update::Completed,
+            ]))
+        }
+
+        fn send(&self, request: SendRequest) -> Box<dyn Exchange> {
+            let context = if request.has_context { "+context" } else { "" };
+            self.calls
+                .borrow_mut()
+                .push(format!("send:{}{context}", request.text));
+            Box::new(Controlled {
+                script: self.script,
+                started: false,
+                answered: false,
+                talked: false,
+                cancelled_at: None,
+                done: false,
+            })
+        }
+    }
+
+    fn with(provider: TestProvider) -> Providers {
+        Providers::new(vec![Box::new(fake::Fake), Box::new(provider)])
+    }
+
     #[test]
     fn empty_input_emits_only_host_ready() {
-        assert_eq!(run_host(&[]), (Ok(()), vec![host_ready()]));
+        let session = run_host(&[]);
+        assert_eq!(session.result, Ok(()));
+        assert_eq!(session.frames, [host_ready()]);
     }
 
     #[test]
@@ -391,18 +1108,19 @@ mod tests {
 
     #[test]
     fn framing_failures_stop_the_host() {
-        let (result, frames) = run_host(&[0x01, 0x00]);
-        assert_eq!(result, Err(HostError::FrameTruncated));
-        assert_eq!(frames, [host_ready()]);
+        let session = run_host(&[0x01, 0x00]);
+        assert_eq!(session.result, Err(HostError::FrameTruncated));
+        assert_eq!(session.frames, [host_ready()]);
 
         let oversized = u32::try_from(MAX_FRAME_SIZE + 1).unwrap().to_ne_bytes();
-        let (result, _) = run_host(&oversized);
-        assert_eq!(result, Err(HostError::FrameTooLarge));
+        assert_eq!(run_host(&oversized).result, Err(HostError::FrameTooLarge));
 
         let mut truncated_payload = framed(&["{}"]);
         truncated_payload.truncate(PREFIX_SIZE + 1);
-        let (result, _) = run_host(&truncated_payload);
-        assert_eq!(result, Err(HostError::FrameTruncated));
+        assert_eq!(
+            run_host(&truncated_payload).result,
+            Err(HostError::FrameTruncated)
+        );
     }
 
     #[test]
@@ -433,7 +1151,12 @@ mod tests {
 
         let mut log = Diagnostics::new(std::io::sink());
         assert_eq!(
-            run(&mut &[][..], &mut ClosedPipe, &mut log),
+            run_with(
+                &Providers::scaffold(),
+                &mut &[][..],
+                &mut ClosedPipe,
+                &mut log
+            ),
             Err(HostError::Io)
         );
     }
@@ -449,10 +1172,10 @@ mod tests {
         ]);
         let malformed = r#"{"error":{"code":"INVALID_REQUEST","reason":"MALFORMED_MESSAGE","message":"Malformed request.","retryable":false}}"#;
 
-        let (result, frames) = run_host(&input);
-        assert_eq!(result, Ok(()));
+        let session = run_host(&input);
+        assert_eq!(session.result, Ok(()));
         assert_eq!(
-            frames,
+            session.frames,
             [
                 host_ready(),
                 event("null", "response.failed", malformed),
@@ -465,7 +1188,7 @@ mod tests {
                 event(
                     r#""req_flow""#,
                     "response.started",
-                    r#"{"provider_id":"fake"}"#
+                    r#"{"provider_id":"fake","conversation_id":"fake-conversation"}"#
                 ),
                 event(
                     r#""req_flow""#,
@@ -498,16 +1221,16 @@ mod tests {
         ]);
         let not_installed = r#"{"error":{"code":"PROVIDER_NOT_FOUND","reason":"PROVIDER_NOT_INSTALLED","message":"The selected provider runtime is not installed.","retryable":false}}"#;
 
-        let (result, frames) = run_host(&input);
-        assert_eq!(result, Ok(()));
+        let session = run_host(&input);
+        assert_eq!(session.result, Ok(()));
         assert_eq!(
-            frames,
+            session.frames,
             [
                 host_ready(),
                 event(
                     r#""req_continue""#,
                     "response.started",
-                    r#"{"provider_id":"fake"}"#
+                    r#"{"provider_id":"fake","conversation_id":"conv_1"}"#
                 ),
                 event(
                     r#""req_continue""#,
@@ -523,6 +1246,7 @@ mod tests {
                 ),
                 event(r#""req_status""#, "response.completed", "{}"),
                 event(r#""req_status_codex""#, "response.failed", not_installed),
+                // The fake request finished before its cancellation arrived.
                 event(
                     r#""req_cancel""#,
                     "response.failed",
@@ -532,120 +1256,82 @@ mod tests {
         );
     }
 
-    /// Records the ID of every request that reaches a handler.
-    #[derive(Default)]
-    struct Recorder {
-        request_ids: Vec<String>,
-    }
-
-    impl Recorder {
-        fn record(&mut self, request_id: RequestId<'_>) -> Result<Outcome, EventError> {
-            self.request_ids
-                .push(String::from_utf8_lossy(request_id.raw()).into_owned());
-            Ok(Outcome::COMPLETED)
-        }
-    }
-
-    impl Handlers for Recorder {
-        fn conversation_send<W: Write + ?Sized>(
-            &mut self,
-            _output: &mut W,
-            request_id: RequestId<'_>,
-            _provider_id: JsonStr<'_>,
-            _conversation_id: Option<JsonStr<'_>>,
-        ) -> Result<Outcome, EventError> {
-            self.record(request_id)
-        }
-
-        fn provider_status<W: Write + ?Sized>(
-            &mut self,
-            _output: &mut W,
-            request_id: RequestId<'_>,
-            _provider_id: Option<JsonStr<'_>>,
-        ) -> Result<Outcome, EventError> {
-            self.record(request_id)
-        }
-
-        fn request_cancel<W: Write + ?Sized>(
-            &mut self,
-            _output: &mut W,
-            request_id: RequestId<'_>,
-            _target_request_id: RequestId<'_>,
-        ) -> Result<Outcome, EventError> {
-            self.record(request_id)
-        }
-    }
-
-    fn conversation_request(request_id: &str, payload: &str) -> String {
-        format!(
-            r#"{{"version":1,"type":"request","request_id":"{request_id}","method":"conversation.send","payload":{payload}}}"#
-        )
-    }
-
     #[test]
-    fn invalid_requests_never_reach_a_handler() {
-        // Every validation failure is answered before routing, so no handler,
-        // and therefore no provider work, sees an invalid request (SEC-01).
+    fn invalid_requests_never_reach_a_provider() {
+        // Every validation failure is answered before routing, so no provider
+        // work starts for an invalid request (SEC-01).
         let too_deep = format!(
-            r#"{{"provider_id":"fake","input":{{"text":"hi"}},"extra":{}{}}}"#,
+            r#"{{"provider_id":"test","input":{{"text":"hi"}},"extra":{}{}}}"#,
             "[".repeat(200),
             "]".repeat(200)
         );
         let invalid = [
-            conversation_request("req_syntax", r#"{"provider_id":"fake""#),
-            r#"{"version":1,"request_id":"req_envelope","method":"conversation.send","payload":{"provider_id":"fake","input":{"text":"hi"}}}"#.to_owned(),
-            r#"{"version":1,"type":"request","request_id":"req_extra","method":"conversation.send","payload":{"provider_id":"fake","input":{"text":"hi"}},"extra":1}"#.to_owned(),
-            r#"{"version":2,"type":"request","request_id":"req_version","method":"conversation.send","payload":{"provider_id":"fake","input":{"text":"hi"}}}"#.to_owned(),
-            r#"{"version":1,"type":"request","request_id":"req_method","method":"provider.spawn","payload":{}}"#.to_owned(),
-            conversation_request("req_payload", r#"{"provider_id":"fake","input":{"text":""}}"#),
-            conversation_request(
+            request("req_syntax", "conversation.send", r#"{"provider_id":"test""#),
+            r#"{"version":1,"request_id":"req_envelope","method":"conversation.send","payload":{"provider_id":"test","input":{"text":"hi"}}}"#.to_owned(),
+            r#"{"version":1,"type":"request","request_id":"req_extra","method":"conversation.send","payload":{"provider_id":"test","input":{"text":"hi"}},"extra":1}"#.to_owned(),
+            r#"{"version":2,"type":"request","request_id":"req_version","method":"conversation.send","payload":{"provider_id":"test","input":{"text":"hi"}}}"#.to_owned(),
+            request("req_method", "provider.spawn", "{}"),
+            request("req_payload", "conversation.send", r#"{"provider_id":"test","input":{"text":""}}"#),
+            request(
                 "req_duplicate",
-                r#"{"provider_id":"fake","provider_id":"fake","input":{"text":"hi"}}"#,
+                "conversation.send",
+                r#"{"provider_id":"test","provider_id":"test","input":{"text":"hi"}}"#,
             ),
-            conversation_request("req_deep", &too_deep),
-            conversation_request(
+            request("req_deep", "conversation.send", &too_deep),
+            request(
                 &"a".repeat(crate::limits::MAX_REQUEST_ID_LENGTH + 1),
-                r#"{"provider_id":"fake","input":{"text":"hi"}}"#,
+                "conversation.send",
+                r#"{"provider_id":"test","input":{"text":"hi"}}"#,
             ),
-            r#"{"version":1,"type":"request","request_id":"req_cancel","method":"request.cancel","payload":{"target_request_id":"bad id"}}"#.to_owned(),
+            request("req_status", "provider.status", r#"{"provider_id":""}"#),
+            request("req_cancel", "request.cancel", r#"{"target_request_id":"bad id"}"#),
         ];
-        let valid = conversation_request(
+        let valid = request(
             "req_valid",
-            r#"{"provider_id":"fake","input":{"text":"hi"}}"#,
+            "conversation.send",
+            r#"{"provider_id":"test","input":{"text":"valid"}}"#,
         );
 
+        let provider = TestProvider::new("test", Script::answers("ok"));
+        let calls = Rc::clone(&provider.calls);
         let mut frames: Vec<&str> = invalid.iter().map(String::as_str).collect();
         frames.push(&valid);
-        let input = framed(&frames);
+        let session = run_session(&with(provider), framed(&frames).as_slice());
 
-        let mut recorder = Recorder::default();
-        let mut output = Vec::new();
-        let mut log = Diagnostics::new(std::io::sink());
-        assert_eq!(
-            serve(
-                &mut recorder,
-                &mut input.as_slice(),
-                &mut output,
-                &mut log,
-                &mut Counts::default()
-            ),
-            Ok(())
-        );
-        assert_eq!(recorder.request_ids, ["req_valid"]);
-
-        let mut wire = output.as_slice();
-        let mut events = Vec::new();
-        while let Some(frame) = framing::read_frame(&mut wire).unwrap() {
-            events.push(serde_json::from_slice::<serde_json::Value>(&frame).unwrap());
-        }
-        assert_eq!(events.len(), 1 + invalid.len());
-        for failure in &events[1..] {
+        assert_eq!(session.result, Ok(()));
+        assert_eq!(*calls.borrow(), ["send:valid"]);
+        let events = session.events();
+        for failure in &events[1..=invalid.len()] {
             assert_eq!(failure["event"], "response.failed", "{failure}");
             assert_eq!(
                 failure["payload"]["error"]["code"], "INVALID_REQUEST",
                 "{failure}"
             );
         }
+    }
+
+    #[test]
+    fn the_provider_learns_whether_context_is_attached() {
+        // An adapter whose provider can't use browser context must be able to
+        // refuse a request that attaches some.
+        let provider = TestProvider::new("test", Script::answers("ok"));
+        let calls = Rc::clone(&provider.calls);
+        let requests = [
+            request(
+                "req_plain",
+                "conversation.send",
+                r#"{"provider_id":"test","input":{"text":"plain"}}"#,
+            ),
+            request(
+                "req_context",
+                "conversation.send",
+                r#"{"provider_id":"test","input":{"text":"with"},"context":{"mode":"selection","text":"x","truncated":false,"page":{"title":"T","url":"https://example.com/"}}}"#,
+            ),
+        ];
+        let frames: Vec<&str> = requests.iter().map(String::as_str).collect();
+        let session = run_session(&with(provider), framed(&frames).as_slice());
+        assert_eq!(session.result, Ok(()));
+        assert_eq!(*calls.borrow(), ["send:plain", "send:with+context"]);
     }
 
     #[test]
@@ -666,31 +1352,525 @@ mod tests {
             "FAKE",
         ] {
             let id_json = serde_json::to_string(provider_id).unwrap();
-            for request in [
-                format!(
-                    r#"{{"version":1,"type":"request","request_id":"req_send","method":"conversation.send","payload":{{"provider_id":{id_json},"input":{{"text":"hi"}}}}}}"#
-                ),
-                format!(
-                    r#"{{"version":1,"type":"request","request_id":"req_status","method":"provider.status","payload":{{"provider_id":{id_json}}}}}"#
-                ),
+            for payload in [
+                format!(r#"{{"provider_id":{id_json},"input":{{"text":"hi"}}}}"#),
+                format!(r#"{{"provider_id":{id_json}}}"#),
             ] {
-                let (result, frames) = run_host(&framed(&[&request]));
-                assert_eq!(result, Ok(()));
-                assert_eq!(frames.len(), 2, "{provider_id:?}");
+                let method = if payload.contains("input") {
+                    "conversation.send"
+                } else {
+                    "provider.status"
+                };
+                let session = run_host(&framed(&[&request("req", method, &payload)]));
+                assert_eq!(session.result, Ok(()));
+                assert_eq!(session.frames.len(), 2, "{provider_id:?}");
                 assert!(
-                    frames[1].contains(r#""reason":"PROVIDER_NOT_INSTALLED""#),
+                    session.frames[1].contains(r#""reason":"PROVIDER_NOT_INSTALLED""#),
                     "{provider_id:?}: {}",
-                    frames[1]
+                    session.frames[1]
                 );
             }
         }
     }
 
-    fn record_events(records: &[serde_json::Value]) -> Vec<&str> {
-        records
+    #[test]
+    fn provider_status_without_an_id_reports_every_provider_in_order() {
+        let session = run_session(
+            &with(TestProvider::new("second", Script::never_starts())),
+            framed(&[&request("req_all", "provider.status", "{}")]).as_slice(),
+        );
+        let events = session.events();
+        assert_eq!(
+            session.sequence(),
+            pairs(&[
+                ("req_all", "provider.status"),
+                ("req_all", "provider.status"),
+                ("req_all", "response.completed"),
+            ])
+        );
+        assert_eq!(events[1]["payload"]["provider_id"], "fake");
+        assert_eq!(events[2]["payload"]["provider_id"], "second");
+    }
+
+    #[test]
+    fn requests_run_side_by_side_and_a_cancelled_one_ends_first() {
+        // `slow` keeps answering while the fake provider completes a request
+        // and the extension cancels `slow`.
+        let session = run_session(
+            &with(TestProvider::new("slow", Script::waits())),
+            framed(&[
+                &send("req_slow", "slow"),
+                &send("req_fast", "fake"),
+                &cancel("req_cancel", "req_slow"),
+            ])
+            .as_slice(),
+        );
+        assert_eq!(session.result, Ok(()));
+        assert_eq!(
+            session.sequence(),
+            pairs(&[
+                ("req_slow", "response.started"),
+                ("req_fast", "conversation.created"),
+                ("req_fast", "response.started"),
+                ("req_fast", "response.delta"),
+                ("req_fast", "response.completed"),
+                ("req_slow", "response.failed"),
+                ("req_cancel", "request.cancelled"),
+            ])
+        );
+        let events = session.events();
+        assert_eq!(
+            events[6]["payload"]["error"],
+            json!({
+                "code": "REQUEST_CANCELLED",
+                "reason": "USER_CANCELLED",
+                "message": "The request was cancelled.",
+                "retryable": true
+            })
+        );
+        assert_eq!(
+            events[7]["payload"],
+            json!({"target_request_id": "req_slow"})
+        );
+    }
+
+    #[test]
+    fn a_request_cancelled_before_it_starts_gets_no_response_started() {
+        let session = run_session(
+            &with(TestProvider::new("idle", Script::never_starts())),
+            framed(&[&send("req_idle", "idle"), &cancel("req_cancel", "req_idle")]).as_slice(),
+        );
+        assert_eq!(
+            session.sequence(),
+            pairs(&[
+                ("req_idle", "response.failed"),
+                ("req_cancel", "request.cancelled"),
+            ])
+        );
+    }
+
+    #[test]
+    fn nothing_but_the_terminal_event_follows_a_cancellation() {
+        // The provider keeps talking after it was cancelled; none of it is
+        // forwarded.
+        let session = run_session(
+            &with(TestProvider::new(
+                "chatty",
+                Script {
+                    talks_after_cancel: true,
+                    ..Script::waits()
+                },
+            )),
+            framed(&[
+                &send("req_chatty", "chatty"),
+                &cancel("req_cancel", "req_chatty"),
+            ])
+            .as_slice(),
+        );
+        assert_eq!(
+            session.sequence(),
+            pairs(&[
+                ("req_chatty", "response.started"),
+                ("req_chatty", "response.failed"),
+                ("req_cancel", "request.cancelled"),
+            ])
+        );
+    }
+
+    /// A provider whose requests start, then take 100 ms to stop once
+    /// cancelled: long enough for more frames to arrive meanwhile.
+    fn slow_to_stop() -> Providers {
+        with(TestProvider::new(
+            "slow",
+            Script::waits().stopping_after(Some(Duration::from_millis(100))),
+        ))
+    }
+
+    #[test]
+    fn every_cancellation_of_one_request_is_confirmed() {
+        let session = run_session(
+            &slow_to_stop(),
+            framed(&[
+                &send("req_slow", "slow"),
+                &cancel("req_cancel_1", "req_slow"),
+                &cancel("req_cancel_2", "req_slow"),
+            ])
+            .as_slice(),
+        );
+        assert_eq!(
+            session.sequence(),
+            pairs(&[
+                ("req_slow", "response.started"),
+                ("req_slow", "response.failed"),
+                ("req_cancel_1", "request.cancelled"),
+                ("req_cancel_2", "request.cancelled"),
+            ])
+        );
+    }
+
+    #[test]
+    fn a_cancellation_without_a_running_target_fails() {
+        let session = run_host(&framed(&[
+            &cancel("req_nothing", "req_missing"),
+            &send("req_done", "fake"),
+            &cancel("req_late", "req_done"),
+        ]));
+        let events = session.events();
+        for index in [1, 6] {
+            assert_eq!(events[index]["event"], "response.failed");
+            assert_eq!(
+                events[index]["payload"]["error"]["reason"],
+                "UNKNOWN_TARGET_REQUEST"
+            );
+        }
+    }
+
+    #[test]
+    fn a_request_id_in_flight_cannot_be_reused() {
+        let session = run_session(
+            &slow_to_stop(),
+            framed(&[
+                &send("req_1", "slow"),
+                &send("req_1", "fake"),
+                &cancel("req_2", "req_1"),
+                // A pending cancellation's ID is in flight too.
+                &cancel("req_2", "req_1"),
+            ])
+            .as_slice(),
+        );
+        assert_eq!(
+            session.sequence(),
+            pairs(&[
+                ("req_1", "response.started"),
+                ("req_1", "response.failed"),
+                ("req_2", "response.failed"),
+                ("req_1", "response.failed"),
+                ("req_2", "request.cancelled"),
+            ])
+        );
+        let events = session.events();
+        assert_eq!(
+            events[2]["payload"]["error"]["reason"],
+            "DUPLICATE_REQUEST_ID"
+        );
+        assert_eq!(
+            events[3]["payload"]["error"]["reason"],
+            "DUPLICATE_REQUEST_ID"
+        );
+        assert_eq!(events[4]["payload"]["error"]["reason"], "USER_CANCELLED");
+        let rejected: Vec<&Value> = session
+            .records
             .iter()
-            .map(|record| record["event"].as_str().unwrap())
-            .collect()
+            .filter(|record| record["event"] == "request.rejected")
+            .collect();
+        assert_eq!(rejected.len(), 2);
+        assert_eq!(rejected[0]["method"], "conversation.send");
+        assert_eq!(rejected[1]["method"], "request.cancel");
+    }
+
+    #[test]
+    fn a_request_id_is_free_again_once_its_request_ends() {
+        let session = run_host(&framed(&[&send("req_1", "fake"), &send("req_1", "fake")]));
+        assert_eq!(
+            session
+                .sequence()
+                .iter()
+                .filter(|(_, event)| event == "response.completed")
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn a_provider_that_never_starts_times_out() {
+        let mut provider = TestProvider::new("idle", Script::never_starts());
+        provider.timeouts.start = Duration::from_millis(50);
+        let session = run_session(
+            &with(provider),
+            lingering(&[&send("req_idle", "idle")], Duration::from_millis(500)),
+        );
+        assert_eq!(
+            session.sequence(),
+            pairs(&[("req_idle", "response.failed")])
+        );
+        assert_eq!(
+            session.events()[1]["payload"]["error"],
+            json!({
+                "code": "REQUEST_TIMEOUT",
+                "reason": "PROVIDER_START_TIMEOUT",
+                "message": "The provider took too long to start answering.",
+                "retryable": true
+            })
+        );
+    }
+
+    #[test]
+    fn a_provider_that_goes_quiet_times_out() {
+        let mut provider = TestProvider::new("quiet", Script::waits());
+        provider.timeouts.idle = Duration::from_millis(50);
+        let session = run_session(
+            &with(provider),
+            lingering(&[&send("req_quiet", "quiet")], Duration::from_millis(500)),
+        );
+        assert_eq!(
+            session.sequence(),
+            pairs(&[
+                ("req_quiet", "response.started"),
+                ("req_quiet", "response.failed"),
+            ])
+        );
+        assert_eq!(
+            session.events()[2]["payload"]["error"]["reason"],
+            "PROVIDER_RESPONSE_TIMEOUT"
+        );
+        // A timed-out request can't be cancelled any more.
+        assert_eq!(session.records[1]["error"]["code"], "REQUEST_TIMEOUT");
+    }
+
+    #[test]
+    fn the_end_of_input_stops_requests_still_running() {
+        let session = run_session(
+            &with(TestProvider::new("slow", Script::waits())),
+            framed(&[&send("req_slow", "slow")]).as_slice(),
+        );
+        assert_eq!(session.result, Ok(()));
+        assert_eq!(
+            session.sequence(),
+            pairs(&[
+                ("req_slow", "response.started"),
+                ("req_slow", "response.failed"),
+            ])
+        );
+        assert_eq!(
+            session.events()[2]["payload"]["error"]["reason"],
+            "INPUT_CLOSED"
+        );
+    }
+
+    #[test]
+    fn an_exchange_that_stops_unasked_is_an_internal_error() {
+        let session = run_session(
+            &with(TestProvider::new(
+                "odd",
+                Script {
+                    stops_unasked: true,
+                    ..Script::waits()
+                },
+            )),
+            framed(&[&send("req_odd", "odd")]).as_slice(),
+        );
+        assert_eq!(
+            session.events()[2]["payload"]["error"]["code"],
+            "INTERNAL_ERROR"
+        );
+    }
+
+    #[test]
+    fn a_long_delta_is_split_into_frames_that_fit() {
+        // Control characters escape to six bytes each: the worst case.
+        const TEXT: &str = "\u{1}\u{2}";
+        let text: &'static str = Box::leak(TEXT.repeat(MAX_FRAME_SIZE / 4).into_boxed_str());
+        let session = run_session(
+            &with(TestProvider::new("long", Script::answers(text))),
+            framed(&[&send("req_long", "long")]).as_slice(),
+        );
+        assert_eq!(session.result, Ok(()));
+        let events = session.events();
+        let deltas: Vec<&Value> = events
+            .iter()
+            .filter(|event| event["event"] == "response.delta")
+            .collect();
+        assert!(deltas.len() > 1);
+        assert!(
+            session
+                .frames
+                .iter()
+                .all(|frame| frame.len() <= MAX_FRAME_SIZE)
+        );
+        let joined: String = deltas
+            .iter()
+            .map(|delta| delta["payload"]["text"].as_str().unwrap())
+            .collect();
+        assert!(joined == text, "the deltas differ from the text");
+    }
+
+    /// Accepts `capacity` bytes, then fails like a closed pipe.
+    struct BreakingPipe {
+        capacity: usize,
+    }
+
+    impl Write for BreakingPipe {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            if self.capacity == 0 {
+                return Err(std::io::ErrorKind::BrokenPipe.into());
+            }
+            let written = buffer.len().min(self.capacity);
+            self.capacity -= written;
+            Ok(written)
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Runs the host into an output that breaks after `host.ready` and one
+    /// more frame of `extra` bytes.
+    fn run_until_stdout_closes(
+        providers: &Providers,
+        requests: &[&str],
+        extra: usize,
+    ) -> Vec<Value> {
+        let mut ready = Vec::new();
+        events::write_host_ready(&mut ready).unwrap();
+        let mut output = BreakingPipe {
+            capacity: ready.len() + extra,
+        };
+        let mut log = Diagnostics::new(Vec::new());
+        let result = run_with(
+            providers,
+            &mut framed(requests).as_slice(),
+            &mut output,
+            &mut log,
+        );
+        assert_eq!(result, Err(HostError::Io));
+        let records: Vec<Value> = String::from_utf8(log.into_inner())
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let stopped = records.last().unwrap();
+        assert_eq!(stopped["reason"], "io_error");
+        assert_eq!(stopped["exit_code"], 2);
+        records
+    }
+
+    #[test]
+    fn a_request_the_host_stops_answering_is_still_recorded() {
+        let records = run_until_stdout_closes(
+            &Providers::scaffold(),
+            &[
+                r#"{"version":1,"type":"request","request_id":"req_cut","method":"conversation.send","payload":{"provider_id":"fake","conversation_id":"conv_1","input":{"text":"hi"}}}"#,
+            ],
+            0,
+        );
+        let events: Vec<&str> = records
+            .iter()
+            .map(|r| r["event"].as_str().unwrap())
+            .collect();
+        assert_eq!(events, ["host.started", "request.aborted", "host.stopped"]);
+        let aborted = &records[1];
+        assert_eq!(aborted["request_id"], "req_cut");
+        assert_eq!(aborted["method"], "conversation.send");
+        assert_eq!(aborted["provider_id"], "fake");
+        assert_eq!(aborted["conversation_id"], "conv_1");
+        assert_eq!(aborted["reason"], "io_error");
+        assert!(aborted["duration_ms"].is_u64());
+        assert!(aborted.get("error").is_none());
+        assert_eq!(
+            (&records[2]["requests"], &records[2]["rejected"]),
+            (&1.into(), &0.into())
+        );
+
+        let records = run_until_stdout_closes(
+            &Providers::scaffold(),
+            &[
+                r#"{"version":1,"type":"request","request_id":"req_bad","method":"provider.spawn","payload":{}}"#,
+            ],
+            0,
+        );
+        let events: Vec<&str> = records
+            .iter()
+            .map(|r| r["event"].as_str().unwrap())
+            .collect();
+        assert_eq!(events, ["host.started", "request.rejected", "host.stopped"]);
+        assert_eq!(
+            (&records[2]["requests"], &records[2]["rejected"]),
+            (&0.into(), &1.into())
+        );
+    }
+
+    #[test]
+    fn an_aborted_request_records_the_conversation_its_provider_created() {
+        // stdout closes on the request's first event, `conversation.created`.
+        // The provider has created the conversation, so the record names it.
+        let records =
+            run_until_stdout_closes(&Providers::scaffold(), &[&send("req_new", "fake")], 0);
+        let aborted = &records[1];
+        assert_eq!(aborted["event"], "request.aborted");
+        assert_eq!(aborted["request_id"], "req_new");
+        assert_eq!(aborted["conversation_id"], fake::CONVERSATION_ID);
+    }
+
+    #[test]
+    fn requests_still_running_when_stdout_closes_are_recorded_as_aborted() {
+        // `slow` is being cancelled when the fake request's first event finds
+        // stdout closed: all three are recorded as aborted.
+        let providers = with(TestProvider::new(
+            "slow",
+            Script::never_starts().stopping_after(Some(Duration::from_secs(60))),
+        ));
+        let records = run_until_stdout_closes(
+            &providers,
+            &[
+                &send("req_slow", "slow"),
+                &cancel("req_cancel", "req_slow"),
+                &send("req_fast", "fake"),
+            ],
+            0,
+        );
+        let mut aborted: Vec<(&str, &str)> = records
+            .iter()
+            .filter(|record| record["event"] == "request.aborted")
+            .map(|record| {
+                (
+                    record["request_id"].as_str().unwrap(),
+                    record["method"].as_str().unwrap(),
+                )
+            })
+            .collect();
+        aborted.sort_unstable();
+        assert_eq!(
+            aborted,
+            [
+                ("req_cancel", "request.cancel"),
+                ("req_fast", "conversation.send"),
+                ("req_slow", "conversation.send"),
+            ]
+        );
+        assert!(records.iter().all(|record| record.get("error").is_none()));
+    }
+
+    #[test]
+    fn a_request_that_never_stops_is_ended_anyway() {
+        // The adapter ignores its cancel entirely; the host ends the request
+        // once the grace period and the slack have passed.
+        let providers = with(TestProvider::new(
+            "stuck",
+            Script::waits().stopping_after(None),
+        ));
+        let started = Instant::now();
+        let session = run_session(
+            &providers,
+            framed(&[
+                &send("req_stuck", "stuck"),
+                &cancel("req_cancel", "req_stuck"),
+            ])
+            .as_slice(),
+        );
+        assert!(started.elapsed() >= STOP_SLACK);
+        assert_eq!(
+            session.sequence(),
+            pairs(&[
+                ("req_stuck", "response.started"),
+                ("req_stuck", "response.failed"),
+                ("req_cancel", "request.cancelled"),
+            ])
+        );
+        assert_eq!(
+            session.events()[2]["payload"]["error"]["reason"],
+            "USER_CANCELLED"
+        );
     }
 
     #[test]
@@ -706,11 +1886,12 @@ mod tests {
             r#"{"version":1,"type":"request","request_id":"req_status","method":"provider.status","payload":{"provider_id":"codex"}}"#,
             r#"{"version":1,"type":"request","request_id":"req_cancel","method":"request.cancel","payload":{"target_request_id":"req_ok"}}"#,
         ]);
-        let (result, _, records) = run_logged(&input);
-        assert_eq!(result, Ok(()));
+        let session = run_host(&input);
+        assert_eq!(session.result, Ok(()));
+        let records = &session.records;
 
         assert_eq!(
-            record_events(&records),
+            session.record_events(),
             [
                 "host.started",
                 "request.rejected",
@@ -721,7 +1902,7 @@ mod tests {
                 "host.stopped"
             ]
         );
-        for record in &records {
+        for record in records {
             let ts = record["ts"].as_str().unwrap();
             assert_eq!(ts.len(), "2025-09-25T01:23:45.678Z".len(), "{ts}");
             assert!(ts.ends_with('Z') && ts.as_bytes()[10] == b'T', "{ts}");
@@ -733,7 +1914,7 @@ mod tests {
         assert_eq!(records[1]["request_id"], "req_bad");
         assert_eq!(
             records[1]["error"],
-            serde_json::json!({"code": "INVALID_REQUEST", "reason": "UNKNOWN_METHOD"})
+            json!({"code": "INVALID_REQUEST", "reason": "UNKNOWN_METHOD"})
         );
         assert!(records[2].get("request_id").is_none());
         assert_eq!(records[2]["error"]["reason"], "MALFORMED_MESSAGE");
@@ -750,7 +1931,7 @@ mod tests {
         assert_eq!(records[4]["provider_id"], "codex");
         assert_eq!(
             records[4]["error"],
-            serde_json::json!({"code": "PROVIDER_NOT_FOUND", "reason": "PROVIDER_NOT_INSTALLED"})
+            json!({"code": "PROVIDER_NOT_FOUND", "reason": "PROVIDER_NOT_INSTALLED"})
         );
         assert_eq!(records[5]["method"], "request.cancel");
         assert_eq!(records[5]["target_request_id"], "req_ok");
@@ -765,43 +1946,73 @@ mod tests {
     }
 
     #[test]
-    fn request_records_agree_with_each_terminal_event() {
-        // Across every handler path, a request is recorded as failed exactly
-        // when its last frame is response.failed, with the same code and reason.
-        // Its conversation is the one conversation.created announced, or else
-        // the one the request continued.
-        let requests = [
-            r#"{"version":1,"type":"request","request_id":"send_new","method":"conversation.send","payload":{"provider_id":"fake","input":{"text":"hi"}}}"#,
-            r#"{"version":1,"type":"request","request_id":"send_existing","method":"conversation.send","payload":{"provider_id":"fake","conversation_id":"c1","input":{"text":"hi"}}}"#,
-            r#"{"version":1,"type":"request","request_id":"send_unknown","method":"conversation.send","payload":{"provider_id":"codex","input":{"text":"hi"}}}"#,
-            r#"{"version":1,"type":"request","request_id":"status_all","method":"provider.status","payload":{}}"#,
-            r#"{"version":1,"type":"request","request_id":"status_fake","method":"provider.status","payload":{"provider_id":"fake"}}"#,
-            r#"{"version":1,"type":"request","request_id":"status_unknown","method":"provider.status","payload":{"provider_id":"codex"}}"#,
-            r#"{"version":1,"type":"request","request_id":"cancel","method":"request.cancel","payload":{"target_request_id":"send_new"}}"#,
-        ];
-        let (result, frames, records) = run_logged(&framed(&requests));
-        assert_eq!(result, Ok(()));
+    fn cancellations_are_recorded_with_their_target() {
+        let session = run_session(
+            &with(TestProvider::new("slow", Script::waits())),
+            framed(&[&send("req_slow", "slow"), &cancel("req_cancel", "req_slow")]).as_slice(),
+        );
+        let records = &session.records;
+        assert_eq!(records[1]["request_id"], "req_slow");
+        assert_eq!(records[1]["event"], "request.failed");
+        assert_eq!(
+            records[1]["error"],
+            json!({"code": "REQUEST_CANCELLED", "reason": "USER_CANCELLED"})
+        );
+        assert_eq!(records[2]["request_id"], "req_cancel");
+        assert_eq!(records[2]["event"], "request.completed");
+        assert_eq!(records[2]["target_request_id"], "req_slow");
+    }
 
-        let mut conversations = std::collections::HashMap::new();
-        for request in requests {
-            let request: serde_json::Value = serde_json::from_str(request).unwrap();
+    #[test]
+    fn request_records_agree_with_each_terminal_event() {
+        // Across every path, a request is recorded as failed exactly when its
+        // last frame is response.failed, with the same code and reason. Its
+        // conversation is the one conversation.created announced, or else the
+        // one the request continued.
+        let requests = [
+            send("send_new", "fake"),
+            request(
+                "send_existing",
+                "conversation.send",
+                r#"{"provider_id":"fake","conversation_id":"c1","input":{"text":"hi"}}"#,
+            ),
+            send("send_unknown", "codex"),
+            request("status_all", "provider.status", "{}"),
+            request(
+                "status_fake",
+                "provider.status",
+                r#"{"provider_id":"fake"}"#,
+            ),
+            request(
+                "status_unknown",
+                "provider.status",
+                r#"{"provider_id":"codex"}"#,
+            ),
+            cancel("cancel", "send_new"),
+        ];
+        let frames: Vec<&str> = requests.iter().map(String::as_str).collect();
+        let session = run_host(&framed(&frames));
+        assert_eq!(session.result, Ok(()));
+
+        let mut conversations = HashMap::new();
+        for request in &requests {
+            let request: Value = serde_json::from_str(request).unwrap();
             let conversation_id = request["payload"].get("conversation_id").cloned();
             conversations.insert(
                 request["request_id"].as_str().unwrap().to_owned(),
                 conversation_id,
             );
         }
-        let mut last_frames = std::collections::HashMap::new();
-        for frame in &frames[1..] {
-            let frame: serde_json::Value = serde_json::from_str(frame).unwrap();
+        let mut last_frames = HashMap::new();
+        for frame in &session.events()[1..] {
             let request_id = frame["request_id"].as_str().unwrap().to_owned();
             if frame["event"] == "conversation.created" {
                 let created = frame["payload"]["conversation_id"].clone();
                 conversations.insert(request_id.clone(), Some(created));
             }
-            last_frames.insert(request_id, frame);
+            last_frames.insert(request_id, frame.clone());
         }
-        let request_records = &records[1..records.len() - 1];
+        let request_records = &session.records[1..session.records.len() - 1];
         assert_eq!(request_records.len(), requests.len());
 
         let mut failures = 0;
@@ -829,91 +2040,14 @@ mod tests {
     }
 
     #[test]
-    fn a_request_the_host_stops_answering_is_still_recorded() {
-        /// Accepts `capacity` bytes, then fails like a closed pipe.
-        struct BreakingPipe {
-            capacity: usize,
-        }
-
-        impl Write for BreakingPipe {
-            fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
-                if self.capacity == 0 {
-                    return Err(std::io::ErrorKind::BrokenPipe.into());
-                }
-                let written = buffer.len().min(self.capacity);
-                self.capacity -= written;
-                Ok(written)
-            }
-
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-        }
-
-        // stdout closes right after host.ready, while the request is answered.
-        let run_until_stdout_closes = |request: &str| {
-            let mut ready = Vec::new();
-            events::write_host_ready(&mut ready).unwrap();
-            let mut output = BreakingPipe {
-                capacity: ready.len(),
-            };
-            let mut log = Diagnostics::new(Vec::new());
-            let result = run(&mut framed(&[request]).as_slice(), &mut output, &mut log);
-            assert_eq!(result, Err(HostError::Io));
-            let records: Vec<serde_json::Value> = String::from_utf8(log.into_inner())
-                .unwrap()
-                .lines()
-                .map(|line| serde_json::from_str(line).unwrap())
-                .collect();
-            let stopped = &records[records.len() - 1];
-            assert_eq!(stopped["reason"], "io_error");
-            assert_eq!(stopped["exit_code"], 2);
-            records
-        };
-
-        let records = run_until_stdout_closes(
-            r#"{"version":1,"type":"request","request_id":"req_cut","method":"conversation.send","payload":{"provider_id":"fake","conversation_id":"conv_1","input":{"text":"hi"}}}"#,
-        );
-        assert_eq!(
-            record_events(&records),
-            ["host.started", "request.aborted", "host.stopped"]
-        );
-        let aborted = &records[1];
-        assert_eq!(aborted["request_id"], "req_cut");
-        assert_eq!(aborted["method"], "conversation.send");
-        assert_eq!(aborted["provider_id"], "fake");
-        assert_eq!(aborted["conversation_id"], "conv_1");
-        assert_eq!(aborted["reason"], "io_error");
-        assert!(aborted["duration_ms"].is_u64());
-        assert!(aborted.get("error").is_none());
-        assert_eq!(
-            (&records[2]["requests"], &records[2]["rejected"]),
-            (&1.into(), &0.into())
-        );
-
-        let records = run_until_stdout_closes(
-            r#"{"version":1,"type":"request","request_id":"req_bad","method":"provider.spawn","payload":{}}"#,
-        );
-        assert_eq!(
-            record_events(&records),
-            ["host.started", "request.rejected", "host.stopped"]
-        );
-        assert_eq!(records[1]["request_id"], "req_bad");
-        assert_eq!(
-            (&records[2]["requests"], &records[2]["rejected"]),
-            (&0.into(), &1.into())
-        );
-    }
-
-    #[test]
     fn diagnostics_record_why_the_host_stopped() {
         let oversized = u32::try_from(MAX_FRAME_SIZE + 1).unwrap().to_ne_bytes();
         for (input, reason, exit_code) in [
             (&oversized[..], "frame_too_large", 4),
             (&[0x01, 0x00][..], "frame_truncated", 3),
         ] {
-            let (_, _, records) = run_logged(input);
-            let stopped = records.last().unwrap();
+            let session = run_host(input);
+            let stopped = session.records.last().unwrap();
             assert_eq!(stopped["event"], "host.stopped");
             assert_eq!(stopped["reason"], reason);
             assert_eq!(stopped["exit_code"], exit_code);
@@ -941,10 +2075,10 @@ mod tests {
             &format!(r#"{{"request_id":"req_5","{MARKER}"#),
             MARKER,
         ]);
-        let (result, _, records) = run_logged(&input);
-        assert_eq!(result, Ok(()));
-        assert_eq!(records.len(), 8);
-        for record in &records {
+        let session = run_host(&input);
+        assert_eq!(session.result, Ok(()));
+        assert_eq!(session.records.len(), 8);
+        for record in &session.records {
             assert!(!record.to_string().contains(MARKER), "{record}");
         }
     }
@@ -964,26 +2098,32 @@ mod tests {
         }
 
         let input = framed(&[
-            r#"{"version":1,"type":"request","request_id":"req_a","method":"conversation.send","payload":{"provider_id":"fake","input":{"text":"hi"}}}"#,
+            &send("req_1", "fake"),
             "{not json",
-            r#"{"version":1,"type":"request","request_id":"req_b","method":"provider.status","payload":{}}"#,
+            &request("req_2", "provider.status", "{}"),
+            &cancel("req_3", "req_1"),
         ]);
-
-        let mut logged = Vec::new();
-        let working = run(
+        let mut with_log = Vec::new();
+        let mut log = Diagnostics::new(Vec::new());
+        run_with(
+            &Providers::scaffold(),
             &mut input.as_slice(),
-            &mut logged,
-            &mut Diagnostics::new(Vec::new()),
-        );
-        let mut unlogged = Vec::new();
-        let broken = run(
-            &mut input.as_slice(),
-            &mut unlogged,
-            &mut Diagnostics::new(Broken),
-        );
+            &mut with_log,
+            &mut log,
+        )
+        .unwrap();
 
-        assert_eq!(working, Ok(()));
-        assert_eq!(broken, Ok(()));
-        assert_eq!(logged, unlogged);
+        let mut without_log = Vec::new();
+        let mut broken = Diagnostics::new(Broken);
+        run_with(
+            &Providers::scaffold(),
+            &mut input.as_slice(),
+            &mut without_log,
+            &mut broken,
+        )
+        .unwrap();
+
+        assert_eq!(with_log, without_log);
+        assert!(!log.into_inner().is_empty());
     }
 }

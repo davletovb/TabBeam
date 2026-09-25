@@ -18,5 +18,13 @@ path = "src/main.rs"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
+# Signals the process groups of provider processes (NAT-04).
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.31", default-features = false, features = ["signal"] }
+
+# kqueue, to see a provider exit before reaping it.
+[target.'cfg(target_vendor = "apple")'.dependencies]
+nix = { version = "0.31", default-features = false, features = ["event", "signal"] }
+
 [lints]
 workspace = true

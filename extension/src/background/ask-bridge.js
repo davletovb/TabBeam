@@ -6,9 +6,10 @@ import { MAX_PAGE_BYTES, MAX_SELECTION_BYTES, utf8ByteLength } from "../shared/l
 /** @typedef {import("./native-connection.js").RequestOwner} RequestOwner */
 /** @typedef {{code: string, reason: string, message: string, retryable: boolean}} ErrorBody */
 
-// Milestone A answers with the native host's deterministic fake provider.
-// Choosing a real provider arrives with Milestone B (PRO-02, EXT-04).
-export const DEFAULT_PROVIDER_ID = "fake";
+// Milestone B's first provider (PRO-03). The host reports a missing or
+// signed-out Codex as a normalized failure; choosing among providers arrives
+// with EXT-04.
+export const DEFAULT_PROVIDER_ID = "codex";
 
 const EMPTY_QUESTION = Object.freeze({
   code: "INVALID_REQUEST",

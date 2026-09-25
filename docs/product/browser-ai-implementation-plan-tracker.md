@@ -151,12 +151,12 @@ Reached after **Milestone H**:
 | SEC-01 | Enforce browser/native trust-boundary limits | A | Security | NAT-02, NAT-03 | IMPLEMENTED — VERIFY |
 | OBS-01 | Add structured native lifecycle diagnostics | A | Observability | NAT-03, DOC-02 | IMPLEMENTED — VERIFY |
 | TST-03 | Add extension ↔ host streamed round-trip integration test | A | Testing | TST-02, EXT-02, EXT-03, NAT-03 | IMPLEMENTED — VERIFY |
-| NAT-04 | Implement provider process manager | B | Native | NAT-03 | BACKLOG |
-| NAT-05 | Implement native stream manager | B | Native | NAT-04 | BACKLOG |
-| PRO-01 | Implement provisional provider adapter contract | B | Provider | DOC-02, NAT-04, NAT-05 | BACKLOG |
-| PRO-02 | Implement Codex/OpenAI discovery and authentication status | B | Provider | PRO-01 | BACKLOG |
-| PRO-03 | Implement Codex/OpenAI request + streaming adapter | B | Provider | PRO-02 | BACKLOG |
-| PRO-04 | Implement provider cancellation, timeout, and crash mapping | B | Provider | PRO-03, NAT-04, NAT-05 | BACKLOG |
+| NAT-04 | Implement provider process manager | B | Native | NAT-03 | IMPLEMENTED — VERIFY |
+| NAT-05 | Implement native stream manager | B | Native | NAT-04 | IMPLEMENTED — VERIFY |
+| PRO-01 | Implement provisional provider adapter contract | B | Provider | DOC-02, NAT-04, NAT-05 | IMPLEMENTED — VERIFY |
+| PRO-02 | Implement Codex/OpenAI discovery and authentication status | B | Provider | PRO-01 | IMPLEMENTED — VERIFY |
+| PRO-03 | Implement Codex/OpenAI request + streaming adapter | B | Provider | PRO-02 | IMPLEMENTED — VERIFY |
+| PRO-04 | Implement provider cancellation, timeout, and crash mapping | B | Provider | PRO-03, NAT-04, NAT-05 | IMPLEMENTED — VERIFY |
 | EXT-04 | Surface host/provider state and normalized failures | B | Extension | EXT-03, PRO-02, DOC-02 | BACKLOG |
 | SEC-02 | Harden provider process invocation and log redaction | B | Security | NAT-04, PRO-03, OBS-01 | BACKLOG |
 | TST-04 | Add hostile fake-process integration matrix | B | Testing | NAT-04, NAT-05, PRO-04 | BACKLOG |
@@ -445,7 +445,7 @@ Reached after **Milestone H**:
 - Strict bounded JSON syntax reader: `native/host/src/protocol/json.rs`
 - Protocol request model and strict top-level/method-payload validation: `native/host/src/protocol/request.rs`
 - Duplicate member names are rejected in every object of a method payload, compared after decoding escapes (v1 §1 rule 9): `native/host/src/protocol/request.rs` + `native/host/src/protocol/json.rs`
-- Method router: `native/host/src/protocol/router.rs`
+- Method routing: `native/host/src/host.rs`, first in `native/host/src/protocol/router.rs` until PRO-01 put it behind the provider adapter contract
 - Protocol event/error emission with the typed DOC-02 error and capability vocabulary: `native/host/src/protocol/events.rs`
 - Host emits exactly one `host.ready`, keeps running after malformed requests, and routes the local fake conversation provider: `native/host/src/host.rs`
 - Parser/router/integration tests cover malformed JSON, duplicate/missing/extra/wrong fields, 128/129-character request-ID boundaries, escaped identifiers, unsupported versions, unknown methods, depth limits, recovered-ID malformed failures, invalid method payloads, and fake conversation dispatch: `native/host/src/protocol/` + `native/host/src/host.rs`
@@ -573,7 +573,7 @@ Reached after **Milestone H**:
 
 **Implementation evidence**
 - JSON-lines diagnostics with timestamp, lifecycle event, request ID, method, provider ID, conversation ID, duration, exit code, and normalized error (code and reason): `native/host/src/diagnostics.rs`
-- The host records `host.started`, `request.completed`, `request.failed`, `request.aborted`, `request.rejected`, and `host.stopped`, with one `request.*` record for every request it reads. Handlers report each request's outcome, and any conversation it created, to the loop: `native/host/src/host.rs`, `native/host/src/protocol/router.rs`
+- The host records `host.started`, `request.completed`, `request.failed`, `request.aborted`, `request.rejected`, and `host.stopped`, with one `request.*` record for every request it reads. The request loop records each request's outcome, and any conversation it created: `native/host/src/host.rs` (the router it used at first became the provider adapter contract in PRO-01)
 - Records never copy prompt text, page context, other payload members, raw frames, or error messages. Identifiers are cut to 128 characters and JSON-escaped: `diagnostics_never_copy_request_content` and the `diagnostics.rs` unit tests
 - Diagnostics go only to stderr, and a failing stderr is ignored: `diagnostics_go_to_stderr_and_never_into_the_frames` and `the_logged_exit_code_matches_the_process` in `native/host/tests/cli.rs`, and `diagnostics_do_not_change_the_frames` in `native/host/src/host.rs`
 - The protocol fuzz target checks that every input yields three well-formed records (`native/fuzz/fuzz_targets/protocol.rs`), and `scripts/validate_host_protocol.py` checks the built host's stderr on the golden requests
@@ -621,7 +621,16 @@ Reached after **Milestone H**:
 - Process lifecycle tests using fake executables.
 - Repeated spawn/cancel stress test.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `native/host/src/process.rs`: `Process::spawn` starts an absolute executable path with an argument array, with no shell and no `PATH` search, on three separate pipes. `write` queues input for a helper thread, `next_event(deadline)` returns bounded stdout/stderr chunks and then the exit, `terminate(grace)` escalates from a stop request to a kill, `kill` kills at once, and dropping a `Process` kills and reaps it. It is the host's only process spawn (`native/host/clippy.toml`), and the Codex adapter (PRO-03) is its first caller, through the stream manager (NAT-05), which added `request_stop()`: a stop request that doesn't wait.
+- POSIX: the provider leads its own process group. A stop reaches everything it started, and whatever it leaves in the group when it exits is killed. The host sees the exit before reaping the provider (`waitid` with `WNOWAIT` on Linux, kqueue's `NOTE_EXIT` on macOS) and kills the group first, while the provider's process ID still holds the group's ID (PR #17 review). Windows: only the provider itself is stopped so far, and closing stdin is the only stop request; stopping the whole tree needs a Job Object (ADR-0001).
+- Lifecycle tests with the fake provider (`native/test_provider/tests/process_manager.rs`): success, nonzero exit, crash (SIGABRT), a deadline passing, a graceful stop, an ignored stop escalated to SIGKILL, kill, a drop that reaps, 1 MiB of input written while its echo is read, 2 MiB of output in chunks of at most 8 KiB, process-group leadership, and descendants that stay in the group, outlive the provider, or leave the group.
+- Stress test (`native/test_provider/tests/process_stress.rs`): 120 spawn/stop rounds across modes, start points, and ways of stopping. Each process is reaped (no zombie), and no pipe or thread is left behind.
+- New fake provider modes: `crash`, `echo`, `tree`, `orphan`, `escape`, `detached` (`native/test_provider/README.md`).
+- Documented in `native/README.md` (Provider processes) and `docs/security/trust-boundaries.md` §3.
+- Moves to VERIFIED once merged.
 
 ### NAT-05 — Implement native stream manager
 **Area:** Native  
@@ -639,7 +648,16 @@ Reached after **Milestone H**:
 - Large-output/backpressure tests.
 - Cancellation mid-chunk.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `native/host/src/stream.rs`: `LineStream` delivers a provider's stdout as complete lines, then exactly one terminal state: `Final` after a clean end, `Error` when a line passes the limit or isn't UTF-8 (the process is killed), or `Stopped` after `cancel`. stderr is counted and discarded. `split_text` cuts outgoing text between characters.
+- Incremental buffering and UTF-8 boundaries: lines are reassembled across chunks cut anywhere, even inside a character, and checked as UTF-8 only once complete. The `stream.rs` unit tests cut `é✓😀` at every byte, and `characters_split_between_chunks_are_reassembled` streams 2,000 lines of multi-byte characters through a real process (`native/test_provider/tests/stream_manager.rs`).
+- Bounded memory: the stream holds at most one line, up to its limit, plus the lines of one chunk, and the process manager reads at most 16 chunks of 8 KiB ahead, so a flood waits on the provider's own writes. A line past the limit ends the stream (`a_line_past_the_limit_ends_the_stream_without_growing_memory`), and a 2 MiB line reaches a slow reader whole (`a_long_line_within_the_limit_arrives_whole_even_to_a_slow_reader`).
+- Prompt cancellation: `cancel(grace)` drops undelivered output at once, sends SIGTERM (`Process::request_stop`), and kills the process after the grace period. Tests cancel mid-line, using the new `partial` fake provider mode, between lines, and against a provider that ignores SIGTERM.
+- The host splits long answers into `response.delta` events of at most 64 KiB, so each fits in a frame (`a_long_delta_is_split_into_frames_that_fit` in `native/host/src/host.rs`).
+- Documented in `native/README.md` (Stream manager).
+- Moves to VERIFIED once merged.
 
 ### PRO-01 — Implement provisional provider adapter contract
 **Area:** Provider  
@@ -652,7 +670,15 @@ Reached after **Milestone H**:
 - Adapter can start a request, stream events, cancel, and close.
 - Provider-specific protocol details do not leak into popup code.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `native/host/src/providers/mod.rs`: a `Provider` reports its status (availability, authentication, capabilities) and starts each request as an `Exchange`, a state machine the host loop drives with deadlines. `cancel(grace)` stops an exchange, and dropping one closes it and kills its processes. Updates are in protocol terms (`ConversationCreated`, `Started`, `Delta`, `Status`, `Activity`, then `Completed`, `Failed`, or `Stopped`), so command lines, output formats, and provider session IDs stay inside the adapter.
+- The host serves requests side by side through the contract (`native/host/src/host.rs`). `request.cancel` stops its target, which ends with `REQUEST_CANCELLED` before `request.cancelled` confirms each cancellation (protocol v1 §7.6). Request IDs are unique among requests in flight (`DUPLICATE_REQUEST_ID`), start and idle timeouts end a request with `REQUEST_TIMEOUT`, and closing the input stops every running request (`INPUT_CLOSED`).
+- Tests in `host.rs` drive a scripted provider: requests side by side, a cancel before the response starts, nothing after a cancel, repeated cancellations, unknown and finished targets, duplicate and reused IDs, both timeouts, the end of input, an adapter that stops unasked or never stops, and requests aborted when stdout closes.
+- The deterministic `fake` scaffold is an adapter too (`native/host/src/providers/fake.rs`), so the golden fixtures and host conformance run through the contract. In the extension, only the default provider ID changed (`extension/src/background/ask-bridge.js`): popup code still sees protocol events alone.
+- Documented in `native/README.md` (Requests in flight, Adapter contract). Provisional until Claude works (PRO-07).
+- Moves to VERIFIED once merged.
 
 ### PRO-02 — Implement Codex/OpenAI discovery and authentication status
 **Area:** Provider  
@@ -669,7 +695,17 @@ Reached after **Milestone H**:
 - Present but unauthenticated.
 - Authenticated status fixture.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- Platform-controlled lookup (`native/host/src/providers/discovery.rs`): the host's `PATH`, then the usual install locations Chrome's minimal `PATH` can miss (Homebrew, `/usr/local/bin`, user bin directories, npm, Volta, Bun, and nvm's Node versions, newest first; `%APPDATA%\npm` on Windows), or `PERVUE_PROVIDER_PATH` instead. Relative directories are skipped, and nothing in a request affects the lookup.
+- `provider.status` runs `codex login status` and reads only its exit status: 0 is `authenticated`, 1 `unauthenticated`, and anything else, or no answer within 10 seconds, `unknown`. A missing executable is `not_found` (`native/host/src/providers/codex/mod.rs`).
+- A request finds a missing executable as `PROVIDER_NOT_FOUND` / `EXECUTABLE_NOT_FOUND` and a signed-out Codex as `PROVIDER_NOT_AUTHENTICATED` / `LOGIN_REQUIRED`, before `codex exec` runs, because a signed-out `codex exec` retries instead of failing.
+- No credential material leaves Codex: the sign-in check's output, which names a masked key, is never read, and the extension stores nothing.
+- Tests against a fake `codex` (`native/test_provider/tests/codex_adapter.rs`): missing (`status_reports_a_missing_codex_as_not_found`, `a_missing_codex_fails_the_request_as_not_found`), present but unauthenticated, and authenticated (`status_reports_the_sign_in_from_the_exit_status_alone`, `a_signed_out_codex_fails_the_request_before_it_runs`), a check that hangs, and a Codex that can't start (`unavailable`). `the_installed_host_reports_a_missing_codex` in `native/host/tests/cli.rs` runs the built host. Discovery has unit tests for the lookup order, the override, relative directories, non-executable files, and nvm versions.
+- Checked with Codex CLI 0.156.1 from npm: `codex login status` exits 0 once signed in with an API key and 1 when signed out, and a real-browser check shows a signed-out Codex as "Codex isn't signed in" and a missing one as "Codex isn't installed" in the popup.
+- Documented in `native/README.md` (Codex).
+- Moves to VERIFIED once merged.
 
 ### PRO-03 — Implement Codex/OpenAI request + streaming adapter
 **Area:** Provider  
@@ -685,7 +721,19 @@ Reached after **Milestone H**:
 - Parser fixtures from representative provider outputs.
 - Opt-in live smoke test.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `native/host/src/providers/codex/mod.rs` runs `codex exec --json --skip-git-repo-check --sandbox read-only -C <empty dir> [resume <thread id>] -` with the question on stdin, never in an argument. `output.rs` turns Codex's JSON events into protocol events: `turn.started` becomes `conversation.created` and `response.started`, each agent message a `response.delta`, and `turn.completed` `response.completed`.
+- stdout and stderr are separate pipes. stdout is read line by line through the stream manager (NAT-05). stderr, which can hold secrets, is counted and discarded, and so are the messages of failed turns.
+- Codex thread IDs stay behind the adapter: each conversation gets a random `conv_…` ID mapped to its thread inside the host, and continuing the conversation resumes that thread. A thread ID that could read as an option is refused as malformed output.
+- Browser context from CTX-01–04 isn't passed to Codex yet (`page_context: false`). A request that attaches some fails as `INVALID_REQUEST` / `PAGE_CONTEXT_UNSUPPORTED` before Codex runs, instead of being answered without it (`page_context_fails_the_request_instead_of_being_dropped`).
+- Parser fixtures: `native/host/src/providers/codex/fixtures/*.jsonl`, captured from Codex CLI 0.156.1 (a success, a resumed turn, 401, 429, and 500 failures, and retry notices), parsed by the `output.rs` tests. Adapter tests against the fake `codex` check the exact command line, the question on stdin, streaming, continuing a conversation, and several messages in one answer.
+- Opt-in live smoke test: `native/host/tests/live_codex.rs` (`PERVUE_LIVE_CODEX=1`) asks the installed Codex one question through the built host.
+- Checked with the real Codex CLI 0.156.1 against a local stand-in for the OpenAI Responses API, as no OpenAI credentials are available here. The live smoke test passes, and a continued conversation carries its history. In Chromium, the unpacked extension's popup asked Codex through the built host and showed the streamed answer, with no Codex or host process left afterwards.
+- The extension's default provider is now `codex`.
+- Documented in `native/README.md` (Codex).
+- Moves to VERIFIED once merged.
 
 ### PRO-04 — Implement provider cancellation, timeout, and crash mapping
 **Area:** Provider  
@@ -698,7 +746,16 @@ Reached after **Milestone H**:
 - Cancellation produces `REQUEST_CANCELLED`.
 - Cleanup remains deterministic even if child process ignores graceful cancellation.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- User cancellation: `request.cancel` sends SIGTERM to Codex's process group and SIGKILL after 2 seconds. The request ends with `REQUEST_CANCELLED` / `USER_CANCELLED`, then the cancellation with `request.cancelled` (`a_cancel_request_stops_codex_mid_turn`, `cancelling_mid_turn_stops_codex_promptly`). Cancelling during the sign-in check never starts `codex exec` (`cancelling_during_the_sign_in_check_runs_nothing`).
+- Timeouts: `REQUEST_TIMEOUT` / `PROVIDER_START_TIMEOUT` when Codex doesn't start its turn within 60 seconds, and `REQUEST_TIMEOUT` / `PROVIDER_RESPONSE_TIMEOUT` after 5 minutes without progress (`a_codex_that_never_starts_its_turn_times_out`, `a_codex_that_goes_quiet_times_out`).
+- Failures map to `PROVIDER_FAILED`: a nonzero exit before the turn ends to `PROCESS_EXITED`, and malformed or oversized output, or a clean exit before the turn ends, to `MALFORMED_PROVIDER_OUTPUT`. Failed turns map to `AUTH_REJECTED` (as `PROVIDER_NOT_AUTHENTICATED`), `PROVIDER_RATE_LIMITED`, or `PROVIDER_UNAVAILABLE`, never with Codex's own message (`failed_turns_map_to_normalized_errors`, `a_lost_codex_session_fails_as_a_process_exit`).
+- Deterministic cleanup: a Codex that ignores SIGTERM is killed after the grace period (`a_codex_that_ignores_cancellation_is_killed_after_the_grace_period`), and one that lingers after its turn is stopped with its answer kept. The host ends a request whose adapter never stops one second past the grace period, and closing the input stops every running request (`closing_the_input_stops_a_running_codex`). The tests check that no Codex process is left.
+- Checked with the real Codex CLI 0.156.1: cancelling mid-answer ended the request in under 0.1 seconds with no Codex process left. 401, 429, and 500 responses mapped to `AUTH_REJECTED`, `PROVIDER_RATE_LIMITED`, and `PROVIDER_UNAVAILABLE`. A signed-out Codex failed with `LOGIN_REQUIRED` in under 0.1 seconds, and closing the input mid-answer left no Codex process, and the host exited 0.
+- Mutation check: 24 deliberate faults across the request loop, stream manager, process manager, discovery, and the Codex adapter, all caught by the tests.
+- Moves to VERIFIED once merged.
 
 ### EXT-04 — Surface host/provider state and normalized failures
 **Area:** Extension  
@@ -746,6 +803,9 @@ Reached after **Milestone H**:
 - Test is skipped safely when provider tooling/auth is absent.
 - When enabled, it proves discovery → send → stream → completion.
 - It does not expose credentials in CI logs.
+
+**Notes**
+- PRO-03 added `native/host/tests/live_codex.rs`, which runs only with `PERVUE_LIVE_CODEX=1` and proves discovery → send → stream → completion through the built host. It still fails, rather than skips, when enabled without Codex or its sign-in, and no CI job runs it yet.
 
 **Status:** BACKLOG
 
@@ -1549,7 +1609,7 @@ Update this section whenever item statuses change.
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | Foundation | 5 | 0 | 5 | 0 | 0 | 0 | 0 | 0 |
 | A — Native round trip | 8 | 0 | 8 | 0 | 0 | 0 | 0 | 0 |
-| B — First provider | 10 | 0 | 0 | 0 | 0 | 10 | 0 | 0 |
+| B — First provider | 10 | 0 | 6 | 0 | 0 | 4 | 0 | 0 |
 | C — Conversation continuity | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
 | D — Browser context | 9 | 0 | 8 | 0 | 0 | 0 | 1 | 0 |
 | MVP closure | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
@@ -1558,7 +1618,7 @@ Update this section whenever item statuses change.
 | G — Installable product | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 |
 | H — Search/citations | 8 | 0 | 0 | 0 | 0 | 8 | 0 | 0 |
 | Post-milestone | 6 | 0 | 0 | 0 | 0 | 4 | 0 | 2 |
-| **Total** | **81** | **0** | **21** | **0** | **0** | **57** | **1** | **2** |
+| **Total** | **81** | **0** | **27** | **0** | **0** | **51** | **1** | **2** |
 
 ### Milestone completion rule
 

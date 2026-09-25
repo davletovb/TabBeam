@@ -2,9 +2,11 @@
 
 import argparse
 import json
+import os
 import struct
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from jsonschema import Draft202012Validator
@@ -86,6 +88,15 @@ def validate_diagnostics(stderr: bytes, request_count: int) -> int:
     return len(records)
 
 
+def collapse_repeats(events: list, repeatable: set) -> list:
+    collapsed = []
+    for event in events:
+        if collapsed and event == collapsed[-1] and event in repeatable:
+            continue
+        collapsed.append(event)
+    return collapsed
+
+
 def compact(value) -> bytes:
     return json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
@@ -117,13 +128,17 @@ def main() -> None:
         input_bytes += frame(payload)
         driven.append(("invalid", fixture))
 
-    proc = subprocess.run(
-        [str(args.host), CALLER_ORIGIN],
-        input=bytes(input_bytes),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
+    # An empty provider search path keeps the run independent of whatever
+    # provider CLIs this machine has installed.
+    with tempfile.TemporaryDirectory() as no_providers:
+        proc = subprocess.run(
+            [str(args.host), CALLER_ORIGIN],
+            input=bytes(input_bytes),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            env={**os.environ, "PERVUE_PROVIDER_PATH": no_providers},
+        )
     if proc.returncode != 0:
         raise AssertionError(
             f"host exited {proc.returncode}: {proc.stderr.decode('utf-8', errors='replace')}"
@@ -148,7 +163,7 @@ def main() -> None:
         else:
             by_request.setdefault(request_id, []).append(event)
 
-    sequence_map = {item["name"]: item["events"] for item in golden["sequences"]}
+    sequence_map = {item["name"]: item for item in golden["sequences"]}
 
     null_index = 0
     for kind, fixture in driven:
@@ -158,7 +173,11 @@ def main() -> None:
             if not sequence_name:
                 raise AssertionError(f"missing sequence metadata for {fixture['name']}")
             actual = [event["event"] for event in by_request.get(request_id, [])]
-            expected = sequence_map[sequence_name]
+            sequence = sequence_map[sequence_name]
+            expected = sequence["events"]
+            # A repeatable event may occur several times in a row, such as
+            # one provider.status per provider (v1 §7.5).
+            actual = collapse_repeats(actual, set(sequence.get("repeatable", [])))
             if actual != expected:
                 raise AssertionError(
                     f"{fixture['name']} sequence mismatch: expected {expected}, got {actual}"
