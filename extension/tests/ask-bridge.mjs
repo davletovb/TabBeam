@@ -141,6 +141,8 @@ function errorOf(message) {
     { ...good, mode: "other" },
     { ...good, text: "x".repeat(MAX_PAGE_BYTES + 1) },
     { ...good, mode: "selection", text: "x".repeat(MAX_SELECTION_BYTES + 1) },
+    { ...good, text: "bad\ud800text" },
+    { ...good, page: { ...good.page, title: "bad\udc00title" } },
     { ...good, page: { ...good.page, url: "https://example.com/story?token=secret" } },
     { ...good, page: { ...good.page, url: "chrome://settings/" } }
   ]) {
@@ -148,7 +150,12 @@ function errorOf(message) {
     const page = openPage();
     page.emitMessage({ type: "ask", text: "Explain", context });
     assert.equal(nativePorts.length, 0);
-    assert.equal(errorOf(page.messages[0]).reason, "INVALID_PAYLOAD");
+    assert.deepEqual(errorOf(page.messages[0]), {
+      code: "INVALID_REQUEST",
+      reason: "INVALID_PAYLOAD",
+      message: "The selected page context is invalid. Choose a source again or use No context.",
+      retryable: false
+    });
   }
 }
 

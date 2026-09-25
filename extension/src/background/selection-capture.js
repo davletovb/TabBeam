@@ -47,7 +47,7 @@ export async function getActiveTabMetadata(tabs) {
       return failure("CONTEXT_TOO_LARGE");
     }
     const title = typeof tab.title === "string"
-      ? [...tab.title].slice(0, 256).join("")
+      ? [...tab.title.replace(/[\uD800-\uDFFF]/gu, "\ufffd")].slice(0, 256).join("")
       : url.hostname;
     return { ok: /** @type {true} */ (true), permission: "granted", tabId: tab.id, page: { title, url: url.href } };
   } catch {

@@ -17,6 +17,13 @@ const EMPTY_QUESTION = Object.freeze({
   retryable: false
 });
 
+const INVALID_CONTEXT = Object.freeze({
+  code: "INVALID_REQUEST",
+  reason: "INVALID_PAYLOAD",
+  message: "The selected page context is invalid. Choose a source again or use No context.",
+  retryable: false
+});
+
 const HOST_START_FAILED = Object.freeze({
   code: "HOST_UNAVAILABLE",
   reason: "HOST_START_FAILED",
@@ -140,7 +147,7 @@ export function serveAskPort(port, options) {
     }
     const context = message.context;
     if (context !== undefined && !isValidContext(context)) {
-      forward(failed(null, EMPTY_QUESTION));
+      forward(failed(null, INVALID_CONTEXT));
       return;
     }
     const safeContext = context === undefined ? undefined : {
@@ -196,7 +203,12 @@ function isValidContext(context) {
     return false;
   }
   const limit = context.mode === "selection" ? MAX_SELECTION_BYTES : MAX_PAGE_BYTES;
-  if (utf8ByteLength(context.text) > limit || utf8ByteLength(context.page.title) > 1024) {
+  if (
+    utf8ByteLength(context.text) > limit ||
+    utf8ByteLength(context.page.title) > 1024 ||
+    /[\uD800-\uDFFF]/u.test(context.text) ||
+    /[\uD800-\uDFFF]/u.test(context.page.title)
+  ) {
     return false;
   }
   try {

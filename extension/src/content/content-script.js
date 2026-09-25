@@ -35,7 +35,10 @@ function boundedText(value, maxBytes) {
       return { text: characters.join(""), truncated: true };
     }
     bytes += width;
-    characters.push(character);
+    // Page-controlled strings may contain a lone UTF-16 surrogate. The host
+    // rejects one on the wire, so replace it before returning the text. Its
+    // UTF-8 replacement character has the same three-byte width.
+    characters.push(codePoint >= 0xd800 && codePoint <= 0xdfff ? "\ufffd" : character);
   }
   return { text: characters.join(""), truncated: false };
 }
@@ -58,7 +61,9 @@ function readablePage() {
   while (inspected < MAX_PAGE_TEXT_NODES && (node = walker.nextNode())) {
     inspected += 1;
     const parent = node.parentElement;
-    if (parent?.closest("script,style,noscript,template,svg,nav,footer,aside,form,[hidden],[aria-hidden='true'],[contenteditable]")) {
+    // isContentEditable respects the nearest contenteditable value: a
+    // contenteditable="false" island inside an editor is readable.
+    if (parent?.isContentEditable || parent?.closest("script,style,noscript,template,svg,nav,footer,aside,form,[hidden],[aria-hidden='true']")) {
       continue;
     }
     const value = node.nodeValue?.replace(/\s+/gu, " ").trim();

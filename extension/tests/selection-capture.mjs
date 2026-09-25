@@ -22,7 +22,7 @@ function contentScript() {
   let listener;
   let selection = "";
   let reads = 0;
-  /** @type {{nodeValue: string, parentElement: {closest(selector: string): object | null}}[]} */
+  /** @type {{nodeValue: string, parentElement: {isContentEditable: boolean, closest(selector: string): object | null}}[]} */
   let nodes = [];
   /** @type {any} */
   const document = {
@@ -55,10 +55,10 @@ function contentScript() {
     document,
     get reads() { return reads; },
     setSelection(/** @type {string} */ value) { selection = value; },
-    setNodes(/** @type {{text: string, excluded?: boolean}[]} */ entries) {
-      nodes = entries.map(({ text, excluded }) => ({
+    setNodes(/** @type {{text: string, excluded?: boolean, editable?: boolean}[]} */ entries) {
+      nodes = entries.map(({ text, excluded, editable }) => ({
         nodeValue: text,
-        parentElement: { closest: () => excluded ? {} : null }
+        parentElement: { isContentEditable: editable === true, closest: () => excluded ? {} : null }
       }));
     },
     /** @param {string} type */
@@ -93,6 +93,12 @@ function contentScript() {
   assert.equal(bounded.truncated, true);
   assert.equal(new TextEncoder().encode(bounded.text).length, MAX_SELECTION_BYTES - 1);
   assert.equal(bounded.text.endsWith("\ud83d"), false);
+  page.setSelection("a\ud800b\udc00c\ud83d\ude00");
+  assert.equal(page.request("pervue.selection.read").text, "a\ufffdb\ufffdc😀");
+  page.document.activeElement = {
+    tagName: "TEXTAREA", value: "x\ud800y", selectionStart: 0, selectionEnd: 3
+  };
+  assert.equal(page.request("pervue.selection.read").text, "x\ufffdy");
 }
 
 {
@@ -107,6 +113,13 @@ function contentScript() {
   assert.equal(extracted.text, "Main article\nSecond paragraph");
   assert.equal(extracted.truncated, false);
   assert.equal(extracted.inspected, 3);
+  page.setNodes([
+    { text: "editable draft", editable: true },
+    { text: "non-editable island", editable: false },
+    { text: "article with \ud800 malformed UTF-16" }
+  ]);
+  const readable = page.request("pervue.page.read");
+  assert.equal(readable.text, "non-editable island\narticle with \ufffd malformed UTF-16");
   page.setNodes([{ text: "😀".repeat(MAX_PAGE_BYTES / 4) + "x" }]);
   const capped = page.request("pervue.page.read");
   assert.equal(capped.truncated, true);
@@ -137,6 +150,12 @@ function workerRequest(message, sender, tabs) {
     ok: true, permission: "granted", tabId: 42,
     page: { title: "Article", url: "https://example.com/read" }
   });
+  const malformedTitle = await getActiveTabMetadata({
+    async query() { return [{ id: 42, title: "a\ud800b\udc00c😀", url: "https://example.com" }]; }
+  });
+  assert.equal(malformedTitle.ok, true);
+  if (!malformedTitle.ok) throw new Error("metadata should be available");
+  assert.equal(malformedTitle.page.title, "a\ufffdb\ufffdc😀");
   const internal = await getActiveTabMetadata({ async query() { return [{ id: 1, url: "chrome://settings" }]; } });
   const inaccessible = await getActiveTabMetadata({ async query() { return [{ id: 1 }]; } });
   assert.equal(internal.ok, false);
