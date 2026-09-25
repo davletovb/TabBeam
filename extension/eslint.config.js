@@ -36,6 +36,8 @@ export default [
         globalThis: "readonly",
         process: "readonly",
         TextEncoder: "readonly",
+        TextDecoder: "readonly",
+        setTimeout: "readonly",
         URL: "readonly"
       }
     },

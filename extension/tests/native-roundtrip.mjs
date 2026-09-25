@@ -232,15 +232,21 @@ bindAskForm(/** @type {any} */ (elements), {
       providerId,
       createRequestId: () => `req_roundtrip_${++nextId}`
     });
-    ui.onMessage.addListener((event) => {
-      events.push(event);
-      snapshots.push({
-        event: event.event,
-        status: elements.status.textContent,
-        answer: elements.answer.textContent,
-        busy: elements.answer.getAttribute("aria-busy")
+    // The popup registers its renderer after connect() returns. Place the
+    // observer immediately after it, including for synchronous local errors.
+    const addListener = ui.onMessage.addListener.bind(ui.onMessage);
+    ui.onMessage.addListener = (listener) => {
+      addListener(listener);
+      addListener((event) => {
+        events.push(event);
+        snapshots.push({
+          event: event.event,
+          status: elements.status.textContent,
+          answer: elements.answer.textContent,
+          busy: elements.answer.getAttribute("aria-busy")
+        });
       });
-    });
+    };
     return /** @type {any} */ (ui);
   }
 });
