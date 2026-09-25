@@ -119,14 +119,14 @@ While it serves a session, the host writes structured diagnostics to stderr, one
 {"ts":"2026-09-25T01:21:49.903Z","event":"host.stopped","duration_ms":0,"reason":"end_of_input","exit_code":0,"requests":2,"rejected":1}
 ```
 
-Every record has `ts` (RFC 3339 UTC, with milliseconds) and `event`. A field that doesn't apply is left out. Every request the host reads gets exactly one `request.*` record, including a request it was answering when it stopped. A request's `conversation_id` is the conversation it continued or, when it started one, the ID its `conversation.created` event announced, so the first request of a conversation correlates with the ones that follow.
+Every record has `ts` (RFC 3339 UTC, with milliseconds) and `event`. A field that doesn't apply is left out. Every request the host reads gets exactly one `request.*` record, including a request it was answering when it stopped. A completed or failed request's `conversation_id` is the conversation it continued or, when it started one, the ID its `conversation.created` event announced, so the first request of a conversation correlates with the ones that follow.
 
 | Event | Written when | Fields |
 |---|---|---|
 | `host.started` | Before `host.ready` | `host_version`, `pid` |
 | `request.completed` | A handler finished the request successfully | `request_id`, `method`, `provider_id`, `conversation_id`, `target_request_id` (for `request.cancel`), `duration_ms` |
 | `request.failed` | A handler ended the request with `response.failed` | The same fields, plus `error` (`code` and `reason`) |
-| `request.aborted` | The host stopped while answering the request, such as when stdout closed, so the extension got no terminal event | The same fields as `request.completed`, plus `reason` (why the host stopped) |
+| `request.aborted` | The host stopped while answering the request, such as when stdout closed, so the extension got no terminal event | The same fields as `request.completed`, plus `reason` (why the host stopped). Its `conversation_id` can only be one the request continued: a conversation the handler created is unknown, because the handler stopped before reporting it |
 | `request.rejected` | The request failed validation and never reached a handler | `request_id` if one was recovered, and `error` (`INVALID_REQUEST` and its reason) |
 | `host.stopped` | The host is about to exit | `reason` (`end_of_input`, `io_error`, `frame_truncated`, `frame_too_large` or `allocation_failed`), `exit_code`, `duration_ms` (uptime), `requests` (requests that passed validation and reached a handler) and `rejected` (requests that failed validation) |
 
