@@ -393,7 +393,7 @@ mod tests {
             br#"{"version":1,"type":"request","request_id":"req","method":"provider.status","payload":{}}"#,
         )
         .unwrap();
-        let text = "x".repeat(framing::MAX_FRAME_SIZE);
+        let text = "x".repeat(crate::limits::MAX_FRAME_SIZE);
         let mut wire = Vec::new();
 
         let result = write_event(

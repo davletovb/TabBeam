@@ -10,6 +10,18 @@
  */
 export const ASK_PORT_NAME = "pervue.ask";
 
+/**
+ * The failure for a question too large for the native host to accept
+ * (SEC-01). The popup checks the question itself before sending; the service
+ * worker checks the whole request.
+ */
+export const QUESTION_TOO_LONG = Object.freeze({
+  code: "INVALID_REQUEST",
+  reason: "REQUEST_TOO_LARGE",
+  message: "Your question is too long. Shorten it and try again.",
+  retryable: false
+});
+
 /** Events that end a `conversation.send` request. */
 export const ASK_TERMINAL_EVENTS = new Set([
   "response.completed",

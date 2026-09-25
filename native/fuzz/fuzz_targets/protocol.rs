@@ -1,8 +1,9 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use pervue_host::framing::{self, MAX_FRAME_SIZE};
+use pervue_host::framing;
 use pervue_host::host;
+use pervue_host::limits::MAX_FRAME_SIZE;
 
 // Treats the input as one request frame and runs it through the host: request
 // validation, routing, and event emission. Whatever the request contains, every

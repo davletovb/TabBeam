@@ -119,7 +119,13 @@ jobs:
         run: |
           python3 fuzz/create_corpus.py fuzz/corpus/frame_reader
           python3 fuzz/create_protocol_corpus.py fuzz/corpus/protocol --fixtures ../docs/protocol/fixtures/v1-golden.json
+      # fuzz/max_len.py derives -max_len from the shared frame limit in
+      # docs/protocol/native-messaging-v1.json.
       - name: Smoke-run frame fuzz target
-        run: cargo +nightly fuzz run frame_reader fuzz/corpus/frame_reader -- -runs=1000 -max_len=1048580
+        run: |
+          max_len=$(python3 fuzz/max_len.py frame_reader)
+          cargo +nightly fuzz run frame_reader fuzz/corpus/frame_reader -- -runs=1000 -max_len="$max_len"
       - name: Smoke-run protocol fuzz target
-        run: cargo +nightly fuzz run protocol fuzz/corpus/protocol -- -runs=2000 -max_len=1048576
+        run: |
+          max_len=$(python3 fuzz/max_len.py protocol)
+          cargo +nightly fuzz run protocol fuzz/corpus/protocol -- -runs=2000 -max_len="$max_len"

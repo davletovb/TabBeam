@@ -2,9 +2,7 @@
 
 use super::PROTOCOL_VERSION;
 use super::json::{JsonError, JsonStr, Reader};
-
-/// Longest request ID accepted, in characters.
-pub const REQUEST_ID_MAX_LENGTH: usize = 128;
+use crate::limits::MAX_REQUEST_ID_LENGTH;
 
 /// A validated request ID, kept as the raw bytes of its JSON string token so
 /// events echo it byte-for-byte (v1 §4).
@@ -448,7 +446,7 @@ fn is_valid_request_id(token: JsonStr<'_>) -> bool {
             Some(c) => c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b':' | b'-'),
             None => false,
         };
-        if !allowed || length > REQUEST_ID_MAX_LENGTH {
+        if !allowed || length > MAX_REQUEST_ID_LENGTH {
             return false;
         }
     }

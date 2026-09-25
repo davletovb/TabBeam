@@ -29,6 +29,7 @@ const referencedFiles = [
   "src/background/native-connection.js",
   "src/background/ask-bridge.js",
   "src/shared/ask-port.js",
+  "src/shared/limits.js",
   "src/popup/ask-form.js",
   "src/fullpage/index.html",
   "src/popup/popup.js",

@@ -10,8 +10,7 @@
 use std::borrow::Cow;
 use std::collections::HashSet;
 
-/// Maximum container nesting accepted by [`Reader::skip_value`].
-pub const MAX_DEPTH: usize = 128;
+use crate::limits::MAX_JSON_DEPTH;
 
 /// Why the reader rejected its input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -318,7 +317,7 @@ impl<'a> Reader<'a> {
     }
 
     fn enter_depth(&mut self) -> Result<(), JsonError> {
-        if self.depth >= MAX_DEPTH {
+        if self.depth >= MAX_JSON_DEPTH {
             return Err(JsonError::DepthExceeded);
         }
         self.depth += 1;
@@ -618,13 +617,16 @@ mod tests {
 
     #[test]
     fn nesting_is_capped_at_the_maximum_depth() {
-        assert_eq!(skip(&nested(MAX_DEPTH)), Ok(()));
-        assert_eq!(skip(&nested(MAX_DEPTH + 1)), Err(JsonError::DepthExceeded));
+        assert_eq!(skip(&nested(MAX_JSON_DEPTH)), Ok(()));
+        assert_eq!(
+            skip(&nested(MAX_JSON_DEPTH + 1)),
+            Err(JsonError::DepthExceeded)
+        );
     }
 
     #[test]
     fn depth_is_released_after_each_container() {
-        let siblings = vec![nested(MAX_DEPTH - 1); 3].join(",");
+        let siblings = vec![nested(MAX_JSON_DEPTH - 1); 3].join(",");
         assert_eq!(skip(&format!("[{siblings}]")), Ok(()));
     }
 

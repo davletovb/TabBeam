@@ -29,6 +29,7 @@ The current foundation provides:
 - One module-scope manager instance lives in the service worker, so popup closure does not own or tear down the native connection.
 - In-flight requests are multiplexed by protocol `request_id`. `send()` rejects IDs outside the protocol v1 grammar before opening the port, because the host could not echo them back to the right request.
 - `send()` serializes `request_id` as the first envelope member, so the host can still echo it when a later member is malformed or nested too deeply (protocol v1 §8.4).
+- `send()` measures each request as Chrome sends it (UTF-8 JSON) and refuses one over the host's 1 MiB frame limit with `RequestTooLargeError`, or one JSON can't represent, before the port opens or is used. The host would treat an oversized frame as a broken stream and exit, failing every request in flight; now a bad request fails on its own. The limit lives in `src/shared/limits.js` and is tested against `docs/protocol/native-messaging-v1.json` (SEC-01).
 - Terminal protocol events release their request route before the owner's handler runs, so the owner can reuse the request ID or disconnect.
 - Native-port disconnect clears in-flight routes and notifies every request owner.
 - Requester and listener callbacks are isolated: a callback that throws is reported (by default with `console.error`) and cannot stop other owners from being notified or the native port from closing.
@@ -46,6 +47,7 @@ The popup asks the native host one question at a time and streams the answer bac
 - While a question is in flight, every other submit is ignored, whether it comes from Enter, the Ask button or `requestSubmit()`. The input stays editable.
 - Deltas are appended as text nodes as they arrive, so provider output is never parsed as HTML.
 - Completion and failure show in the status line without reloading. Failures show the error's `message`.
+- A question over the native host's 1 MiB limit is refused in the popup before it's sent ("Your question is too long…"). The service worker checks the whole request too, and reports `INVALID_REQUEST` / `REQUEST_TOO_LARGE`.
 - When the native port closes before the answer finishes, the service worker reports the failure itself, in the DOC-02 vocabulary, based on Chrome's `runtime.lastError`. A missing host, or one registered only for other extensions, is `HOST_NOT_INSTALLED` and not retryable. A host that can't start or that disconnects is `HOST_UNAVAILABLE`.
 - Closing the popup drops the rest of that answer. The request still runs to its own terminal event; cancellation is EXT-12.
 - Only the extension's own pages can open the ask port. The service worker disconnects ports from content scripts.
@@ -57,19 +59,14 @@ Until packaging registers the host (Milestone G), register a development build b
 
 1. Build the host: `cargo build -p pervue-host` in `native/`.
 2. Load this directory unpacked and copy the extension ID from `chrome://extensions`.
-3. Save a host manifest named `com.pervue.host.json`:
+3. Have the host print its manifest for that ID, and save it as `com.pervue.host.json` in Chrome's per-user `NativeMessagingHosts` directory, creating the directory if needed. For example, on Linux:
 
-   ```json
-   {
-     "name": "com.pervue.host",
-     "description": "Pervue native host (development)",
-     "path": "/absolute/path/to/pervue/native/target/debug/pervue-host",
-     "type": "stdio",
-     "allowed_origins": ["chrome-extension://<extension-id>/"]
-   }
+   ```bash
+   native/target/debug/pervue-host --print-manifest <extension-id> \
+     > ~/.config/google-chrome/NativeMessagingHosts/com.pervue.host.json
    ```
 
-   Put it in Chrome's per-user `NativeMessagingHosts` directory: `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/` on macOS, or `~/.config/google-chrome/NativeMessagingHosts/` on Linux. On Windows, create the registry key `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.pervue.host`, set its default value to the manifest's full path, and point `path` at `pervue-host.exe`.
+   The macOS directory is `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/`. On Windows, save the file anywhere, then create the registry key `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.pervue.host` and set its default value to the file's full path. The manifest allows only the IDs you pass, and its `path` is the host binary that printed it.
 4. Open the popup and ask anything. The fake provider answers "Fake provider response."
 
 ## Validation

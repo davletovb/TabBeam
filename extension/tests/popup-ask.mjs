@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { READY_STATUS, bindAskForm } from "../src/popup/ask-form.js";
 import { ASK_PORT_NAME } from "../src/shared/ask-port.js";
+import { MAX_NATIVE_MESSAGE_BYTES } from "../src/shared/limits.js";
 import { MockPort } from "./support/mock-port.mjs";
 
 /** The subset of an HTML element that the ask form touches. */
@@ -452,6 +453,28 @@ function hostEvent(event, payload = {}) {
   assert.equal(popup.ports.length, 2);
   assert.deepEqual(popup.ports[1].messages, [{ type: "ask", text: "Small enough" }]);
   assert.equal(popup.busy, true);
+}
+
+{
+  // A question the native host could never accept is not sent. The limit is
+  // in UTF-8 bytes, so two-byte characters reach it at half the length.
+  const popup = openPopup();
+  const twoByte = String.fromCharCode(0xe9);
+  for (const text of [
+    "x".repeat(MAX_NATIVE_MESSAGE_BYTES + 1),
+    twoByte.repeat(MAX_NATIVE_MESSAGE_BYTES / 2 + 1)
+  ]) {
+    popup.ask(text);
+    assert.equal(popup.ports.length, 0);
+    assert.equal(popup.statusText, "Your question is too long. Shorten it and try again.");
+    assert.equal(popup.statusState, "failed");
+    assert.equal(popup.busy, false);
+  }
+
+  // At the limit, the question goes to the service worker, which checks the
+  // whole request.
+  popup.ask("x".repeat(MAX_NATIVE_MESSAGE_BYTES));
+  assert.equal(popup.ports.length, 1);
 }
 
 console.log("EXT-03 popup ask/stream tests passed");

@@ -1,4 +1,5 @@
-import { ASK_PORT_NAME } from "../shared/ask-port.js";
+import { ASK_PORT_NAME, QUESTION_TOO_LONG } from "../shared/ask-port.js";
+import { MAX_NATIVE_MESSAGE_BYTES, utf8ByteLength } from "../shared/limits.js";
 
 /** @typedef {import("../shared/ask-port.js").AskPort} AskPort */
 
@@ -67,6 +68,12 @@ export function bindAskForm(elements, runtime) {
     const text = input.value;
     if (text.trim() === "") {
       setStatus("Type a question first.", "idle");
+      return;
+    }
+    // The native host could never accept this question, and Chrome refuses a
+    // runtime message over 64 MiB outright, so don't send it.
+    if (utf8ByteLength(text) > MAX_NATIVE_MESSAGE_BYTES) {
+      setStatus(QUESTION_TOO_LONG.message, "failed");
       return;
     }
 

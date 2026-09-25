@@ -5,7 +5,10 @@ import struct
 import sys
 from pathlib import Path
 
-MAX_FRAME = 1024 * 1024
+from max_len import max_frame_bytes
+
+# The frame limit shared by the extension and the host (SEC-01).
+MAX_FRAME = max_frame_bytes()
 
 
 def prefix(length: int) -> bytes:

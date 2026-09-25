@@ -57,12 +57,22 @@ pub fn run<R: Read + ?Sized, W: Write + ?Sized>(
     input: &mut R,
     output: &mut W,
 ) -> Result<(), HostError> {
+    serve(&mut ScaffoldHandlers, input, output)
+}
+
+/// The request loop behind [`run`]. A request reaches `handlers` only after it
+/// has passed validation, so provider work never starts for an invalid one
+/// (SEC-01).
+fn serve<H: Handlers, R: Read + ?Sized, W: Write + ?Sized>(
+    handlers: &mut H,
+    input: &mut R,
+    output: &mut W,
+) -> Result<(), HostError> {
     events::write_host_ready(output).map_err(|_| HostError::Io)?;
 
-    let mut handlers = ScaffoldHandlers;
     while let Some(frame) = framing::read_frame(input)? {
         let written = match request::parse_request(&frame) {
-            Ok(request) => router::dispatch(&mut handlers, output, &request),
+            Ok(request) => router::dispatch(handlers, output, &request),
             Err(failure) => events::write_request_failure(output, &failure),
         };
         written.map_err(|_| HostError::Io)?;
@@ -179,7 +189,8 @@ impl Handlers for ScaffoldHandlers {
 mod tests {
     use super::*;
     use crate::HOST_VERSION;
-    use crate::framing::{MAX_FRAME_SIZE, PREFIX_SIZE};
+    use crate::framing::PREFIX_SIZE;
+    use crate::limits::MAX_FRAME_SIZE;
 
     fn framed(payloads: &[&str]) -> Vec<u8> {
         let mut wire = Vec::new();
@@ -361,5 +372,152 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    /// Records the ID of every request that reaches a handler.
+    #[derive(Default)]
+    struct Recorder {
+        request_ids: Vec<String>,
+    }
+
+    impl Recorder {
+        fn record(&mut self, request_id: RequestId<'_>) -> Result<(), EventError> {
+            self.request_ids
+                .push(String::from_utf8_lossy(request_id.raw()).into_owned());
+            Ok(())
+        }
+    }
+
+    impl Handlers for Recorder {
+        fn conversation_send<W: Write + ?Sized>(
+            &mut self,
+            _output: &mut W,
+            request_id: RequestId<'_>,
+            _provider_id: JsonStr<'_>,
+            _conversation_id: Option<JsonStr<'_>>,
+        ) -> Result<(), EventError> {
+            self.record(request_id)
+        }
+
+        fn provider_status<W: Write + ?Sized>(
+            &mut self,
+            _output: &mut W,
+            request_id: RequestId<'_>,
+            _provider_id: Option<JsonStr<'_>>,
+        ) -> Result<(), EventError> {
+            self.record(request_id)
+        }
+
+        fn request_cancel<W: Write + ?Sized>(
+            &mut self,
+            _output: &mut W,
+            request_id: RequestId<'_>,
+            _target_request_id: RequestId<'_>,
+        ) -> Result<(), EventError> {
+            self.record(request_id)
+        }
+    }
+
+    fn conversation_request(request_id: &str, payload: &str) -> String {
+        format!(
+            r#"{{"version":1,"type":"request","request_id":"{request_id}","method":"conversation.send","payload":{payload}}}"#
+        )
+    }
+
+    #[test]
+    fn invalid_requests_never_reach_a_handler() {
+        // Every validation failure is answered before routing, so no handler,
+        // and therefore no provider work, sees an invalid request (SEC-01).
+        let too_deep = format!(
+            r#"{{"provider_id":"fake","input":{{"text":"hi"}},"extra":{}{}}}"#,
+            "[".repeat(200),
+            "]".repeat(200)
+        );
+        let invalid = [
+            conversation_request("req_syntax", r#"{"provider_id":"fake""#),
+            r#"{"version":1,"request_id":"req_envelope","method":"conversation.send","payload":{"provider_id":"fake","input":{"text":"hi"}}}"#.to_owned(),
+            r#"{"version":1,"type":"request","request_id":"req_extra","method":"conversation.send","payload":{"provider_id":"fake","input":{"text":"hi"}},"extra":1}"#.to_owned(),
+            r#"{"version":2,"type":"request","request_id":"req_version","method":"conversation.send","payload":{"provider_id":"fake","input":{"text":"hi"}}}"#.to_owned(),
+            r#"{"version":1,"type":"request","request_id":"req_method","method":"provider.spawn","payload":{}}"#.to_owned(),
+            conversation_request("req_payload", r#"{"provider_id":"fake","input":{"text":""}}"#),
+            conversation_request(
+                "req_duplicate",
+                r#"{"provider_id":"fake","provider_id":"fake","input":{"text":"hi"}}"#,
+            ),
+            conversation_request("req_deep", &too_deep),
+            conversation_request(
+                &"a".repeat(crate::limits::MAX_REQUEST_ID_LENGTH + 1),
+                r#"{"provider_id":"fake","input":{"text":"hi"}}"#,
+            ),
+            r#"{"version":1,"type":"request","request_id":"req_cancel","method":"request.cancel","payload":{"target_request_id":"bad id"}}"#.to_owned(),
+        ];
+        let valid = conversation_request(
+            "req_valid",
+            r#"{"provider_id":"fake","input":{"text":"hi"}}"#,
+        );
+
+        let mut frames: Vec<&str> = invalid.iter().map(String::as_str).collect();
+        frames.push(&valid);
+        let input = framed(&frames);
+
+        let mut recorder = Recorder::default();
+        let mut output = Vec::new();
+        assert_eq!(
+            serve(&mut recorder, &mut input.as_slice(), &mut output),
+            Ok(())
+        );
+        assert_eq!(recorder.request_ids, ["req_valid"]);
+
+        let mut wire = output.as_slice();
+        let mut events = Vec::new();
+        while let Some(frame) = framing::read_frame(&mut wire).unwrap() {
+            events.push(serde_json::from_slice::<serde_json::Value>(&frame).unwrap());
+        }
+        assert_eq!(events.len(), 1 + invalid.len());
+        for failure in &events[1..] {
+            assert_eq!(failure["event"], "response.failed", "{failure}");
+            assert_eq!(
+                failure["payload"]["error"]["code"], "INVALID_REQUEST",
+                "{failure}"
+            );
+        }
+    }
+
+    #[test]
+    fn provider_ids_are_names_not_paths_or_commands() {
+        // A provider ID is only ever compared with the registry's names. One
+        // that looks like a path or a shell command is just an unknown ID.
+        for provider_id in [
+            "/bin/sh",
+            "../../../bin/sh",
+            r"C:\Windows\System32\cmd.exe",
+            "fake; rm -rf ~",
+            "fake && id",
+            "$(id)",
+            "`id`",
+            "fake\0",
+            "fake/",
+            " fake",
+            "FAKE",
+        ] {
+            let id_json = serde_json::to_string(provider_id).unwrap();
+            for request in [
+                format!(
+                    r#"{{"version":1,"type":"request","request_id":"req_send","method":"conversation.send","payload":{{"provider_id":{id_json},"input":{{"text":"hi"}}}}}}"#
+                ),
+                format!(
+                    r#"{{"version":1,"type":"request","request_id":"req_status","method":"provider.status","payload":{{"provider_id":{id_json}}}}}"#
+                ),
+            ] {
+                let (result, frames) = run_host(&framed(&[&request]));
+                assert_eq!(result, Ok(()));
+                assert_eq!(frames.len(), 2, "{provider_id:?}");
+                assert!(
+                    frames[1].contains(r#""reason":"PROVIDER_NOT_INSTALLED""#),
+                    "{provider_id:?}: {}",
+                    frames[1]
+                );
+            }
+        }
     }
 }
