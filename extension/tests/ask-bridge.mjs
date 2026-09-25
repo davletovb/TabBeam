@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import {
-  DEFAULT_PROVIDER_ID,
   createRequestId,
   isExtensionPage,
   serveAskPort
@@ -11,6 +10,7 @@ import {
 } from "../src/background/native-connection.js";
 import { ASK_PORT_NAME, QUESTION_TOO_LONG } from "../src/shared/ask-port.js";
 import { MAX_NATIVE_MESSAGE_BYTES, MAX_PAGE_BYTES, MAX_SELECTION_BYTES } from "../src/shared/limits.js";
+import { DEFAULT_PROVIDER_ID } from "../src/shared/providers.js";
 import { MockPort } from "./support/mock-port.mjs";
 
 const POPUP_URL = "chrome-extension://pervue-test/src/popup/index.html";
@@ -196,7 +196,7 @@ function errorOf(message) {
     error: {
       code: "PROVIDER_NOT_FOUND",
       reason: "PROVIDER_NOT_INSTALLED",
-      message: "The selected provider runtime is not installed.",
+      message: "Pervue's companion app doesn't support this AI provider yet. Update it, then try again.",
       retryable: false
     }
   });

@@ -111,6 +111,7 @@ The host serves requests side by side. A reader thread hands over one frame at a
 - **Stopping.** A stopped request's provider gets the provider's grace period to exit before it is killed. If the adapter still hasn't ended the request one second after that, the host ends it anyway and drops the adapter, which kills its processes.
 - **End of input.** When the extension closes the stream, each request still running gets 250 ms to stop and ends with `REQUEST_CANCELLED` / `INPUT_CLOSED`; the host exits once all have ended. If stdout closes instead, the host can't answer anyone: it records the running requests as aborted, kills their processes, and exits with status 2.
 - **Frame size.** Long answers are split into `response.delta` events of at most 64 KiB, cut between characters, so every event fits in a frame whatever JSON escaping adds.
+- **Fairness.** The loop delivers one request's updates for at most 5 ms before it turns to the other requests and to new frames, and an adapter stops consuming output that gives it nothing to return 5 ms past its deadline (`BUSY_LIMIT`). A provider that floods its output, with progress events, lines nobody acts on, or stderr, can't hold up other requests, new frames, or its own cancellation and timeouts (TST-04).
 
 ## Registering the host
 
@@ -145,7 +146,7 @@ Every record has `ts` (RFC 3339 UTC, with milliseconds) and `event`. A field tha
 | `request.rejected` | The request failed validation, or reused the ID of a request in flight, and never reached a provider | `request_id` if one was recovered, `method` for a reused ID, and `error` (`INVALID_REQUEST` and its reason) |
 | `host.stopped` | The host is about to exit | `reason` (`end_of_input`, `io_error`, `frame_truncated`, `frame_too_large` or `allocation_failed`), `exit_code`, `duration_ms` (uptime), `requests` (requests that passed validation and were served) and `rejected` (requests that failed validation or reused an ID in flight) |
 
-A record never contains request content: no prompt text, page context, other payload members, raw frame bytes, or error messages. Nor does it contain provider output: a provider's stderr and error messages are discarded (see [Codex](#codex)). Every identifier it records is cut to 128 characters, and JSON escaping keeps each record on one line whatever they contain. SEC-02 reviews redaction across providers.
+A record never contains request content: no prompt text, page context, other payload members, raw frame bytes, or error messages. Nor does it contain provider output: a provider's stderr and error messages are discarded (see [Codex](#codex)). An identifier is recorded only when it fits the protocol's ID grammar, up to 128 ASCII letters, digits, `.`, `_`, `:`, and `-`, and holds nothing shaped like a credential, such as an OpenAI, Anthropic, GitHub, GitLab, Slack, AWS, Google, Hugging Face, npm, or PyPI key or a JSON Web Token. Anything else is written as `[redacted]` (SEC-02), so a secret passed where an ID belongs never reaches the log, and no request can forge or split a record.
 
 Command-line errors, such as a usage error or an invalid `--print-manifest` ID, are plain text on stderr, because no session is running.
 
@@ -158,7 +159,7 @@ Provider support is four layers, each with its own tests: the adapter contract t
 `host/src/providers/mod.rs` defines the contract. It stays provisional until a second real provider works (framework §10.1).
 
 - A `Provider` has an ID, which requests name, and `Timeouts`: how long a request may take to start answering, how long it may then go without progress, and how long a stopped request's process gets to exit.
-- `status()` and `send(request)` start an `Exchange`: a state machine the request loop drives. `next(deadline)` returns the next `Update`, or `None` once the deadline passes, and never blocks longer, so one slow provider can't hold up other requests.
+- `status()` and `send(request)` start an `Exchange`: a state machine the request loop drives. `next(deadline)` returns the next `Update`, or `None` once the deadline passes, and never blocks longer, so one slow provider can't hold up other requests. Output that keeps arriving without an update can keep it working at most `BUSY_LIMIT` (5 ms) past the deadline, so a flooding provider can't either.
 - Updates are in protocol terms: `ConversationCreated`, `Started`, `Delta`, `Status`, and `Activity` (progress with nothing to show, which counts for the idle timeout), then one terminal update, `Completed`, `Failed`, or `Stopped`. Command lines, output formats, and provider session IDs stay inside the adapter.
 - `cancel(grace)` stops the work. The exchange then ends with `Stopped`, or with the terminal update it had already reached, and kills any process still running after `grace`.
 - `Providers::installed()` is the registry of an installed host: `fake` and `codex`, which `provider.status` without a provider ID reports in that order. `Providers::scaffold()` holds only `fake`, which starts no processes, for fuzzing and protocol tests.
@@ -175,7 +176,8 @@ Provider support is four layers, each with its own tests: the adapter contract t
   codex exec --json --skip-git-repo-check --sandbox read-only -C <work dir> [resume <thread id>] -
   ```
 
-  The question goes on stdin, never in an argument. `<work dir>` is an empty `pervue-codex` directory in the system temporary directory, and the read-only sandbox keeps Codex from changing files. The executable's own directory is put first in Codex's `PATH`, because npm installs `codex` as a Node script that finds `node` there.
+  The question goes on stdin, never in an argument. `<work dir>` is Codex's workspace, which is also where both commands run: an empty directory in the user's own cache, which other users can't write to. It is `~/Library/Caches/Pervue/codex-workspace` on macOS, `$XDG_CACHE_HOME/pervue/codex-workspace` or `~/.cache/pervue/codex-workspace` on other POSIX systems, and `%LOCALAPPDATA%\Pervue\codex-workspace` on Windows. On POSIX the host creates it for its user alone (mode 0700). A shared temporary directory, such as `/tmp` on Linux, would let another user plant files, such as instructions, for Codex to read. The read-only sandbox keeps Codex from changing files.
+- **Environment.** Codex gets a minimal environment (SEC-02): the variables every provider gets (see [Provider processes](#provider-processes)), Codex's own `CODEX_HOME`, `CODEX_SQLITE_HOME`, and `CODEX_CA_CERTIFICATE`, and a `PATH` that starts with the executable's own directory, because npm installs `codex` as a Node script that finds `node` there. So Codex signs in with its stored login, the one its status reports, even when Chrome was started from a terminal holding `OPENAI_API_KEY` or `CODEX_API_KEY`.
 - **Answers.** Codex prints one JSON event per line (`host/src/providers/codex/output.rs`). The response starts at `turn.started`. Each completed agent message is a `response.delta`, with a blank line before each message after the first. Other items, such as reasoning and tool calls, count as progress for the idle timeout. `turn.completed` completes the request. Exec mode reports each message whole when it completes, not token by token.
 - **Conversations.** A new conversation gets a random Pervue ID, `conv_` and 16 hex digits, which the adapter maps to the Codex thread; continuing the conversation resumes that thread. The map lives in the host process, so a conversation can be continued only while the host that started it runs; after that it fails with `UNKNOWN_CONVERSATION`. Conversations that outlive the host are Milestone C.
 - **Limits.** Codex gets 60 seconds to start answering and 5 minutes without progress, because a model can think for minutes without any output. A stopped request's Codex gets 2 seconds to exit before it is killed. After the turn ends, Codex gets 5 seconds to save its session and exit before it is stopped; the answer stands either way. A line of output over 8 MiB ends the request.
@@ -192,18 +194,20 @@ Failures map to the normalized errors of `docs/protocol/errors-and-capabilities-
 | Any other failed turn | `PROVIDER_FAILED` / `PROVIDER_UNAVAILABLE` | yes |
 | Codex exited with an error before the turn ended, as in a crash or a lost session | `PROVIDER_FAILED` / `PROCESS_EXITED` | yes |
 | Output that isn't Codex's event stream: a line that isn't an event, events out of order, a line over 8 MiB, or a clean exit before the turn ended | `PROVIDER_FAILED` / `MALFORMED_PROVIDER_OUTPUT` | no |
-| Codex couldn't be started | `PROVIDER_FAILED` / `PROVIDER_UNAVAILABLE` | no |
+| Codex, or its workspace, couldn't be started | `PROVIDER_FAILED` / `PROVIDER_UNAVAILABLE` | no |
 | A `conversation_id` the adapter doesn't know | `INVALID_REQUEST` / `UNKNOWN_CONVERSATION` | no |
 | The request attaches browser context, which Codex doesn't receive yet | `INVALID_REQUEST` / `PAGE_CONTEXT_UNSUPPORTED` | no |
 
-`test_provider/tests/codex_adapter.rs` runs the adapter, and the whole host, against a fake `codex`: the fake provider binary copied under that name (see `test_provider/README.md`). The tests cover discovery and sign-in status, a Codex that can't start, the exact command line and the question on stdin, streaming, continuing a conversation, refused page context, failed turns, crashes, malformed and oversized output, cancellation, and both timeouts. `host/src/providers/codex/fixtures/` holds `codex exec --json` output captured from Codex CLI 0.156.1, and `output.rs`'s tests parse it.
+`test_provider/tests/codex_adapter.rs` runs the adapter, and the whole host, against a fake `codex`: the fake provider binary, linked under that name (see `test_provider/README.md`). The tests cover discovery and sign-in status, a Codex that can't start or has no workspace, the exact command line and the question on stdin, the exact environment and working directory Codex gets, streaming, continuing a conversation, conversation IDs that never reach the command line, refused page context, failed turns, crashes, malformed and oversized output, cancellation, and both timeouts. `host/src/providers/codex/fixtures/` holds `codex exec --json` output captured from Codex CLI 0.156.1, and `output.rs`'s tests parse it.
 
-`host/tests/live_codex.rs` asks the installed, signed-in Codex one question through the built host and checks the whole answer. It needs Codex and its credentials, so it runs only when asked:
+`host/tests/live_codex.rs` is the opt-in smoke test against the real Codex (TST-05). Through the built host, it checks Codex's status, asks it one question, and checks that the answer streams to completion: discovery → send → stream → completion. `PERVUE_LIVE_CODEX` turns it on:
 
 ```bash
 cd native
 PERVUE_LIVE_CODEX=1 cargo test -p pervue-host --test live_codex -- --nocapture
 ```
+
+Unset, as in CI's usual runs, the test passes at once. Set to `1`, it is skipped, and passes, when Codex isn't installed or isn't signed in. Set to `required`, those fail it instead. Before printing anything, it checks the events and the host's diagnostics for the values of `OPENAI_API_KEY` and `CODEX_API_KEY` and for anything shaped like an API key. The **Live Codex smoke test** workflow (`.github/workflows/live-codex.yml`) runs it only when started by hand: with a repository secret `OPENAI_API_KEY`, Codex signs in with it, reading it on stdin, and the test runs with `PERVUE_LIVE_CODEX=required`; without the secret, the test is skipped.
 
 ### Stream manager
 
@@ -214,6 +218,8 @@ PERVUE_LIVE_CODEX=1 cargo test -p pervue-host --test live_codex -- --nocapture
 - `Stopped(exit)` after `cancel(grace)`.
 
 The process manager's chunks end wherever a read did, even inside a UTF-8 character. The stream manager reassembles lines across any number of chunks, drops a `\r` before a `\n`, and checks each line is UTF-8 once it is complete. The limit counts a line as delivered, without its line ending. It holds at most one line of up to the limit and the lines of one chunk, and the process manager reads at most 16 chunks ahead, so a provider that floods its output waits on its own writes instead of growing the host's memory. stderr is counted and discarded, because it is written for people and can hold secrets. `cancel(grace)` drops everything not yet delivered, asks the process to stop (`request_stop`), and kills it once `grace` passes.
+
+Output that arrives without completing a line, such as stderr, the start of a long line, or anything after a cancel, keeps `next(deadline)` working at most `BUSY_LIMIT` (5 ms) past its deadline; a stopped process is killed when its grace period ends even while it floods.
 
 `split_text` cuts outgoing text into pieces of bounded size, never inside a character; the host uses it for `response.delta`.
 
@@ -240,6 +246,7 @@ let exit = process.terminate(Duration::from_secs(2)); // the deadline passed
 ```
 
 - **Starting.** The program must be an absolute path, and each argument is its own argv element: there is no shell and no `PATH` search. stdin, stdout, and stderr are always three separate pipes, so a provider never gets the host's own Native Messaging streams.
+- **Environment.** A provider's environment starts empty: it gets only the variables its spec sets (`env`, `envs`), none of the host's, and runs in the spec's `current_dir` when it sets one (SEC-02). `host/src/providers/environment.rs` lists what every provider gets from the host's environment, when set: `HOME`, `USER`, `LOGNAME`, `TMPDIR`, `LANG`, `LC_ALL`, `LC_CTYPE`, `DBUS_SESSION_BUS_ADDRESS` and `XDG_RUNTIME_DIR` (where Linux keyrings are found), the `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, and `NO_PROXY` proxies in either case, and `SSL_CERT_FILE` and `SSL_CERT_DIR`. On Windows it is what programs, `cmd.exe`, and Node need to run (`SystemRoot`, `ComSpec`, `PATHEXT`, `TEMP`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, and the like), with the proxies and CA certificates. Each adapter adds its provider's own settings and sets `PATH`. Everything else stays behind: credentials such as `OPENAI_API_KEY`, `AWS_SECRET_ACCESS_KEY`, or `GITHUB_TOKEN`, variables that change how programs load code such as `NODE_OPTIONS`, `LD_PRELOAD`, and `DYLD_INSERT_LIBRARIES`, and Pervue's own settings.
 - **Input.** `write` queues bytes for a helper thread and returns at once, so a provider that isn't reading can't block the host. `close_stdin` sends end of file after the queued input.
 - **Output.** `next_event` returns stdout and stderr chunks of at most 8 KiB (`MAX_CHUNK_BYTES`) as the provider writes them, then one final `Exited`. At most 16 chunks are read ahead of the caller; beyond that the provider waits on its own writes, so a flood can't grow the host's memory. Chunks end wherever a read did, so they can split lines and UTF-8 sequences; reassembling them is the stream manager's job (NAT-05).
 - **Timeouts.** `next_event` returns `None` once its deadline passes, and the caller decides what happens next.
@@ -252,9 +259,32 @@ What it can't do yet:
 - On POSIX systems other than Linux, Android, FreeBSD, and macOS, the host can't see an exit before reaping, so it kills the group right after. If the provider left nothing behind, the group ID is free again by then, and another group that took it within those microseconds would be hit.
 - On Windows only the provider process itself is stopped; stopping its descendants too needs a Job Object (ADR-0001). Windows has no SIGTERM, so closing stdin is the only stop request there.
 - If the host itself is killed outright, it can't clean up. A provider that reads stdin sees end of file.
-- Providers inherit the host's environment and working directory, apart from variables their spec sets with `env`. SEC-02 narrows what they receive.
 
-The fake provider's crate tests the manager, because only it can locate the fake provider binary: `test_provider/tests/process_manager.rs` covers success, a nonzero exit, a crash, a timeout, a graceful stop, an ignored stop escalated to SIGKILL, input written while output flows, and descendants that stay in the group, outlive the provider, or leave the group. `test_provider/tests/process_stress.rs` spawns and stops 120 providers at different points and checks that each was reaped and that no pipe or thread was left behind.
+The fake provider's crate tests the manager, because only it can locate the fake provider binary: `test_provider/tests/process_manager.rs` covers success, a nonzero exit, a crash, a timeout, a graceful stop, an ignored stop escalated to SIGKILL, input written while output flows, a process that sees only the environment its spec sets and runs where its spec says, arguments holding spaces, quotes, and shell syntax that each arrive whole, and descendants that stay in the group, outlive the provider, or leave the group. `test_provider/tests/process_stress.rs` spawns and stops 120 providers at different points and checks that each was reaped and that no pipe or thread was left behind.
+
+### Hostile providers
+
+`test_provider/tests/hostile_matrix.rs` is the hostile fake-process matrix (TST-04). It runs the whole host (the request loop, the Codex adapter, the stream manager, and the process manager) against a fake `codex` that misbehaves in one way per case, and checks that each request ends in its normalized outcome within a time bound:
+
+| Case | Outcome |
+|---|---|
+| Every line arrives a few bytes at a time | the whole answer |
+| 128 MiB of stderr while answering | the whole answer |
+| stderr without end, and no progress | `REQUEST_TIMEOUT` / `PROVIDER_RESPONSE_TIMEOUT` |
+| 100,000 progress events, then the answer | the whole answer |
+| Progress without end, cancelled | `REQUEST_CANCELLED`, then `request.cancelled` |
+| Unknown events without end | `REQUEST_TIMEOUT` / `PROVIDER_RESPONSE_TIMEOUT` |
+| Nonzero exit, or a crash, mid-turn | `PROVIDER_FAILED` / `PROCESS_EXITED` |
+| A hang before the turn starts | `REQUEST_TIMEOUT` / `PROVIDER_START_TIMEOUT` |
+| A hang mid-turn | `REQUEST_TIMEOUT` / `PROVIDER_RESPONSE_TIMEOUT` |
+| Cancellation ignored, quietly or while flooding | `REQUEST_CANCELLED` once the grace period ends |
+| A line that isn't JSON, or isn't UTF-8 | `PROVIDER_FAILED` / `MALFORMED_PROVIDER_OUTPUT` |
+| A 330 KB answer | the whole answer, in deltas of at most 64 KiB |
+| A 9 MiB line, or a line without end | `PROVIDER_FAILED` / `MALFORMED_PROVIDER_OUTPUT` |
+| A sign-in check that floods | given up on at its time limit: the status is `unknown`, and the question is asked anyway |
+| Four of these at once, next to a plain question and a cancel | each its own outcome; the answer and the cancel within 2 seconds |
+
+Every request ends exactly once, with a matching diagnostics record, every process is reaped, and neither the provider's stderr nor any question reaches the events or the diagnostics. On Linux the test also checks that the host's threads and file descriptors return to where they were after each case, and that its peak memory grows by at most 64 MiB, far less than the floods write; the longest line held is 8 MiB. The matrix found that a provider writing fast enough could keep the loop busy indefinitely, holding up other requests, cancellations, and timeouts, which the fairness limits above now prevent. A stopped process, or a sign-in check past its time limit, is also cut off on time however fast it writes.
 
 ## Fuzz targets
 

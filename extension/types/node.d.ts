@@ -2,7 +2,7 @@ declare module "node:assert/strict" {
   interface AssertStrict {
     equal(actual: unknown, expected: unknown, message?: string): void;
     ok(value: unknown, message?: string): void;
-    deepEqual(actual: unknown, expected: unknown): void;
+    deepEqual(actual: unknown, expected: unknown, message?: string): void;
     throws(block: () => unknown, error?: RegExp | object): void;
   }
 
@@ -33,7 +33,8 @@ declare module "node:fs" {
   }
 
   interface FileSystem {
-    readFileSync(path: string, encoding: "utf8"): string;
+    readFileSync(path: string | URL, encoding: "utf8"): string;
+    mkdtempSync(prefix: string): string;
     existsSync(path: string): boolean;
     rmSync(path: string, options?: RmOptions): void;
     mkdirSync(path: string, options?: MkdirOptions): void;
@@ -43,6 +44,15 @@ declare module "node:fs" {
 
   const fs: FileSystem;
   export default fs;
+}
+
+declare module "node:os" {
+  interface OsApi {
+    tmpdir(): string;
+  }
+
+  const os: OsApi;
+  export default os;
 }
 
 declare module "node:path" {
@@ -65,6 +75,7 @@ declare module "node:url" {
 declare const process: {
   cwd(): string;
   argv: string[];
+  env: Record<string, string | undefined>;
 };
 
 interface ImportMeta {

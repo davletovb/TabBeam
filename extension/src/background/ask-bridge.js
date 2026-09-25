@@ -1,15 +1,11 @@
 import { ASK_TERMINAL_EVENTS, QUESTION_TOO_LONG } from "../shared/ask-port.js";
 import { RequestTooLargeError } from "./native-connection.js";
 import { MAX_PAGE_BYTES, MAX_SELECTION_BYTES, utf8ByteLength } from "../shared/limits.js";
+import { DEFAULT_PROVIDER_ID } from "../shared/providers.js";
 
 /** @typedef {import("../shared/ask-port.js").AskPort} AskPort */
 /** @typedef {import("./native-connection.js").RequestOwner} RequestOwner */
-/** @typedef {{code: string, reason: string, message: string, retryable: boolean}} ErrorBody */
-
-// Milestone B's first provider (PRO-03). The host reports a missing or
-// signed-out Codex as a normalized failure; choosing among providers arrives
-// with EXT-04.
-export const DEFAULT_PROVIDER_ID = "codex";
+/** @typedef {import("../shared/provider-status.js").ErrorBody} ErrorBody */
 
 const EMPTY_QUESTION = Object.freeze({
   code: "INVALID_REQUEST",
@@ -25,7 +21,7 @@ const INVALID_CONTEXT = Object.freeze({
   retryable: false
 });
 
-const HOST_START_FAILED = Object.freeze({
+export const HOST_START_FAILED = Object.freeze({
   code: "HOST_UNAVAILABLE",
   reason: "HOST_START_FAILED",
   message: "Pervue's companion app couldn't start. Try again.",

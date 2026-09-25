@@ -3,9 +3,13 @@
 //! The host writes one JSON object per line to stderr. stdout carries only
 //! Native Messaging frames, so diagnostics can never corrupt them. A record
 //! names identifiers, timings, and outcomes, but never request content: no
-//! prompt text, page context, unknown payload members, or raw frame bytes.
-//! Identifiers are truncated, and JSON escaping keeps each record on one line
-//! whatever they contain.
+//! prompt text, page context, unknown payload members, raw frame bytes, or
+//! anything a provider wrote.
+//!
+//! Identifiers are copied only when they fit the protocol's ID grammar and
+//! hold nothing shaped like a credential (SEC-02); anything else is written
+//! as [`REDACTED`]. So a record never holds free text, a secret passed where
+//! an ID belongs, or characters that could forge or split a record.
 
 use std::borrow::Cow;
 use std::io::Write;
@@ -15,8 +19,44 @@ use serde::Serialize;
 
 use crate::protocol::events::ErrorCode;
 
-/// Longest identifier, in characters, copied into a record.
+/// Longest identifier, in characters, copied into a record: the protocol's
+/// request-ID limit.
 pub const MAX_LOGGED_ID_CHARS: usize = 128;
+
+/// What a record holds in place of an identifier it won't copy.
+pub const REDACTED: &str = "[redacted]";
+
+/// Prefixes of well-known credential formats: OpenAI and Anthropic API keys
+/// (`sk-`), Stripe keys, GitHub, GitLab, and Slack tokens, AWS access keys,
+/// Google API keys, JSON Web Tokens, and Hugging Face, npm, and PyPI tokens.
+const CREDENTIAL_PREFIXES: &[&str] = &[
+    "sk-",
+    "sk_",
+    "rk_",
+    "ghp_",
+    "gho_",
+    "ghu_",
+    "ghs_",
+    "ghr_",
+    "github_pat_",
+    "glpat-",
+    "xoxa-",
+    "xoxb-",
+    "xoxp-",
+    "xoxr-",
+    "xoxs-",
+    "AKIA",
+    "ASIA",
+    "AIza",
+    "eyJ",
+    "hf_",
+    "npm_",
+    "pypi-",
+];
+
+/// How many token characters must follow a prefix for it to look like a
+/// credential rather than a word.
+const CREDENTIAL_BODY: usize = 8;
 
 /// Lifecycle events a record can describe.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -141,12 +181,45 @@ impl<W: Write> Diagnostics<W> {
     }
 }
 
-/// `text` cut to [`MAX_LOGGED_ID_CHARS`] characters, marked with `…` when cut.
+/// `text` as a record may hold it: an identifier in the protocol's ID
+/// grammar (1 to [`MAX_LOGGED_ID_CHARS`] ASCII letters, digits, `.`, `_`, `:`,
+/// and `-`, starting with a letter or digit) that holds nothing shaped like a
+/// credential. Anything else becomes [`REDACTED`].
 pub fn loggable_id(text: Cow<'_, str>) -> Cow<'_, str> {
-    match text.char_indices().nth(MAX_LOGGED_ID_CHARS) {
-        None => text,
-        Some((end, _)) => Cow::Owned(format!("{}…", &text[..end])),
+    if is_identifier(&text) && !looks_like_credential(&text) {
+        text
+    } else {
+        Cow::Borrowed(REDACTED)
     }
+}
+
+fn is_identifier(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    bytes.first().is_some_and(u8::is_ascii_alphanumeric)
+        && bytes.len() <= MAX_LOGGED_ID_CHARS
+        && bytes
+            .iter()
+            .all(|&byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-'))
+}
+
+/// Whether ASCII `text` holds a credential prefix where a token starts,
+/// followed by at least [`CREDENTIAL_BODY`] token characters.
+fn looks_like_credential(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    (0..bytes.len()).any(|start| {
+        let starts_token = start == 0 || !bytes[start - 1].is_ascii_alphanumeric();
+        starts_token
+            && CREDENTIAL_PREFIXES.iter().any(|prefix| {
+                bytes[start..].starts_with(prefix.as_bytes())
+                    && bytes[start + prefix.len()..]
+                        .iter()
+                        .take_while(|&&byte| {
+                            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')
+                        })
+                        .count()
+                        >= CREDENTIAL_BODY
+            })
+    })
 }
 
 /// Whole milliseconds in `duration`, saturating.
@@ -251,7 +324,7 @@ mod tests {
     }
 
     #[test]
-    fn identifiers_cannot_break_a_line_or_grow_without_bound() {
+    fn identifiers_outside_the_grammar_are_redacted() {
         let mut diagnostics = Diagnostics::with_clock(Vec::new(), fixed_clock);
         let mut record = Record::new(LifecycleEvent::RequestCompleted);
         record.provider_id = Some(loggable_id(Cow::Borrowed(
@@ -262,23 +335,76 @@ mod tests {
 
         let records = lines(diagnostics);
         assert_eq!(records.len(), 1);
-        assert_eq!(
-            records[0]["provider_id"],
-            "fake\n{\"ts\":\"forged\",\"event\":\"host.stopped\"}"
-        );
-        let conversation_id = records[0]["conversation_id"].as_str().unwrap();
-        assert_eq!(conversation_id.chars().count(), MAX_LOGGED_ID_CHARS + 1);
-        assert!(conversation_id.ends_with('…'));
+        assert_eq!(records[0]["provider_id"], REDACTED);
+        assert_eq!(records[0]["conversation_id"], REDACTED);
+
+        for text in [
+            "",
+            "-leading-dash",
+            ".hidden",
+            "has space",
+            "what is on this page?",
+            "tab\tthere",
+            "slash/path",
+            "quote\"",
+            "café",
+            &"a".repeat(MAX_LOGGED_ID_CHARS + 1),
+        ] {
+            assert_eq!(loggable_id(Cow::Borrowed(text)), REDACTED, "{text:?}");
+        }
     }
 
     #[test]
-    fn short_identifiers_are_kept_whole() {
+    fn identifiers_in_the_grammar_are_kept_whole() {
         let exact = "a".repeat(MAX_LOGGED_ID_CHARS);
         assert_eq!(loggable_id(Cow::Borrowed(&exact)), exact.as_str());
         assert!(matches!(
             loggable_id(Cow::Borrowed("req")),
             Cow::Borrowed("req")
         ));
+        for id in [
+            "req_4f1c2a7e-9b3d-4c21-8e0f-2a6b5c7d8e9f",
+            "conv_00ff00ff00ff00ff",
+            "codex",
+            "fake-conversation",
+            "req:cancel.1",
+            // Words that merely contain a prefix.
+            "task-12345678",
+            "desk_12345678",
+            "risk_score_12345678",
+            // A prefix with too little after it.
+            "sk-1",
+            "ghp_short",
+        ] {
+            assert_eq!(loggable_id(Cow::Borrowed(id)), id);
+        }
+    }
+
+    #[test]
+    fn identifiers_shaped_like_credentials_are_redacted() {
+        for secret in [
+            "sk-proj-abcdEFGH1234",
+            "sk-ant-api03-abcdefgh",
+            "sk_live_51Habcdefgh",
+            "rk_live_51Habcdefgh",
+            "ghp_0123456789abcdef",
+            "github_pat_11ABCDEFG0123",
+            "glpat-abcdefgh1234",
+            "xoxb-123456789012",
+            "AKIAIOSFODNN7EXAMPLE",
+            "ASIAIOSFODNN7EXAMPLE",
+            "AIzaSyA-abcdefgh",
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig",
+            "hf_abcdefghijkl",
+            "npm_abcdefghijkl",
+            "pypi-AgEIcHlwaS5vcmc",
+            // After a separator, too.
+            "req_sk-proj-abcdEFGH1234",
+            "conv:ghp_0123456789abcdef",
+            "id.eyJhbGciOiJIUzI1NiJ9",
+        ] {
+            assert_eq!(loggable_id(Cow::Borrowed(secret)), REDACTED, "{secret}");
+        }
     }
 
     #[test]

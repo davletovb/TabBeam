@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { ASK_PORT_NAME } from "../src/shared/ask-port.js";
+import { PROVIDER_STATUS_MESSAGE } from "../src/shared/provider-status.js";
 import { MockPort } from "./support/mock-port.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -159,4 +160,28 @@ assert.equal(popupPort.messages[0].event, "response.failed");
 assert.equal(popupPort.messages[0].payload.error.reason, "HOST_START_FAILED");
 assert.equal(popupPort.disconnectCalls, 1);
 
-console.log("EXT-01/EXT-02/EXT-03 manifest and service-worker smoke checks passed");
+// Provider status: only the extension's own pages may ask, and the answer
+// comes asynchronously, here the failure of a host that can't start.
+const [onMessage] = listeners.messages;
+/** @type {any[]} */
+const statusResponses = [];
+assert.equal(
+  onMessage({ type: PROVIDER_STATUS_MESSAGE }, { url: "https://example.com/" }, (/** @type {any} */ response) =>
+    statusResponses.push(response)
+  ),
+  undefined
+);
+assert.equal(nativeConnectCalls, 1);
+assert.equal(
+  onMessage({ type: PROVIDER_STATUS_MESSAGE }, { url: popupUrl }, (/** @type {any} */ response) =>
+    statusResponses.push(response)
+  ),
+  true
+);
+await new Promise((resolve) => setTimeout(resolve, 0));
+assert.equal(nativeConnectCalls, 2);
+assert.equal(statusResponses.length, 1);
+assert.equal(statusResponses[0].provider_id, "codex");
+assert.equal(statusResponses[0].error.reason, "HOST_START_FAILED");
+
+console.log("EXT-01/EXT-02/EXT-03/EXT-04 manifest and service-worker smoke checks passed");

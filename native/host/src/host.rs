@@ -83,6 +83,11 @@ impl From<FrameError> for HostError {
 /// How often the loop checks running requests while it waits for a frame.
 const TICK: Duration = Duration::from_millis(10);
 
+/// How long the loop delivers one request's updates before it turns to the
+/// other requests and to new frames, so a provider that floods its output
+/// can't hold up the rest, or its own cancellation.
+const SLICE: Duration = Duration::from_millis(5);
+
 /// Largest `response.delta` text. JSON escaping at most sixfolds text, so a
 /// delta this size always fits in one frame.
 const MAX_DELTA_BYTES: usize = MAX_FRAME_SIZE / 16;
@@ -102,7 +107,7 @@ const STOP_SLACK: Duration = Duration::from_secs(1);
 const PROVIDER_NOT_INSTALLED: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::ProviderNotFound,
     reason: "PROVIDER_NOT_INSTALLED",
-    message: "The selected provider runtime is not installed.",
+    message: "Pervue's companion app doesn't support this AI provider yet. Update it, then try again.",
     retryable: false,
 };
 
@@ -123,28 +128,28 @@ const DUPLICATE_REQUEST_ID: ErrorBody<'static> = ErrorBody {
 const CANCELLED: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::RequestCancelled,
     reason: "USER_CANCELLED",
-    message: "The request was cancelled.",
+    message: "Stopped. You can ask again.",
     retryable: true,
 };
 
 const INPUT_CLOSED: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::RequestCancelled,
     reason: "INPUT_CLOSED",
-    message: "The extension closed the connection before the request finished.",
+    message: "Stopped because Pervue closed. You can ask again.",
     retryable: true,
 };
 
 const START_TIMEOUT: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::RequestTimeout,
     reason: "PROVIDER_START_TIMEOUT",
-    message: "The provider took too long to start answering.",
+    message: "The answer took too long to start. Try again.",
     retryable: true,
 };
 
 const RESPONSE_TIMEOUT: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::RequestTimeout,
     reason: "PROVIDER_RESPONSE_TIMEOUT",
-    message: "The provider stopped responding.",
+    message: "The answer stopped arriving. Try again.",
     retryable: true,
 };
 
@@ -153,7 +158,7 @@ const RESPONSE_TIMEOUT: ErrorBody<'static> = ErrorBody {
 const STOPPED_UNASKED: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::InternalError,
     reason: "INTERNAL_STATE_ERROR",
-    message: "The request stopped unexpectedly.",
+    message: "The answer stopped unexpectedly. Try again.",
     retryable: false,
 };
 
@@ -288,6 +293,16 @@ impl Canceller {
     }
 }
 
+/// What one turn of [`Session::pump_one`] left a request doing.
+enum Pumped {
+    /// It ended and was removed.
+    Finished,
+    /// It had nothing more ready.
+    Waiting,
+    /// Its slice ran out while it had more ready.
+    Busy,
+}
+
 /// Why a running request is being stopped.
 enum Stop {
     Cancelled(Vec<Canceller>),
@@ -414,14 +429,18 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
         frames: &Receiver<Inbound>,
     ) -> Result<Result<(), HostError>, Undeliverable> {
         events::write_host_ready(self.output).map_err(|_| Undeliverable)?;
+        // Whether a request still had updates ready when its slice ran out.
+        let mut busy = false;
         loop {
             let inbound = if self.running.is_empty() {
                 frames.recv().unwrap_or(Inbound::End)
             } else {
-                match frames.recv_timeout(TICK) {
+                // A busy request keeps the loop going: only check for a frame.
+                let wait = if busy { Duration::ZERO } else { TICK };
+                match frames.recv_timeout(wait) {
                     Ok(inbound) => inbound,
                     Err(RecvTimeoutError::Timeout) => {
-                        self.pump()?;
+                        busy = self.pump()?;
                         continue;
                     }
                     Err(RecvTimeoutError::Disconnected) => Inbound::End,
@@ -432,7 +451,7 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                 Inbound::End => return Ok(Ok(())),
                 Inbound::Broken(error) => return Ok(Err(error.into())),
             }
-            self.pump()?;
+            busy = self.pump()?;
         }
     }
 
@@ -554,21 +573,29 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
         }
     }
 
-    /// Delivers what every running request has ready, and applies timeouts.
-    fn pump(&mut self) -> Result<(), Undeliverable> {
+    /// Delivers what every running request has ready, a slice at a time, and
+    /// applies timeouts. Returns whether a request had more ready when its
+    /// slice ran out.
+    fn pump(&mut self) -> Result<bool, Undeliverable> {
+        let mut busy = false;
         let mut index = 0;
         while index < self.running.len() {
-            if !self.pump_one(index)? {
-                index += 1;
+            match self.pump_one(index)? {
+                Pumped::Finished => {}
+                Pumped::Waiting => index += 1,
+                Pumped::Busy => {
+                    busy = true;
+                    index += 1;
+                }
             }
         }
-        Ok(())
+        Ok(busy)
     }
 
-    /// Delivers what request `index` has ready. Returns whether it finished,
-    /// in which case it has been removed.
-    fn pump_one(&mut self, index: usize) -> Result<bool, Undeliverable> {
+    /// Delivers what request `index` has ready, for one slice at most.
+    fn pump_one(&mut self, index: usize) -> Result<Pumped, Undeliverable> {
         let now = Instant::now();
+        let slice_end = now.checked_add(SLICE).unwrap_or(now);
         let running = &mut self.running[index];
         if let Some(error) = running.expired(now) {
             let grace = running.stop_grace;
@@ -577,21 +604,27 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
         loop {
             let running = &mut self.running[index];
             let Some(update) = running.exchange.next(now) else {
-                if running.stop_limit.is_some_and(|limit| now >= limit) {
+                if running
+                    .stop_limit
+                    .is_some_and(|limit| Instant::now() >= limit)
+                {
                     // The adapter didn't stop in time: end the request anyway.
                     let running = self.running.remove(index);
                     self.finish(running, Update::Stopped)?;
-                    return Ok(true);
+                    return Ok(Pumped::Finished);
                 }
-                return Ok(false);
+                return Ok(Pumped::Waiting);
             };
             running.last_update = Instant::now();
             if update.is_terminal() {
                 let running = self.running.remove(index);
                 self.finish(running, update)?;
-                return Ok(true);
+                return Ok(Pumped::Finished);
             }
             forward(&mut *self.output, &mut self.running[index], update)?;
+            if Instant::now() >= slice_end {
+                return Ok(Pumped::Busy);
+            }
         }
     }
 
@@ -652,11 +685,13 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
             running.stop(Stop::InputClosed, SHUTDOWN_GRACE);
         }
         loop {
-            self.pump()?;
+            let busy = self.pump()?;
             if self.running.is_empty() {
                 return Ok(());
             }
-            thread::sleep(TICK);
+            if !busy {
+                thread::sleep(TICK);
+            }
         }
     }
 
@@ -1094,6 +1129,91 @@ mod tests {
         Providers::new(vec![Box::new(fake::Fake), Box::new(provider)])
     }
 
+    /// An exchange that always has another update ready, like a provider that
+    /// never stops reporting progress.
+    struct Flooding {
+        cancelled: bool,
+    }
+
+    impl Exchange for Flooding {
+        fn next(&mut self, _deadline: Instant) -> Option<Update> {
+            Some(if self.cancelled {
+                Update::Stopped
+            } else {
+                Update::Activity
+            })
+        }
+
+        fn cancel(&mut self, _grace: Duration) {
+            self.cancelled = true;
+        }
+    }
+
+    /// Serves `flood` requests with a [`Flooding`] exchange.
+    struct FloodingProvider;
+
+    impl Provider for FloodingProvider {
+        fn id(&self) -> &str {
+            "flood"
+        }
+
+        fn timeouts(&self) -> Timeouts {
+            Timeouts {
+                start: Duration::from_secs(60),
+                idle: Duration::from_secs(60),
+                stop_grace: Duration::ZERO,
+            }
+        }
+
+        fn status(&self) -> Box<dyn Exchange> {
+            Box::new(Scripted::new([Update::Completed]))
+        }
+
+        fn send(&self, _request: SendRequest) -> Box<dyn Exchange> {
+            Box::new(Flooding { cancelled: false })
+        }
+    }
+
+    #[test]
+    fn a_request_that_never_runs_dry_cannot_hold_up_the_others() {
+        // The session runs on its own thread, so a host stuck on the flood
+        // fails the test instead of hanging it.
+        let (done, finished) = mpsc::channel();
+        thread::spawn(move || {
+            let providers = Providers::new(vec![Box::new(fake::Fake), Box::new(FloodingProvider)]);
+            let session = run_session(
+                &providers,
+                lingering(
+                    &[
+                        &send("req_flood", "flood"),
+                        &send("req_fake", "fake"),
+                        &cancel("req_stop", "req_flood"),
+                    ],
+                    Duration::from_millis(200),
+                ),
+            );
+            let _ = done.send((session.result, session.events()));
+        });
+        let (result, events) = finished
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the host should not be stuck on the flood");
+        assert_eq!(result, Ok(()));
+
+        let ending = |request_id: &str| {
+            events
+                .iter()
+                .rfind(|event| event["request_id"] == request_id)
+                .map(|event| event["event"].as_str().unwrap().to_owned())
+        };
+        assert_eq!(ending("req_fake").as_deref(), Some("response.completed"));
+        assert_eq!(ending("req_stop").as_deref(), Some("request.cancelled"));
+        let flood = events
+            .iter()
+            .rfind(|event| event["request_id"] == "req_flood")
+            .unwrap();
+        assert_eq!(flood["payload"]["error"]["code"], "REQUEST_CANCELLED");
+    }
+
     #[test]
     fn empty_input_emits_only_host_ready() {
         let session = run_host(&[]);
@@ -1219,7 +1339,7 @@ mod tests {
             r#"{"version":1,"type":"request","request_id":"req_status_codex","method":"provider.status","payload":{"provider_id":"codex"}}"#,
             r#"{"version":1,"type":"request","request_id":"req_cancel","method":"request.cancel","payload":{"target_request_id":"req_continue"}}"#,
         ]);
-        let not_installed = r#"{"error":{"code":"PROVIDER_NOT_FOUND","reason":"PROVIDER_NOT_INSTALLED","message":"The selected provider runtime is not installed.","retryable":false}}"#;
+        let not_installed = r#"{"error":{"code":"PROVIDER_NOT_FOUND","reason":"PROVIDER_NOT_INSTALLED","message":"Pervue's companion app doesn't support this AI provider yet. Update it, then try again.","retryable":false}}"#;
 
         let session = run_host(&input);
         assert_eq!(session.result, Ok(()));
@@ -1424,7 +1544,7 @@ mod tests {
             json!({
                 "code": "REQUEST_CANCELLED",
                 "reason": "USER_CANCELLED",
-                "message": "The request was cancelled.",
+                "message": "Stopped. You can ask again.",
                 "retryable": true
             })
         );
@@ -1598,7 +1718,7 @@ mod tests {
             json!({
                 "code": "REQUEST_TIMEOUT",
                 "reason": "PROVIDER_START_TIMEOUT",
-                "message": "The provider took too long to start answering.",
+                "message": "The answer took too long to start. Try again.",
                 "retryable": true
             })
         );
@@ -2081,6 +2201,50 @@ mod tests {
         for record in &session.records {
             assert!(!record.to_string().contains(MARKER), "{record}");
         }
+    }
+
+    #[test]
+    fn credentials_passed_as_identifiers_are_redacted_in_diagnostics() {
+        // SEC-02: a secret where an ID belongs, in each identifier a record
+        // names, still never reaches the diagnostics.
+        const KEY: &str = "sk-proj-SECRETabcd1234";
+        let input = framed(&[
+            &send(KEY, "fake"),
+            &send("req_provider", KEY),
+            &request(
+                "req_conversation",
+                "conversation.send",
+                &format!(
+                    r#"{{"provider_id":"fake","conversation_id":"{KEY}","input":{{"text":"hi"}}}}"#
+                ),
+            ),
+            &cancel("req_cancel", KEY),
+            &request("ghp_SECRET0123456789", "no.such.method", "{}"),
+        ]);
+        let session = run_host(&input);
+        assert_eq!(session.result, Ok(()));
+        let records: Vec<String> = session.records.iter().map(Value::to_string).collect();
+        assert!(
+            records.iter().all(|record| !record.contains("SECRET")),
+            "{records:?}"
+        );
+        for field in [
+            "request_id",
+            "provider_id",
+            "conversation_id",
+            "target_request_id",
+        ] {
+            assert!(
+                session
+                    .records
+                    .iter()
+                    .any(|record| record[field] == crate::diagnostics::REDACTED),
+                "{field} was never redacted: {records:?}"
+            );
+        }
+        // The frames still echo the request IDs: they go to the extension,
+        // which sent them.
+        assert!(session.frames.iter().any(|frame| frame.contains(KEY)));
     }
 
     #[test]
