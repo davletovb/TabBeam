@@ -565,11 +565,7 @@ mod tests {
             r#"{"provider_id":"codex","input":{"text":"Next?","history":[{"role":"user","text":"First?"},{"role":"assistant","text":"First answer."}]}}"#,
         );
         let request = parse_request(valid.as_bytes()).unwrap();
-        let Method::ConversationSend {
-            history,
-            ..
-        } = request.method
-        else {
+        let Method::ConversationSend { history, .. } = request.method else {
             panic!("expected dialogue history");
         };
         assert_eq!(history.len(), 2);

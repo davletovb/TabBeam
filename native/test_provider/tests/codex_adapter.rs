@@ -601,8 +601,14 @@ fn a_lost_codex_thread_retries_once_with_dialogue() {
             .send(SendRequest {
                 conversation_id: Some(conversation_id.clone()),
                 history: vec![
-                    HistoryMessage { role: Role::User, text: "first".to_owned() },
-                    HistoryMessage { role: Role::Assistant, text: "first answer".to_owned() },
+                    HistoryMessage {
+                        role: Role::User,
+                        text: "first".to_owned(),
+                    },
+                    HistoryMessage {
+                        role: Role::Assistant,
+                        text: "first answer".to_owned(),
+                    },
                 ],
                 ..ask("again")
             })
@@ -610,7 +616,12 @@ fn a_lost_codex_thread_retries_once_with_dialogue() {
     ));
     assert!(matches!(&updates[0], Update::ConversationCreated(id) if id != &conversation_id));
     assert!(matches!(updates.last(), Some(Update::Completed)));
-    assert!(codex.invocations().iter().any(|line| line.contains("resume thread-")));
+    assert!(
+        codex
+            .invocations()
+            .iter()
+            .any(|line| line.contains("resume thread-"))
+    );
     assert!(codex.prompts().last().unwrap().contains("first answer"));
     codex.assert_nothing_left_running();
 }
