@@ -109,7 +109,7 @@ The output names `com.pervue.host`, points `path` at the absolute path the host 
 
 ## Diagnostics
 
-While it serves a session, the host writes structured diagnostics to stderr, one JSON object per line (OBS-01). stdout carries only Native Messaging frames, so diagnostics can't corrupt them. If stderr fails or is closed, the host ignores the failure and carries on. Chrome passes a host's stderr through to its own, so starting Chrome with `--enable-logging=stderr` shows them.
+While it serves a session, the host writes structured diagnostics to stderr, one JSON object per line (OBS-01). stdout carries only Native Messaging frames, so diagnostics can't corrupt them. If writing to stderr fails, for example because it's closed, the host ignores the failure and carries on. A write that blocks isn't skipped, though: a stderr pipe that nobody reads would eventually stall the host. Chrome passes a host's stderr through to its own, so that only happens when Chrome's own stderr is such a pipe, and starting Chrome with `--enable-logging=stderr` shows the records.
 
 ```text
 {"ts":"2026-09-25T01:21:49.903Z","event":"host.started","host_version":"0.1.0-dev","pid":1764}
@@ -119,17 +119,18 @@ While it serves a session, the host writes structured diagnostics to stderr, one
 {"ts":"2026-09-25T01:21:49.903Z","event":"host.stopped","duration_ms":0,"reason":"end_of_input","exit_code":0,"requests":2,"rejected":1}
 ```
 
-Every record has `ts` (RFC 3339 UTC, with milliseconds) and `event`. A field that doesn't apply is left out. A request's `conversation_id` is the conversation it continued or, when it started one, the ID its `conversation.created` event announced, so the first request of a conversation correlates with the ones that follow.
+Every record has `ts` (RFC 3339 UTC, with milliseconds) and `event`. A field that doesn't apply is left out. Every request the host reads gets exactly one `request.*` record, including a request it was answering when it stopped. A request's `conversation_id` is the conversation it continued or, when it started one, the ID its `conversation.created` event announced, so the first request of a conversation correlates with the ones that follow.
 
 | Event | Written when | Fields |
 |---|---|---|
 | `host.started` | Before `host.ready` | `host_version`, `pid` |
-| `request.completed` | A handler finished the request successfully | `request_id`, `method`, `provider_id`, `conversation_id`, `duration_ms` |
+| `request.completed` | A handler finished the request successfully | `request_id`, `method`, `provider_id`, `conversation_id`, `target_request_id` (for `request.cancel`), `duration_ms` |
 | `request.failed` | A handler ended the request with `response.failed` | The same fields, plus `error` (`code` and `reason`) |
+| `request.aborted` | The host stopped while answering the request, such as when stdout closed, so the extension got no terminal event | The same fields as `request.completed`, plus `reason` (why the host stopped) |
 | `request.rejected` | The request failed validation and never reached a handler | `request_id` if one was recovered, and `error` (`INVALID_REQUEST` and its reason) |
-| `host.stopped` | The host is about to exit | `reason` (`end_of_input`, `io_error`, `frame_truncated`, `frame_too_large` or `allocation_failed`), `exit_code`, `duration_ms` (uptime), `requests` and `rejected` |
+| `host.stopped` | The host is about to exit | `reason` (`end_of_input`, `io_error`, `frame_truncated`, `frame_too_large` or `allocation_failed`), `exit_code`, `duration_ms` (uptime), `requests` (requests that passed validation and reached a handler) and `rejected` (requests that failed validation) |
 
-A record never contains request content: no prompt text, page context, other payload members, raw frame bytes, or error messages. The `provider_id` and `conversation_id` it records are cut to 128 characters, and JSON escaping keeps each record on one line whatever they contain. Redacting provider output and credentials comes with real providers (SEC-02).
+A record never contains request content: no prompt text, page context, other payload members, raw frame bytes, or error messages. Every identifier it records is cut to 128 characters, and JSON escaping keeps each record on one line whatever they contain. Redacting provider output and credentials comes with real providers (SEC-02).
 
 Command-line errors, such as a usage error or an invalid `--print-manifest` ID, are plain text on stderr, because no session is running.
 

@@ -573,8 +573,8 @@ Reached after **Milestone H**:
 
 **Implementation evidence**
 - JSON-lines diagnostics with timestamp, lifecycle event, request ID, method, provider ID, conversation ID, duration, exit code, and normalized error (code and reason): `native/host/src/diagnostics.rs`
-- The host records `host.started`, `request.completed`, `request.failed`, `request.rejected`, and `host.stopped`. Handlers report each request's outcome to the loop: `native/host/src/host.rs`, `native/host/src/protocol/router.rs`
-- Records never copy prompt text, page context, other payload members, raw frames, or error messages. Request identifiers are cut to 128 characters and JSON-escaped: `diagnostics_never_copy_request_content` and the `diagnostics.rs` unit tests
+- The host records `host.started`, `request.completed`, `request.failed`, `request.aborted`, `request.rejected`, and `host.stopped`, with one `request.*` record for every request it reads. Handlers report each request's outcome, and any conversation it created, to the loop: `native/host/src/host.rs`, `native/host/src/protocol/router.rs`
+- Records never copy prompt text, page context, other payload members, raw frames, or error messages. Identifiers are cut to 128 characters and JSON-escaped: `diagnostics_never_copy_request_content` and the `diagnostics.rs` unit tests
 - Diagnostics go only to stderr, and a failing stderr is ignored: `diagnostics_go_to_stderr_and_never_into_the_frames` and `the_logged_exit_code_matches_the_process` in `native/host/tests/cli.rs`, and `diagnostics_do_not_change_the_frames` in `native/host/src/host.rs`
 - The protocol fuzz target checks that every input yields three well-formed records (`native/fuzz/fuzz_targets/protocol.rs`), and `scripts/validate_host_protocol.py` checks the built host's stderr on the golden requests
 - Format and fields documented in `native/README.md` (Diagnostics)

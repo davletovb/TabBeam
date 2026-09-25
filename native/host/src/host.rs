@@ -114,28 +114,62 @@ fn serve<H: Handlers, R: Read + ?Sized, W: Write + ?Sized, L: Write>(
 ) -> Result<(), HostError> {
     events::write_host_ready(output).map_err(|_| HostError::Io)?;
 
+    // Every request read gets one record, even when the host stops while
+    // answering it.
     while let Some(frame) = framing::read_frame(input)? {
         match request::parse_request(&frame) {
             Ok(request) => {
                 let started = Instant::now();
-                let outcome =
-                    router::dispatch(handlers, output, &request).map_err(|_| HostError::Io)?;
+                let (record, result) = match router::dispatch(handlers, output, &request) {
+                    Ok(outcome) => (finished(&request, outcome, started.elapsed()), Ok(())),
+                    Err(_) => (
+                        aborted(&request, HostError::Io, started.elapsed()),
+                        Err(HostError::Io),
+                    ),
+                };
                 counts.requests += 1;
-                log.record(&finished(&request, outcome, started.elapsed()));
+                log.record(&record);
+                result?;
             }
             Err(failure) => {
-                events::write_request_failure(output, &failure).map_err(|_| HostError::Io)?;
+                let written = events::write_request_failure(output, &failure);
                 counts.rejected += 1;
                 log.record(&rejected(&failure));
+                written.map_err(|_| HostError::Io)?;
             }
         }
     }
     Ok(())
 }
 
-/// The record of a request a handler finished. It names the request's
-/// identifiers, never its input, context, or other payload members. Its
-/// conversation is the one the request continued or the one it created.
+/// The record of a request that reached a handler, before its outcome is
+/// known. It names the request's identifiers, never its input, context, or
+/// other payload members.
+fn handled<'a>(event: LifecycleEvent, request: &Request<'a>, elapsed: Duration) -> Record<'a> {
+    let mut record = Record::new(event);
+    record.request_id = Some(loggable_id(request.request_id.decode()));
+    record.method = Some(request.method.name());
+    match request.method {
+        Method::ConversationSend {
+            provider_id,
+            conversation_id,
+        } => {
+            record.provider_id = Some(loggable_id(provider_id.decode()));
+            record.conversation_id = conversation_id.map(|id| loggable_id(id.decode()));
+        }
+        Method::ProviderStatus { provider_id } => {
+            record.provider_id = provider_id.map(|id| loggable_id(id.decode()));
+        }
+        Method::RequestCancel { target_request_id } => {
+            record.target_request_id = Some(loggable_id(target_request_id.decode()));
+        }
+    }
+    record.duration_ms = Some(millis(elapsed));
+    record
+}
+
+/// The record of a request a handler finished. Its conversation is the one the
+/// request created, if it created one, or else the one it continued.
 fn finished<'a>(request: &Request<'a>, outcome: Outcome, elapsed: Duration) -> Record<'a> {
     let (event, error) = match outcome.end {
         End::Completed => (LifecycleEvent::RequestCompleted, None),
@@ -144,25 +178,19 @@ fn finished<'a>(request: &Request<'a>, outcome: Outcome, elapsed: Duration) -> R
             Some(LoggedError { code, reason }),
         ),
     };
-    let (provider_id, conversation_id) = match request.method {
-        Method::ConversationSend {
-            provider_id,
-            conversation_id,
-        } => (Some(provider_id), conversation_id),
-        Method::ProviderStatus { provider_id } => (provider_id, None),
-        Method::RequestCancel { .. } => (None, None),
-    };
-
-    let mut record = Record::new(event);
-    record.request_id = Some(request.request_id.decode());
-    record.method = Some(request.method.name());
-    record.provider_id = provider_id.map(|id| loggable_id(id.decode()));
-    record.conversation_id = outcome
-        .created_conversation_id
-        .or_else(|| conversation_id.map(JsonStr::decode))
-        .map(loggable_id);
-    record.duration_ms = Some(millis(elapsed));
+    let mut record = handled(event, request, elapsed);
+    if let Some(created) = outcome.created_conversation_id {
+        record.conversation_id = Some(loggable_id(created));
+    }
     record.error = error;
+    record
+}
+
+/// The record of a request whose handler stopped with `error` before the
+/// request ended, such as when stdout closed mid-answer.
+fn aborted<'a>(request: &Request<'a>, error: HostError, elapsed: Duration) -> Record<'a> {
+    let mut record = handled(LifecycleEvent::RequestAborted, request, elapsed);
+    record.reason = Some(error.reason());
     record
 }
 
@@ -170,7 +198,7 @@ fn finished<'a>(request: &Request<'a>, outcome: Outcome, elapsed: Duration) -> R
 /// copied into it.
 fn rejected<'a>(failure: &RequestFailure<'a>) -> Record<'a> {
     let mut record = Record::new(LifecycleEvent::RequestRejected);
-    record.request_id = failure.request_id.map(RequestId::decode);
+    record.request_id = failure.request_id.map(|id| loggable_id(id.decode()));
     record.error = Some(LoggedError {
         code: ErrorCode::InvalidRequest,
         reason: failure.kind.reason(),
@@ -725,6 +753,7 @@ mod tests {
             serde_json::json!({"code": "PROVIDER_NOT_FOUND", "reason": "PROVIDER_NOT_INSTALLED"})
         );
         assert_eq!(records[5]["method"], "request.cancel");
+        assert_eq!(records[5]["target_request_id"], "req_ok");
         assert_eq!(records[5]["error"]["reason"], "UNKNOWN_TARGET_REQUEST");
 
         let stopped = &records[6];
@@ -797,6 +826,83 @@ mod tests {
         assert_eq!(failures, 3);
         assert_eq!(request_records[0]["conversation_id"], "fake-conversation");
         assert_eq!(request_records[1]["conversation_id"], "c1");
+    }
+
+    #[test]
+    fn a_request_the_host_stops_answering_is_still_recorded() {
+        /// Accepts `capacity` bytes, then fails like a closed pipe.
+        struct BreakingPipe {
+            capacity: usize,
+        }
+
+        impl Write for BreakingPipe {
+            fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+                if self.capacity == 0 {
+                    return Err(std::io::ErrorKind::BrokenPipe.into());
+                }
+                let written = buffer.len().min(self.capacity);
+                self.capacity -= written;
+                Ok(written)
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        // stdout closes right after host.ready, while the request is answered.
+        let run_until_stdout_closes = |request: &str| {
+            let mut ready = Vec::new();
+            events::write_host_ready(&mut ready).unwrap();
+            let mut output = BreakingPipe {
+                capacity: ready.len(),
+            };
+            let mut log = Diagnostics::new(Vec::new());
+            let result = run(&mut framed(&[request]).as_slice(), &mut output, &mut log);
+            assert_eq!(result, Err(HostError::Io));
+            let records: Vec<serde_json::Value> = String::from_utf8(log.into_inner())
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+            let stopped = &records[records.len() - 1];
+            assert_eq!(stopped["reason"], "io_error");
+            assert_eq!(stopped["exit_code"], 2);
+            records
+        };
+
+        let records = run_until_stdout_closes(
+            r#"{"version":1,"type":"request","request_id":"req_cut","method":"conversation.send","payload":{"provider_id":"fake","conversation_id":"conv_1","input":{"text":"hi"}}}"#,
+        );
+        assert_eq!(
+            record_events(&records),
+            ["host.started", "request.aborted", "host.stopped"]
+        );
+        let aborted = &records[1];
+        assert_eq!(aborted["request_id"], "req_cut");
+        assert_eq!(aborted["method"], "conversation.send");
+        assert_eq!(aborted["provider_id"], "fake");
+        assert_eq!(aborted["conversation_id"], "conv_1");
+        assert_eq!(aborted["reason"], "io_error");
+        assert!(aborted["duration_ms"].is_u64());
+        assert!(aborted.get("error").is_none());
+        assert_eq!(
+            (&records[2]["requests"], &records[2]["rejected"]),
+            (&1.into(), &0.into())
+        );
+
+        let records = run_until_stdout_closes(
+            r#"{"version":1,"type":"request","request_id":"req_bad","method":"provider.spawn","payload":{}}"#,
+        );
+        assert_eq!(
+            record_events(&records),
+            ["host.started", "request.rejected", "host.stopped"]
+        );
+        assert_eq!(records[1]["request_id"], "req_bad");
+        assert_eq!(
+            (&records[2]["requests"], &records[2]["rejected"]),
+            (&0.into(), &1.into())
+        );
     }
 
     #[test]

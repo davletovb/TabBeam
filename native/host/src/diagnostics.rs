@@ -4,8 +4,8 @@
 //! Native Messaging frames, so diagnostics can never corrupt them. A record
 //! names identifiers, timings, and outcomes, but never request content: no
 //! prompt text, page context, unknown payload members, or raw frame bytes.
-//! Provider and conversation IDs are truncated, and JSON escaping keeps each
-//! record on one line whatever they contain.
+//! Identifiers are truncated, and JSON escaping keeps each record on one line
+//! whatever they contain.
 
 use std::borrow::Cow;
 use std::io::Write;
@@ -15,7 +15,7 @@ use serde::Serialize;
 
 use crate::protocol::events::ErrorCode;
 
-/// Longest provider or conversation ID, in characters, copied into a record.
+/// Longest identifier, in characters, copied into a record.
 pub const MAX_LOGGED_ID_CHARS: usize = 128;
 
 /// Lifecycle events a record can describe.
@@ -32,6 +32,9 @@ pub enum LifecycleEvent {
     RequestCompleted,
     #[serde(rename = "request.failed")]
     RequestFailed,
+    /// The host stopped while a handler was writing the request's events.
+    #[serde(rename = "request.aborted")]
+    RequestAborted,
 }
 
 /// A normalized error (DOC-02): its code and reason, never its message.
@@ -53,6 +56,8 @@ pub struct Record<'a> {
     pub provider_id: Option<Cow<'a, str>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub conversation_id: Option<Cow<'a, str>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_request_id: Option<Cow<'a, str>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -80,6 +85,7 @@ impl Record<'_> {
             method: None,
             provider_id: None,
             conversation_id: None,
+            target_request_id: None,
             duration_ms: None,
             error: None,
             host_version: None,
