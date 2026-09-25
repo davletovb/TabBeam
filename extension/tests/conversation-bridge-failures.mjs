@@ -14,7 +14,7 @@ async function settle() {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 const id = "conv_00000000-0000-4000-8000-000000000001";
-/** @param {{send?: (request: any, owner: any) => void, setSession?: () => Promise<void>}} [options] */
+/** @param {{send?: (request: any, owner: any) => void, setSession?: () => Promise<void>, getPrivate?: () => Promise<any>}} [options] */
 function harness(options = {}) {
   const port = new MockPort("pervue.ask");
   /** @type {{request: any, owner: any}[]} */
@@ -23,10 +23,13 @@ function harness(options = {}) {
   const finishes = [];
   const inFlight = new Set();
   const store = {
-    async getPrivate() { return {
-      id, provider_id: "codex", provider_session_id: "host_session",
-      messages: [{ role: "user", text: "Previous" }, { role: "assistant", text: "Answer", status: "complete" }]
-    }; },
+    async getPrivate() {
+      if (options.getPrivate) return options.getPrivate();
+      return {
+        id, provider_id: "codex", provider_session_id: "host_session",
+        messages: [{ role: "user", text: "Previous" }, { role: "assistant", text: "Answer", status: "complete" }]
+      };
+    },
     async begin() { return { assistantId: "msg_2" }; },
     async setSession() { if (options.setSession) await options.setSession(); },
     /** @param {...any} args */
@@ -91,6 +94,39 @@ function harness(options = {}) {
   await settle();
   assert.equal(finishes.length, 1, "late completion cannot replace the saved failure");
   assert.equal(inFlight.has(id), false);
+}
+{
+  // EXT-12: a Stop message targets the in-flight native request and uses a
+  // fresh request ID for the cancellation command.
+  const { port, sent } = harness();
+  port.emitMessage({ type: "ask", text: "Long answer" });
+  await settle();
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].request.method, "conversation.send");
+  const target = sent[0].request.request_id;
+  port.emitMessage({ type: "cancel" });
+  assert.equal(sent.length, 2);
+  assert.equal(sent[1].request.method, "request.cancel");
+  assert.equal(sent[1].request.payload.target_request_id, target);
+  assert.notEqual(sent[1].request.request_id, target);
+}
+{
+  // Cancellation is remembered while a follow-up is loading from storage,
+  // then sent immediately after the native request is registered.
+  let release;
+  const stored = new Promise((resolve) => { release = resolve; });
+  const { port, sent } = harness({ getPrivate: () => stored });
+  port.emitMessage({ type: "ask", text: "Follow-up", conversation_id: id });
+  port.emitMessage({ type: "cancel" });
+  assert.equal(sent.length, 0);
+  release({
+    id, provider_id: "codex", provider_session_id: "host_session",
+    messages: [{ role: "user", text: "Previous" }, { role: "assistant", text: "Answer", status: "complete" }]
+  });
+  await settle();
+  assert.equal(sent[0].request.method, "conversation.send");
+  assert.equal(sent[1].request.method, "request.cancel");
+  assert.equal(sent[1].request.payload.target_request_id, sent[0].request.request_id);
 }
 {
   const { port, sent, finishes } = harness({
