@@ -1,9 +1,11 @@
 export const THEME_STORAGE_KEY = "pervue.theme";
+/** @typedef {"system" | "light" | "dark"} ThemePreference */
+/** @type {readonly ThemePreference[]} */
 export const THEME_PREFERENCES = Object.freeze(["system", "light", "dark"]);
 
-/** @param {unknown} value */
+/** @param {unknown} value @returns {ThemePreference} */
 export function normalizeThemePreference(value) {
-  return THEME_PREFERENCES.includes(/** @type {any} */ (value)) ? value : "system";
+  return value === "light" || value === "dark" || value === "system" ? value : "system";
 }
 
 /**
