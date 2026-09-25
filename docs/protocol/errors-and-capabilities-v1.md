@@ -97,6 +97,8 @@ Retryability is reason-dependent:
 - rate limiting/unavailability/process crash MAY be retryable;
 - rejected request is normally not retryable without modifying the request.
 
+The Codex adapter reports `WORKSPACE_UNAVAILABLE` when the directory it runs Codex in can't be created, or other users could change it (SEC-02). It isn't retryable until the directory's owner or permissions change.
+
 ### `REQUEST_CANCELLED`
 The target request was cancelled intentionally.
 

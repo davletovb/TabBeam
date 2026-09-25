@@ -221,6 +221,25 @@ fn records(log: Diagnostics<Vec<u8>>) -> Vec<Value> {
         .collect()
 }
 
+/// The ID the extension would give the request named `name`: `req_` and a
+/// UUID, the one shape the host's diagnostics keep, here spelling `name` (16
+/// bytes at most) in hex.
+pub fn request_id_for(name: &str) -> String {
+    assert!(name.len() <= 16, "{name} is too long");
+    let value = name
+        .bytes()
+        .fold(0_u128, |value, byte| (value << 8) | u128::from(byte));
+    let hex = format!("{value:032x}");
+    format!(
+        "req_{}-{}-{}-{}-{}",
+        &hex[..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..]
+    )
+}
+
 /// The `(request_id, event)` of each event after `host.ready`.
 pub fn names(events: &[Value]) -> Vec<(&str, &str)> {
     events[1..]

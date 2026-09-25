@@ -13,8 +13,8 @@
 //! signed-out `codex exec` retries the network instead of failing. Only its
 //! exit status is read: its output names the account and a masked key.
 //!
-//! Codex runs in a workspace only its user can reach, with a minimal
-//! environment (SEC-02): the variables every provider gets
+//! Codex runs in a workspace nobody but its user can change ([`workspace`]),
+//! with a minimal environment (SEC-02): the variables every provider gets
 //! ([`environment::INHERITED`]), Codex's own settings, and a `PATH` that
 //! starts with Codex's directory.
 
@@ -36,6 +36,7 @@ use crate::protocol::events::{
 use crate::stream::{BUSY_LIMIT, LineStream, Output};
 
 pub mod output;
+mod workspace;
 
 use output::Line;
 
@@ -124,6 +125,13 @@ const START_FAILED: ErrorBody<'static> = ErrorBody {
     retryable: false,
 };
 
+const NO_WORKSPACE: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::ProviderFailed,
+    reason: "WORKSPACE_UNAVAILABLE",
+    message: "Pervue couldn't prepare a private folder for Codex. Make sure your cache folder exists and only you can change it, then try again.",
+    retryable: false,
+};
+
 const PROCESS_EXITED: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROCESS_EXITED",
@@ -161,19 +169,23 @@ impl Launch {
         }
     }
 
-    /// `codex` with `args`, in the workspace, with only its environment. The
-    /// workspace is created first, so no process starts without it.
-    fn command<I>(&self, executable: &Path, args: I) -> std::io::Result<ProcessSpec>
+    /// The workspace, created if needed and checked before every launch:
+    /// the path Codex runs in and is pointed at.
+    fn workspace(&self) -> std::io::Result<PathBuf> {
+        workspace::prepare(&self.work_dir)
+    }
+
+    /// `codex` with `args`, in `workspace`, with only its environment.
+    fn command<I>(&self, workspace: &Path, executable: &Path, args: I) -> ProcessSpec
     where
         I: IntoIterator,
         I::Item: Into<OsString>,
     {
-        prepare_workspace(&self.work_dir)?;
-        Ok(ProcessSpec::new(executable)
+        ProcessSpec::new(executable)
             .args(args)
             .envs(self.inherited.iter().cloned())
             .env("PATH", search_path_for(executable, self.path.as_deref()))
-            .current_dir(&self.work_dir))
+            .current_dir(workspace)
     }
 }
 
@@ -190,11 +202,12 @@ impl Codex {
     /// empty workspace in the user's own cache directory.
     pub fn installed() -> Self {
         let host: Vec<_> = std::env::vars_os().collect();
-        Self::new(SearchPath::from_env(), workspace(&host))
+        Self::new(SearchPath::from_env(), workspace::default(&host))
     }
 
     /// Looks for `codex` in `search`, and runs it in `work_dir`, which it
-    /// creates when needed, with variables from the host's environment.
+    /// creates when needed and refuses if other users could change it, with
+    /// variables from the host's environment.
     pub fn new(search: SearchPath, work_dir: PathBuf) -> Self {
         Self {
             search,
@@ -227,67 +240,6 @@ impl Codex {
 
     fn executable(&self) -> Option<PathBuf> {
         self.search.find(EXECUTABLE)
-    }
-}
-
-/// Where an installed host runs Codex: an empty directory in the user's own
-/// cache, which other users can't write to. In a shared temporary directory,
-/// such as `/tmp` on Linux, another user could plant files there, such as
-/// instructions for Codex to follow. Without a cache directory, a new one
-/// with a random name in the temporary directory.
-fn workspace(host: &[(OsString, OsString)]) -> PathBuf {
-    cache_dir(host).map_or_else(
-        || {
-            std::env::temp_dir().join(format!(
-                "pervue-codex-{:016x}",
-                RandomState::new().hash_one(SystemTime::now())
-            ))
-        },
-        |cache| cache.join("codex-workspace"),
-    )
-}
-
-/// Pervue's directory in the user's cache.
-#[cfg(target_vendor = "apple")]
-fn cache_dir(host: &[(OsString, OsString)]) -> Option<PathBuf> {
-    absolute(host, "HOME").map(|home| home.join("Library/Caches/Pervue"))
-}
-
-/// Pervue's directory in the user's cache.
-#[cfg(all(unix, not(target_vendor = "apple")))]
-fn cache_dir(host: &[(OsString, OsString)]) -> Option<PathBuf> {
-    absolute(host, "XDG_CACHE_HOME")
-        .map(|cache| cache.join("pervue"))
-        .or_else(|| absolute(host, "HOME").map(|home| home.join(".cache/pervue")))
-}
-
-/// Pervue's directory in the user's cache.
-#[cfg(not(unix))]
-fn cache_dir(host: &[(OsString, OsString)]) -> Option<PathBuf> {
-    absolute(host, "LOCALAPPDATA").map(|local| local.join("Pervue"))
-}
-
-/// The variable `name` as a path, if it is set to an absolute one.
-fn absolute(host: &[(OsString, OsString)], name: &str) -> Option<PathBuf> {
-    environment::lookup(host, name)
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-}
-
-/// Creates the workspace if needed. On POSIX, the directories created are
-/// open to their user alone.
-fn prepare_workspace(dir: &Path) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(dir)
-    }
-    #[cfg(not(unix))]
-    {
-        std::fs::create_dir_all(dir)
     }
 }
 
@@ -379,7 +331,8 @@ fn status_update(availability: Availability, authentication: Authentication) -> 
 
 /// `codex login status`: exit status 0 means signed in, 1 signed out.
 fn probe(launch: &Launch, executable: &Path) -> std::io::Result<Process> {
-    let mut process = Process::spawn(&launch.command(executable, ["login", "status"])?)?;
+    let workspace = launch.workspace()?;
+    let mut process = Process::spawn(&launch.command(&workspace, executable, ["login", "status"]))?;
     process.close_stdin();
     Ok(process)
 }
@@ -504,6 +457,9 @@ enum Stage {
 impl Turn {
     /// Starts `codex exec` and hands it the question.
     fn start(&mut self) {
+        let Ok(workspace) = self.launch.workspace() else {
+            return self.end(Update::Failed(NO_WORKSPACE));
+        };
         let mut args: Vec<OsString> = [
             "exec",
             "--json",
@@ -514,17 +470,12 @@ impl Turn {
         ]
         .map(OsString::from)
         .into();
-        args.push(self.launch.work_dir.clone().into());
+        args.push(workspace.clone().into());
         if let Some(thread_id) = &self.resume {
             args.extend(["resume", thread_id].map(OsString::from));
         }
         args.push("-".into());
-        let spawned = self
-            .launch
-            .command(&self.executable, args)
-            .and_then(|spec| Process::spawn(&spec));
-
-        match spawned {
+        match Process::spawn(&self.launch.command(&workspace, &self.executable, args)) {
             Ok(mut process) => {
                 // The question goes on stdin: it can exceed the size one
                 // argument may have, and no shell ever sees it.
@@ -711,61 +662,6 @@ impl Exchange for Turn {
 mod tests {
     use super::*;
 
-    fn vars(pairs: &[(&str, &str)]) -> Vec<(OsString, OsString)> {
-        pairs
-            .iter()
-            .map(|(name, value)| (OsString::from(name), OsString::from(value)))
-            .collect()
-    }
-
-    #[cfg(target_vendor = "apple")]
-    #[test]
-    fn the_workspace_is_in_the_users_cache() {
-        assert_eq!(
-            workspace(&vars(&[("HOME", "/Users/me")])),
-            PathBuf::from("/Users/me/Library/Caches/Pervue/codex-workspace")
-        );
-    }
-
-    #[cfg(all(unix, not(target_vendor = "apple")))]
-    #[test]
-    fn the_workspace_is_in_the_users_cache() {
-        assert_eq!(
-            workspace(&vars(&[("HOME", "/home/me")])),
-            PathBuf::from("/home/me/.cache/pervue/codex-workspace")
-        );
-        assert_eq!(
-            workspace(&vars(&[("HOME", "/home/me"), ("XDG_CACHE_HOME", "/cache")])),
-            PathBuf::from("/cache/pervue/codex-workspace")
-        );
-        // A relative cache directory would depend on the working directory.
-        assert_eq!(
-            workspace(&vars(&[("HOME", "/home/me"), ("XDG_CACHE_HOME", "cache")])),
-            PathBuf::from("/home/me/.cache/pervue/codex-workspace")
-        );
-    }
-
-    #[cfg(not(unix))]
-    #[test]
-    fn the_workspace_is_in_the_users_cache() {
-        assert_eq!(
-            workspace(&vars(&[("LOCALAPPDATA", r"C:\Users\me\AppData\Local")])),
-            PathBuf::from(r"C:\Users\me\AppData\Local\Pervue\codex-workspace")
-        );
-    }
-
-    #[test]
-    fn without_a_cache_the_workspace_gets_a_new_name() {
-        let first = workspace(&vars(&[("HOME", "relative"), ("LOCALAPPDATA", "relative")]));
-        let second = workspace(&[]);
-        for dir in [&first, &second] {
-            assert_eq!(dir.parent(), Some(std::env::temp_dir().as_path()));
-            let name = dir.file_name().unwrap().to_str().unwrap();
-            assert!(name.starts_with("pervue-codex-"), "{name}");
-        }
-        assert_ne!(first, second);
-    }
-
     #[test]
     fn codex_s_directory_comes_first_on_its_path() {
         let (codex, inherited) = if cfg!(unix) {
@@ -782,24 +678,5 @@ mod tests {
             std::env::split_paths(&alone).collect::<Vec<_>>(),
             [Path::new(codex).parent().unwrap()]
         );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn the_workspace_is_created_for_its_user_alone() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let root =
-            std::env::temp_dir().join(format!("pervue-workspace-test-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        let dir = root.join("cache/codex-workspace");
-        prepare_workspace(&dir).unwrap();
-        for created in [&root.join("cache"), &dir] {
-            let mode = std::fs::metadata(created).unwrap().permissions().mode();
-            assert_eq!(mode & 0o777, 0o700, "{}", created.display());
-        }
-        // Already there: nothing to do.
-        prepare_workspace(&dir).unwrap();
-        std::fs::remove_dir_all(&root).unwrap();
     }
 }

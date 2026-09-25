@@ -5,10 +5,14 @@ import { createNativeConnectionManager } from "../src/background/native-connecti
 import {
   CAPABILITY_KEYS,
   HOST_OUT_OF_DATE,
+  STATUS_TIMED_OUT,
   checkProviderStatus
 } from "../src/background/status-bridge.js";
 import { STATUS_WAIT_MS, bindProviderState, providerView } from "../src/popup/provider-state.js";
-import { PROVIDER_STATUS_MESSAGE } from "../src/shared/provider-status.js";
+import {
+  PROVIDER_STATUS_MESSAGE,
+  PROVIDER_STATUS_TIMEOUT_MS
+} from "../src/shared/provider-status.js";
 import { DEFAULT_PROVIDER_ID } from "../src/shared/providers.js";
 import { MockPort } from "./support/mock-port.mjs";
 
@@ -41,7 +45,12 @@ function worker({ connectFails = false } = {}) {
   return {
     manager,
     ports,
-    /** @param {{providerId?: string}} [options] */
+    /**
+     * @param {{
+     *   providerId?: string,
+     *   timers?: {schedule?: (callback: () => void, ms: number) => any, cancel?: (timer: any) => void}
+     * }} [options]
+     */
     check(options = {}) {
       return checkProviderStatus({
         manager,
@@ -151,6 +160,86 @@ function hostEvent(requestId, event, payload = {}) {
   answer = check();
   ports[0].emitMessage(hostEvent("req_status_1", "response.failed", { error: { code: 7 } }));
   assert.deepEqual(await answer, { provider_id: "codex", error: HOST_OUT_OF_DATE });
+
+  // A code outside DOC-02's frozen vocabulary, however well formed the rest,
+  // comes from a host speaking another version of the protocol.
+  ({ ports, check } = worker());
+  answer = check();
+  ports[0].emitMessage(
+    hostEvent("req_status_1", "response.failed", {
+      error: { code: "SOME_FUTURE_ERROR", reason: "NEW_REASON", message: "...", retryable: false }
+    })
+  );
+  assert.deepEqual(await answer, { provider_id: "codex", error: HOST_OUT_OF_DATE });
+
+  // Every DOC-02 error passes through, without its metadata.
+  for (const error of DOC_02.valid_errors) {
+    ({ ports, check } = worker());
+    answer = check();
+    ports[0].emitMessage(hostEvent("req_status_1", "response.failed", { error }));
+    const { code, reason, message, retryable } = error;
+    assert.deepEqual(
+      await answer,
+      { provider_id: "codex", error: { code, reason, message, retryable } },
+      code
+    );
+  }
+}
+
+{
+  // A host that never ends the request: the worker answers when its time is
+  // up, stops routing the request, and keeps the connection for the next one.
+  /** @type {{callback: () => void, ms: number, cancelled: boolean}[]} */
+  const timers = [];
+  const fakeTimers = {
+    /** @param {() => void} callback @param {number} ms */
+    schedule(callback, ms) {
+      const timer = { callback, ms, cancelled: false };
+      timers.push(timer);
+      return timer;
+    },
+    /** @param {{cancelled: boolean}} timer */
+    cancel(timer) {
+      timer.cancelled = true;
+    }
+  };
+  const { manager, ports, check } = worker();
+  const answer = check({ timers: fakeTimers });
+  ports[0].emitMessage(hostEvent("req_status_1", "provider.status", { provider_id: "codex", status: READY }));
+  assert.equal(timers.length, 1);
+  assert.equal(timers[0].ms, PROVIDER_STATUS_TIMEOUT_MS);
+  assert.equal(manager.pendingRequestCount, 1);
+  timers[0].callback();
+  assert.deepEqual(await answer, { provider_id: "codex", error: STATUS_TIMED_OUT });
+  assert.equal(manager.pendingRequestCount, 0);
+  // Its late end changes nothing.
+  ports[0].emitMessage(hostEvent("req_status_1", "response.completed"));
+  assert.equal(manager.pendingRequestCount, 0);
+
+  // The next check uses the same connection, and its answer stops its timer.
+  const next = check({ timers: fakeTimers });
+  assert.equal(ports.length, 1);
+  ports[0].emitMessage(hostEvent("req_status_2", "provider.status", { provider_id: "codex", status: READY }));
+  ports[0].emitMessage(hostEvent("req_status_2", "response.completed"));
+  assert.deepEqual(await next, { provider_id: "codex", status: READY });
+  assert.equal(timers.length, 2);
+  assert.equal(timers[1].cancelled, true);
+
+  // A connection that can't open answers at once, with no timer.
+  const failed = await checkProviderStatus({
+    manager: createNativeConnectionManager({
+      connectNative() {
+        throw new Error("mock connectNative failure");
+      },
+      reportError() {}
+    }),
+    timers: fakeTimers
+  });
+  assert.deepEqual(failed, { provider_id: "codex", error: HOST_START_FAILED });
+  assert.equal(timers.length, 2);
+
+  // The popup waits longer than the worker, so the worker's answer is shown.
+  assert.ok(STATUS_WAIT_MS > PROVIDER_STATUS_TIMEOUT_MS);
 }
 
 {

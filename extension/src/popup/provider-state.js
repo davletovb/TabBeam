@@ -6,7 +6,9 @@ import { DEFAULT_PROVIDER_ID, providerLabel } from "../shared/providers.js";
 
 /**
  * How long the popup waits for the provider's status before it stops saying
- * it is checking. The host gives up on a stuck sign-in check sooner.
+ * it is checking. The service worker answers sooner, within
+ * PROVIDER_STATUS_TIMEOUT_MS, so the popup gives up on its own only if the
+ * worker never answers.
  */
 export const STATUS_WAIT_MS = 20_000;
 

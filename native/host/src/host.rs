@@ -15,6 +15,7 @@
 //! event.
 
 use std::borrow::Cow;
+use std::collections::HashSet;
 use std::io::{Read, Write};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
 use std::thread;
@@ -23,7 +24,9 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 
 use crate::HOST_VERSION;
-use crate::diagnostics::{Diagnostics, LifecycleEvent, LoggedError, Record, loggable_id, millis};
+use crate::diagnostics::{
+    self, Diagnostics, LifecycleEvent, LoggedError, Record, issued_id, millis,
+};
 use crate::framing::{self, FrameError};
 use crate::limits::MAX_FRAME_SIZE;
 use crate::protocol::events::{
@@ -210,6 +213,7 @@ where
             log: &mut *log,
             counts: &mut counts,
             running: Vec::new(),
+            conversations: HashSet::new(),
         };
         session.serve(&frames)
     });
@@ -284,9 +288,9 @@ struct Canceller {
 impl Canceller {
     fn record(&self, event: LifecycleEvent, error: Option<ErrorBody<'static>>) -> Record<'_> {
         let mut record = Record::new(event);
-        record.request_id = Some(loggable_id(Cow::Borrowed(&self.id.value)));
+        record.request_id = Some(diagnostics::request_id(Cow::Borrowed(&self.id.value)));
         record.method = Some("request.cancel");
-        record.target_request_id = Some(loggable_id(Cow::Borrowed(&self.target)));
+        record.target_request_id = Some(diagnostics::request_id(Cow::Borrowed(&self.target)));
         record.duration_ms = Some(millis(self.started_at.elapsed()));
         record.error = error.as_ref().map(logged);
         record
@@ -315,6 +319,8 @@ struct Running {
     id: Id,
     method: &'static str,
     provider_id: Option<String>,
+    /// Whether the host serves the provider the request names.
+    provider_served: bool,
     conversation_id: Option<String>,
     /// The provider's limits for a `conversation.send`; none for status checks.
     timeouts: Option<Timeouts>,
@@ -332,16 +338,19 @@ impl Running {
     fn new(
         id: Id,
         method: &'static str,
-        provider_id: Option<String>,
+        provider: Option<(String, bool)>,
         conversation_id: Option<String>,
         timeouts: Option<Timeouts>,
         exchange: Box<dyn Exchange>,
     ) -> Self {
         let now = Instant::now();
+        let (provider_id, provider_served) =
+            provider.map_or((None, false), |(id, served)| (Some(id), served));
         Self {
             id,
             method,
             provider_id,
+            provider_served,
             conversation_id,
             timeouts,
             stop_grace: timeouts.map_or(STATUS_STOP_GRACE, |timeouts| timeouts.stop_grace),
@@ -377,18 +386,24 @@ impl Running {
     }
 
     /// This request's record: identifiers and timing, never its content.
-    fn record(&self, event: LifecycleEvent, error: Option<ErrorBody<'static>>) -> Record<'_> {
+    /// `conversations` holds the conversations the host created.
+    fn record<'a>(
+        &'a self,
+        event: LifecycleEvent,
+        error: Option<ErrorBody<'static>>,
+        conversations: &HashSet<String>,
+    ) -> Record<'a> {
         let mut record = Record::new(event);
-        record.request_id = Some(loggable_id(Cow::Borrowed(&self.id.value)));
+        record.request_id = Some(diagnostics::request_id(Cow::Borrowed(&self.id.value)));
         record.method = Some(self.method);
         record.provider_id = self
             .provider_id
             .as_deref()
-            .map(|id| loggable_id(Cow::Borrowed(id)));
+            .map(|id| issued_id(id, self.provider_served));
         record.conversation_id = self
             .conversation_id
             .as_deref()
-            .map(|id| loggable_id(Cow::Borrowed(id)));
+            .map(|id| issued_id(id, conversations.contains(id)));
         record.duration_ms = Some(millis(self.started_at.elapsed()));
         record.error = error.as_ref().map(logged);
         record
@@ -409,6 +424,9 @@ struct Session<'a, W: ?Sized, L: Write> {
     log: &'a mut Diagnostics<L>,
     counts: &'a mut Counts,
     running: Vec<Running>,
+    /// The conversations the host's providers created, whose IDs records may
+    /// hold.
+    conversations: HashSet<String>,
 }
 
 impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
@@ -475,7 +493,7 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
             self.counts.rejected += 1;
             let written = write_failure(self.output, &id.raw, DUPLICATE_REQUEST_ID);
             let mut record = Record::new(LifecycleEvent::RequestRejected);
-            record.request_id = Some(loggable_id(Cow::Borrowed(&id.value)));
+            record.request_id = Some(diagnostics::request_id(Cow::Borrowed(&id.value)));
             record.method = Some(request.method.name());
             record.error = Some(logged(&DUPLICATE_REQUEST_ID));
             self.log.record(&record);
@@ -492,22 +510,22 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
             } => {
                 let provider_id = provider_id.decode().into_owned();
                 let conversation_id = conversation_id.map(|id| id.decode().into_owned());
-                let (exchange, timeouts): (Box<dyn Exchange>, _) =
-                    match self.providers.get(&provider_id) {
-                        Some(provider) => (
-                            provider.send(SendRequest {
-                                text: text.decode().into_owned(),
-                                conversation_id: conversation_id.clone(),
-                                has_context,
-                            }),
-                            Some(provider.timeouts()),
-                        ),
-                        None => (Box::new(Scripted::failed(PROVIDER_NOT_INSTALLED)), None),
-                    };
+                let provider = self.providers.get(&provider_id);
+                let (exchange, timeouts): (Box<dyn Exchange>, _) = match provider {
+                    Some(provider) => (
+                        provider.send(SendRequest {
+                            text: text.decode().into_owned(),
+                            conversation_id: conversation_id.clone(),
+                            has_context,
+                        }),
+                        Some(provider.timeouts()),
+                    ),
+                    None => (Box::new(Scripted::failed(PROVIDER_NOT_INSTALLED)), None),
+                };
                 Running::new(
                     id,
                     "conversation.send",
-                    Some(provider_id),
+                    Some((provider_id, provider.is_some())),
                     conversation_id,
                     timeouts,
                     exchange,
@@ -515,14 +533,21 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
             }
             Method::ProviderStatus { provider_id } => {
                 let provider_id = provider_id.map(|id| id.decode().into_owned());
-                let exchange: Box<dyn Exchange> = match &provider_id {
+                let provider = provider_id.as_deref().map(|id| self.providers.get(id));
+                let exchange: Box<dyn Exchange> = match provider {
                     None => Box::new(StatusOfAll::new(self.providers)),
-                    Some(provider_id) => match self.providers.get(provider_id) {
-                        Some(provider) => provider.status(),
-                        None => Box::new(Scripted::failed(PROVIDER_NOT_INSTALLED)),
-                    },
+                    Some(Some(provider)) => provider.status(),
+                    Some(None) => Box::new(Scripted::failed(PROVIDER_NOT_INSTALLED)),
                 };
-                Running::new(id, "provider.status", provider_id, None, None, exchange)
+                let served = matches!(provider, Some(Some(_)));
+                Running::new(
+                    id,
+                    "provider.status",
+                    provider_id.map(|id| (id, served)),
+                    None,
+                    None,
+                    exchange,
+                )
             }
             Method::RequestCancel { target_request_id } => {
                 return self.cancel(Canceller {
@@ -616,6 +641,9 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                 return Ok(Pumped::Waiting);
             };
             running.last_update = Instant::now();
+            if let Update::ConversationCreated(conversation_id) = &update {
+                self.conversations.insert(conversation_id.clone());
+            }
             if update.is_terminal() {
                 let running = self.running.remove(index);
                 self.finish(running, update)?;
@@ -646,11 +674,15 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                     Event::ResponseCompleted,
                     &ResponseCompleted {},
                 ),
-                running.record(LifecycleEvent::RequestCompleted, None),
+                running.record(LifecycleEvent::RequestCompleted, None, &self.conversations),
             ),
             Some(error) => (
                 write_failure(self.output, &running.id.raw, error),
-                running.record(LifecycleEvent::RequestFailed, Some(error)),
+                running.record(
+                    LifecycleEvent::RequestFailed,
+                    Some(error),
+                    &self.conversations,
+                ),
             ),
         };
         let mut result = log_outcome(self.log, record, written);
@@ -700,7 +732,7 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
     /// processes.
     fn abort(&mut self) -> HostError {
         for running in self.running.drain(..) {
-            let record = running.record(LifecycleEvent::RequestAborted, None);
+            let record = running.record(LifecycleEvent::RequestAborted, None, &self.conversations);
             let _ = log_outcome(self.log, record, Err(Undeliverable));
             if let Some(Stop::Cancelled(cancellers)) = &running.stop {
                 for canceller in cancellers {
@@ -807,7 +839,9 @@ fn log_outcome<L: Write>(
 /// copied into it.
 fn rejected<'a>(failure: &RequestFailure<'a>) -> Record<'a> {
     let mut record = Record::new(LifecycleEvent::RequestRejected);
-    record.request_id = failure.request_id.map(|id| loggable_id(id.decode()));
+    record.request_id = failure
+        .request_id
+        .map(|id| diagnostics::request_id(id.decode()));
     record.error = Some(LoggedError {
         code: ErrorCode::InvalidRequest,
         reason: failure.kind.reason(),
@@ -857,6 +891,24 @@ mod tests {
             request_id,
             "request.cancel",
             &format!(r#"{{"target_request_id":"{target}"}}"#),
+        )
+    }
+
+    /// A request ID in the shape the extension gives every request, the only
+    /// one diagnostics keep, spelling `name` (16 bytes at most) in hex.
+    fn rid(name: &str) -> String {
+        assert!(name.len() <= 16, "{name} is too long");
+        let value = name
+            .bytes()
+            .fold(0_u128, |value, byte| (value << 8) | u128::from(byte));
+        let hex = format!("{value:032x}");
+        format!(
+            "req_{}-{}-{}-{}-{}",
+            &hex[..8],
+            &hex[8..12],
+            &hex[12..16],
+            &hex[16..20],
+            &hex[20..]
         )
     }
 
@@ -1869,9 +1921,11 @@ mod tests {
     fn a_request_the_host_stops_answering_is_still_recorded() {
         let records = run_until_stdout_closes(
             &Providers::scaffold(),
-            &[
-                r#"{"version":1,"type":"request","request_id":"req_cut","method":"conversation.send","payload":{"provider_id":"fake","conversation_id":"conv_1","input":{"text":"hi"}}}"#,
-            ],
+            &[&request(
+                &rid("cut"),
+                "conversation.send",
+                r#"{"provider_id":"fake","conversation_id":"conv_1","input":{"text":"hi"}}"#,
+            )],
             0,
         );
         let events: Vec<&str> = records
@@ -1880,10 +1934,11 @@ mod tests {
             .collect();
         assert_eq!(events, ["host.started", "request.aborted", "host.stopped"]);
         let aborted = &records[1];
-        assert_eq!(aborted["request_id"], "req_cut");
+        assert_eq!(aborted["request_id"], rid("cut"));
         assert_eq!(aborted["method"], "conversation.send");
         assert_eq!(aborted["provider_id"], "fake");
-        assert_eq!(aborted["conversation_id"], "conv_1");
+        // Named by the request, not created by this host.
+        assert_eq!(aborted["conversation_id"], diagnostics::REDACTED);
         assert_eq!(aborted["reason"], "io_error");
         assert!(aborted["duration_ms"].is_u64());
         assert!(aborted.get("error").is_none());
@@ -1915,10 +1970,10 @@ mod tests {
         // stdout closes on the request's first event, `conversation.created`.
         // The provider has created the conversation, so the record names it.
         let records =
-            run_until_stdout_closes(&Providers::scaffold(), &[&send("req_new", "fake")], 0);
+            run_until_stdout_closes(&Providers::scaffold(), &[&send(&rid("new"), "fake")], 0);
         let aborted = &records[1];
         assert_eq!(aborted["event"], "request.aborted");
-        assert_eq!(aborted["request_id"], "req_new");
+        assert_eq!(aborted["request_id"], rid("new"));
         assert_eq!(aborted["conversation_id"], fake::CONVERSATION_ID);
     }
 
@@ -1933,9 +1988,9 @@ mod tests {
         let records = run_until_stdout_closes(
             &providers,
             &[
-                &send("req_slow", "slow"),
-                &cancel("req_cancel", "req_slow"),
-                &send("req_fast", "fake"),
+                &send(&rid("slow"), "slow"),
+                &cancel(&rid("cancel"), &rid("slow")),
+                &send(&rid("fast"), "fake"),
             ],
             0,
         );
@@ -1950,14 +2005,17 @@ mod tests {
             })
             .collect();
         aborted.sort_unstable();
-        assert_eq!(
-            aborted,
-            [
-                ("req_cancel", "request.cancel"),
-                ("req_fast", "conversation.send"),
-                ("req_slow", "conversation.send"),
-            ]
-        );
+        let mut expected = [
+            (rid("cancel"), "request.cancel"),
+            (rid("fast"), "conversation.send"),
+            (rid("slow"), "conversation.send"),
+        ];
+        expected.sort_unstable();
+        let expected: Vec<(&str, &str)> = expected
+            .iter()
+            .map(|(id, method)| (id.as_str(), *method))
+            .collect();
+        assert_eq!(aborted, expected);
         assert!(records.iter().all(|record| record.get("error").is_none()));
     }
 
@@ -1996,15 +2054,20 @@ mod tests {
     #[test]
     fn diagnostics_record_the_session_lifecycle() {
         // The request ID is written with an escape; the record holds it decoded.
-        let escaped_id = format!("r{}u0065q_ok", '\\');
+        let ok = rid("ok");
+        let escaped_id = format!("r{}u0065{}", '\\', &ok[2..]);
         let input = framed(&[
-            r#"{"version":1,"type":"request","request_id":"req_bad","method":"provider.spawn","payload":{}}"#,
+            &request(&rid("bad"), "provider.spawn", "{}"),
             "{not json",
             &format!(
                 r#"{{"version":1,"type":"request","request_id":"{escaped_id}","method":"conversation.send","payload":{{"provider_id":"fake","conversation_id":"conv_1","input":{{"text":"hi"}}}}}}"#
             ),
-            r#"{"version":1,"type":"request","request_id":"req_status","method":"provider.status","payload":{"provider_id":"codex"}}"#,
-            r#"{"version":1,"type":"request","request_id":"req_cancel","method":"request.cancel","payload":{"target_request_id":"req_ok"}}"#,
+            &request(
+                &rid("status"),
+                "provider.status",
+                r#"{"provider_id":"codex"}"#,
+            ),
+            &cancel(&rid("cancel"), &ok),
         ]);
         let session = run_host(&input);
         assert_eq!(session.result, Ok(()));
@@ -2031,7 +2094,7 @@ mod tests {
         assert_eq!(records[0]["host_version"], HOST_VERSION);
         assert_eq!(records[0]["pid"], std::process::id());
 
-        assert_eq!(records[1]["request_id"], "req_bad");
+        assert_eq!(records[1]["request_id"], rid("bad"));
         assert_eq!(
             records[1]["error"],
             json!({"code": "INVALID_REQUEST", "reason": "UNKNOWN_METHOD"})
@@ -2039,22 +2102,24 @@ mod tests {
         assert!(records[2].get("request_id").is_none());
         assert_eq!(records[2]["error"]["reason"], "MALFORMED_MESSAGE");
 
-        assert_eq!(records[3]["request_id"], "req_ok");
+        assert_eq!(records[3]["request_id"], ok);
         assert_eq!(records[3]["method"], "conversation.send");
         assert_eq!(records[3]["provider_id"], "fake");
-        assert_eq!(records[3]["conversation_id"], "conv_1");
+        assert_eq!(records[3]["conversation_id"], diagnostics::REDACTED);
         assert!(records[3]["duration_ms"].is_u64());
         assert!(records[3].get("error").is_none());
 
-        assert_eq!(records[4]["request_id"], "req_status");
+        assert_eq!(records[4]["request_id"], rid("status"));
         assert_eq!(records[4]["method"], "provider.status");
-        assert_eq!(records[4]["provider_id"], "codex");
+        // This host serves the fake provider alone.
+        assert_eq!(records[4]["provider_id"], diagnostics::REDACTED);
         assert_eq!(
             records[4]["error"],
             json!({"code": "PROVIDER_NOT_FOUND", "reason": "PROVIDER_NOT_INSTALLED"})
         );
+        assert_eq!(records[5]["request_id"], rid("cancel"));
         assert_eq!(records[5]["method"], "request.cancel");
-        assert_eq!(records[5]["target_request_id"], "req_ok");
+        assert_eq!(records[5]["target_request_id"], ok);
         assert_eq!(records[5]["error"]["reason"], "UNKNOWN_TARGET_REQUEST");
 
         let stopped = &records[6];
@@ -2069,18 +2134,22 @@ mod tests {
     fn cancellations_are_recorded_with_their_target() {
         let session = run_session(
             &with(TestProvider::new("slow", Script::waits())),
-            framed(&[&send("req_slow", "slow"), &cancel("req_cancel", "req_slow")]).as_slice(),
+            framed(&[
+                &send(&rid("slow"), "slow"),
+                &cancel(&rid("cancel"), &rid("slow")),
+            ])
+            .as_slice(),
         );
         let records = &session.records;
-        assert_eq!(records[1]["request_id"], "req_slow");
+        assert_eq!(records[1]["request_id"], rid("slow"));
         assert_eq!(records[1]["event"], "request.failed");
         assert_eq!(
             records[1]["error"],
             json!({"code": "REQUEST_CANCELLED", "reason": "USER_CANCELLED"})
         );
-        assert_eq!(records[2]["request_id"], "req_cancel");
+        assert_eq!(records[2]["request_id"], rid("cancel"));
         assert_eq!(records[2]["event"], "request.completed");
-        assert_eq!(records[2]["target_request_id"], "req_slow");
+        assert_eq!(records[2]["target_request_id"], rid("slow"));
     }
 
     #[test]
@@ -2088,27 +2157,27 @@ mod tests {
         // Across every path, a request is recorded as failed exactly when its
         // last frame is response.failed, with the same code and reason. Its
         // conversation is the one conversation.created announced, or else the
-        // one the request continued.
+        // one the request continued, which only this host could have created.
         let requests = [
-            send("send_new", "fake"),
+            send(&rid("send_new"), "fake"),
             request(
-                "send_existing",
+                &rid("send_existing"),
                 "conversation.send",
                 r#"{"provider_id":"fake","conversation_id":"c1","input":{"text":"hi"}}"#,
             ),
-            send("send_unknown", "codex"),
-            request("status_all", "provider.status", "{}"),
+            send(&rid("send_unknown"), "codex"),
+            request(&rid("status_all"), "provider.status", "{}"),
             request(
-                "status_fake",
+                &rid("status_fake"),
                 "provider.status",
                 r#"{"provider_id":"fake"}"#,
             ),
             request(
-                "status_unknown",
+                &rid("status_unknown"),
                 "provider.status",
                 r#"{"provider_id":"codex"}"#,
             ),
-            cancel("cancel", "send_new"),
+            cancel(&rid("cancel"), &rid("send_new")),
         ];
         let frames: Vec<&str> = requests.iter().map(String::as_str).collect();
         let session = run_host(&framed(&frames));
@@ -2117,7 +2186,9 @@ mod tests {
         let mut conversations = HashMap::new();
         for request in &requests {
             let request: Value = serde_json::from_str(request).unwrap();
-            let conversation_id = request["payload"].get("conversation_id").cloned();
+            let conversation_id = request["payload"]
+                .get("conversation_id")
+                .map(|_| Value::from(diagnostics::REDACTED));
             conversations.insert(
                 request["request_id"].as_str().unwrap().to_owned(),
                 conversation_id,
@@ -2156,7 +2227,7 @@ mod tests {
         }
         assert_eq!(failures, 3);
         assert_eq!(request_records[0]["conversation_id"], "fake-conversation");
-        assert_eq!(request_records[1]["conversation_id"], "c1");
+        assert_eq!(request_records[1]["conversation_id"], diagnostics::REDACTED);
     }
 
     #[test]
@@ -2204,24 +2275,47 @@ mod tests {
     }
 
     #[test]
-    fn credentials_passed_as_identifiers_are_redacted_in_diagnostics() {
-        // SEC-02: a secret where an ID belongs, in each identifier a record
-        // names, still never reaches the diagnostics.
-        const KEY: &str = "sk-proj-SECRETabcd1234";
-        let input = framed(&[
-            &send(KEY, "fake"),
-            &send("req_provider", KEY),
-            &request(
-                "req_conversation",
+    fn identifiers_pervue_did_not_issue_are_redacted_in_diagnostics() {
+        // SEC-02: a record keeps a request ID only in the extension's shape, a
+        // provider only if this host serves it, and a conversation only if
+        // this host created it. Anything else, such as a secret where an ID
+        // belongs, recognizable or not, never reaches the diagnostics.
+        const KEYS: [&str; 3] = [
+            "sk-proj-SECRETabcd1234",
+            "ya29.SECRETa0AfH6SMBx3dEFG",
+            "SECRET",
+        ];
+        let mut frames = Vec::new();
+        for key in KEYS {
+            frames.extend([
+                send(key, "fake"),
+                send(&rid("provider"), key),
+                request(
+                    &rid("conversation"),
+                    "conversation.send",
+                    &format!(
+                        r#"{{"provider_id":"fake","conversation_id":"{key}","input":{{"text":"hi"}}}}"#
+                    ),
+                ),
+                cancel(&rid("cancel"), key),
+                request(key, "no.such.method", "{}"),
+            ]);
+        }
+        // What this host issued is kept: its provider, and a conversation it
+        // created, continued.
+        frames.extend([
+            send(&rid("new"), "fake"),
+            request(
+                &rid("continued"),
                 "conversation.send",
                 &format!(
-                    r#"{{"provider_id":"fake","conversation_id":"{KEY}","input":{{"text":"hi"}}}}"#
+                    r#"{{"provider_id":"fake","conversation_id":"{}","input":{{"text":"hi"}}}}"#,
+                    fake::CONVERSATION_ID
                 ),
             ),
-            &cancel("req_cancel", KEY),
-            &request("ghp_SECRET0123456789", "no.such.method", "{}"),
         ]);
-        let session = run_host(&input);
+        let frames: Vec<&str> = frames.iter().map(String::as_str).collect();
+        let session = run_host(&framed(&frames));
         assert_eq!(session.result, Ok(()));
         let records: Vec<String> = session.records.iter().map(Value::to_string).collect();
         assert!(
@@ -2238,13 +2332,20 @@ mod tests {
                 session
                     .records
                     .iter()
-                    .any(|record| record[field] == crate::diagnostics::REDACTED),
+                    .any(|record| record[field] == diagnostics::REDACTED),
                 "{field} was never redacted: {records:?}"
             );
         }
+        let continued = session
+            .records
+            .iter()
+            .find(|record| record["request_id"] == rid("continued"))
+            .unwrap();
+        assert_eq!(continued["provider_id"], "fake");
+        assert_eq!(continued["conversation_id"], fake::CONVERSATION_ID);
         // The frames still echo the request IDs: they go to the extension,
         // which sent them.
-        assert!(session.frames.iter().any(|frame| frame.contains(KEY)));
+        assert!(session.frames.iter().any(|frame| frame.contains(KEYS[0])));
     }
 
     #[test]

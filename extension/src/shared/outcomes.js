@@ -26,6 +26,17 @@ export const FAILURE_KINDS = Object.freeze({
 });
 
 /**
+ * Whether `code` is a DOC-02 error code: one of the keys of
+ * {@link FAILURE_KINDS}, a vocabulary DOC-02 freezes.
+ *
+ * @param {unknown} code
+ * @returns {code is string}
+ */
+export function isErrorCode(code) {
+  return typeof code === "string" && Object.hasOwn(FAILURE_KINDS, code);
+}
+
+/**
  * What each kind says when its error has no message of its own.
  * @type {Readonly<Record<string, string>>}
  */
@@ -62,8 +73,7 @@ const PROTOCOL_REASONS = new Set([
  *   message to show, and whether to show a reference with it
  */
 export function describeFailure(error) {
-  const code = typeof error?.code === "string" ? error.code : "";
-  const kind = Object.hasOwn(FAILURE_KINDS, code) ? FAILURE_KINDS[code] : "internal-error";
+  const kind = isErrorCode(error?.code) ? FAILURE_KINDS[error.code] : "internal-error";
   const message =
     typeof error?.message === "string" && error.message.trim() !== ""
       ? error.message

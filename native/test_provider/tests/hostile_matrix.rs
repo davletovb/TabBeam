@@ -19,7 +19,7 @@ use std::time::Duration;
 use pervue_host::providers::Timeouts;
 use pervue_host::providers::codex::Limits;
 use serde_json::Value;
-use support::{FakeCodex, PacedInput, Session, TEST_LIMITS, serve_timed};
+use support::{FakeCodex, PacedInput, Session, TEST_LIMITS, request_id_for, serve_timed};
 
 /// How long a session may wait for its requests to end. Every case expects
 /// far less: this only keeps a broken host from hanging the test.
@@ -59,7 +59,7 @@ fn ask(pause_ms: u64, request_id: &'static str, text: &str) -> Frame {
     let json = serde_json::json!({
         "version": 1,
         "type": "request",
-        "request_id": request_id,
+        "request_id": request_id_for(request_id),
         "method": "conversation.send",
         "payload": {"provider_id": "codex", "input": {"text": text}}
     });
@@ -74,7 +74,7 @@ fn status(pause_ms: u64, request_id: &'static str) -> Frame {
     let json = serde_json::json!({
         "version": 1,
         "type": "request",
-        "request_id": request_id,
+        "request_id": request_id_for(request_id),
         "method": "provider.status",
         "payload": {"provider_id": "codex"}
     });
@@ -89,9 +89,9 @@ fn cancel(pause_ms: u64, request_id: &'static str, target: &str) -> Frame {
     let json = serde_json::json!({
         "version": 1,
         "type": "request",
-        "request_id": request_id,
+        "request_id": request_id_for(request_id),
         "method": "request.cancel",
-        "payload": {"target_request_id": target}
+        "payload": {"target_request_id": request_id_for(target)}
     });
     Frame {
         pause: Duration::from_millis(pause_ms),
@@ -449,7 +449,12 @@ fn run(case: &Case) {
         .iter()
         .map(|frame| (frame.pause, frame.json.as_str()))
         .collect();
-    let waiting: Vec<&str> = case.expect.iter().map(|(id, _, _)| *id).collect();
+    let waiting: Vec<String> = case
+        .expect
+        .iter()
+        .map(|(name, _, _)| request_id_for(name))
+        .collect();
+    let waiting: Vec<&str> = waiting.iter().map(String::as_str).collect();
     let session = serve_timed(
         codex.adapter_with(case.limits),
         PacedInput::new(&frames, SESSION_LIMIT),
@@ -492,7 +497,8 @@ fn check(case: &Case, session: &Session, request_id: &str, ending: &Ending, with
         .position(|frame| frame.request_id == request_id)
         .expect("an expected request is sent");
     let sent = session.sent[index];
-    let events = session.of(request_id);
+    let wire_id = request_id_for(request_id);
+    let events = session.of(&wire_id);
     let kinds: Vec<&str> = events
         .iter()
         .map(|timed| timed.event["event"].as_str().unwrap())
@@ -524,7 +530,7 @@ fn check(case: &Case, session: &Session, request_id: &str, ending: &Ending, with
         .records
         .iter()
         .find(|record| {
-            record["request_id"] == request_id
+            record["request_id"] == wire_id.as_str()
                 && matches!(
                     record["event"].as_str(),
                     Some("request.completed" | "request.failed")

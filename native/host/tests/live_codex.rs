@@ -33,9 +33,13 @@ const STATUS_TIMEOUT: Duration = Duration::from_secs(30);
 /// A real model can take a while.
 const ANSWER_TIMEOUT: Duration = Duration::from_secs(300);
 
-const STATUS: &str = r#"{"version":1,"type":"request","request_id":"req_status","method":"provider.status","payload":{"provider_id":"codex"}}"#;
+/// Request IDs in the shape the extension gives its requests, which the
+/// host's diagnostics keep.
+const STATUS_ID: &str = "req_5a7a0000-0000-4000-8000-000000000001";
+const ASK_ID: &str = "req_5a7a0000-0000-4000-8000-000000000002";
+const STATUS: &str = r#"{"version":1,"type":"request","request_id":"req_5a7a0000-0000-4000-8000-000000000001","method":"provider.status","payload":{"provider_id":"codex"}}"#;
 const QUESTION: &str = "Reply with the single word: pong";
-const ASK: &str = r#"{"version":1,"type":"request","request_id":"req_live","method":"conversation.send","payload":{"provider_id":"codex","input":{"text":"Reply with the single word: pong"}}}"#;
+const ASK: &str = r#"{"version":1,"type":"request","request_id":"req_5a7a0000-0000-4000-8000-000000000002","method":"conversation.send","payload":{"provider_id":"codex","input":{"text":"Reply with the single word: pong"}}}"#;
 
 /// Environment variables that may hold a credential in a CI job.
 const CREDENTIAL_VARIABLES: &[&str] = &["OPENAI_API_KEY", "CODEX_API_KEY"];
@@ -202,7 +206,7 @@ fn live_codex_answers_a_question() {
 
     // Discovery and sign-in.
     host.send(STATUS);
-    let status = host.until_end("req_status", STATUS_TIMEOUT);
+    let status = host.until_end(STATUS_ID, STATUS_TIMEOUT);
     let state = &status
         .iter()
         .find(|event| event["event"] == "provider.status")
@@ -221,7 +225,7 @@ fn live_codex_answers_a_question() {
 
     // Send, stream, and complete.
     host.send(ASK);
-    let answer = host.until_end("req_live", ANSWER_TIMEOUT);
+    let answer = host.until_end(ASK_ID, ANSWER_TIMEOUT);
     let took = started.elapsed();
     let last = answer.last().unwrap();
     if last["event"] == "response.failed"

@@ -65,9 +65,10 @@ When the popup opens, a line under its title shows the state of the companion ap
 | Codex not signed in | Codex isn't signed in. Sign in to Codex, then try again. |
 | Codex can't start | Codex is installed but can't start. Reinstall it, then try again. |
 | Companion app missing, or unreachable | The failure's own message, such as "Pervue's companion app isn't installed. Install it, then try again." |
-| No answer within 20 seconds, or an unknown state | Pervue couldn't check Codex. |
+| Companion app not answering within 15 seconds | Pervue's companion app didn't answer in time. Try again. |
+| No answer from the service worker within 20 seconds, or an unknown state | Pervue couldn't check Codex. |
 
-A status that doesn't follow DOC-02, such as one missing a capability, means the companion app speaks another version of the protocol: "Pervue's companion app needs an update. Update it, then try again." (`HOST_UNAVAILABLE` / `HOST_PROTOCOL_MISMATCH`). Asking stays possible whatever the line says, and each question keeps the line current: an answer shows Codex ready, and a missing app or provider, or a sign-in, shows what the question found.
+A status or error that doesn't follow DOC-02, such as a status missing a capability or an error whose `code` isn't one of DOC-02's, means the companion app speaks another version of the protocol: "Pervue's companion app needs an update. Update it, then try again." (`HOST_UNAVAILABLE` / `HOST_PROTOCOL_MISMATCH`). The service worker waits 15 seconds for the host's answer (`PROVIDER_STATUS_TIMEOUT_MS`); the host gives up on a stuck sign-in check after 10, so only a host that has stopped answering takes that long. Then the worker answers `REQUEST_TIMEOUT` / `REQUEST_DEADLINE_EXCEEDED` and stops listening for that request, so nothing stays pending in the worker. Asking stays possible whatever the line says, and each question keeps the line current: an answer shows Codex ready, and a missing app or provider, or a sign-in, shows what the question found.
 
 A failed question's status line shows the error's message and its kind, decided by the DOC-02 `code` alone (`src/shared/outcomes.js`), never by the message:
 

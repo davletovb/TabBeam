@@ -7,6 +7,7 @@ mod support;
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use pervue_host::protocol::events::{Authentication, Availability, Capability, ErrorCode};
@@ -253,12 +254,11 @@ fn a_question_streams_its_answer_and_opens_a_conversation() {
     assert_eq!(invocations.len(), 2);
     assert!(invocations[0].starts_with("login status\t"));
     let (command, path) = invocations[1].split_once('\t').unwrap();
-    let work = codex.dir.join("work");
     assert_eq!(
         command,
         format!(
             "exec --json --skip-git-repo-check --sandbox read-only -C {} -",
-            work.display()
+            workspace(&codex).display()
         )
     );
     // Codex's own directory comes first on its PATH, for `node`.
@@ -302,6 +302,16 @@ fn a_conversation_continues_its_codex_thread() {
 }
 
 /// What each Codex run saw: its command, working directory, and environment.
+/// The path Codex gets for its workspace: on POSIX, with every link resolved.
+fn workspace(codex: &FakeCodex) -> PathBuf {
+    let work = codex.dir.join("work");
+    if cfg!(unix) {
+        std::fs::canonicalize(&work).expect("the workspace exists")
+    } else {
+        work
+    }
+}
+
 fn launches(codex: &FakeCodex) -> Vec<(String, String, BTreeMap<String, String>)> {
     codex
         .read("codex-environment")
@@ -425,11 +435,76 @@ fn codex_runs_in_its_own_workspace() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn codex_gets_the_workspace_s_real_path() {
+    use pervue_host::providers::discovery::SearchPath;
+    use std::path::Path;
+
+    // Reached through a link, the workspace is checked, and given to Codex,
+    // as the directory the link resolves to.
+    let codex = FakeCodex::install("answers", "signed-in");
+    let real = codex.dir.join("real");
+    std::fs::create_dir(&real).unwrap();
+    std::os::unix::fs::symlink(&real, codex.dir.join("link")).unwrap();
+    let adapter = Codex::new(
+        SearchPath::new([codex.dir.clone()]),
+        codex.dir.join("link/work"),
+    )
+    .with_limits(TEST_LIMITS);
+    run_to_end(adapter.send(ask("hi")).as_mut());
+
+    let resolved = std::fs::canonicalize(&real).unwrap().join("work");
+    let invocations = codex.invocations();
+    let (command, _) = invocations.last().unwrap().split_once('\t').unwrap();
+    assert!(
+        command.ends_with(&format!(" -C {} -", resolved.display())),
+        "{command}"
+    );
+    for (command, cwd, _) in launches(&codex) {
+        assert_eq!(Path::new(&cwd), resolved, "{command}");
+    }
+}
+
 #[test]
 fn a_workspace_that_cannot_be_made_stops_codex_from_starting() {
     // Where the workspace should go, a file is in the way.
     let codex = FakeCodex::install("answers", "signed-in");
     std::fs::write(codex.dir.join("work"), b"not a directory").unwrap();
+    assert_refused(&codex);
+    assert!(codex.invocations().is_empty(), "codex ran");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_workspace_others_can_change_stops_codex_from_starting() {
+    use std::os::unix::fs::PermissionsExt;
+
+    // The check runs before every launch, not only when the workspace is new.
+    let codex = FakeCodex::install("answers", "signed-in");
+    assert_eq!(
+        status(&codex.adapter()),
+        (Availability::Available, Authentication::Authenticated)
+    );
+    let ran = codex.invocations().len();
+    // Anyone could now add `.git` and `AGENTS.md` above the workspace.
+    std::fs::set_permissions(&codex.dir, std::fs::Permissions::from_mode(0o1777)).unwrap();
+    assert_refused(&codex);
+    std::fs::set_permissions(&codex.dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    // A workspace that is a link could send Codex anywhere.
+    let work = codex.dir.join("work");
+    std::fs::remove_dir(&work).unwrap();
+    let elsewhere = codex.dir.join("elsewhere");
+    std::fs::create_dir(&elsewhere).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &work).unwrap();
+    assert_refused(&codex);
+    assert_eq!(codex.invocations().len(), ran, "codex ran");
+}
+
+/// Codex doesn't start: the status says so, and a question fails before
+/// anything runs.
+fn assert_refused(codex: &FakeCodex) {
     assert_eq!(
         status(&codex.adapter()),
         (Availability::Unavailable, Authentication::Unknown)
@@ -437,9 +512,8 @@ fn a_workspace_that_cannot_be_made_stops_codex_from_starting() {
     let updates = run_to_end(codex.adapter().send(ask("hi")).as_mut());
     assert_eq!(
         failure(&updates),
-        (ErrorCode::ProviderFailed, "PROVIDER_UNAVAILABLE")
+        (ErrorCode::ProviderFailed, "WORKSPACE_UNAVAILABLE")
     );
-    assert!(codex.invocations().is_empty(), "codex ran");
 }
 
 #[test]
@@ -612,7 +686,12 @@ fn cancelling_during_the_sign_in_check_runs_nothing() {
 /// How long the tests keep the input open for an answer to arrive.
 const ANSWER_TIME: Duration = Duration::from_secs(3);
 
-const SEND: &str = r#"{"version":1,"type":"request","request_id":"req_ask","method":"conversation.send","payload":{"provider_id":"codex","input":{"text":"What is this page about?"}}}"#;
+/// The IDs of the requests below, in the shape the extension gives its
+/// requests, which the host's diagnostics keep.
+const ASK: &str = "req_00000000-0000-4000-8000-000000000a5c";
+const STOP: &str = "req_00000000-0000-4000-8000-00000000057b";
+
+const SEND: &str = r#"{"version":1,"type":"request","request_id":"req_00000000-0000-4000-8000-000000000a5c","method":"conversation.send","payload":{"provider_id":"codex","input":{"text":"What is this page about?"}}}"#;
 
 #[test]
 fn a_question_travels_through_the_host_as_protocol_events() {
@@ -625,11 +704,11 @@ fn a_question_travels_through_the_host_as_protocol_events() {
     assert_eq!(
         names(&events),
         [
-            ("req_ask", "conversation.created"),
-            ("req_ask", "response.started"),
-            ("req_ask", "response.delta"),
-            ("req_ask", "response.delta"),
-            ("req_ask", "response.completed"),
+            (ASK, "conversation.created"),
+            (ASK, "response.started"),
+            (ASK, "response.delta"),
+            (ASK, "response.delta"),
+            (ASK, "response.completed"),
         ]
     );
     let conversation_id = events[1]["payload"]["conversation_id"].as_str().unwrap();
@@ -669,13 +748,15 @@ fn a_long_answer_is_split_into_frames_that_fit() {
 #[test]
 fn a_cancel_request_stops_codex_mid_turn() {
     let codex = FakeCodex::install("goes-quiet", "signed-in");
-    let cancel = r#"{"version":1,"type":"request","request_id":"req_stop","method":"request.cancel","payload":{"target_request_id":"req_ask"}}"#;
+    let cancel = format!(
+        r#"{{"version":1,"type":"request","request_id":"{STOP}","method":"request.cancel","payload":{{"target_request_id":"{ASK}"}}}}"#
+    );
     let (events, records) = serve(
         codex.adapter(),
         PacedInput::new(
             &[
                 (Duration::ZERO, SEND),
-                (Duration::from_millis(1500), cancel),
+                (Duration::from_millis(1500), cancel.as_str()),
             ],
             Duration::ZERO,
         ),
@@ -683,15 +764,15 @@ fn a_cancel_request_stops_codex_mid_turn() {
     assert_eq!(
         names(&events),
         [
-            ("req_ask", "conversation.created"),
-            ("req_ask", "response.started"),
-            ("req_ask", "response.failed"),
-            ("req_stop", "request.cancelled"),
+            (ASK, "conversation.created"),
+            (ASK, "response.started"),
+            (ASK, "response.failed"),
+            (STOP, "request.cancelled"),
         ]
     );
     assert_eq!(events[3]["payload"]["error"]["code"], "REQUEST_CANCELLED");
     assert_eq!(records[2]["event"], "request.completed");
-    assert_eq!(records[2]["target_request_id"], "req_ask");
+    assert_eq!(records[2]["target_request_id"], ASK);
     codex.assert_nothing_left_running();
 }
 
@@ -733,7 +814,7 @@ fn a_codex_that_never_starts_its_turn_times_out() {
         codex.adapter_with(limits),
         PacedInput::new(&[(Duration::ZERO, SEND)], Duration::from_secs(4)),
     );
-    assert_eq!(names(&events), [("req_ask", "response.failed")]);
+    assert_eq!(names(&events), [(ASK, "response.failed")]);
     assert_eq!(
         events[1]["payload"]["error"]["reason"],
         "PROVIDER_START_TIMEOUT"

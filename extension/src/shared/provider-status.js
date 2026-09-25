@@ -10,8 +10,18 @@
  *   `{availability, authentication, capabilities}`;
  * - `{provider_id, error}`: why there is no status, as a DOC-02 error, such as
  *   `HOST_NOT_INSTALLED` when the companion app is missing.
+ *
+ * The worker answers within {@link PROVIDER_STATUS_TIMEOUT_MS}.
  */
 export const PROVIDER_STATUS_MESSAGE = "pervue.provider-status";
+
+/**
+ * How long the worker waits for the host's answer. After that it answers with
+ * `REQUEST_TIMEOUT` and stops listening for the host's. The host itself gives
+ * up on a stuck sign-in check after 10 seconds, so only a host that has
+ * stopped answering takes this long.
+ */
+export const PROVIDER_STATUS_TIMEOUT_MS = 15_000;
 
 /**
  * @typedef {{
