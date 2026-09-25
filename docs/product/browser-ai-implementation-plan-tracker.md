@@ -579,6 +579,9 @@ Reached after **Milestone H**:
 - A test request travels from extension → host → fake provider and streamed deltas return to the popup.
 - The test verifies request IDs, ordering, completion, and one failure path.
 
+**Notes**
+- Also pin SEC-01's size boundary end to end with the built host: a request whose frame is exactly 1 MiB reaches the host and is answered, and one byte more is refused by the extension without reaching it (suggested in the SEC-01 review).
+
 **Status:** BACKLOG
 
 ---

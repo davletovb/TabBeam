@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 
 import argparse
-import json
 import struct
 import sys
 from pathlib import Path
 
+from max_len import max_frame_bytes
+
 # The frame limit shared by the extension and the host (SEC-01).
-CONTRACT = Path(__file__).resolve().parents[2] / "docs/protocol/native-messaging-v1.json"
-MAX_FRAME = json.loads(CONTRACT.read_text(encoding="utf-8"))["max_frame_bytes"]
+MAX_FRAME = max_frame_bytes()
 
 
 def prefix(length: int) -> bytes:

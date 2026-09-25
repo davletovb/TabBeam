@@ -104,7 +104,7 @@ Chrome starts the host only for the extensions its Native Messaging manifest lis
 ./target/debug/pervue-host --print-manifest <extension-id> [<extension-id>...]
 ```
 
-The output names `com.pervue.host`, points `path` at the absolute path of the binary that printed it, and lists one `chrome-extension://<id>/` origin per ID. Anything that isn't a 32-character `a`–`p` ID, such as a wildcard or a full origin, is refused with status 64. `extension/README.md` shows where to save the manifest for development; installers register it later (PKG-01).
+The output names `com.pervue.host`, points `path` at the absolute path the host was run from, and lists one `chrome-extension://<id>/` origin per ID. Anything that isn't a 32-character `a`–`p` ID, such as a wildcard or a full origin, is refused with status 64. The path isn't canonicalized: on macOS a symlink or `..` is kept as typed, while Linux reports the resolved path. That is deliberate, because a stable symlink can be the right path to register, where its versioned target would break on upgrade. Installers should run the host from the path they want registered (PKG-01). `extension/README.md` shows where to save the manifest for development; installers register it later (PKG-01).
 
 ## Fuzz targets
 
@@ -114,8 +114,8 @@ With nightly Rust and [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz) (`ca
 cd native
 python3 fuzz/create_corpus.py fuzz/corpus/frame_reader
 python3 fuzz/create_protocol_corpus.py fuzz/corpus/protocol --fixtures ../docs/protocol/fixtures/v1-golden.json
-cargo +nightly fuzz run frame_reader fuzz/corpus/frame_reader -- -runs=1000 -max_len=1048580
-cargo +nightly fuzz run protocol fuzz/corpus/protocol -- -runs=2000 -max_len=1048576
+cargo +nightly fuzz run frame_reader fuzz/corpus/frame_reader -- -runs=1000 -max_len="$(python3 fuzz/max_len.py frame_reader)"
+cargo +nightly fuzz run protocol fuzz/corpus/protocol -- -runs=2000 -max_len="$(python3 fuzz/max_len.py protocol)"
 ```
 
 cargo-fuzz builds the targets with AddressSanitizer. `frame_reader` reads frames from memory until the first non-frame result. `protocol` runs each input through the whole host as one request frame and fails if any emitted frame is not a JSON object.
