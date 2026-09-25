@@ -20,6 +20,8 @@ export default [
         HTMLFormElement: "readonly",
         HTMLTextAreaElement: "readonly",
         HTMLSelectElement: "readonly",
+        HTMLDetailsElement: "readonly",
+        globalThis: "readonly",
         structuredClone: "readonly",
         TextEncoder: "readonly",
         NodeFilter: "readonly",
