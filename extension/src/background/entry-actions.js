@@ -1,4 +1,4 @@
-import { captureContext, metadataForTab } from "./selection-capture.js";
+import { captureContext } from "./selection-capture.js";
 
 export const MENU_SELECTION_ID = "pervue-use-selection";
 export const MENU_PAGE_ID = "pervue-use-page";
@@ -16,7 +16,7 @@ const HANDOFF_MS = 30_000;
  * }} options
  */
 export function createEntryActions({ tabs, action, popupUrl }) {
-  /** @type {{tabId: number | undefined, pageUrl: string | null, token: string, expires: number, result: Promise<any>} | null} */
+  /** @type {{tabId: number | undefined, sourceUrl: string | null, token: string, expires: number, result: Promise<any>} | null} */
   let pending = null;
 
   /**
@@ -31,10 +31,11 @@ export function createEntryActions({ tabs, action, popupUrl }) {
 
     // Start the capture and open the popup while the context-menu gesture is
     // still active. Awaiting extraction first could lose the user gesture.
-    const metadata = metadataForTab(tab);
     const entry = {
       tabId: tab?.id,
-      pageUrl: metadata.ok ? metadata.page.url : null,
+      // Keep the exact URL only for the short-lived navigation check. It is
+      // never sent to the popup, provider, logs, or a URL parameter.
+      sourceUrl: typeof tab?.url === "string" ? tab.url : null,
       token: crypto.randomUUID(),
       expires: Date.now() + HANDOFF_MS,
       result: captureContext(tabs, mode, tab ?? {}, mode === "selection" ? info.selectionText ?? "" : undefined)
@@ -71,9 +72,8 @@ export function createEntryActions({ tabs, action, popupUrl }) {
       if (sender?.url !== popupUrl || message.token !== null) return { available: false };
       try {
         const [active] = await tabs.query({ active: true, currentWindow: true });
-        const activeMetadata = metadataForTab(active);
         if (active?.id !== entry.tabId ||
-            (entry.pageUrl !== null && (!activeMetadata.ok || activeMetadata.page.url !== entry.pageUrl))) {
+            (entry.sourceUrl !== null && active?.url !== entry.sourceUrl)) {
           // A different tab or navigation invalidates the one-time capture;
           // reopening the popup later cannot silently attach stale content.
           if (pending === entry) pending = null;

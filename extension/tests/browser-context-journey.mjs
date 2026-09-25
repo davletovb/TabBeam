@@ -267,4 +267,12 @@ function harness({ tab = webTab, pageReply = { ok: true, text: "Readable article
   assert.equal(app.controls.getContext(), null, "same-tab navigation invalidates the capture");
 }
 
+{
+  const app = harness();
+  await app.entries.onMenuClick({ menuItemId: MENU_PAGE_ID }, webTab);
+  app.setTab({ ...webTab, url: "https://user:pass@example.com/read?secret=2#part" });
+  await app.preload();
+  assert.equal(app.controls.getContext(), null, "query-only navigation invalidates stale content too");
+}
+
 console.log("EXT-09/10, SEC-03, TST-07 browser-context journey tests passed");
