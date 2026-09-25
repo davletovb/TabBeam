@@ -17,8 +17,10 @@
 //!
 //! On POSIX the child leads a new process group. Stopping it signals the whole
 //! group, so the processes it started stop too, and when it exits on its own
-//! the host kills any it left behind. On Windows only the child itself is
-//! stopped so far; stopping its whole tree needs a Job Object (ADR-0001).
+//! the host kills any it left behind. The host signals the group before it
+//! reaps the child: until then, the child's process ID, which is also the
+//! group's, can't be reused. On Windows only the child itself is stopped so
+//! far; stopping its whole tree needs a Job Object (ADR-0001).
 
 use std::ffi::OsString;
 use std::io::{self, Read, Write};
@@ -146,6 +148,8 @@ pub struct Process {
     threads: Vec<JoinHandle<()>>,
     ending: Ending,
     state: State,
+    /// Sees the child's exit before it is reaped.
+    exit_watch: tree::ExitWatch,
 }
 
 #[derive(Clone, Copy)]
@@ -192,6 +196,7 @@ impl Process {
             .stderr(Stdio::piped());
         tree::configure(&mut command);
         let mut child = command.spawn()?;
+        let exit_watch = tree::ExitWatch::new(&child);
 
         let stdin = child.stdin.take();
         let stdout = child.stdout.take();
@@ -205,6 +210,7 @@ impl Process {
             threads: Vec::new(),
             ending: Ending::Natural,
             state: State::Running,
+            exit_watch,
         };
 
         // If a helper thread can't start, dropping `process` kills the child.
@@ -353,8 +359,15 @@ impl Process {
             State::Running => {
                 self.ending = Ending::Killed;
                 tree::force_stop(&mut self.child);
-                let status = self.child.wait().ok();
-                self.reaped(status)
+                self.reap(true);
+                match self.state {
+                    State::Reaped {
+                        status,
+                        drain_until,
+                    } => (status, drain_until),
+                    State::Finished(exit) => return exit,
+                    State::Running => unreachable!("a blocking reap always reaps"),
+                }
             }
         };
         while self.open_streams > 0 && Instant::now() < drain_until {
@@ -398,33 +411,51 @@ impl Process {
 
     /// Reaps the process if it has exited.
     fn poll_exit(&mut self) {
+        self.reap(false);
+    }
+
+    /// Reaps the process once it has exited, waiting for that if `block` is
+    /// set, and stops whatever it left behind: descendants left in its group
+    /// would outlive it as orphans, and could hold its output open.
+    fn reap(&mut self, block: bool) {
         if !matches!(self.state, State::Running) {
             return;
         }
-        match self.child.try_wait() {
-            Ok(None) => {}
-            Ok(Some(status)) => {
-                self.reaped(Some(status));
+        let seen = if block {
+            self.exit_watch.wait(&self.child)
+        } else {
+            self.exit_watch.exited(&self.child)
+        };
+        let stopped_first = match seen {
+            Some(false) if !block => return,
+            // Exited but not reaped, so its process ID, and with it the
+            // group's, is still taken: the signal can reach only the group.
+            Some(true) => {
+                tree::stop_leftovers(&self.child);
+                true
             }
-            // Only something outside the host reaping the child fails this.
-            Err(_) => {
-                self.reaped(None);
+            // No way to tell without reaping: signal after it, see
+            // `tree::stop_leftovers`.
+            _ => false,
+        };
+        let status = if block {
+            self.child.wait().ok()
+        } else {
+            match self.child.try_wait() {
+                Ok(None) => return,
+                Ok(Some(status)) => Some(status),
+                // Only something outside the host reaping the child fails
+                // this.
+                Err(_) => None,
             }
+        };
+        if !stopped_first {
+            tree::stop_leftovers(&self.child);
         }
-    }
-
-    /// Records that the process was reaped and stops whatever it left behind.
-    /// Returns its status and how long to keep reading its output.
-    fn reaped(&mut self, status: Option<ExitStatus>) -> (Option<ExitStatus>, Instant) {
-        // Descendants left in the group would outlive the process as orphans,
-        // and could hold its output open.
-        tree::stop_leftovers(&self.child);
-        let drain_until = Instant::now() + DRAIN_TIMEOUT;
         self.state = State::Reaped {
             status,
-            drain_until,
+            drain_until: Instant::now() + DRAIN_TIMEOUT,
         };
-        (status, drain_until)
     }
 
     /// Waits up to `timeout` for output and throws it away.
@@ -519,14 +550,13 @@ mod tree {
         let _ = child.kill();
     }
 
-    /// Kills what is left of the group after the child was reaped. A process
-    /// group ID stays reserved while any member is alive, so when the child
-    /// left descendants, this reaches only them. When it left none, the ID is
-    /// free again: a group that took it in the microseconds since the reaping
-    /// would be hit instead, which takes process IDs wrapping around within
-    /// that window. Signalling before reaping would close it, but seeing the
-    /// exit without reaping needs `waitid` with `WNOWAIT`, which nix doesn't
-    /// offer on macOS (SEC-02).
+    /// Kills what is left of the child's group once the child has exited.
+    /// Called before the child is reaped, while its process ID, and so the
+    /// group's ID, can't be reused, it reaches only the child's own
+    /// descendants. Where [`ExitWatch`] can't see the exit first, it is
+    /// called just after reaping: a group ID stays taken while any member is
+    /// alive, so descendants are still all it can reach, but if none are left,
+    /// a group that took the ID in the microseconds since would be hit.
     pub fn stop_leftovers(child: &Child) {
         signal_group(child, Signal::SIGKILL);
     }
@@ -536,6 +566,177 @@ mod tree {
         if let Ok(group) = i32::try_from(child.id()) {
             if group > 1 {
                 let _ = killpg(Pid::from_raw(group), signal);
+            }
+        }
+    }
+
+    pub use exit_watch::ExitWatch;
+
+    /// Sees the exit with `waitid` and `WNOWAIT`, which leaves the child to
+    /// be reaped.
+    #[cfg(any(
+        target_os = "android",
+        target_os = "freebsd",
+        all(target_os = "linux", not(target_env = "uclibc"))
+    ))]
+    mod exit_watch {
+        use std::process::Child;
+
+        use nix::errno::Errno;
+        use nix::sys::wait::{Id, WaitPidFlag, WaitStatus, waitid};
+        use nix::unistd::Pid;
+
+        pub struct ExitWatch;
+
+        impl ExitWatch {
+            pub fn new(_child: &Child) -> Self {
+                Self
+            }
+
+            /// Whether the child has exited, still unreaped; `None` if that
+            /// can't be told.
+            pub fn exited(&mut self, child: &Child) -> Option<bool> {
+                let pid = Pid::from_raw(i32::try_from(child.id()).ok()?);
+                let flags = WaitPidFlag::WEXITED | WaitPidFlag::WNOHANG | WaitPidFlag::WNOWAIT;
+                match waitid(Id::Pid(pid), flags) {
+                    Ok(WaitStatus::StillAlive) => Some(false),
+                    Ok(_) => Some(true),
+                    Err(_) => None,
+                }
+            }
+
+            /// Waits until the child has exited, leaving it unreaped:
+            /// `Some(true)`, or `None` if that can't be told.
+            pub fn wait(&mut self, child: &Child) -> Option<bool> {
+                let pid = Pid::from_raw(i32::try_from(child.id()).ok()?);
+                let flags = WaitPidFlag::WEXITED | WaitPidFlag::WNOWAIT;
+                loop {
+                    match waitid(Id::Pid(pid), flags) {
+                        Ok(_) => return Some(true),
+                        Err(Errno::EINTR) => {}
+                        Err(_) => return None,
+                    }
+                }
+            }
+        }
+    }
+
+    /// Sees the exit with kqueue: the kernel posts `NOTE_EXIT` before the
+    /// child can be reaped. nix offers no `waitid` here.
+    #[cfg(target_vendor = "apple")]
+    mod exit_watch {
+        use std::process::Child;
+
+        use nix::errno::Errno;
+        use nix::libc::timespec;
+        use nix::sys::event::{EvFlags, EventFilter, FilterFlag, KEvent, Kqueue};
+
+        /// A timeout that only polls.
+        const NOW: timespec = timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+
+        pub struct ExitWatch {
+            /// `None` if the child couldn't be watched.
+            queue: Option<Kqueue>,
+            exited: bool,
+        }
+
+        impl ExitWatch {
+            /// Watches `child` from now on. A child already exiting can't be
+            /// watched (`ESRCH`), and counts as exited.
+            pub fn new(child: &Child) -> Self {
+                let unwatched = |exited| Self {
+                    queue: None,
+                    exited,
+                };
+                let (Ok(queue), Ok(pid)) = (Kqueue::new(), usize::try_from(child.id())) else {
+                    return unwatched(false);
+                };
+                let exit = KEvent::new(
+                    pid,
+                    EventFilter::EVFILT_PROC,
+                    EvFlags::EV_ADD | EvFlags::EV_ONESHOT,
+                    FilterFlag::NOTE_EXIT,
+                    0,
+                    0,
+                );
+                match queue.kevent(&[exit], &mut [], Some(NOW)) {
+                    Ok(_) => Self {
+                        queue: Some(queue),
+                        exited: false,
+                    },
+                    Err(Errno::ESRCH) => unwatched(true),
+                    Err(_) => unwatched(false),
+                }
+            }
+
+            /// Whether the child has exited, still unreaped; `None` if that
+            /// can't be told.
+            pub fn exited(&mut self, _child: &Child) -> Option<bool> {
+                self.check(Some(NOW))
+            }
+
+            /// Waits until the child has exited, leaving it unreaped:
+            /// `Some(true)`, or `None` if that can't be told.
+            pub fn wait(&mut self, _child: &Child) -> Option<bool> {
+                self.check(None).filter(|&exited| exited)
+            }
+
+            /// Collects `NOTE_EXIT`, waiting up to `timeout`, or for as long
+            /// as it takes if there is none.
+            fn check(&mut self, timeout: Option<timespec>) -> Option<bool> {
+                if self.exited {
+                    return Some(true);
+                }
+                let queue = self.queue.as_ref()?;
+                let mut events = [KEvent::new(
+                    0,
+                    EventFilter::EVFILT_PROC,
+                    EvFlags::empty(),
+                    FilterFlag::empty(),
+                    0,
+                    0,
+                )];
+                loop {
+                    match queue.kevent(&[], &mut events, timeout) {
+                        Ok(0) => return Some(false),
+                        Ok(_) if !events[0].flags().contains(EvFlags::EV_ERROR) => {
+                            self.exited = true;
+                            return Some(true);
+                        }
+                        Err(Errno::EINTR) => {}
+                        _ => return None,
+                    }
+                }
+            }
+        }
+    }
+
+    /// Elsewhere the exit shows only when the child is reaped.
+    #[cfg(not(any(
+        target_vendor = "apple",
+        target_os = "android",
+        target_os = "freebsd",
+        all(target_os = "linux", not(target_env = "uclibc"))
+    )))]
+    mod exit_watch {
+        use std::process::Child;
+
+        pub struct ExitWatch;
+
+        impl ExitWatch {
+            pub fn new(_child: &Child) -> Self {
+                Self
+            }
+
+            pub fn exited(&mut self, _child: &Child) -> Option<bool> {
+                None
+            }
+
+            pub fn wait(&mut self, _child: &Child) -> Option<bool> {
+                None
             }
         }
     }
@@ -557,6 +758,23 @@ mod tree {
     }
 
     pub fn stop_leftovers(_child: &Child) {}
+
+    /// Only reaping shows the exit here, and there is no group to signal.
+    pub struct ExitWatch;
+
+    impl ExitWatch {
+        pub fn new(_child: &Child) -> Self {
+            Self
+        }
+
+        pub fn exited(&mut self, _child: &Child) -> Option<bool> {
+            None
+        }
+
+        pub fn wait(&mut self, _child: &Child) -> Option<bool> {
+            None
+        }
+    }
 }
 
 #[cfg(test)]
@@ -582,6 +800,47 @@ mod tests {
         assert_eq!(
             spec.args,
             ["--mode", "a b", "$(id)", "; rm -rf /"].map(OsString::from)
+        );
+    }
+
+    /// Where the exit watch works, it sees the exit and leaves the child to be
+    /// reaped: until then, the child's group can be signalled safely.
+    #[cfg(any(
+        target_vendor = "apple",
+        target_os = "android",
+        target_os = "freebsd",
+        all(target_os = "linux", not(target_env = "uclibc"))
+    ))]
+    #[test]
+    fn an_exit_is_seen_before_the_process_is_reaped() {
+        let mut running = Process::spawn(&ProcessSpec::new("/bin/sh").args(["-c", "sleep 10"]))
+            .expect("start a shell");
+        assert_eq!(running.exit_watch.exited(&running.child), Some(false));
+        assert_eq!(running.kill().ending, Ending::Killed);
+
+        let mut process = Process::spawn(&ProcessSpec::new("/bin/sh").args(["-c", "exit 3"]))
+            .expect("start a shell");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while process.exit_watch.exited(&process.child) != Some(true) {
+            assert!(Instant::now() < deadline, "the exit was never seen");
+            thread::sleep(POLL_INTERVAL);
+        }
+        // Seeing the exit reaped nothing: reaping now still gets the status.
+        process.poll_exit();
+        assert!(
+            matches!(process.state, State::Reaped { status: Some(status), .. } if status.code() == Some(3)),
+            "the watch reaped the process"
+        );
+
+        // Waiting for the exit, as a kill does, leaves it unreaped too.
+        let mut killed = Process::spawn(&ProcessSpec::new("/bin/sh").args(["-c", "sleep 10"]))
+            .expect("start a shell");
+        tree::force_stop(&mut killed.child);
+        assert_eq!(killed.exit_watch.wait(&killed.child), Some(true));
+        killed.poll_exit();
+        assert!(
+            matches!(killed.state, State::Reaped { status: Some(status), .. } if !status.success()),
+            "the watch reaped the process"
         );
     }
 }

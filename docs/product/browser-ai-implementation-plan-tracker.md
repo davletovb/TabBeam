@@ -625,7 +625,7 @@ Reached after **Milestone H**:
 
 **Implementation evidence**
 - `native/host/src/process.rs`: `Process::spawn` starts an absolute executable path with an argument array, with no shell and no `PATH` search, on three separate pipes. `write` queues input for a helper thread, `next_event(deadline)` returns bounded stdout/stderr chunks and then the exit, `terminate(grace)` escalates from a stop request to a kill, `kill` kills at once, and dropping a `Process` kills and reaps it. It is the host's only process spawn (`native/host/clippy.toml`), and the Codex adapter (PRO-03) is its first caller, through the stream manager (NAT-05), which added `request_stop()`: a stop request that doesn't wait.
-- POSIX: the provider leads its own process group. A stop reaches everything it started, and whatever it leaves in the group when it exits is killed. Windows: only the provider itself is stopped so far, and closing stdin is the only stop request; stopping the whole tree needs a Job Object (ADR-0001).
+- POSIX: the provider leads its own process group. A stop reaches everything it started, and whatever it leaves in the group when it exits is killed. The host sees the exit before reaping the provider (`waitid` with `WNOWAIT` on Linux, kqueue's `NOTE_EXIT` on macOS) and kills the group first, while the provider's process ID still holds the group's ID (PR #17 review). Windows: only the provider itself is stopped so far, and closing stdin is the only stop request; stopping the whole tree needs a Job Object (ADR-0001).
 - Lifecycle tests with the fake provider (`native/test_provider/tests/process_manager.rs`): success, nonzero exit, crash (SIGABRT), a deadline passing, a graceful stop, an ignored stop escalated to SIGKILL, kill, a drop that reaps, 1 MiB of input written while its echo is read, 2 MiB of output in chunks of at most 8 KiB, process-group leadership, and descendants that stay in the group, outlive the provider, or leave the group.
 - Stress test (`native/test_provider/tests/process_stress.rs`): 120 spawn/stop rounds across modes, start points, and ways of stopping. Each process is reaped (no zombie), and no pipe or thread is left behind.
 - New fake provider modes: `crash`, `echo`, `tree`, `orphan`, `escape`, `detached` (`native/test_provider/README.md`).
@@ -782,9 +782,6 @@ Reached after **Milestone H**:
 - Web/page content cannot select arbitrary executable paths.
 - Environment forwarding is minimal and documented.
 - Secrets/tokens are redacted from logs.
-
-**Notes**
-- From the PR #17 review: when a provider exits on its own, `stop_leftovers` (`native/host/src/process.rs`) kills its process group right after reaping it. If the provider left no descendants, the group ID is already free, so in principle the kill could reach an unrelated group that took the ID in those microseconds. Seeing the exit before reaping would close this: `waitid` with `WNOWAIT` on Linux, and `EVFILT_PROC`/`NOTE_EXIT` through kqueue on macOS, where nix has no `waitid`.
 
 **Status:** BACKLOG
 
