@@ -1,8 +1,15 @@
 import assert from "node:assert/strict";
-import { READY_STATUS, bindAskForm } from "../src/popup/ask-form.js";
+import fs from "node:fs";
+import { READY_STATUS, WORKER_LOST, bindAskForm } from "../src/popup/ask-form.js";
 import { ASK_PORT_NAME } from "../src/shared/ask-port.js";
 import { MAX_NATIVE_MESSAGE_BYTES } from "../src/shared/limits.js";
+import { FAILURE_KINDS, KIND_MESSAGES } from "../src/shared/outcomes.js";
 import { MockPort } from "./support/mock-port.mjs";
+
+/** DOC-02's machine-readable fixtures. */
+const DOC_02 = JSON.parse(
+  fs.readFileSync(new URL("../../docs/protocol/fixtures/v1-errors-capabilities.json", import.meta.url), "utf8")
+);
 
 /** The subset of an HTML element that the ask form touches. */
 class FakeElement {
@@ -50,6 +57,11 @@ class FakeElement {
     return this.attributes.get(name) ?? null;
   }
 
+  /** @param {string} name */
+  removeAttribute(name) {
+    this.attributes.delete(name);
+  }
+
   /**
    * Appends text nodes; anything else would be markup.
    * @param {...unknown} nodes
@@ -95,8 +107,11 @@ function cancellableEvent(fields) {
   };
 }
 
-/** @param {{getContext(): any | null, isPending(): boolean}} [contextControls] */
-function openPopup(contextControls) {
+/**
+ * @param {{getContext(): any | null, isPending(): boolean}} [contextControls]
+ * @param {{kind: string, message?: string}[]} [outcomes] receives each outcome
+ */
+function openPopup(contextControls, outcomes = []) {
   const elements = {
     form: new FakeForm(),
     input: new FakeTextArea(),
@@ -129,7 +144,9 @@ function openPopup(contextControls) {
     }
   };
 
-  bindAskForm(/** @type {any} */ (elements), runtime, contextControls);
+  bindAskForm(/** @type {any} */ (elements), runtime, contextControls, {
+    onOutcome: (outcome) => outcomes.push(outcome)
+  });
 
   return {
     ...elements,
@@ -169,6 +186,9 @@ function openPopup(contextControls) {
     },
     get statusState() {
       return elements.status.getAttribute("data-state");
+    },
+    get statusKind() {
+      return elements.status.getAttribute("data-kind");
     },
     get busy() {
       return elements.submit.getAttribute("aria-disabled") === "true";
@@ -368,6 +388,7 @@ function hostEvent(event, payload = {}) {
 
   assert.equal(popup.statusText, "The provider process exited unexpectedly.");
   assert.equal(popup.statusState, "failed");
+  assert.equal(popup.statusKind, "provider-failed");
   assert.equal(popup.answer.textContent, "Half an");
   assert.equal(popup.busy, false);
   assert.equal(port.disconnectCalls, 1);
@@ -377,15 +398,125 @@ function hostEvent(event, payload = {}) {
 }
 
 {
-  // A failure without a usable message gets a generic one.
-  for (const error of [undefined, {}, { message: "" }, { message: 7 }]) {
+  // A failure without a usable code or message gets a generic one, with the
+  // request's ID for the host's diagnostics.
+  for (const error of [undefined, {}, { message: "" }, { message: 7 }, { code: "NEW_CODE" }]) {
     const popup = openPopup();
     popup.ask("Unknown failure");
     popup.ports[0].emitMessage(hostEvent("response.failed", { error }));
 
-    assert.equal(popup.statusText, "Something went wrong. Try again.");
+    assert.equal(popup.statusText, "Something went wrong. Try again. Reference: req_popup");
     assert.equal(popup.statusState, "failed");
+    assert.equal(popup.statusKind, "internal-error");
   }
+}
+
+{
+  // EXT-04: each DOC-02 code shows as its own kind, decided by the code
+  // alone. The six states the popup must tell apart all differ.
+  assert.deepEqual(Object.keys(FAILURE_KINDS).sort(), [...DOC_02.error_codes].sort());
+  /** @type {Map<string, string>} */
+  const shown = new Map();
+  for (const code of DOC_02.error_codes) {
+    const popup = openPopup();
+    popup.ask("Which failure?");
+    popup.ports[0].emitMessage(
+      hostEvent("response.failed", {
+        error: { code, reason: "SOME_REASON", message: `Message for ${code}.`, retryable: false }
+      })
+    );
+    shown.set(code, popup.statusKind ?? "");
+    assert.equal(popup.statusState, code === "REQUEST_CANCELLED" ? "cancelled" : "failed", code);
+    assert.ok(popup.statusText.startsWith(`Message for ${code}.`), code);
+    assert.equal(popup.busy, false);
+  }
+  const states = [
+    "HOST_UNAVAILABLE",
+    "PROVIDER_NOT_FOUND",
+    "PROVIDER_NOT_AUTHENTICATED",
+    "PROVIDER_FAILED",
+    "REQUEST_TIMEOUT",
+    "REQUEST_CANCELLED"
+  ].map((code) => shown.get(code));
+  assert.equal(new Set(states).size, states.length, `${states}`);
+  assert.equal(shown.get("HOST_NOT_INSTALLED"), "host-missing");
+  assert.equal(shown.get("HOST_UNAVAILABLE"), "host-unavailable");
+  assert.equal(shown.get("PROVIDER_NOT_FOUND"), "provider-missing");
+  assert.equal(shown.get("PROVIDER_NOT_AUTHENTICATED"), "provider-signed-out");
+  assert.equal(shown.get("PROVIDER_FAILED"), "provider-failed");
+  assert.equal(shown.get("REQUEST_TIMEOUT"), "timeout");
+  assert.equal(shown.get("REQUEST_CANCELLED"), "cancelled");
+}
+
+{
+  // DOC-02's example errors render with their own messages.
+  for (const error of DOC_02.valid_errors) {
+    const popup = openPopup();
+    popup.ask("Fixture");
+    popup.ports[0].emitMessage(hostEvent("response.failed", { error }));
+    assert.equal(popup.statusKind, FAILURE_KINDS[error.code], error.code);
+    assert.ok(popup.statusText.startsWith(error.message), error.code);
+  }
+}
+
+{
+  // Without a message, each kind says what to do in its own words, and none
+  // of them talks about ports, hosts, or processes.
+  for (const [code, kind] of Object.entries(FAILURE_KINDS)) {
+    const popup = openPopup();
+    popup.ask("No message");
+    popup.ports[0].emitMessage(
+      hostEvent("response.failed", { error: { code, reason: "SOME_REASON", retryable: true } })
+    );
+    assert.ok(popup.statusText.startsWith(KIND_MESSAGES[kind]), code);
+    assert.ok(!/native|port|process|host|stdin|protocol/i.test(KIND_MESSAGES[kind]), kind);
+  }
+}
+
+{
+  // Only failures a person can't act on carry a reference: protocol
+  // mismatches and internal errors, not a question that is too long.
+  /** @type {[any, boolean][]} */
+  const cases = [
+    [{ code: "INVALID_REQUEST", reason: "UNKNOWN_METHOD", message: "Unsupported method.", retryable: false }, true],
+    [{ code: "INVALID_REQUEST", reason: "REQUEST_TOO_LARGE", message: "Your question is too long.", retryable: false }, false],
+    [{ code: "INVALID_REQUEST", reason: "PAGE_CONTEXT_UNSUPPORTED", message: "Choose No context.", retryable: false }, false],
+    [{ code: "INTERNAL_ERROR", reason: "INTERNAL_STATE_ERROR", message: "The answer stopped.", retryable: false }, true],
+    [{ code: "PROVIDER_FAILED", reason: "PROCESS_EXITED", message: "Codex stopped.", retryable: true }, false]
+  ];
+  for (const [error, referenced] of cases) {
+    const popup = openPopup();
+    popup.ask("Reference?");
+    popup.ports[0].emitMessage(hostEvent("response.failed", { error }));
+    assert.equal(popup.statusText, referenced ? `${error.message} Reference: req_popup` : error.message);
+  }
+}
+
+{
+  // A new question clears the last failure's kind; outcomes go to the
+  // provider line.
+  /** @type {{kind: string, message?: string}[]} */
+  const outcomes = [];
+  const popup = openPopup(undefined, outcomes);
+  popup.ask("Signed out?");
+  popup.ports[0].emitMessage(
+    hostEvent("response.failed", {
+      error: {
+        code: "PROVIDER_NOT_AUTHENTICATED",
+        reason: "LOGIN_REQUIRED",
+        message: "Codex isn't signed in.",
+        retryable: false
+      }
+    })
+  );
+  popup.ask("Again");
+  assert.equal(popup.statusKind, null);
+  assert.equal(popup.statusState, "pending");
+  popup.ports[1].emitMessage(hostEvent("response.completed"));
+  assert.deepEqual(outcomes, [
+    { kind: "provider-signed-out", message: "Codex isn't signed in." },
+    { kind: "completed" }
+  ]);
 }
 
 {
@@ -411,11 +542,9 @@ function hostEvent(event, payload = {}) {
   popup.ask("Worker restarts");
   popup.ports[0].emitDisconnect();
 
-  assert.equal(
-    popup.statusText,
-    "Pervue's background service stopped. Reopen the popup and try again."
-  );
+  assert.equal(popup.statusText, WORKER_LOST);
   assert.equal(popup.statusState, "failed");
+  assert.equal(popup.statusKind, "internal-error");
   assert.equal(popup.busy, false);
 
   popup.ask("Again");
@@ -459,10 +588,7 @@ function hostEvent(event, payload = {}) {
   popup.ask("Too large to send");
 
   assert.equal(popup.ports.length, 1);
-  assert.equal(
-    popup.statusText,
-    "Pervue's background service stopped. Reopen the popup and try again."
-  );
+  assert.equal(popup.statusText, WORKER_LOST);
   assert.equal(popup.statusState, "failed");
   assert.equal(popup.busy, false);
   assert.equal(popup.answer.getAttribute("aria-busy"), "false");
@@ -497,4 +623,4 @@ function hostEvent(event, payload = {}) {
   assert.equal(popup.ports.length, 1);
 }
 
-console.log("EXT-03 popup ask/stream tests passed");
+console.log("EXT-03/EXT-04 popup ask/stream and failure tests passed");

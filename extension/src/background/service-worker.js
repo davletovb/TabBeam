@@ -1,5 +1,7 @@
 import { ASK_PORT_NAME } from "../shared/ask-port.js";
+import { PROVIDER_STATUS_MESSAGE } from "../shared/provider-status.js";
 import { isExtensionPage, serveAskPort } from "./ask-bridge.js";
+import { checkProviderStatus } from "./status-bridge.js";
 import {
   NATIVE_HOST_NAME,
   createNativeConnectionManager
@@ -65,6 +67,14 @@ chrome.runtime.onMessage.addListener(
         version: chrome.runtime.getManifest().version
       });
       return;
+    }
+    if (message?.type === PROVIDER_STATUS_MESSAGE) {
+      // Only the extension's own pages may drive the native companion.
+      if (!isExtensionPage(sender, chrome.runtime.getURL(""))) {
+        return;
+      }
+      checkProviderStatus({ manager: nativeConnectionManager }).then(sendResponse);
+      return true;
     }
     if (message?.type === MENU_CONSUME_MESSAGE) {
       entryActions.consume(message, sender).then(sendResponse);

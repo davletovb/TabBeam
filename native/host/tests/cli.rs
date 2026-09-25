@@ -72,7 +72,7 @@ fn the_chrome_launch_shape_serves_requests() {
     let output = run_host(&[ORIGIN], &frame(request));
     assert_eq!(output.status.code(), Some(0));
 
-    let failure = r#"{"version":1,"type":"event","request_id":"req_cli","event":"response.failed","payload":{"error":{"code":"PROVIDER_NOT_FOUND","reason":"PROVIDER_NOT_INSTALLED","message":"The selected provider runtime is not installed.","retryable":false}}}"#;
+    let failure = r#"{"version":1,"type":"event","request_id":"req_cli","event":"response.failed","payload":{"error":{"code":"PROVIDER_NOT_FOUND","reason":"PROVIDER_NOT_INSTALLED","message":"Pervue's companion app doesn't support this AI provider yet. Update it, then try again.","retryable":false}}}"#;
     assert!(
         output.stdout.ends_with(&frame(failure)),
         "{}",

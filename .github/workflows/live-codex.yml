@@ -1,0 +1,56 @@
+name: Live Codex smoke test
+
+# TST-05: the opt-in smoke test against the real Codex CLI
+# (native/host/tests/live_codex.rs). It runs only when started by hand. With a
+# repository secret OPENAI_API_KEY, Codex signs in with it and the test must
+# pass; without one, the test is skipped.
+on:
+  workflow_dispatch:
+    inputs:
+      codex_version:
+        description: "Codex CLI version to install from npm"
+        required: true
+        default: "latest"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-codex
+  cancel-in-progress: false
+
+jobs:
+  live-codex:
+    name: Real Codex smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal
+      - name: Install the Codex CLI
+        env:
+          CODEX_VERSION: ${{ inputs.codex_version }}
+        run: npm install --global "@openai/codex@${CODEX_VERSION}"
+      - name: Sign Codex in
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          # A sign-in of this job's own, removed with the runner.
+          echo "CODEX_HOME=$RUNNER_TEMP/codex-home" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/codex-home"
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "No OPENAI_API_KEY secret: the smoke test will be skipped."
+            exit 0
+          fi
+          # The key goes to Codex on stdin, never in a command line, and
+          # nothing Codex prints about it is kept.
+          printenv OPENAI_API_KEY | CODEX_HOME="$RUNNER_TEMP/codex-home" codex login --with-api-key > /dev/null 2>&1
+      - name: Run the smoke test
+        env:
+          # With a sign-in, a missing or signed-out Codex fails the test.
+          PERVUE_LIVE_CODEX: ${{ secrets.OPENAI_API_KEY != '' && 'required' || '1' }}
+        run: cargo +stable test --manifest-path native/Cargo.toml --locked -p pervue-host --test live_codex -- --nocapture

@@ -191,6 +191,18 @@ export class NativeConnectionManager {
   }
 
   /**
+   * Stops routing a request its owner no longer waits for: the owner hears
+   * nothing more about it, and the request's later events are dropped. The
+   * host isn't told, so the request runs to its own end there.
+   *
+   * @param {string} requestId
+   * @returns {boolean} whether the request was in flight
+   */
+  forget(requestId) {
+    return this.routes.delete(requestId);
+  }
+
+  /**
    * @param {(event: any) => void} listener
    * @returns {() => void}
    */

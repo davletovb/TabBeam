@@ -1,6 +1,7 @@
 import { bindAskForm } from "./ask-form.js";
 import { bindContextControls } from "./context-controls.js";
 import { preloadMenuContext } from "./menu-preload.js";
+import { bindProviderState } from "./provider-state.js";
 
 /**
  * @template {HTMLElement} T
@@ -28,6 +29,11 @@ const contextControls = bindContextControls(
 );
 void preloadMenuContext(chrome.runtime, contextControls, window.location.search);
 
+const providerState = bindProviderState(
+  requireElement("#provider-state", HTMLElement),
+  chrome.runtime
+);
+
 bindAskForm(
   {
     form: requireElement("#ask-form", HTMLFormElement),
@@ -37,7 +43,8 @@ bindAskForm(
     answer: requireElement("#answer", HTMLElement)
   },
   chrome.runtime,
-  contextControls
+  contextControls,
+  { onOutcome: (outcome) => providerState.update(outcome) }
 );
 
 requireElement("#open-full-page", HTMLButtonElement).addEventListener(

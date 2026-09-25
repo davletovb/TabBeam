@@ -12,24 +12,31 @@
 //! Before each request, `codex login status` checks the sign-in, because a
 //! signed-out `codex exec` retries the network instead of failing. Only its
 //! exit status is read: its output names the account and a masked key.
+//!
+//! Codex runs in a workspace nobody but its user can change ([`workspace`]),
+//! with a minimal environment (SEC-02): the variables every provider gets
+//! ([`environment::INHERITED`]), Codex's own settings, and a `PATH` that
+//! starts with Codex's directory.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::hash::{BuildHasher, RandomState};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime};
 
 use super::discovery::SearchPath;
+use super::environment;
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
 use crate::process::{Event, Exit, Process, ProcessSpec};
 use crate::protocol::events::{
     Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ProviderState,
 };
-use crate::stream::{LineStream, Output};
+use crate::stream::{BUSY_LIMIT, LineStream, Output};
 
 pub mod output;
+mod workspace;
 
 use output::Line;
 
@@ -37,6 +44,10 @@ pub const ID: &str = "codex";
 
 /// The executable the adapter looks for.
 const EXECUTABLE: &str = "codex";
+
+/// Codex's own settings, passed on when set: where it keeps its settings,
+/// sign-in, and state, and an extra CA certificate for its connections.
+pub const CODEX_VARIABLES: &[&str] = &["CODEX_HOME", "CODEX_SQLITE_HOME", "CODEX_CA_CERTIFICATE"];
 
 /// Longest line of Codex output. One line holds a whole answer, which can be
 /// long; a line past this ends the request instead of growing memory.
@@ -110,7 +121,14 @@ const UNKNOWN_CONVERSATION: ErrorBody<'static> = ErrorBody {
 const START_FAILED: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROVIDER_UNAVAILABLE",
-    message: "Codex couldn't be started.",
+    message: "Codex couldn't start. Reinstall the Codex CLI, then try again.",
+    retryable: false,
+};
+
+const NO_WORKSPACE: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::ProviderFailed,
+    reason: "WORKSPACE_UNAVAILABLE",
+    message: "Pervue couldn't prepare a private folder for Codex. Make sure your cache folder exists and only you can change it, then try again.",
     retryable: false,
 };
 
@@ -124,39 +142,93 @@ const PROCESS_EXITED: ErrorBody<'static> = ErrorBody {
 const MALFORMED_OUTPUT: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "MALFORMED_PROVIDER_OUTPUT",
-    message: "Codex answered in a form Pervue doesn't understand.",
+    message: "Codex answered in a way Pervue doesn't understand. Update Codex and Pervue, then try again.",
     retryable: false,
 };
 
 /// Pervue conversation IDs mapped to the Codex threads they continue.
 type Conversations = Rc<RefCell<HashMap<String, String>>>;
 
+/// How Codex processes start: where they run, and what environment they get.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Launch {
+    work_dir: PathBuf,
+    /// Variables copied from the host's environment.
+    inherited: Vec<(OsString, OsString)>,
+    /// The host's `PATH`.
+    path: Option<OsString>,
+}
+
+impl Launch {
+    fn new(work_dir: PathBuf, host: Vec<(OsString, OsString)>) -> Self {
+        let path = environment::lookup(&host, "PATH").map(OsStr::to_os_string);
+        Self {
+            work_dir,
+            inherited: environment::inherit(host, CODEX_VARIABLES),
+            path,
+        }
+    }
+
+    /// The workspace, created if needed and checked before every launch:
+    /// the path Codex runs in and is pointed at.
+    fn workspace(&self) -> std::io::Result<PathBuf> {
+        workspace::prepare(&self.work_dir)
+    }
+
+    /// `codex` with `args`, in `workspace`, with only its environment.
+    fn command<I>(&self, workspace: &Path, executable: &Path, args: I) -> ProcessSpec
+    where
+        I: IntoIterator,
+        I::Item: Into<OsString>,
+    {
+        ProcessSpec::new(executable)
+            .args(args)
+            .envs(self.inherited.iter().cloned())
+            .env("PATH", search_path_for(executable, self.path.as_deref()))
+            .current_dir(workspace)
+    }
+}
+
 /// The Codex CLI adapter.
 pub struct Codex {
     search: SearchPath,
-    work_dir: PathBuf,
+    launch: Rc<Launch>,
     limits: Limits,
     conversations: Conversations,
 }
 
 impl Codex {
     /// The adapter of an installed host: the platform lookup rules, and an
-    /// empty working directory under the system temporary directory.
+    /// empty workspace in the user's own cache directory.
     pub fn installed() -> Self {
-        Self::new(
-            SearchPath::from_env(),
-            std::env::temp_dir().join("pervue-codex"),
-        )
+        let host: Vec<_> = std::env::vars_os().collect();
+        Self::new(SearchPath::from_env(), workspace::default(&host))
     }
 
-    /// Looks for `codex` in `search`, and runs it from `work_dir`.
+    /// Looks for `codex` in `search`, and runs it in `work_dir`, which it
+    /// creates when needed and refuses if other users could change it, with
+    /// variables from the host's environment.
     pub fn new(search: SearchPath, work_dir: PathBuf) -> Self {
         Self {
             search,
-            work_dir,
+            launch: Rc::new(Launch::new(work_dir, std::env::vars_os().collect())),
             limits: LIMITS,
             conversations: Rc::default(),
         }
+    }
+
+    /// Takes the variables Codex gets from `host` instead of the host's own
+    /// environment.
+    #[must_use]
+    pub fn with_environment<I>(mut self, host: I) -> Self
+    where
+        I: IntoIterator<Item = (OsString, OsString)>,
+    {
+        self.launch = Rc::new(Launch::new(
+            self.launch.work_dir.clone(),
+            host.into_iter().collect(),
+        ));
+        self
     }
 
     /// Replaces the default time limits.
@@ -187,7 +259,7 @@ impl Provider for Codex {
                 Update::Completed,
             ]));
         };
-        Box::new(match probe(&executable) {
+        Box::new(match probe(&self.launch, &executable) {
             Ok(process) => StatusCheck::Probing {
                 process,
                 give_up: after(self.limits.probe),
@@ -218,7 +290,7 @@ impl Provider for Codex {
         let mut turn = Turn {
             stage: Stage::Done,
             executable,
-            work_dir: self.work_dir.clone(),
+            launch: Rc::clone(&self.launch),
             prompt: request.text,
             resume,
             conversation_id: request.conversation_id,
@@ -232,7 +304,7 @@ impl Provider for Codex {
             outcome: None,
             finish_by: None,
         };
-        match probe(&turn.executable) {
+        match probe(&turn.launch, &turn.executable) {
             Ok(process) => {
                 turn.stage = Stage::Probing {
                     process,
@@ -258,11 +330,9 @@ fn status_update(availability: Availability, authentication: Authentication) -> 
 }
 
 /// `codex login status`: exit status 0 means signed in, 1 signed out.
-fn probe(executable: &Path) -> std::io::Result<Process> {
-    let spec = ProcessSpec::new(executable)
-        .args(["login", "status"])
-        .env("PATH", search_path_for(executable));
-    let mut process = Process::spawn(&spec)?;
+fn probe(launch: &Launch, executable: &Path) -> std::io::Result<Process> {
+    let workspace = launch.workspace()?;
+    let mut process = Process::spawn(&launch.command(&workspace, executable, ["login", "status"]))?;
     process.close_stdin();
     Ok(process)
 }
@@ -278,14 +348,14 @@ fn signed_in(exit: &Exit) -> Authentication {
 /// The host's `PATH` with the executable's own directory first. npm installs
 /// `codex` as a Node script next to `node`, and a host started by Chrome
 /// inherits a `PATH` that may not include that directory.
-fn search_path_for(executable: &Path) -> OsString {
-    let inherited = std::env::var_os("PATH");
+fn search_path_for(executable: &Path, inherited: Option<&OsStr>) -> OsString {
     let dirs = executable
         .parent()
         .map(Path::to_path_buf)
         .into_iter()
-        .chain(inherited.iter().flat_map(std::env::split_paths));
-    std::env::join_paths(dirs).unwrap_or_else(|_| inherited.unwrap_or_default())
+        .chain(inherited.into_iter().flat_map(std::env::split_paths));
+    std::env::join_paths(dirs)
+        .unwrap_or_else(|_| inherited.map(OsStr::to_os_string).unwrap_or_default())
 }
 
 fn after(duration: Duration) -> Instant {
@@ -315,18 +385,26 @@ enum StatusCheck {
 
 impl Exchange for StatusCheck {
     fn next(&mut self, deadline: Instant) -> Option<Update> {
+        let busy_until = deadline.max(after(BUSY_LIMIT));
         loop {
             let authentication = match self {
                 Self::Done(updates) => return updates.pop_front(),
+                // Checked first, so output that keeps coming can't put it off.
+                Self::Probing { process, give_up } if Instant::now() >= *give_up => {
+                    process.kill();
+                    Authentication::Unknown
+                }
                 Self::Probing { process, give_up } => {
                     match process.next_event(deadline.min(*give_up)) {
                         Some(Event::Exited(exit)) => signed_in(&exit),
                         // The probe's output names the account: never read.
-                        Some(Event::Stdout(_) | Event::Stderr(_)) => continue,
-                        None if Instant::now() >= *give_up => {
-                            process.kill();
-                            Authentication::Unknown
+                        Some(Event::Stdout(_) | Event::Stderr(_)) => {
+                            if Instant::now() >= busy_until {
+                                return None;
+                            }
+                            continue;
                         }
+                        None if Instant::now() >= *give_up => continue,
                         None => return None,
                     }
                 }
@@ -347,7 +425,7 @@ impl Exchange for StatusCheck {
 struct Turn {
     stage: Stage,
     executable: PathBuf,
-    work_dir: PathBuf,
+    launch: Rc<Launch>,
     prompt: String,
     /// The Codex thread to resume, when continuing a conversation.
     resume: Option<String>,
@@ -379,23 +457,25 @@ enum Stage {
 impl Turn {
     /// Starts `codex exec` and hands it the question.
     fn start(&mut self) {
-        let mut spec = ProcessSpec::new(&self.executable)
-            .args([
-                "exec",
-                "--json",
-                "--skip-git-repo-check",
-                "--sandbox",
-                "read-only",
-                "-C",
-            ])
-            .arg(&self.work_dir);
+        let Ok(workspace) = self.launch.workspace() else {
+            return self.end(Update::Failed(NO_WORKSPACE));
+        };
+        let mut args: Vec<OsString> = [
+            "exec",
+            "--json",
+            "--skip-git-repo-check",
+            "--sandbox",
+            "read-only",
+            "-C",
+        ]
+        .map(OsString::from)
+        .into();
+        args.push(workspace.clone().into());
         if let Some(thread_id) = &self.resume {
-            spec = spec.args(["resume", thread_id]);
+            args.extend(["resume", thread_id].map(OsString::from));
         }
-        let spec = spec.arg("-").env("PATH", search_path_for(&self.executable));
-        let _ = std::fs::create_dir_all(&self.work_dir);
-
-        match Process::spawn(&spec) {
+        args.push("-".into());
+        match Process::spawn(&self.launch.command(&workspace, &self.executable, args)) {
             Ok(mut process) => {
                 // The question goes on stdin: it can exceed the size one
                 // argument may have, and no shell ever sees it.
@@ -493,12 +573,23 @@ impl Turn {
 
 impl Exchange for Turn {
     fn next(&mut self, deadline: Instant) -> Option<Update> {
+        let busy_until = deadline.max(after(BUSY_LIMIT));
         loop {
             if let Some(update) = self.queue.pop_front() {
                 return Some(update);
             }
+            // Output that keeps coming without an update, such as lines the
+            // adapter ignores, gives the caller its turn back.
+            if Instant::now() >= busy_until {
+                return None;
+            }
             match &mut self.stage {
                 Stage::Done => return None,
+                // Checked first, so output that keeps coming can't put it off.
+                Stage::Probing { process, give_up } if Instant::now() >= *give_up => {
+                    process.kill();
+                    self.start();
+                }
                 Stage::Probing { process, give_up } => {
                     match process.next_event(deadline.min(*give_up)) {
                         Some(Event::Exited(exit)) => match signed_in(&exit) {
@@ -509,10 +600,8 @@ impl Exchange for Turn {
                         },
                         // The probe's output names the account: never read.
                         Some(Event::Stdout(_) | Event::Stderr(_)) => {}
-                        None if Instant::now() >= *give_up => {
-                            process.kill();
-                            self.start();
-                        }
+                        // Its time is up: the arm above stops it.
+                        None if Instant::now() >= *give_up => {}
                         None => return None,
                     }
                 }
@@ -566,5 +655,28 @@ impl Exchange for Turn {
             Stage::Done if finished => self.queue.push_back(Update::Stopped),
             Stage::Done => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn codex_s_directory_comes_first_on_its_path() {
+        let (codex, inherited) = if cfg!(unix) {
+            ("/opt/codex/bin/codex", "/usr/bin:/bin")
+        } else {
+            (r"C:\npm\codex.cmd", r"C:\Windows;C:\bin")
+        };
+        let path = search_path_for(Path::new(codex), Some(OsStr::new(inherited)));
+        let dirs: Vec<PathBuf> = std::env::split_paths(&path).collect();
+        assert_eq!(dirs[0], Path::new(codex).parent().unwrap());
+        assert_eq!(dirs.len(), 3);
+        let alone = search_path_for(Path::new(codex), None);
+        assert_eq!(
+            std::env::split_paths(&alone).collect::<Vec<_>>(),
+            [Path::new(codex).parent().unwrap()]
+        );
     }
 }

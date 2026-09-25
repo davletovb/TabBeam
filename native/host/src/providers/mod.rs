@@ -3,8 +3,9 @@
 //! The adapter contract is provisional until a second real provider works
 //! (framework §10.1). A [`Provider`] reports its status and serves requests
 //! through [`Exchange`]s: state machines the host loop drives, which never
-//! block past the deadline they are given. That lets one host serve several
-//! requests, and read cancellations, while providers work.
+//! block past the deadline they are given, and never keep working past it for
+//! longer than [`BUSY_LIMIT`], however fast a provider writes. That lets one
+//! host serve several requests, and read cancellations, while providers work.
 //!
 //! Everything provider-specific stays inside the adapter: command lines,
 //! output formats, and provider session IDs. The host sees only [`Update`]s in
@@ -14,9 +15,11 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use crate::protocol::events::{ErrorBody, ProviderState};
+pub use crate::stream::BUSY_LIMIT;
 
 pub mod codex;
 pub mod discovery;
+pub mod environment;
 pub mod fake;
 
 /// One `conversation.send`, in provider-neutral terms.
@@ -67,7 +70,8 @@ impl Update {
 /// One request being served.
 pub trait Exchange {
     /// Returns the next update, waiting until `deadline` at most, or `None` if
-    /// the deadline passes first.
+    /// the deadline passes first. Output that keeps arriving without an update
+    /// may hold the call at most [`BUSY_LIMIT`] past the deadline.
     fn next(&mut self, deadline: Instant) -> Option<Update>;
 
     /// Stops the work. Updates already produced may still arrive, then

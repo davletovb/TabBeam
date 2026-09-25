@@ -278,6 +278,78 @@ fn a_missing_executable_fails_to_spawn() {
     assert_eq!(error.kind(), io::ErrorKind::NotFound);
 }
 
+#[test]
+fn a_process_gets_only_the_environment_its_spec_sets() {
+    // The test runs with cargo's variables and the whole environment of its
+    // shell; the process sees none of them.
+    let spec = ProcessSpec::new(PROVIDER)
+        .args(["--mode", "env"])
+        .env("PERVUE_TEST_VARIABLE", "set")
+        .envs([("SECOND", "2")]);
+    let (output, exit) = run_to_exit(&mut Process::spawn(&spec).unwrap());
+    assert!(exit.status.unwrap().success());
+    let launch: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        launch["env"],
+        serde_json::json!({"PERVUE_TEST_VARIABLE": "set", "SECOND": "2"})
+    );
+}
+
+#[test]
+fn each_argument_reaches_the_process_whole() {
+    // No shell parses the arguments: each arrives as its own element, as is.
+    let args = [
+        "a b",
+        "$(id)",
+        "`id`",
+        "; rm -rf /",
+        "&& echo pwned",
+        "| cat",
+        "*",
+        "~",
+        "%PATH%",
+        "\"quoted\"",
+        "it's",
+        "",
+        "line\nbreak",
+        "back\\slash\\",
+        "é✓😀",
+        "--mode",
+        "-",
+    ];
+    let spec = ProcessSpec::new(PROVIDER)
+        .args(["--mode", "args"])
+        .args(args);
+    let (output, exit) = run_to_exit(&mut Process::spawn(&spec).unwrap());
+    assert!(exit.status.unwrap().success());
+    let received: Vec<String> = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(received, args);
+}
+
+#[test]
+fn a_process_runs_in_the_directory_its_spec_names() {
+    let dir = std::env::temp_dir();
+    let spec = ProcessSpec::new(PROVIDER)
+        .args(["--mode", "env"])
+        .current_dir(&dir);
+    let (output, exit) = run_to_exit(&mut Process::spawn(&spec).unwrap());
+    assert!(exit.status.unwrap().success());
+    let launch: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        std::fs::canonicalize(launch["cwd"].as_str().unwrap()).unwrap(),
+        std::fs::canonicalize(&dir).unwrap()
+    );
+
+    // Without its directory, the process doesn't start at all.
+    let missing = dir.join("pervue-no-such-directory");
+    let error = Process::spawn(&ProcessSpec::new(PROVIDER).current_dir(missing))
+        .err()
+        .expect("no directory to run in");
+    if cfg!(unix) {
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+    }
+}
+
 #[cfg(unix)]
 mod posix {
     //! Process groups: the child leads its own, so stopping it reaches every

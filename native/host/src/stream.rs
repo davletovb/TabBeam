@@ -14,7 +14,9 @@
 //!   clean end, [`Output::Error`] when the output broke the policy, or
 //!   [`Output::Stopped`] after [`LineStream::cancel`];
 //! - cancelling discards everything not yet delivered at once, asks the
-//!   process to stop, and kills it once the grace period runs out.
+//!   process to stop, and kills it once the grace period runs out;
+//! - output that keeps coming without completing a line, such as a stderr
+//!   flood, holds a caller at most [`BUSY_LIMIT`] past its deadline.
 //!
 //! [`split_text`] cuts outgoing text into bounded pieces without splitting a
 //! character.
@@ -23,6 +25,12 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use crate::process::{Event, Exit, Process};
+
+/// How long past its deadline a call keeps consuming output that arrives
+/// without giving it anything to return. A provider that never stops writing,
+/// to stderr or in lines nobody acts on, can't hold its caller longer than
+/// this, so a loop serving several streams gets back to the others.
+pub const BUSY_LIMIT: Duration = Duration::from_millis(5);
 
 /// Why a stream failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -172,9 +180,11 @@ impl LineStream {
     }
 
     /// Returns the next line or terminal state, waiting until `deadline` at
-    /// most. Returns `None` if the deadline passes first. Once a terminal state
-    /// is returned, every later call returns it again.
+    /// most. Returns `None` if the deadline passes first, or once output has
+    /// kept arriving for [`BUSY_LIMIT`] past it without completing a line.
+    /// Once a terminal state is returned, every later call returns it again.
     pub fn next(&mut self, deadline: Instant) -> Option<Output> {
+        let busy_until = deadline.max(after(BUSY_LIMIT));
         loop {
             match &self.state {
                 State::Done(output) => return Some(output.clone()),
@@ -187,13 +197,17 @@ impl LineStream {
                 }
                 State::Stopping { kill_at } => {
                     let kill_at = *kill_at;
+                    // Checked first, so output that keeps coming can't put
+                    // the kill off.
+                    if Instant::now() >= kill_at {
+                        let exit = self.process.kill();
+                        return Some(self.end(Output::Stopped(exit)));
+                    }
                     match self.process.next_event(deadline.min(kill_at)) {
                         Some(Event::Exited(exit)) => return Some(self.end(Output::Stopped(exit))),
+                        // Output after a cancel is dropped.
                         Some(_) => {}
-                        None if Instant::now() >= kill_at => {
-                            let exit = self.process.kill();
-                            return Some(self.end(Output::Stopped(exit)));
-                        }
+                        None if Instant::now() >= kill_at => continue,
                         None => return None,
                     }
                 }
@@ -222,6 +236,9 @@ impl LineStream {
                     }
                 }
             }
+            if self.ready.is_empty() && Instant::now() >= busy_until {
+                return None;
+            }
         }
     }
 
@@ -240,9 +257,7 @@ impl LineStream {
             _ => {
                 self.process.request_stop();
                 State::Stopping {
-                    kill_at: Instant::now()
-                        .checked_add(grace)
-                        .unwrap_or_else(Instant::now),
+                    kill_at: after(grace),
                 }
             }
         };
@@ -270,6 +285,12 @@ impl LineStream {
         self.state = State::Done(output.clone());
         output
     }
+}
+
+/// `duration` from now, or now if that can't be represented.
+fn after(duration: Duration) -> Instant {
+    let now = Instant::now();
+    now.checked_add(duration).unwrap_or(now)
 }
 
 #[cfg(test)]

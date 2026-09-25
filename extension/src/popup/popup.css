@@ -102,6 +102,75 @@ textarea {
   opacity: 1;
 }
 
+/* Setup the user can do (install, sign in) rather than something broken. */
+.status[data-state="failed"]:is(
+    [data-kind="host-missing"],
+    [data-kind="provider-missing"],
+    [data-kind="provider-signed-out"]
+  ) {
+  color: light-dark(#7a4a00, #fdd663);
+}
+
+/* A cancellation is not a failure. */
+.status[data-state="cancelled"] {
+  opacity: 0.72;
+}
+
+.provider-state {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.provider-state[hidden] {
+  display: none;
+}
+
+.provider-state::before {
+  content: "";
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: color-mix(in srgb, CanvasText 40%, transparent);
+}
+
+.provider-state[data-state="ready"]::before {
+  background: light-dark(#1e7d32, #81c995);
+}
+
+.provider-state[data-state="attention"] {
+  color: light-dark(#7a4a00, #fdd663);
+}
+
+.provider-state[data-state="attention"]::before {
+  background: currentColor;
+}
+
+.provider-state[data-state="attention"][data-kind="host-unavailable"],
+.provider-state[data-state="attention"][data-kind="provider-failed"] {
+  color: light-dark(#b3261e, #f2b8b5);
+}
+
+.provider-state[data-state="checking"]::before {
+  animation: provider-checking 1.2s ease-in-out infinite;
+}
+
+@keyframes provider-checking {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .provider-state[data-state="checking"]::before {
+    animation: none;
+  }
+}
+
 .answer {
   font-size: 14px;
   line-height: 1.5;

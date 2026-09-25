@@ -1,130 +1,23 @@
-//! The Codex adapter against a fake `codex` (this crate's binary, copied under
+//! The Codex adapter against a fake `codex` (this crate's binary, linked under
 //! that name): discovery and sign-in status (PRO-02), requests and streaming
-//! (PRO-03), and cancellation, timeouts, and failures (PRO-04).
+//! (PRO-03), cancellation, timeouts, and failures (PRO-04), and how Codex is
+//! started (SEC-02).
 
-use std::collections::VecDeque;
-use std::io::Read;
+mod support;
+
+use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::thread;
 use std::time::{Duration, Instant};
 
-use pervue_host::diagnostics::Diagnostics;
-use pervue_host::framing;
-use pervue_host::host;
 use pervue_host::protocol::events::{Authentication, Availability, Capability, ErrorCode};
-use pervue_host::providers::codex::{Codex, LIMITS, Limits};
-use pervue_host::providers::discovery::SearchPath;
-use pervue_host::providers::{Exchange, Provider, Providers, SendRequest, Timeouts, Update};
+use pervue_host::providers::codex::{CODEX_VARIABLES, Codex, LIMITS, Limits};
+use pervue_host::providers::environment::INHERITED;
+use pervue_host::providers::{Exchange, Provider, SendRequest, Timeouts, Update};
 use serde_json::Value;
+use support::{FakeCodex, PROMPT_STOP_GRACE, PacedInput, TEST_LIMITS, names, serve};
 
-const PROVIDER: &str = env!("CARGO_BIN_EXE_pervue-fake-provider");
 const DEADLINE: Duration = Duration::from_secs(20);
-
-/// Short limits, so failures show up quickly.
-const TEST_LIMITS: Limits = Limits {
-    timeouts: Timeouts {
-        start: Duration::from_secs(10),
-        idle: Duration::from_secs(10),
-        stop_grace: Duration::from_millis(300),
-    },
-    probe: Duration::from_secs(5),
-    finish: Duration::from_millis(300),
-};
-
-/// The grace period of a cancel that should stop a process promptly. On POSIX
-/// the stop request, SIGTERM, ends the process well inside a long grace period.
-/// Windows has no stop request that reaches a process not reading its input,
-/// so there a short grace period ends in a kill.
-const PROMPT_STOP_GRACE: Duration = if cfg!(unix) {
-    Duration::from_secs(5)
-} else {
-    Duration::from_millis(300)
-};
-
-/// A directory holding a fake `codex` and the scenario it follows.
-struct FakeCodex {
-    dir: PathBuf,
-}
-
-impl FakeCodex {
-    fn install(exec: &str, login: &str) -> Self {
-        static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let dir = std::env::temp_dir().join(format!(
-            "pervue-fake-codex-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("create the fake codex directory");
-        let name = if cfg!(windows) { "codex.exe" } else { "codex" };
-        std::fs::copy(PROVIDER, dir.join(name)).expect("install the fake codex");
-        let codex = Self { dir };
-        codex.set(exec, login);
-        codex
-    }
-
-    fn set(&self, exec: &str, login: &str) {
-        std::fs::write(
-            self.dir.join("codex-scenario"),
-            format!("exec={exec}\nlogin={login}\n"),
-        )
-        .expect("write the scenario");
-    }
-
-    fn adapter(&self) -> Codex {
-        self.adapter_with(TEST_LIMITS)
-    }
-
-    fn adapter_with(&self, limits: Limits) -> Codex {
-        Codex::new(SearchPath::new([self.dir.clone()]), self.dir.join("work")).with_limits(limits)
-    }
-
-    fn read(&self, file: &str) -> String {
-        std::fs::read_to_string(self.dir.join(file)).unwrap_or_default()
-    }
-
-    fn invocations(&self) -> Vec<String> {
-        self.read("codex-invocations")
-            .lines()
-            .map(str::to_owned)
-            .collect()
-    }
-
-    fn prompts(&self) -> Vec<String> {
-        self.read("codex-prompts")
-            .split('\0')
-            .filter(|prompt| !prompt.is_empty())
-            .map(str::to_owned)
-            .collect()
-    }
-
-    fn pids(&self) -> Vec<u32> {
-        self.read("codex-pids")
-            .lines()
-            .map(|pid| pid.parse().expect("a pid"))
-            .collect()
-    }
-
-    /// Every `codex exec` this directory saw has exited and been reaped.
-    fn assert_nothing_left_running(&self) {
-        #[cfg(unix)]
-        for pid in self.pids() {
-            use nix::errno::Errno;
-            use nix::sys::signal::kill;
-            use nix::unistd::Pid;
-
-            let pid = Pid::from_raw(i32::try_from(pid).expect("pid fits in pid_t"));
-            assert_eq!(kill(pid, None), Err(Errno::ESRCH), "{pid} is still around");
-        }
-    }
-}
-
-impl Drop for FakeCodex {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.dir);
-    }
-}
 
 fn ask(text: &str) -> SendRequest {
     SendRequest {
@@ -200,12 +93,7 @@ fn status(codex: &Codex) -> (Availability, Authentication) {
 #[test]
 fn status_reports_a_missing_codex_as_not_found() {
     let empty = FakeCodex::install("answers", "signed-in");
-    std::fs::remove_file(
-        empty
-            .dir
-            .join(if cfg!(windows) { "codex.exe" } else { "codex" }),
-    )
-    .unwrap();
+    std::fs::remove_file(empty.dir.join(FakeCodex::file_name())).unwrap();
     assert_eq!(
         status(&empty.adapter()),
         (Availability::NotFound, Authentication::Unknown)
@@ -255,12 +143,7 @@ fn a_status_check_that_hangs_gives_up_as_unknown() {
 #[test]
 fn a_missing_codex_fails_the_request_as_not_found() {
     let codex = FakeCodex::install("answers", "signed-in");
-    std::fs::remove_file(
-        codex
-            .dir
-            .join(if cfg!(windows) { "codex.exe" } else { "codex" }),
-    )
-    .unwrap();
+    std::fs::remove_file(codex.dir.join(FakeCodex::file_name())).unwrap();
     let updates = run_to_end(codex.adapter().send(ask("hi")).as_mut());
     assert_eq!(
         failure(&updates),
@@ -275,9 +158,10 @@ fn a_codex_that_cannot_be_started_is_unavailable() {
     // /bin/sh. Root may execute it anyway, and Windows ignores the mode, but
     // neither runs a file that isn't a program.
     let codex = FakeCodex::install("answers", "signed-in");
-    let path = codex
-        .dir
-        .join(if cfg!(windows) { "codex.exe" } else { "codex" });
+    let path = codex.dir.join(FakeCodex::file_name());
+    // The installed `codex` links to the fake provider itself: replace the
+    // link, rather than write through it.
+    std::fs::remove_file(&path).unwrap();
     std::fs::write(&path, b"not a program\n").unwrap();
     #[cfg(unix)]
     {
@@ -370,12 +254,11 @@ fn a_question_streams_its_answer_and_opens_a_conversation() {
     assert_eq!(invocations.len(), 2);
     assert!(invocations[0].starts_with("login status\t"));
     let (command, path) = invocations[1].split_once('\t').unwrap();
-    let work = codex.dir.join("work");
     assert_eq!(
         command,
         format!(
             "exec --json --skip-git-repo-check --sandbox read-only -C {} -",
-            work.display()
+            workspace(&codex).display()
         )
     );
     // Codex's own directory comes first on its PATH, for `node`.
@@ -418,23 +301,256 @@ fn a_conversation_continues_its_codex_thread() {
     );
 }
 
+/// What each Codex run saw: its command, working directory, and environment.
+/// The path Codex gets for its workspace: on POSIX, with every link resolved.
+fn workspace(codex: &FakeCodex) -> PathBuf {
+    let work = codex.dir.join("work");
+    if cfg!(unix) {
+        std::fs::canonicalize(&work).expect("the workspace exists")
+    } else {
+        work
+    }
+}
+
+fn launches(codex: &FakeCodex) -> Vec<(String, String, BTreeMap<String, String>)> {
+    codex
+        .read("codex-environment")
+        .lines()
+        .map(|line| {
+            let run: Value = serde_json::from_str(line).unwrap();
+            let env = run["env"]
+                .as_object()
+                .unwrap()
+                .iter()
+                .map(|(name, value)| (name.clone(), value.as_str().unwrap().to_owned()))
+                .collect();
+            (
+                run["command"].as_str().unwrap().to_owned(),
+                run["cwd"].as_str().unwrap().to_owned(),
+                env,
+            )
+        })
+        .collect()
+}
+
 #[test]
-fn an_unknown_conversation_fails_without_running_codex() {
+fn codex_gets_only_the_environment_it_needs() {
     let codex = FakeCodex::install("answers", "signed-in");
-    let updates = run_to_end(
-        codex
-            .adapter()
-            .send(SendRequest {
-                conversation_id: Some("conv_from_elsewhere".to_owned()),
-                ..ask("hi")
+    // The host's own variables that every provider may get, with their real
+    // values (Windows programs need some to start), then settings and
+    // secrets a terminal might hold.
+    let mut host: Vec<(OsString, OsString)> = std::env::vars_os()
+        .filter(|(name, _)| {
+            INHERITED.iter().any(|wanted| {
+                name.to_str()
+                    .is_some_and(|name| name.eq_ignore_ascii_case(wanted))
             })
-            .as_mut(),
+        })
+        .collect();
+    let codex_home = codex.dir.join("codex-home");
+    for (name, value) in [
+        ("OPENAI_API_KEY", OsString::from("sk-live-SECRET-openai")),
+        ("CODEX_API_KEY", "sk-live-SECRET-codex".into()),
+        ("AWS_SECRET_ACCESS_KEY", "SECRET-aws".into()),
+        ("GITHUB_TOKEN", "ghp_SECRET".into()),
+        ("NODE_OPTIONS", "--require /tmp/SECRET.js".into()),
+        ("LD_PRELOAD", "/tmp/SECRET.so".into()),
+        ("DYLD_INSERT_LIBRARIES", "/tmp/SECRET.dylib".into()),
+        ("PERVUE_PROVIDER_PATH", "/opt/SECRET".into()),
+        ("RUST_LOG", "trace".into()),
+        ("CODEX_HOME", codex_home.clone().into()),
+        ("PATH", std::env::var_os("PATH").unwrap_or_default()),
+    ] {
+        host.push((name.into(), value));
+    }
+    let adapter = codex.adapter().with_environment(host.clone());
+    assert_eq!(status(&adapter).1, Authentication::Authenticated);
+    let updates = run_to_end(adapter.send(ask("hi")).as_mut());
+    assert_eq!(updates.last(), Some(&Update::Completed));
+
+    let mut expected: BTreeMap<String, String> = host
+        .iter()
+        .filter(|(name, _)| {
+            let name = name.to_str().unwrap();
+            INHERITED.contains(&name)
+                || CODEX_VARIABLES.contains(&name)
+                || (cfg!(windows)
+                    && INHERITED
+                        .iter()
+                        .any(|wanted| wanted.eq_ignore_ascii_case(name)))
+        })
+        .map(|(name, value)| {
+            (
+                name.to_str().unwrap().to_owned(),
+                value.to_string_lossy().into_owned(),
+            )
+        })
+        .collect();
+    let launches = launches(&codex);
+    assert_eq!(
+        launches
+            .iter()
+            .map(|(command, _, _)| command.as_str())
+            .collect::<Vec<_>>(),
+        // The status check, then the request's own check and its turn.
+        ["login", "login", "exec"]
     );
+    for (command, _, env) in &launches {
+        let mut env = env.clone();
+        // PATH is Codex's directory, then the host's.
+        let path = env
+            .remove("PATH")
+            .or_else(|| env.remove("Path"))
+            .expect("a PATH");
+        let first = std::env::split_paths(&path).next().unwrap();
+        assert_eq!(first, codex.dir, "{command}");
+        expected.remove("PATH");
+        assert_eq!(env, expected, "{command}");
+        // Codex's own settings reach it, whatever the list above says.
+        assert_eq!(
+            env.get("CODEX_HOME").map(String::as_str),
+            codex_home.to_str(),
+            "{command}"
+        );
+        assert!(!format!("{env:?}").contains("SECRET"), "{command}");
+    }
+}
+
+#[test]
+fn codex_runs_in_its_own_workspace() {
+    let codex = FakeCodex::install("answers", "signed-in");
+    let adapter = codex.adapter();
+    status(&adapter);
+    run_to_end(adapter.send(ask("hi")).as_mut());
+
+    let work = std::fs::canonicalize(codex.dir.join("work")).expect("the workspace exists");
+    for (command, cwd, _) in launches(&codex) {
+        assert_eq!(std::fs::canonicalize(&cwd).unwrap(), work, "{command}");
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&work).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o700);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn codex_gets_the_workspace_s_real_path() {
+    use pervue_host::providers::discovery::SearchPath;
+    use std::path::Path;
+
+    // Reached through a link, the workspace is checked, and given to Codex,
+    // as the directory the link resolves to.
+    let codex = FakeCodex::install("answers", "signed-in");
+    let real = codex.dir.join("real");
+    std::fs::create_dir(&real).unwrap();
+    std::os::unix::fs::symlink(&real, codex.dir.join("link")).unwrap();
+    let adapter = Codex::new(
+        SearchPath::new([codex.dir.clone()]),
+        codex.dir.join("link/work"),
+    )
+    .with_limits(TEST_LIMITS);
+    run_to_end(adapter.send(ask("hi")).as_mut());
+
+    let resolved = std::fs::canonicalize(&real).unwrap().join("work");
+    let invocations = codex.invocations();
+    let (command, _) = invocations.last().unwrap().split_once('\t').unwrap();
+    assert!(
+        command.ends_with(&format!(" -C {} -", resolved.display())),
+        "{command}"
+    );
+    for (command, cwd, _) in launches(&codex) {
+        assert_eq!(Path::new(&cwd), resolved, "{command}");
+    }
+}
+
+#[test]
+fn a_workspace_that_cannot_be_made_stops_codex_from_starting() {
+    // Where the workspace should go, a file is in the way.
+    let codex = FakeCodex::install("answers", "signed-in");
+    std::fs::write(codex.dir.join("work"), b"not a directory").unwrap();
+    assert_refused(&codex);
+    assert!(codex.invocations().is_empty(), "codex ran");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_workspace_others_can_change_stops_codex_from_starting() {
+    use std::os::unix::fs::PermissionsExt;
+
+    // The check runs before every launch, not only when the workspace is new.
+    let codex = FakeCodex::install("answers", "signed-in");
+    assert_eq!(
+        status(&codex.adapter()),
+        (Availability::Available, Authentication::Authenticated)
+    );
+    let ran = codex.invocations().len();
+    // Anyone could now add `.git` and `AGENTS.md` above the workspace.
+    std::fs::set_permissions(&codex.dir, std::fs::Permissions::from_mode(0o1777)).unwrap();
+    assert_refused(&codex);
+    std::fs::set_permissions(&codex.dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    // A workspace that is a link could send Codex anywhere.
+    let work = codex.dir.join("work");
+    std::fs::remove_dir(&work).unwrap();
+    let elsewhere = codex.dir.join("elsewhere");
+    std::fs::create_dir(&elsewhere).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &work).unwrap();
+    assert_refused(&codex);
+    assert_eq!(codex.invocations().len(), ran, "codex ran");
+}
+
+/// Codex doesn't start: the status says so, and a question fails before
+/// anything runs.
+fn assert_refused(codex: &FakeCodex) {
+    assert_eq!(
+        status(&codex.adapter()),
+        (Availability::Unavailable, Authentication::Unknown)
+    );
+    let updates = run_to_end(codex.adapter().send(ask("hi")).as_mut());
     assert_eq!(
         failure(&updates),
-        (ErrorCode::InvalidRequest, "UNKNOWN_CONVERSATION")
+        (ErrorCode::ProviderFailed, "WORKSPACE_UNAVAILABLE")
     );
-    assert!(codex.invocations().is_empty());
+}
+
+#[test]
+fn an_unknown_conversation_fails_without_running_codex() {
+    // Only IDs this host issued map to a Codex thread: nothing a request
+    // names, even a real thread ID, reaches Codex's command line.
+    let codex = FakeCodex::install("answers", "signed-in");
+    let adapter = codex.adapter();
+    let issued = visible(&run_to_end(adapter.send(ask("first")).as_mut()));
+    assert!(matches!(issued[0], Update::ConversationCreated(_)));
+    let thread = format!("thread-{}", codex.pids()[0]);
+    let before = codex.invocations().len();
+    for conversation_id in [
+        "conv_from_elsewhere",
+        thread.as_str(),
+        "--help",
+        "-c",
+        "../../bin/sh",
+        "/bin/sh",
+        "; rm -rf ~",
+        "$(id)",
+    ] {
+        let updates = run_to_end(
+            adapter
+                .send(SendRequest {
+                    conversation_id: Some(conversation_id.to_owned()),
+                    ..ask("hi")
+                })
+                .as_mut(),
+        );
+        assert_eq!(
+            failure(&updates),
+            (ErrorCode::InvalidRequest, "UNKNOWN_CONVERSATION"),
+            "{conversation_id}"
+        );
+    }
+    assert_eq!(codex.invocations().len(), before, "codex ran");
 }
 
 #[test]
@@ -567,88 +683,15 @@ fn cancelling_during_the_sign_in_check_runs_nothing() {
     assert!(codex.pids().is_empty());
 }
 
-/// Frames, each sent after a pause, then the end of input after `linger`.
-struct PacedInput {
-    pending: VecDeque<(Duration, Vec<u8>)>,
-    current: std::io::Cursor<Vec<u8>>,
-    linger: Duration,
-}
-
-impl PacedInput {
-    fn new(frames: &[(Duration, &str)], linger: Duration) -> Self {
-        let pending = frames
-            .iter()
-            .map(|(pause, payload)| {
-                let mut frame = Vec::new();
-                framing::write_frame(&mut frame, payload.as_bytes()).unwrap();
-                (*pause, frame)
-            })
-            .collect();
-        Self {
-            pending,
-            current: std::io::Cursor::new(Vec::new()),
-            linger,
-        }
-    }
-}
-
-impl Read for PacedInput {
-    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
-        loop {
-            let count = self.current.read(buffer)?;
-            if count > 0 {
-                return Ok(count);
-            }
-            match self.pending.pop_front() {
-                Some((pause, frame)) => {
-                    thread::sleep(pause);
-                    self.current = std::io::Cursor::new(frame);
-                }
-                None => {
-                    thread::sleep(std::mem::take(&mut self.linger));
-                    return Ok(0);
-                }
-            }
-        }
-    }
-}
-
-/// Runs a host serving only `codex`, and returns its events and records.
-fn serve(codex: Codex, mut input: PacedInput) -> (Vec<Value>, Vec<Value>) {
-    let providers = Providers::new(vec![Box::new(codex)]);
-    let mut output = Vec::new();
-    let mut log = Diagnostics::new(Vec::new());
-    host::run_with(&providers, &mut input, &mut output, &mut log).expect("a clean session");
-
-    let mut wire = output.as_slice();
-    let mut events = Vec::new();
-    while let Some(frame) = framing::read_frame(&mut wire).unwrap() {
-        events.push(serde_json::from_slice(&frame).unwrap());
-    }
-    let records = String::from_utf8(log.into_inner())
-        .unwrap()
-        .lines()
-        .map(|line| serde_json::from_str(line).unwrap())
-        .collect();
-    (events, records)
-}
-
-fn names(events: &[Value]) -> Vec<(&str, &str)> {
-    events[1..]
-        .iter()
-        .map(|event| {
-            (
-                event["request_id"].as_str().unwrap(),
-                event["event"].as_str().unwrap(),
-            )
-        })
-        .collect()
-}
-
 /// How long the tests keep the input open for an answer to arrive.
 const ANSWER_TIME: Duration = Duration::from_secs(3);
 
-const SEND: &str = r#"{"version":1,"type":"request","request_id":"req_ask","method":"conversation.send","payload":{"provider_id":"codex","input":{"text":"What is this page about?"}}}"#;
+/// The IDs of the requests below, in the shape the extension gives its
+/// requests, which the host's diagnostics keep.
+const ASK: &str = "req_00000000-0000-4000-8000-000000000a5c";
+const STOP: &str = "req_00000000-0000-4000-8000-00000000057b";
+
+const SEND: &str = r#"{"version":1,"type":"request","request_id":"req_00000000-0000-4000-8000-000000000a5c","method":"conversation.send","payload":{"provider_id":"codex","input":{"text":"What is this page about?"}}}"#;
 
 #[test]
 fn a_question_travels_through_the_host_as_protocol_events() {
@@ -661,11 +704,11 @@ fn a_question_travels_through_the_host_as_protocol_events() {
     assert_eq!(
         names(&events),
         [
-            ("req_ask", "conversation.created"),
-            ("req_ask", "response.started"),
-            ("req_ask", "response.delta"),
-            ("req_ask", "response.delta"),
-            ("req_ask", "response.completed"),
+            (ASK, "conversation.created"),
+            (ASK, "response.started"),
+            (ASK, "response.delta"),
+            (ASK, "response.delta"),
+            (ASK, "response.completed"),
         ]
     );
     let conversation_id = events[1]["payload"]["conversation_id"].as_str().unwrap();
@@ -705,13 +748,15 @@ fn a_long_answer_is_split_into_frames_that_fit() {
 #[test]
 fn a_cancel_request_stops_codex_mid_turn() {
     let codex = FakeCodex::install("goes-quiet", "signed-in");
-    let cancel = r#"{"version":1,"type":"request","request_id":"req_stop","method":"request.cancel","payload":{"target_request_id":"req_ask"}}"#;
+    let cancel = format!(
+        r#"{{"version":1,"type":"request","request_id":"{STOP}","method":"request.cancel","payload":{{"target_request_id":"{ASK}"}}}}"#
+    );
     let (events, records) = serve(
         codex.adapter(),
         PacedInput::new(
             &[
                 (Duration::ZERO, SEND),
-                (Duration::from_millis(1500), cancel),
+                (Duration::from_millis(1500), cancel.as_str()),
             ],
             Duration::ZERO,
         ),
@@ -719,15 +764,15 @@ fn a_cancel_request_stops_codex_mid_turn() {
     assert_eq!(
         names(&events),
         [
-            ("req_ask", "conversation.created"),
-            ("req_ask", "response.started"),
-            ("req_ask", "response.failed"),
-            ("req_stop", "request.cancelled"),
+            (ASK, "conversation.created"),
+            (ASK, "response.started"),
+            (ASK, "response.failed"),
+            (STOP, "request.cancelled"),
         ]
     );
     assert_eq!(events[3]["payload"]["error"]["code"], "REQUEST_CANCELLED");
     assert_eq!(records[2]["event"], "request.completed");
-    assert_eq!(records[2]["target_request_id"], "req_ask");
+    assert_eq!(records[2]["target_request_id"], ASK);
     codex.assert_nothing_left_running();
 }
 
@@ -769,7 +814,7 @@ fn a_codex_that_never_starts_its_turn_times_out() {
         codex.adapter_with(limits),
         PacedInput::new(&[(Duration::ZERO, SEND)], Duration::from_secs(4)),
     );
-    assert_eq!(names(&events), [("req_ask", "response.failed")]);
+    assert_eq!(names(&events), [(ASK, "response.failed")]);
     assert_eq!(
         events[1]["payload"]["error"]["reason"],
         "PROVIDER_START_TIMEOUT"

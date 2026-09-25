@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { serveAskPort } from "../src/background/ask-bridge.js";
 import { createNativeConnectionManager } from "../src/background/native-connection.js";
+import { checkProviderStatus } from "../src/background/status-bridge.js";
 import { bindAskForm } from "../src/popup/ask-form.js";
+import { bindProviderState } from "../src/popup/provider-state.js";
 import { ASK_PORT_NAME, QUESTION_TOO_LONG } from "../src/shared/ask-port.js";
 import { MAX_NATIVE_MESSAGE_BYTES } from "../src/shared/limits.js";
 import { MockEvent } from "./support/mock-port.mjs";
@@ -17,6 +21,9 @@ const origin = "chrome-extension://abcdefghijklmnopabcdefghijklmnop/";
 const littleEndian = new Uint8Array(new Uint32Array([1]).buffer)[0] === 1;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
+// An empty provider search path: whatever this machine has installed, the
+// host finds no Codex.
+const noProviders = fs.mkdtempSync(path.join(os.tmpdir(), "pervue-roundtrip-"));
 
 /** @param {Uint8Array} bytes */
 function frame(bytes) {
@@ -29,7 +36,10 @@ function frame(bytes) {
 /** A Chrome-like Native Messaging port connected to the actual host process. */
 class HostPort {
   constructor() {
-    this.child = spawn(hostPath, [origin], { stdio: ["pipe", "pipe", "pipe"] });
+    this.child = spawn(hostPath, [origin], {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: { ...process.env, PERVUE_PROVIDER_PATH: noProviders }
+    });
     this.onMessage = new MockEvent();
     this.onDisconnect = new MockEvent();
     this.messagesSent = 0;
@@ -173,6 +183,11 @@ class Element {
   /** @param {string} name */
   getAttribute(name) {
     return this.attributes.get(name);
+  }
+
+  /** @param {string} name */
+  removeAttribute(name) {
+    this.attributes.delete(name);
   }
 
   /** @param {...string} nodes */
@@ -336,7 +351,27 @@ try {
   assert.equal(events.at(-1).request_id, "req_roundtrip_5");
   assert.equal(native.messagesSent, count + 1);
   assert.equal(elements.status.getAttribute("data-state"), "done");
+
+  // EXT-04: provider state through the same host. The fake scaffold is
+  // ready, Codex isn't installed here, and an unknown provider fails.
+  const ready = /** @type {any} */ (await checkProviderStatus({ manager, providerId: "fake" }));
+  assert.equal(ready.status.availability, "available");
+  assert.equal(ready.status.authentication, "authenticated");
+  const unknown = /** @type {any} */ (await checkProviderStatus({ manager, providerId: "missing" }));
+  assert.equal(unknown.error.code, "PROVIDER_NOT_FOUND");
+
+  const line = Object.assign(new Element(), { hidden: true });
+  bindProviderState(/** @type {any} */ (line), {
+    sendMessage: () => checkProviderStatus({ manager })
+  });
+  assert.equal(line.textContent, "Checking Codex…");
+  await until(() => line.getAttribute("data-state") !== "checking");
+  assert.equal(line.getAttribute("data-state"), "attention");
+  assert.equal(line.getAttribute("data-kind"), "provider-missing");
+  assert.equal(line.textContent, "Codex isn't installed. Install it, then try again.");
+  assert.equal(manager.pendingRequestCount, 0);
   console.log("Extension → native host → popup round trip passed");
 } finally {
   native?.disconnect();
+  fs.rmSync(noProviders, { recursive: true, force: true });
 }

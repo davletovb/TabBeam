@@ -157,10 +157,10 @@ Reached after **Milestone H**:
 | PRO-02 | Implement Codex/OpenAI discovery and authentication status | B | Provider | PRO-01 | IMPLEMENTED — VERIFY |
 | PRO-03 | Implement Codex/OpenAI request + streaming adapter | B | Provider | PRO-02 | IMPLEMENTED — VERIFY |
 | PRO-04 | Implement provider cancellation, timeout, and crash mapping | B | Provider | PRO-03, NAT-04, NAT-05 | IMPLEMENTED — VERIFY |
-| EXT-04 | Surface host/provider state and normalized failures | B | Extension | EXT-03, PRO-02, DOC-02 | BACKLOG |
-| SEC-02 | Harden provider process invocation and log redaction | B | Security | NAT-04, PRO-03, OBS-01 | BACKLOG |
-| TST-04 | Add hostile fake-process integration matrix | B | Testing | NAT-04, NAT-05, PRO-04 | BACKLOG |
-| TST-05 | Add opt-in real Codex/OpenAI smoke test | B | Testing | PRO-03, PRO-04 | BACKLOG |
+| EXT-04 | Surface host/provider state and normalized failures | B | Extension | EXT-03, PRO-02, DOC-02 | IMPLEMENTED — VERIFY |
+| SEC-02 | Harden provider process invocation and log redaction | B | Security | NAT-04, PRO-03, OBS-01 | IMPLEMENTED — VERIFY |
+| TST-04 | Add hostile fake-process integration matrix | B | Testing | NAT-04, NAT-05, PRO-04 | IMPLEMENTED — VERIFY |
+| TST-05 | Add opt-in real Codex/OpenAI smoke test | B | Testing | PRO-03, PRO-04 | IMPLEMENTED — VERIFY |
 | CON-01 | Define provider-neutral conversation/message/source model | C | Conversation | DOC-01, PRO-03 | BACKLOG |
 | CON-02 | Implement conversation persistence and recent index | C | Conversation | CON-01 | BACKLOG |
 | CON-03 | Implement native provider-session bridge | C | Conversation | CON-01, PRO-03 | BACKLOG |
@@ -771,7 +771,16 @@ Reached after **Milestone H**:
   - cancellation.
 - UI instructions describe the user action, not internal architecture.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- Provider state on open: the popup's first line asks the service worker (`pervue.provider-status`, `extension/src/shared/provider-status.js`), which sends the host `provider.status` for Codex and passes on only the DOC-02 fields (`extension/src/background/status-bridge.js`). It shows "Codex is ready.", Codex not installed, not signed in, or unable to start, the companion app missing or unreachable, or an out-of-date companion app whose status or error doesn't follow DOC-02, such as an error code outside DOC-02's vocabulary (`HOST_UNAVAILABLE` / `HOST_PROTOCOL_MISMATCH`). The service worker answers within 15 seconds: a host that never ends the request gets `REQUEST_TIMEOUT` / `REQUEST_DEADLINE_EXCEEDED`, and the worker stops routing it. The popup never waits more than 20 seconds, and each question's outcome keeps it current (`extension/src/popup/provider-state.js`).
+- Failures: the status line shows the error's message and names its kind in `data-kind`, from the DOC-02 `code` alone (`extension/src/shared/outcomes.js`): `host-missing`, `host-unavailable`, `provider-missing`, `provider-signed-out`, `provider-failed`, `timeout`, `cancelled`, `context-unavailable`, `invalid-request`, and `internal-error`. Setup the user can do (install, sign in) shows amber, failures red, and a cancellation is neutral with state `cancelled`. An error without a message gets its kind's own, and internal errors and protocol mismatches add a request ID for the host's diagnostics (DOC-02 §7).
+- User actions, not architecture: host messages that described internals now say what to do: timeouts ("The answer took too long to start. Try again."), cancellation ("Stopped. You can ask again."), an unknown provider ("Pervue's companion app doesn't support this AI provider yet. Update it, then try again."), and Codex failing to start or answering in a way Pervue doesn't understand. The popup's own lost-worker message no longer mentions a background service.
+- Tests: `extension/tests/provider-status.mjs` (the status bridge against DOC-02's status and error fixtures, invalid statuses, unknown error codes, host failures and disconnects, and the worker's 15-second deadline; the provider line for every state, the 20-second bound, and updates from outcomes); `extension/tests/native-connection-manager.mjs` (a forgotten request's route is dropped); `extension/tests/popup-ask.mjs` (every DOC-02 code, the six required states distinct, fallback messages free of architecture words, references, outcomes); `extension/tests/manifest-smoke.mjs` (only extension pages get a status); and `extension/tests/native-roundtrip.mjs` (statuses through the built host, and the popup line showing a missing Codex).
+- Checked in Chromium with the unpacked extension, the built host, and the real Codex CLI 0.156.1 against a local stand-in for the OpenAI Responses API: Codex ready and answering, signed out, not installed, failing with a 500, and the companion app not registered each showed their own line and failure kind, and no Codex or host process was left.
+- Documented in `extension/README.md` (Provider state and failures).
+- Moves to VERIFIED once merged.
 
 ### SEC-02 — Harden provider process invocation and log redaction
 **Area:** Security  
@@ -783,7 +792,17 @@ Reached after **Milestone H**:
 - Environment forwarding is minimal and documented.
 - Secrets/tokens are redacted from logs.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- No shell command concatenation: the process manager passes an absolute program and an argument array, the only process spawn in the host (`native/host/clippy.toml`). `each_argument_reaches_the_process_whole` shows spaces, quotes, `$(id)`, `;`, `|`, `%PATH%`, newlines, and empty arguments arriving as separate, unchanged argv elements; questions go on stdin.
+- Web/page content can't select executables: provider IDs only select a registered adapter (`provider_ids_are_names_not_paths_or_commands`); Codex is found by platform rules alone; conversation IDs map to Codex threads only when this host issued them, so option-, path-, and thread-shaped IDs never reach Codex's command line (`an_unknown_conversation_fails_without_running_codex`); page context never reaches Codex yet.
+- Minimal, documented environment: provider processes start with an empty environment (`env_clear`) and get only the variables listed in `native/host/src/providers/environment.rs` (home, user, temporary directory, locale, session bus, proxies, CA certificates; on Windows what programs and Node need), plus Codex's `CODEX_HOME`, `CODEX_SQLITE_HOME`, and `CODEX_CA_CERTIFICATE` and a `PATH` led by Codex's directory. Credentials such as `OPENAI_API_KEY` and code-loading variables such as `NODE_OPTIONS` and `LD_PRELOAD` stay behind (`codex_gets_only_the_environment_it_needs`, `a_process_gets_only_the_environment_its_spec_sets`).
+- Private workspace: Codex runs in, and is pointed at, an empty directory in the user's cache instead of the shared temporary directory. Codex reads `AGENTS.md` from its working directory and, below a directory holding `.git`, from each directory in between (checked with Codex CLI 0.156.1), so before every launch the host checks that nobody but the user can change the workspace or anything above it. On POSIX the workspace must be the user's own directory, not a link, and is set to mode 0700; every directory above it, as named and with links resolved, must belong to the user or root and be writable by its owner alone (or the user's private group), sticky or not; Codex gets the resolved path. Checked as root, as a user with a private group and umask 002, and as a user whose primary group is shared. On Windows the workspace must not be a link or junction. Otherwise Codex doesn't start (`WORKSPACE_UNAVAILABLE`). Code: `native/host/src/providers/codex/workspace.rs`; tests there and `a_workspace_others_can_change_stops_codex_from_starting`, `codex_gets_the_workspace_s_real_path`, `codex_runs_in_its_own_workspace`.
+- Redaction: diagnostics copy only identifiers Pervue made itself: request IDs in the shape the extension gives every request (`req_` and a UUID), providers the host serves, and conversations it created. Anything else a request carries is `[redacted]`, whatever its format, so a secret sent where an ID belongs never reaches the log (`native/host/src/diagnostics.rs`, `identifiers_pervue_did_not_issue_are_redacted_in_diagnostics`). Provider stderr, sign-in output, and failed-turn messages were already discarded unread.
+- Checked with the real Codex CLI 0.156.1 through the built host, with canary credentials and a crashing `NODE_OPTIONS` in the host's environment: Codex's processes saw only `CODEX_HOME`, `HOME`, `LANG`, `NO_PROXY`, and `PATH` (plus what its own launcher adds), ran in the new 0700 workspace, answered with the stored sign-in, and no canary reached Codex or the diagnostics.
+- Documented in `docs/security/trust-boundaries.md` (§3, §5) and `native/README.md` (Codex, Provider processes, Diagnostics).
+- Moves to VERIFIED once merged.
 
 ### TST-04 — Add hostile fake-process integration matrix
 **Area:** Testing  
@@ -793,7 +812,16 @@ Reached after **Milestone H**:
 - CI covers slow stream, stderr flood, non-zero exit, hang, ignored cancellation, malformed output, and large output.
 - All cases finish with bounded resources and normalized outcomes.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `native/test_provider/tests/hostile_matrix.rs` runs the whole host against a fake `codex` in 19 cases: a byte-at-a-time stream, 128 MiB of stderr while answering, endless stderr, 100,000 progress events, endless progress cancelled, endless unknown events, a nonzero exit, a crash, hangs before and during the turn, ignored cancellation (quiet and while flooding), non-JSON and non-UTF-8 output, a 330 KB answer, a 9 MiB line, an endless line, a sign-in check that floods, and four hostile requests at once next to a plain question and a cancel. It runs in every native CI job (Linux, macOS, Windows, MSRV, release).
+- Each request must end exactly once, in its normalized outcome, within a bound, with a matching diagnostics record and its process reaped; the provider's stderr and the questions never reach events or diagnostics. On Linux the host's threads and file descriptors must return to their baseline after each case, and its peak memory may grow by at most 64 MiB (observed: about 8 MiB for the 9 MiB line, 144 KiB for the 128 MiB stderr flood). A watchdog fails a stuck case instead of hanging CI.
+- The matrix found a real bug: a provider that writes fast enough kept the request loop busy indefinitely. A cancel took 17 seconds, an ignored-SIGTERM flooder 30 seconds to be killed, and a 1-second idle timeout fired after 19. Fixed with bounded work per turn: the loop delivers one request's updates for at most 5 ms before turning to others and to new frames, and the stream manager and the Codex adapter stop consuming output that yields nothing to return 5 ms past their deadline (`BUSY_LIMIT`); a stopped process, or a sign-in check past its time limit, is cut off on time even while it writes. `a_request_that_never_runs_dry_cannot_hold_up_the_others` in `native/host/src/host.rs` pins the loop's part without processes. Reverting each part of the fix makes the matrix fail, except the stream's own limit, which a stderr flood can't outrun in practice and remains as a safeguard.
+- The fake `codex` gained the hostile behaviors, a `by-prompt` mode so one session can mix them, and a 60-second cap on every hang, so a killed test run leaves nothing running for long (`native/test_provider/README.md`). It is now installed as a hard link rather than a copy: a copy could fail to run with `ETXTBSY` when another test thread forked while it was being written, a race that predates this item and was seen once.
+- Mutation check: 30 deliberate faults across EXT-04, SEC-02, and this item's fixes, all caught.
+- Documented in `native/README.md` (Requests in flight, Hostile providers).
+- Moves to VERIFIED once merged.
 
 ### TST-05 — Add opt-in real Codex/OpenAI smoke test
 **Area:** Testing  
@@ -804,10 +832,16 @@ Reached after **Milestone H**:
 - When enabled, it proves discovery → send → stream → completion.
 - It does not expose credentials in CI logs.
 
-**Notes**
-- PRO-03 added `native/host/tests/live_codex.rs`, which runs only with `PERVUE_LIVE_CODEX=1` and proves discovery → send → stream → completion through the built host. It still fails, rather than skips, when enabled without Codex or its sign-in, and no CI job runs it yet.
+**Status:** IMPLEMENTED — VERIFY
 
-**Status:** BACKLOG
+**Implementation evidence**
+- `native/host/tests/live_codex.rs`: through the built host, `provider.status` must find Codex available and signed in (discovery), then one question must produce `conversation.created`, `response.started` from `codex`, at least one `response.delta`, and `response.completed`, with the answer "pong" (send → stream → completion). The host's diagnostics must hold neither the question nor the answer.
+- Skipped safely: without `PERVUE_LIVE_CODEX` the test passes at once; with `PERVUE_LIVE_CODEX=1` it is skipped, and passes, when Codex isn't installed or signed in, including when the request itself finds Codex signed out; `PERVUE_LIVE_CODEX=required` makes those failures, for a job set up with a sign-in. Checked all three against a missing Codex and a signed-out real Codex CLI 0.156.1.
+- No credentials in CI logs: the host's stderr is captured rather than inherited, and before printing anything the test fails, without printing the value, if the events or diagnostics hold the value of `OPENAI_API_KEY` or `CODEX_API_KEY` or anything shaped like an API key. SEC-02 keeps those variables from reaching Codex at all.
+- CI: `.github/workflows/live-codex.yml` runs it only when started by hand (`workflow_dispatch`, with the Codex CLI version as an input). With a repository secret `OPENAI_API_KEY`, Codex signs in with it on stdin, into a sign-in of the job's own, with its output discarded, and the test runs as `required`; without the secret it is skipped.
+- Checked end to end with the real Codex CLI 0.156.1 against a local stand-in for the Responses API, with a canary `OPENAI_API_KEY` in the environment: the test passed in 0.75 seconds, and a planted "credential" in the output failed it before anything was printed. A run against a real OpenAI account still needs the secret, or a developer's signed-in Codex.
+- Documented in `native/README.md` (Codex).
+- Moves to VERIFIED once merged.
 
 ---
 
@@ -1609,7 +1643,7 @@ Update this section whenever item statuses change.
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | Foundation | 5 | 0 | 5 | 0 | 0 | 0 | 0 | 0 |
 | A — Native round trip | 8 | 0 | 8 | 0 | 0 | 0 | 0 | 0 |
-| B — First provider | 10 | 0 | 6 | 0 | 0 | 4 | 0 | 0 |
+| B — First provider | 10 | 0 | 10 | 0 | 0 | 0 | 0 | 0 |
 | C — Conversation continuity | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
 | D — Browser context | 9 | 0 | 8 | 0 | 0 | 0 | 1 | 0 |
 | MVP closure | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
@@ -1618,7 +1652,7 @@ Update this section whenever item statuses change.
 | G — Installable product | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 |
 | H — Search/citations | 8 | 0 | 0 | 0 | 0 | 8 | 0 | 0 |
 | Post-milestone | 6 | 0 | 0 | 0 | 0 | 4 | 0 | 2 |
-| **Total** | **81** | **0** | **27** | **0** | **0** | **51** | **1** | **2** |
+| **Total** | **81** | **0** | **31** | **0** | **0** | **47** | **1** | **2** |
 
 ### Milestone completion rule
 
