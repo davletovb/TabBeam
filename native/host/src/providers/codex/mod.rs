@@ -93,6 +93,13 @@ const NOT_SIGNED_IN: ErrorBody<'static> = ErrorBody {
     retryable: false,
 };
 
+const PAGE_CONTEXT_UNSUPPORTED: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::InvalidRequest,
+    reason: "PAGE_CONTEXT_UNSUPPORTED",
+    message: "Codex can't use page context yet. Choose No context, then ask again.",
+    retryable: false,
+};
+
 const UNKNOWN_CONVERSATION: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::InvalidRequest,
     reason: "UNKNOWN_CONVERSATION",
@@ -196,6 +203,11 @@ impl Provider for Codex {
         let Some(executable) = self.executable() else {
             return Box::new(Scripted::failed(NOT_INSTALLED));
         };
+        // Codex doesn't receive browser context yet (`page_context: false`).
+        // Answering without it would silently ignore what the user attached.
+        if request.has_context {
+            return Box::new(Scripted::failed(PAGE_CONTEXT_UNSUPPORTED));
+        }
         let resume = match &request.conversation_id {
             None => None,
             Some(conversation_id) => match self.conversations.borrow().get(conversation_id) {

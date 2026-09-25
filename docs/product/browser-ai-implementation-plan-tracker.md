@@ -445,7 +445,7 @@ Reached after **Milestone H**:
 - Strict bounded JSON syntax reader: `native/host/src/protocol/json.rs`
 - Protocol request model and strict top-level/method-payload validation: `native/host/src/protocol/request.rs`
 - Duplicate member names are rejected in every object of a method payload, compared after decoding escapes (v1 §1 rule 9): `native/host/src/protocol/request.rs` + `native/host/src/protocol/json.rs`
-- Method router: `native/host/src/protocol/router.rs`
+- Method routing: `native/host/src/host.rs`, first in `native/host/src/protocol/router.rs` until PRO-01 put it behind the provider adapter contract
 - Protocol event/error emission with the typed DOC-02 error and capability vocabulary: `native/host/src/protocol/events.rs`
 - Host emits exactly one `host.ready`, keeps running after malformed requests, and routes the local fake conversation provider: `native/host/src/host.rs`
 - Parser/router/integration tests cover malformed JSON, duplicate/missing/extra/wrong fields, 128/129-character request-ID boundaries, escaped identifiers, unsupported versions, unknown methods, depth limits, recovered-ID malformed failures, invalid method payloads, and fake conversation dispatch: `native/host/src/protocol/` + `native/host/src/host.rs`
@@ -727,6 +727,7 @@ Reached after **Milestone H**:
 - `native/host/src/providers/codex/mod.rs` runs `codex exec --json --skip-git-repo-check --sandbox read-only -C <empty dir> [resume <thread id>] -` with the question on stdin, never in an argument. `output.rs` turns Codex's JSON events into protocol events: `turn.started` becomes `conversation.created` and `response.started`, each agent message a `response.delta`, and `turn.completed` `response.completed`.
 - stdout and stderr are separate pipes. stdout is read line by line through the stream manager (NAT-05). stderr, which can hold secrets, is counted and discarded, and so are the messages of failed turns.
 - Codex thread IDs stay behind the adapter: each conversation gets a random `conv_…` ID mapped to its thread inside the host, and continuing the conversation resumes that thread. A thread ID that could read as an option is refused as malformed output.
+- Browser context from CTX-01–04 isn't passed to Codex yet (`page_context: false`). A request that attaches some fails as `INVALID_REQUEST` / `PAGE_CONTEXT_UNSUPPORTED` before Codex runs, instead of being answered without it (`page_context_fails_the_request_instead_of_being_dropped`).
 - Parser fixtures: `native/host/src/providers/codex/fixtures/*.jsonl`, captured from Codex CLI 0.156.1 (a success, a resumed turn, 401, 429, and 500 failures, and retry notices), parsed by the `output.rs` tests. Adapter tests against the fake `codex` check the exact command line, the question on stdin, streaming, continuing a conversation, and several messages in one answer.
 - Opt-in live smoke test: `native/host/tests/live_codex.rs` (`PERVUE_LIVE_CODEX=1`) asks the installed Codex one question through the built host.
 - Checked with the real Codex CLI 0.156.1 against a local stand-in for the OpenAI Responses API, as no OpenAI credentials are available here. The live smoke test passes, and a continued conversation carries its history. In Chromium, the unpacked extension's popup asked Codex through the built host and showed the streamed answer, with no Codex or host process left afterwards.

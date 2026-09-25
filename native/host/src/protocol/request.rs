@@ -47,6 +47,8 @@ pub enum Method<'a> {
         conversation_id: Option<JsonStr<'a>>,
         /// `input.text`: the user's question.
         text: JsonStr<'a>,
+        /// Whether the request attaches browser context (`context`).
+        has_context: bool,
     },
     ProviderStatus {
         provider_id: Option<JsonStr<'a>>,
@@ -302,6 +304,7 @@ fn parse_conversation_payload(payload: &[u8]) -> Result<Method<'_>, FailureKind>
     let mut provider_id = None;
     let mut conversation_id = None;
     let mut text = None;
+    let mut has_context = false;
     let mut invalid = false;
 
     let has_members = walk_payload_object(payload, |key, reader| {
@@ -315,6 +318,7 @@ fn parse_conversation_payload(payload: &[u8]) -> Result<Method<'_>, FailureKind>
             conversation_id = read_nonempty_string(reader)?;
             invalid |= conversation_id.is_none();
         } else if key.equals_ascii("context") {
+            has_context = true;
             invalid |= read_object(reader)?.is_none();
         } else {
             reader.skip_value().map_err(payload_error)?;
@@ -328,6 +332,7 @@ fn parse_conversation_payload(payload: &[u8]) -> Result<Method<'_>, FailureKind>
                 provider_id,
                 conversation_id,
                 text,
+                has_context,
             })
         }
         _ => Err(FailureKind::InvalidPayload),
@@ -525,6 +530,7 @@ mod tests {
             provider_id,
             conversation_id,
             text,
+            has_context,
         } = request.method
         else {
             panic!("unexpected method: {:?}", request.method);
@@ -532,6 +538,7 @@ mod tests {
         assert!(provider_id.equals_ascii("fake"));
         assert_eq!(conversation_id, None);
         assert_eq!(text.decode(), "Hello");
+        assert!(!has_context);
     }
 
     #[test]
@@ -811,12 +818,14 @@ mod tests {
             provider_id,
             conversation_id,
             text,
+            has_context,
         } = request.method
         else {
             panic!("unexpected method: {:?}", request.method);
         };
         assert!(provider_id.equals_ascii("codex"));
         assert_eq!(text.decode(), "Hi");
+        assert!(has_context);
         assert_eq!(conversation_id.map(JsonStr::raw), Some(&b"conv_1"[..]));
     }
 

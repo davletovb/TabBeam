@@ -469,6 +469,7 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                 provider_id,
                 conversation_id,
                 text,
+                has_context,
             } => {
                 let provider_id = provider_id.decode().into_owned();
                 let conversation_id = conversation_id.map(|id| id.decode().into_owned());
@@ -478,6 +479,7 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                             provider.send(SendRequest {
                                 text: text.decode().into_owned(),
                                 conversation_id: conversation_id.clone(),
+                                has_context,
                             }),
                             Some(provider.timeouts()),
                         ),
@@ -1073,9 +1075,10 @@ mod tests {
         }
 
         fn send(&self, request: SendRequest) -> Box<dyn Exchange> {
+            let context = if request.has_context { "+context" } else { "" };
             self.calls
                 .borrow_mut()
-                .push(format!("send:{}", request.text));
+                .push(format!("send:{}{context}", request.text));
             Box::new(Controlled {
                 script: self.script,
                 started: false,
@@ -1305,6 +1308,30 @@ mod tests {
                 "{failure}"
             );
         }
+    }
+
+    #[test]
+    fn the_provider_learns_whether_context_is_attached() {
+        // An adapter whose provider can't use browser context must be able to
+        // refuse a request that attaches some.
+        let provider = TestProvider::new("test", Script::answers("ok"));
+        let calls = Rc::clone(&provider.calls);
+        let requests = [
+            request(
+                "req_plain",
+                "conversation.send",
+                r#"{"provider_id":"test","input":{"text":"plain"}}"#,
+            ),
+            request(
+                "req_context",
+                "conversation.send",
+                r#"{"provider_id":"test","input":{"text":"with"},"context":{"mode":"selection","text":"x","truncated":false,"page":{"title":"T","url":"https://example.com/"}}}"#,
+            ),
+        ];
+        let frames: Vec<&str> = requests.iter().map(String::as_str).collect();
+        let session = run_session(&with(provider), framed(&frames).as_slice());
+        assert_eq!(session.result, Ok(()));
+        assert_eq!(*calls.borrow(), ["send:plain", "send:with+context"]);
     }
 
     #[test]

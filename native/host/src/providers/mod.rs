@@ -25,6 +25,10 @@ pub struct SendRequest {
     pub text: String,
     /// The conversation to continue, or `None` to start one.
     pub conversation_id: Option<String>,
+    /// Whether the request attaches browser context (`payload.context`). An
+    /// adapter whose provider can't use it fails the request rather than
+    /// answer without it (DOC-02 §6).
+    pub has_context: bool,
 }
 
 /// What an exchange reports, in protocol order. After a terminal update

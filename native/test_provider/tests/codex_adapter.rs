@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use pervue_host::diagnostics::Diagnostics;
 use pervue_host::framing;
 use pervue_host::host;
-use pervue_host::protocol::events::{Authentication, Availability, ErrorCode};
+use pervue_host::protocol::events::{Authentication, Availability, Capability, ErrorCode};
 use pervue_host::providers::codex::{Codex, LIMITS, Limits};
 use pervue_host::providers::discovery::SearchPath;
 use pervue_host::providers::{Exchange, Provider, Providers, SendRequest, Timeouts, Update};
@@ -120,6 +120,7 @@ fn ask(text: &str) -> SendRequest {
     SendRequest {
         text: text.to_owned(),
         conversation_id: None,
+        has_context: false,
     }
 }
 
@@ -283,6 +284,35 @@ fn a_codex_that_cannot_be_started_is_unavailable() {
 }
 
 #[test]
+fn page_context_fails_the_request_instead_of_being_dropped() {
+    // Codex doesn't receive browser context yet, so a request that attaches
+    // some fails before anything runs rather than answer without it.
+    let codex = FakeCodex::install("answers", "signed-in");
+    let adapter = codex.adapter();
+    let updates = run_to_end(
+        adapter
+            .send(SendRequest {
+                has_context: true,
+                ..ask("Summarize this page")
+            })
+            .as_mut(),
+    );
+    assert_eq!(
+        failure(&updates),
+        (ErrorCode::InvalidRequest, "PAGE_CONTEXT_UNSUPPORTED")
+    );
+    assert_eq!(updates.len(), 1);
+    assert!(codex.invocations().is_empty(), "codex ran");
+
+    // The status says so up front.
+    let updates = run_to_end(adapter.status().as_mut());
+    let Update::Status { status, .. } = &updates[0] else {
+        panic!("expected a status, got {updates:?}");
+    };
+    assert_eq!(status.capabilities.page_context, Capability::Unsupported);
+}
+
+#[test]
 fn a_signed_out_codex_fails_the_request_before_it_runs() {
     let codex = FakeCodex::install("answers", "signed-out");
     let updates = run_to_end(codex.adapter().send(ask("hi")).as_mut());
@@ -352,8 +382,8 @@ fn a_conversation_continues_its_codex_thread() {
     let second = run_to_end(
         adapter
             .send(SendRequest {
-                text: "second".to_owned(),
                 conversation_id: Some(conversation_id.clone()),
+                ..ask("second")
             })
             .as_mut(),
     );
@@ -382,8 +412,8 @@ fn an_unknown_conversation_fails_without_running_codex() {
         codex
             .adapter()
             .send(SendRequest {
-                text: "hi".to_owned(),
                 conversation_id: Some("conv_from_elsewhere".to_owned()),
+                ..ask("hi")
             })
             .as_mut(),
     );
@@ -464,8 +494,8 @@ fn a_lost_codex_session_fails_as_a_process_exit() {
     let updates = run_to_end(
         adapter
             .send(SendRequest {
-                text: "again".to_owned(),
                 conversation_id: Some(conversation_id),
+                ..ask("again")
             })
             .as_mut(),
     );

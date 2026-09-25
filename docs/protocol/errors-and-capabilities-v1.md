@@ -142,7 +142,7 @@ Required v1 protocol reasons include:
 
 The extension also reports `REQUEST_TOO_LARGE` when it refuses to send a request that would exceed the Native Messaging frame limit (SEC-01, `docs/protocol/native-messaging-v1.json`). The host never receives such a request.
 
-A provider adapter reports `UNKNOWN_CONVERSATION` when `conversation_id` names a conversation it can't continue, such as one started by an earlier host process (PRO-03).
+A provider adapter reports `UNKNOWN_CONVERSATION` when `conversation_id` names a conversation it can't continue, such as one started by an earlier host process (PRO-03). It reports `PAGE_CONTEXT_UNSUPPORTED` when a request attaches browser context (`payload.context`) that its provider can't use (`page_context: false`), rather than answer without it (§6).
 
 Default retryability: **false** unless the caller changes the request.
 
