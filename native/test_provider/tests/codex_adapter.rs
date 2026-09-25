@@ -270,7 +270,10 @@ fn a_missing_codex_fails_the_request_as_not_found() {
 
 #[test]
 fn a_codex_that_cannot_be_started_is_unavailable() {
-    // An executable file that isn't a program: found, but it can't start.
+    // Found, since an execute bit is set, but it can't start. On POSIX its
+    // owner may not execute it: macOS runs a text file it may execute with
+    // /bin/sh. Root may execute it anyway, and Windows ignores the mode, but
+    // neither runs a file that isn't a program.
     let codex = FakeCodex::install("answers", "signed-in");
     let path = codex
         .dir
@@ -279,7 +282,7 @@ fn a_codex_that_cannot_be_started_is_unavailable() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o601)).unwrap();
     }
 
     assert_eq!(
