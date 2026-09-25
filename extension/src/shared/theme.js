@@ -36,14 +36,20 @@ export async function loadTheme(storage, root) {
  * @param {HTMLSelectElement} select
  * @param {{get(key: string): Promise<Record<string, any>>, set(values: Record<string, any>): Promise<void>}} storage
  * @param {HTMLElement} root
+ * @param {{addListener(callback: (changes: Record<string, any>, area: string) => void): void}} [storageChanges]
  */
-export async function bindThemeSelect(select, storage, root) {
+export async function bindThemeSelect(select, storage, root, storageChanges) {
   const initial = await loadTheme(storage, root);
   select.value = initial;
   select.addEventListener("change", () => {
     const preference = applyTheme(root, select.value);
     select.value = preference;
     void storage.set({ [THEME_STORAGE_KEY]: preference });
+  });
+  storageChanges?.addListener((changes, area) => {
+    if (area !== "local" || !changes[THEME_STORAGE_KEY]) return;
+    const preference = applyTheme(root, changes[THEME_STORAGE_KEY].newValue);
+    select.value = preference;
   });
   return initial;
 }
