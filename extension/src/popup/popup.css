@@ -45,6 +45,45 @@ h1 {
   gap: 8px;
 }
 
+.conversation-nav {
+  display: grid;
+  gap: 6px;
+}
+
+.conversation-nav label {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.conversation-nav select {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, CanvasText 24%, transparent);
+  border-radius: 8px;
+  background: Canvas;
+  color: CanvasText;
+}
+
+.conversation-history {
+  display: grid;
+  gap: 10px;
+  max-height: 240px;
+  overflow: auto;
+}
+
+.message {
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, CanvasText 16%, transparent);
+  border-radius: 10px;
+  overflow-wrap: anywhere;
+}
+
+.message-user { margin-left: 20px; }
+.message-assistant { margin-right: 20px; }
+.message strong { font-size: 12px; }
+.message p { margin-top: 4px; white-space: pre-wrap; font-size: 14px; }
+.message[data-state="failed"] { border-color: light-dark(#b3261e, #f2b8b5); }
+
 .context-choices {
   display: flex;
   flex-wrap: wrap;
@@ -129,6 +168,8 @@ button.secondary {
   background: transparent;
   color: CanvasText;
 }
+
+button:disabled { opacity: 0.5; cursor: default; }
 
 button:focus-visible,
 textarea:focus-visible {

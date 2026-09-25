@@ -15,7 +15,8 @@ const WORKER_LOST =
  *   input: HTMLTextAreaElement,
  *   submit: HTMLButtonElement,
  *   status: HTMLElement,
- *   answer: HTMLElement
+ *   answer: HTMLElement,
+ *   history?: HTMLElement
  * }} AskElements
  */
 
@@ -26,15 +27,73 @@ const WORKER_LOST =
  * while an answer streams.
  *
  * @param {AskElements} elements
- * @param {{connect(connectInfo: {name: string}): AskPort}} runtime
- * @param {{getContext(): any | null, isPending(): boolean}} [contextControls]
+ * @param {{connect(connectInfo: {name: string}): AskPort, sendMessage?(message: any): Promise<any>}} runtime
+ * @param {{getContext(): any | null, isPending(): boolean, clear?(): void}} [contextControls]
+ * @param {{onConversationId?(id: string | null): void, onSaved?(): void, onRequestStarted?(): void}} [options]
  */
-export function bindAskForm(elements, runtime, contextControls) {
+export function bindAskForm(elements, runtime, contextControls, options = {}) {
   const { form, input, submit, status, answer } = elements;
+  const history = elements.history;
+  /** @type {string | null} */
+  let conversationId = null;
+  let viewGeneration = 0;
 
   // The port of the question in flight, or null when idle.
   /** @type {AskPort | null} */
   let active = null;
+
+  /** @param {string} id */
+  async function loadConversation(id) {
+    if (!history || typeof runtime.sendMessage !== "function" || active) return false;
+    const generation = ++viewGeneration;
+    try {
+      const result = await runtime.sendMessage?.({ type: "pervue.conversations.get", conversation_id: id });
+      if (generation !== viewGeneration || active) return false;
+      if (result?.ok !== true || !result.value) throw new Error("unavailable");
+      conversationId = result.value.id;
+      renderHistory(result.value.messages);
+      answer.textContent = "";
+      answer.hidden = true;
+      options.onConversationId?.(conversationId);
+      return true;
+    } catch {
+      if (generation === viewGeneration) setStatus("Conversation history unavailable.", "failed");
+      return false;
+    }
+  }
+
+  /** @param {any[]} messages */
+  function renderHistory(messages) {
+    if (!history) return;
+    history.replaceChildren(...messages.map((message) => bubble(message.role, message.text, message.status)));
+  }
+
+  /** @param {string} role @param {string} text @param {string} state */
+  function bubble(role, text, state) {
+    const owner = history?.ownerDocument ?? document;
+    const item = owner.createElement("article");
+    item.className = `message message-${role}`;
+    item.setAttribute("data-state", state);
+    const label = owner.createElement("strong");
+    label.textContent = role === "user" ? "You" : "Pervue";
+    const body = owner.createElement("p");
+    body.textContent = text || (state === "pending" ? "Answering…" : "No answer.");
+    item.append(label, body);
+    return item;
+  }
+
+  function newConversation() {
+    if (active) return false;
+    ++viewGeneration;
+    conversationId = null;
+    history?.replaceChildren();
+    answer.textContent = "";
+    answer.hidden = true;
+    options.onConversationId?.(null);
+    setStatus(READY_STATUS, "idle");
+    input.focus();
+    return true;
+  }
 
   form.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -92,6 +151,9 @@ export function bindAskForm(elements, runtime, contextControls) {
     }
 
     active = port;
+    ++viewGeneration;
+    options.onRequestStarted?.();
+    if (history) history.append(bubble("user", text, "pending"));
     answer.textContent = "";
     answer.hidden = true;
     setBusy(true);
@@ -109,7 +171,11 @@ export function bindAskForm(elements, runtime, contextControls) {
     });
     try {
       const context = contextControls?.getContext();
-      port.postMessage(context ? { type: "ask", text, context } : { type: "ask", text });
+      port.postMessage({
+        type: "ask", text,
+        ...(history && conversationId ? { conversation_id: conversationId } : {}),
+        ...(context ? { context } : {})
+      });
     } catch {
       // No events will follow a question the port couldn't carry, such as
       // one over Chrome's 64 MiB message limit, so fail it now.
@@ -123,6 +189,12 @@ export function bindAskForm(elements, runtime, contextControls) {
    */
   function render(port, event) {
     switch (event?.event) {
+      case "conversation.created":
+        if (history && typeof event.payload?.conversation_id === "string") {
+          conversationId = event.payload.conversation_id;
+          options.onConversationId?.(conversationId);
+        }
+        break;
       case "response.started":
         setStatus("Answering…", "pending");
         break;
@@ -135,12 +207,13 @@ export function bindAskForm(elements, runtime, contextControls) {
         break;
       case "response.completed":
         finish(port, "Answer complete.", "done");
+        if (history) input.value = "";
         break;
       case "response.failed":
         finish(port, failureMessage(event.payload?.error), "failed");
         break;
       default:
-        // conversation.created and response.source belong to later items.
+        // Sources are persisted by the background worker for later display.
         break;
     }
   }
@@ -155,6 +228,12 @@ export function bindAskForm(elements, runtime, contextControls) {
     port.disconnect();
     setBusy(false);
     setStatus(message, state);
+    if (history && conversationId) {
+      void loadConversation(conversationId).then((loaded) => {
+        if (loaded) options.onSaved?.();
+      });
+    }
+    contextControls?.clear?.();
   }
 
   /** @param {boolean} busy */
@@ -172,6 +251,8 @@ export function bindAskForm(elements, runtime, contextControls) {
     status.textContent = message;
     status.setAttribute("data-state", state);
   }
+
+  return { getConversationId: () => conversationId, loadConversation, newConversation };
 }
 
 /** @param {any} error */

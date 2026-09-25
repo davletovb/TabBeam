@@ -191,7 +191,7 @@ export function serveAskPort(port, options) {
 }
 
 /** @param {any} context */
-function isValidContext(context) {
+export function isValidContext(context) {
   if (
     !context ||
     (context.mode !== "selection" && context.mode !== "page") ||

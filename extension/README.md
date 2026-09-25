@@ -18,7 +18,8 @@ The current foundation provides:
 - keyboard shortcut to the focused popup composer;
 - selection and current-page context-menu actions;
 - service-worker-owned Native Messaging connection manager;
-- popup ask/stream UI backed by the native host;
+- popup and full-page ask/stream UI backed by the native host;
+- versioned local conversation history with a recent-conversation picker;
 - dependency-free smoke/lifecycle validation.
 
 ## Native Messaging connection lifecycle
@@ -40,22 +41,22 @@ The canonical Native Messaging host name is currently `com.pervue.host`. Packagi
 
 ## Popup ask flow
 
-The popup asks the native host one question at a time and streams the answer back.
+The popup and full-page view ask the native host one question at a time and stream the answer into a shared conversation.
 
 - The input is focused and usable as soon as the popup opens. Enter asks; Shift+Enter adds a line; an Enter that ends an IME composition does neither.
-- Each question opens its own runtime port to the service worker (contract: `src/shared/ask-port.js`). The service worker sends one `conversation.send` and forwards that request's protocol events in order, ending with exactly one terminal event.
+- Each question opens its own runtime port to the service worker (contract: `src/shared/ask-port.js`). The service worker sends one `conversation.send`, persists the completed turn, and forwards that request's protocol events in order, ending with exactly one terminal event.
 - While a question is in flight, every other submit is ignored, whether it comes from Enter, the Ask button or `requestSubmit()`. The input stays editable.
 - Deltas are appended as text nodes as they arrive, so provider output is never parsed as HTML.
 - Completion and failure show in the status line without reloading. Failures show the error's `message`.
 - A question over the native host's 1 MiB limit is refused in the popup before it's sent ("Your question is too long…"). The service worker checks the whole request too, and reports `INVALID_REQUEST` / `REQUEST_TOO_LARGE`.
 - When the native port closes before the answer finishes, the service worker reports the failure itself, in the DOC-02 vocabulary, based on Chrome's `runtime.lastError`. A missing host, or one registered only for other extensions, is `HOST_NOT_INSTALLED` and not retryable. A host that can't start or that disconnects is `HOST_UNAVAILABLE`.
-- Closing the popup drops the rest of that answer. The request still runs to its own terminal event; cancellation is EXT-12.
+- Closing the popup leaves the native request running; its answer is saved when it finishes. Reopen the popup to see the recent thread. Cancellation is EXT-12.
 - Only the extension's own pages can open the ask port. The service worker disconnects ports from content scripts.
-- Milestone A always asks the host's deterministic `fake` provider (`DEFAULT_PROVIDER_ID` in `src/background/ask-bridge.js`). Provider selection comes with Milestone B.
+- New conversations use Codex. The extension stores a stable `conv_<UUID>` ID, message history, title, source records, and optional page-context metadata under a versioned `chrome.storage.local` key, keeping the 30 most recent threads. Native provider session IDs remain private to the service worker and adapter. The recent picker loads a saved thread; **New conversation** clears the active thread; **Continue in full view** opens the same ID in the larger view. Follow-ups send bounded prior dialogue so the adapter can continue even after a native session is lost. One question per conversation runs at a time across both views.
 
 ## Browser context (CTX-01 through CTX-04)
 
-The popup starts with **No context**. To attach context, click **Use selection** after selecting text on the page, or **Use this page** to extract readable text. The popup shows the page title, sanitized URL, a text preview, and whether capture was truncated. Press **Ask** to send the question and the chosen context together; **No context** clears it. A fresh popup starts without context. No capture happens on popup open or a normal Ask.
+The popup starts with **No context**. To attach context, click **Use selection** after selecting text on the page, or **Use this page** to extract readable text. The popup shows the page title, sanitized URL, a text preview, and whether capture was truncated. Press **Ask** to send the question and the chosen context together; **No context** clears it. A fresh popup starts without context. An attached capture applies to that question only. Saved conversations retain only page title, sanitized URL, mode, and truncation metadata, never the raw captured text. No capture happens on popup open or a normal Ask.
 
 Right-click selected text and choose **Ask Pervue about selection**, or right-click a page and choose **Ask Pervue about this page**. The menu opens the popup with that context previewed; it does not ask automatically. Chrome's menu selection includes text selected within frames. The handoff belongs to the clicked tab, expires after 30 seconds, and can be claimed once. If Chrome cannot open the action popup, the same composer opens in a tab with only an opaque handoff token in its URL. **Alt+Shift+P** (or **Command+Shift+P** on macOS) invokes the popup directly and focuses the input; Chrome users can change the shortcut under `chrome://extensions/shortcuts`.
 

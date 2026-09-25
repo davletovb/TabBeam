@@ -5,9 +5,8 @@
 //! working directory, with the question on stdin. Its JSON lines become
 //! protocol updates (see [`output`]). Codex's own session IDs stay inside the
 //! adapter: each conversation gets a Pervue ID, mapped to the Codex thread it
-//! continues with `codex exec resume`. The map lives in the host process, so
-//! a conversation can be continued only while the host that started it runs;
-//! conversation continuity is Milestone C.
+//! continues with `codex exec resume`. The provider-specific mapping is kept
+//! in private native files, so a new host can resume a stored conversation.
 //!
 //! Before each request, `codex login status` checks the sign-in, because a
 //! signed-out `codex exec` retries the network instead of failing. Only its
@@ -16,6 +15,7 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::ffi::OsString;
+use std::io::{self, Read, Write};
 use std::hash::{BuildHasher, RandomState};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -23,6 +23,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use super::discovery::SearchPath;
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
+use crate::conversation::normalized_prompt;
 use crate::process::{Event, Exit, Process, ProcessSpec};
 use crate::protocol::events::{
     Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ProviderState,
@@ -128,6 +129,13 @@ const MALFORMED_OUTPUT: ErrorBody<'static> = ErrorBody {
     retryable: false,
 };
 
+const SESSION_STORE_FAILED: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::InternalError,
+    reason: "SESSION_STORE_FAILED",
+    message: "Codex's conversation could not be saved. Check available disk space and try again.",
+    retryable: true,
+};
+
 /// Pervue conversation IDs mapped to the Codex threads they continue.
 type Conversations = Rc<RefCell<HashMap<String, String>>>;
 
@@ -135,6 +143,7 @@ type Conversations = Rc<RefCell<HashMap<String, String>>>;
 pub struct Codex {
     search: SearchPath,
     work_dir: PathBuf,
+    session_dir: PathBuf,
     limits: Limits,
     conversations: Conversations,
 }
@@ -143,16 +152,19 @@ impl Codex {
     /// The adapter of an installed host: the platform lookup rules, and an
     /// empty working directory under the system temporary directory.
     pub fn installed() -> Self {
-        Self::new(
+        let mut codex = Self::new(
             SearchPath::from_env(),
             std::env::temp_dir().join("pervue-codex"),
-        )
+        );
+        codex.session_dir = installed_session_dir();
+        codex
     }
 
     /// Looks for `codex` in `search`, and runs it from `work_dir`.
     pub fn new(search: SearchPath, work_dir: PathBuf) -> Self {
         Self {
             search,
+            session_dir: work_dir.join("sessions"),
             work_dir,
             limits: LIMITS,
             conversations: Rc::default(),
@@ -163,6 +175,13 @@ impl Codex {
     #[must_use]
     pub fn with_limits(mut self, limits: Limits) -> Self {
         self.limits = limits;
+        self
+    }
+
+    /// Overrides the native mapping directory, for isolated host tests.
+    #[must_use]
+    pub fn with_session_dir(mut self, session_dir: PathBuf) -> Self {
+        self.session_dir = session_dir;
         self
     }
 
@@ -208,20 +227,31 @@ impl Provider for Codex {
         if request.has_context {
             return Box::new(Scripted::failed(PAGE_CONTEXT_UNSUPPORTED));
         }
-        let resume = match &request.conversation_id {
+        let mut conversation_id = request.conversation_id;
+        let mut prompt = request.text;
+        let resume = match &conversation_id {
             None => None,
-            Some(conversation_id) => match self.conversations.borrow().get(conversation_id) {
-                Some(thread_id) => Some(thread_id.clone()),
+            Some(conversation_id) => match self.conversations.borrow().get(conversation_id).cloned()
+                .or_else(|| read_thread(&self.session_dir, conversation_id)) {
+                Some(thread_id) => Some(thread_id),
+                None if !request.history.is_empty() => None,
                 None => return Box::new(Scripted::failed(UNKNOWN_CONVERSATION)),
             },
         };
+        if resume.is_none() && !request.history.is_empty() {
+            // If a provider has no native session (or its mapping was lost),
+            // the ordered, bounded dialogue still reaches the new turn.
+            prompt = normalized_prompt(&request.history, &prompt);
+            conversation_id = None;
+        }
         let mut turn = Turn {
             stage: Stage::Done,
             executable,
             work_dir: self.work_dir.clone(),
-            prompt: request.text,
+            session_dir: self.session_dir.clone(),
+            prompt,
             resume,
-            conversation_id: request.conversation_id,
+            conversation_id,
             conversations: Rc::clone(&self.conversations),
             finish_grace: self.limits.finish,
             queue: VecDeque::new(),
@@ -293,6 +323,57 @@ fn after(duration: Duration) -> Instant {
     now.checked_add(duration).unwrap_or(now)
 }
 
+fn installed_session_dir() -> PathBuf {
+    #[cfg(windows)]
+    let base = std::env::var_os("LOCALAPPDATA").or_else(|| std::env::var_os("APPDATA"));
+    #[cfg(not(windows))]
+    let base = std::env::var_os("XDG_DATA_HOME")
+        .filter(|path| Path::new(path).is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share").into_os_string()));
+    base.map(PathBuf::from)
+        .unwrap_or_else(|| std::env::temp_dir().join("pervue-data"))
+        .join("pervue/codex-sessions")
+}
+
+fn session_name(id: &str) -> bool {
+    id.len() == 21 && id.starts_with("conv_") && id[5..].bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn read_thread(dir: &Path, id: &str) -> Option<String> {
+    if !session_name(id) {
+        return None;
+    }
+    let mut content = String::new();
+    std::fs::File::open(dir.join(id)).ok()?.take(129).read_to_string(&mut content).ok()?;
+    output::is_thread_id(&content).then_some(content)
+}
+
+fn save_thread(dir: &Path, id: &str, thread: &str) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        let mut builder = std::fs::DirBuilder::new();
+        builder.recursive(true).mode(0o700).create(dir)?;
+    }
+    #[cfg(not(unix))]
+    std::fs::create_dir_all(dir)?;
+
+    let path = dir.join(id);
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&path)?;
+    if let Err(error) = file.write_all(thread.as_bytes()).and_then(|()| file.sync_all()) {
+        let _ = std::fs::remove_file(path);
+        return Err(error);
+    }
+    Ok(())
+}
+
 /// A new Pervue conversation ID. It is random so it reveals nothing about the
 /// Codex thread behind it.
 fn new_conversation_id(conversations: &HashMap<String, String>) -> String {
@@ -348,6 +429,7 @@ struct Turn {
     stage: Stage,
     executable: PathBuf,
     work_dir: PathBuf,
+    session_dir: PathBuf,
     prompt: String,
     /// The Codex thread to resume, when continuing a conversation.
     resume: Option<String>,
@@ -461,6 +543,9 @@ impl Turn {
             None => {
                 let mut conversations = self.conversations.borrow_mut();
                 let conversation_id = new_conversation_id(&conversations);
+                if save_thread(&self.session_dir, &conversation_id, &thread_id).is_err() {
+                    return self.end(Update::Failed(SESSION_STORE_FAILED));
+                }
                 conversations.insert(conversation_id.clone(), thread_id);
                 self.queue
                     .push_back(Update::ConversationCreated(conversation_id.clone()));

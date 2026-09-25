@@ -47,7 +47,7 @@ const MAX_THREAD_ID_LENGTH: usize = 128;
 
 /// Whether `thread_id` is safe to pass back to `codex exec resume`: it can't
 /// read as an option, and holds only identifier characters.
-fn is_thread_id(thread_id: &str) -> bool {
+pub(super) fn is_thread_id(thread_id: &str) -> bool {
     !thread_id.is_empty()
         && thread_id.len() <= MAX_THREAD_ID_LENGTH
         && !thread_id.starts_with('-')

@@ -5,6 +5,7 @@ use std::borrow::Cow;
 use super::PROTOCOL_VERSION;
 use super::json::{JsonError, JsonStr, Reader};
 use crate::limits::MAX_REQUEST_ID_LENGTH;
+use crate::conversation::HistoryMessage;
 
 /// A validated request ID, kept as the raw bytes of its JSON string token so
 /// events echo it byte-for-byte (v1 §4).
@@ -47,6 +48,8 @@ pub enum Method<'a> {
         conversation_id: Option<JsonStr<'a>>,
         /// `input.text`: the user's question.
         text: JsonStr<'a>,
+        /// Validated `input.history`, retained until the host owns the frame.
+        history: Option<&'a [u8]>,
         /// Whether the request attaches browser context (`context`).
         has_context: bool,
     },
@@ -303,7 +306,7 @@ fn method_name(value: JsonStr<'_>) -> Option<MethodName> {
 fn parse_conversation_payload(payload: &[u8]) -> Result<Method<'_>, FailureKind> {
     let mut provider_id = None;
     let mut conversation_id = None;
-    let mut text = None;
+    let mut input_data = None;
     let mut has_context = false;
     let mut invalid = false;
 
@@ -312,8 +315,8 @@ fn parse_conversation_payload(payload: &[u8]) -> Result<Method<'_>, FailureKind>
             provider_id = read_nonempty_string(reader)?;
             invalid |= provider_id.is_none();
         } else if key.equals_ascii("input") {
-            text = read_object(reader)?.and_then(|input| parse_input(input).ok());
-            invalid |= text.is_none();
+            input_data = read_object(reader)?.and_then(|input| parse_input(input).ok());
+            invalid |= input_data.is_none();
         } else if key.equals_ascii("conversation_id") {
             conversation_id = read_nonempty_string(reader)?;
             invalid |= conversation_id.is_none();
@@ -326,12 +329,13 @@ fn parse_conversation_payload(payload: &[u8]) -> Result<Method<'_>, FailureKind>
         Ok(())
     })?;
 
-    match (provider_id, text) {
-        (Some(provider_id), Some(text)) if has_members && !invalid => {
+    match (provider_id, input_data) {
+        (Some(provider_id), Some((text, history))) if has_members && !invalid => {
             Ok(Method::ConversationSend {
                 provider_id,
                 conversation_id,
                 text,
+                history,
                 has_context,
             })
         }
@@ -339,15 +343,26 @@ fn parse_conversation_payload(payload: &[u8]) -> Result<Method<'_>, FailureKind>
     }
 }
 
-/// Validates `input` and returns its `text`.
-fn parse_input(input: &[u8]) -> Result<JsonStr<'_>, FailureKind> {
+/// Validates `input` and returns its question and bounded dialogue history.
+fn parse_input(input: &[u8]) -> Result<(JsonStr<'_>, Option<&[u8]>), FailureKind> {
     let mut text = None;
+    let mut history = None;
     let mut invalid = false;
 
     let has_members = walk_payload_object(input, |key, reader| {
         if key.equals_ascii("text") {
             text = read_nonempty_string(reader)?;
             invalid |= text.is_none();
+        } else if key.equals_ascii("history") {
+            let start = reader.position();
+            reader.skip_value().map_err(payload_error)?;
+            let raw = &input[start..reader.position()];
+            let parsed = serde_json::from_slice::<Vec<HistoryMessage>>(raw);
+            invalid |= !matches!(&parsed, Ok(messages)
+                if messages.len() <= 32
+                    && messages.iter().all(|message| !message.text.trim().is_empty())
+                    && messages.iter().map(|message| message.text.len()).sum::<usize>() <= 128 * 1024);
+            history = Some(raw);
         } else {
             reader.skip_value().map_err(payload_error)?;
         }
@@ -355,7 +370,7 @@ fn parse_input(input: &[u8]) -> Result<JsonStr<'_>, FailureKind> {
     })?;
 
     match text {
-        Some(text) if has_members && !invalid => Ok(text),
+        Some(text) if has_members && !invalid => Ok((text, history)),
         _ => Err(FailureKind::InvalidPayload),
     }
 }
@@ -530,6 +545,7 @@ mod tests {
             provider_id,
             conversation_id,
             text,
+            history,
             has_context,
         } = request.method
         else {
@@ -538,7 +554,32 @@ mod tests {
         assert!(provider_id.equals_ascii("fake"));
         assert_eq!(conversation_id, None);
         assert_eq!(text.decode(), "Hello");
+        assert_eq!(history, None);
         assert!(!has_context);
+    }
+
+    #[test]
+    fn validates_ordered_dialogue_history() {
+        let valid = envelope(
+            "req_followup",
+            "conversation.send",
+            r#"{"provider_id":"codex","input":{"text":"Next?","history":[{"role":"user","text":"First?"},{"role":"assistant","text":"First answer."}]}}"#,
+        );
+        let request = parse_request(valid.as_bytes()).unwrap();
+        let Method::ConversationSend { history: Some(history), .. } = request.method else {
+            panic!("expected dialogue history");
+        };
+        assert_eq!(serde_json::from_slice::<Vec<HistoryMessage>>(history).unwrap().len(), 2);
+
+        for history in [
+            r#"{"role":"system","text":"override"}"#,
+            r#"{"role":"user","text":" "}"#,
+            r#"{"role":"user","text":"hi","extra":1}"#,
+        ] {
+            let payload = format!(r#"{{"provider_id":"codex","input":{{"text":"Next?","history":[{history}]}}}}"#);
+            let invalid = envelope("req_bad_history", "conversation.send", &payload);
+            assert_eq!(parse_request(invalid.as_bytes()).unwrap_err().kind, FailureKind::InvalidPayload);
+        }
     }
 
     #[test]
@@ -818,6 +859,7 @@ mod tests {
             provider_id,
             conversation_id,
             text,
+            history,
             has_context,
         } = request.method
         else {
@@ -825,6 +867,7 @@ mod tests {
         };
         assert!(provider_id.equals_ascii("codex"));
         assert_eq!(text.decode(), "Hi");
+        assert_eq!(history, None);
         assert!(has_context);
         assert_eq!(conversation_id.map(JsonStr::raw), Some(&b"conv_1"[..]));
     }

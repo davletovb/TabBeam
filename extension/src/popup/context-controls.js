@@ -127,6 +127,7 @@ export function bindContextControls(elements, runtime) {
   return {
     getContext: () => context,
     isPending: () => pending,
+    clear,
     beginMenuHandoff
   };
 }

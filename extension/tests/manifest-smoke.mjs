@@ -16,6 +16,7 @@ assert.equal(manifest.background.service_worker, "src/background/service-worker.
 assert.equal(manifest.background.type, "module");
 assert.ok(manifest.permissions.includes("contextMenus"));
 assert.ok(manifest.permissions.includes("nativeMessaging"));
+assert.ok(manifest.permissions.includes("storage"));
 assert.ok(manifest.permissions.includes("activeTab"));
 assert.ok(manifest.commands._execute_action?.suggested_key);
 assert.equal(manifest.commands["open-pervue-full-page"], undefined);
@@ -98,6 +99,7 @@ globalThis.chrome = /** @type {any} */ ({
     create: (/** @type {any} */ properties) => { menuItems.push(properties); return properties.id; }
   },
   action: { openPopup: async () => {} },
+  storage: { local: { async get() { return {}; }, async set() {} } },
   tabs: {
     create: async () => ({ id: 1 })
   }

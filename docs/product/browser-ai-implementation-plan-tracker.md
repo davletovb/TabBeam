@@ -822,7 +822,10 @@ Reached after **Milestone H**:
 - Message supports ID, role, text, timestamp, status, optional provider metadata, optional sources.
 - Provider session IDs are implementation metadata, not user-facing primary IDs.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `extension/src/shared/conversation-model.js` defines versioned conversation IDs, titles, page-context metadata, bounded normalized dialogue, and a public view without native provider session metadata. `extension/src/background/conversation-store.js` records timestamps, provider ID, messages with roles/status/IDs, sources, and optional provider metadata.
 
 ### CON-02 — Implement conversation persistence and recent index
 **Area:** Conversation  
@@ -837,7 +840,10 @@ Reached after **Milestone H**:
 - Recent index can open a stored conversation.
 - Schema versioning exists for persisted data.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `extension/src/background/conversation-store.js` serializes writes to versioned `chrome.storage.local` data and indexes the 30 most recent conversations. Both views load history through service-worker messages; `extension/tests/conversation-continuity.mjs` reopens a thread after simulating a worker restart.
 
 ### CON-03 — Implement native provider-session bridge
 **Area:** Conversation  
@@ -848,7 +854,10 @@ Reached after **Milestone H**:
 - Providers without native continuation can still receive normalized conversation context.
 - Native session metadata is recoverable enough for the chosen persistence model.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `native/host/src/providers/codex/mod.rs` persists private Codex thread mappings across host processes, resumes known threads, and rebuilds from bounded dialogue if a mapping is lost. `native/host/src/protocol/request.rs` accepts validated `input.history`; `native/host/src/conversation.rs` supplies normalized dialogue to providers without a usable native session. Fake-Codex adapter tests exercise recovery and fallback.
 
 ### EXT-05 — Implement popup follow-up flow
 **Area:** Extension  
@@ -859,7 +868,10 @@ Reached after **Milestone H**:
 - Prior messages render correctly.
 - New response streams into the existing thread.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `extension/src/popup/ask-form.js` renders saved turns, reuses the stable conversation ID, and streams the next answer into that thread. The service-worker bridge prevents simultaneous turns in one conversation and persists the answer even after the popup closes.
 
 ### EXT-06 — Implement full-page conversation UI
 **Area:** Extension  
@@ -870,7 +882,10 @@ Reached after **Milestone H**:
 - Displays complete history and longer responses.
 - Uses the same request protocol/native host as popup.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `extension/src/fullpage/` opens a stored ID from its URL, displays its history, offers recent conversations and follow-ups, and shares the popup's ask controller and worker request protocol.
 
 ### EXT-07 — Implement popup → full-page continuation handoff
 **Area:** Extension  
@@ -881,7 +896,10 @@ Reached after **Milestone H**:
 - No prompt or answer duplication occurs.
 - A follow-up from full view continues the same conversation.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- The popup's **Continue in full view** opens the full-page route with its existing stable ID. `extension/tests/conversation-continuity.mjs` checks one copy of each prompt and answer after the handoff.
 
 ### TST-06 — Add conversation continuity end-to-end tests
 **Area:** Testing  
@@ -891,7 +909,10 @@ Reached after **Milestone H**:
 - Ask in popup → follow up → open full page → follow up again.
 - Conversation ID and message ordering remain stable throughout.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `extension/tests/conversation-continuity.mjs` exercises popup Ask, popup follow-up, worker restart, full-page load and follow-up, stable ID, ordered messages, native continuation metadata, concurrent-turn refusal, and schema mismatch. Native adapter tests cover persisted thread recovery and dialogue fallback. Extension `npm test`, lint, typecheck, and build pass; native test execution still requires a Rust toolchain and CI.
 
 ---
 
@@ -972,10 +993,10 @@ Reached after **Milestone H**:
 - Popup can initiate Ask, Selection, and This Page behavior without cluttering the command surface.
 - Attached context is visible enough that the user understands what will be sent.
 
-**Status:** BLOCKED — awaiting EXT-05 popup follow-up flow
+**Status:** IMPLEMENTED — VERIFY
 
-**Existing foundation**
-- CTX-01–04 already provide the popup's No context, Use selection, and Use this page controls, capture preview, and structured context on the first Ask. This item remains for the EXT-05 follow-up flow and its context behavior; reuse those controls rather than rebuilding them.
+**Implementation evidence**
+- CTX-01–04 provide the popup's No context, Use selection, and Use this page controls, capture preview, and structured context. The shared follow-up form sends the user's explicit choice with that turn, then clears it; saved conversations retain page metadata but no raw captured page text. Codex still reports `PAGE_CONTEXT_UNSUPPORTED` until provider context support is implemented.
 
 ### EXT-09 — Add selection/current-page context-menu actions
 **Area:** Extension  
@@ -1610,15 +1631,15 @@ Update this section whenever item statuses change.
 | Foundation | 5 | 0 | 5 | 0 | 0 | 0 | 0 | 0 |
 | A — Native round trip | 8 | 0 | 8 | 0 | 0 | 0 | 0 | 0 |
 | B — First provider | 10 | 0 | 6 | 0 | 0 | 4 | 0 | 0 |
-| C — Conversation continuity | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
-| D — Browser context | 9 | 0 | 8 | 0 | 0 | 0 | 1 | 0 |
+| C — Conversation continuity | 7 | 0 | 7 | 0 | 0 | 0 | 0 | 0 |
+| D — Browser context | 9 | 0 | 9 | 0 | 0 | 0 | 0 | 0 |
 | MVP closure | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
 | E — Second provider | 5 | 0 | 0 | 0 | 0 | 5 | 0 | 0 |
 | F — Reusable native core | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
 | G — Installable product | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 |
 | H — Search/citations | 8 | 0 | 0 | 0 | 0 | 8 | 0 | 0 |
 | Post-milestone | 6 | 0 | 0 | 0 | 0 | 4 | 0 | 2 |
-| **Total** | **81** | **0** | **27** | **0** | **0** | **51** | **1** | **2** |
+| **Total** | **81** | **0** | **35** | **0** | **0** | **44** | **0** | **2** |
 
 ### Milestone completion rule
 

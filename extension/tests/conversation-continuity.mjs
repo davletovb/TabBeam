@@ -1,0 +1,210 @@
+import assert from "node:assert/strict";
+import { bindAskForm } from "../src/popup/ask-form.js";
+import { serveConversationAskPort } from "../src/background/conversation-bridge.js";
+import { createConversationStore } from "../src/background/conversation-store.js";
+import { dialogueHistory } from "../src/shared/conversation-model.js";
+import { ASK_PORT_NAME } from "../src/shared/ask-port.js";
+import { MockPort } from "./support/mock-port.mjs";
+
+const ownerDocument = { createElement: () => new Element() };
+
+class Element {
+  constructor() {
+    /** @type {Map<string, ((event: any) => void)[]>} */
+    this.listeners = new Map();
+    /** @type {Element[]} */
+    this.children = [];
+    this.attributes = new Map();
+    this.ownerDocument = ownerDocument;
+    this.textContent = "";
+    this.value = "";
+    this.hidden = false;
+    this.focused = false;
+    this.className = "";
+  }
+  /** @param {string} name @param {(event: any) => void} listener */
+  addEventListener(name, listener) {
+    this.listeners.set(name, [...this.listeners.get(name) ?? [], listener]);
+  }
+  /** @param {string} name */
+  fire(name) {
+    for (const listener of this.listeners.get(name) ?? []) listener({ preventDefault() {}, key: name });
+  }
+  /** @param {string} name @param {string} value */
+  setAttribute(name, value) { this.attributes.set(name, String(value)); }
+  /** @param {...(string | Element)} children */
+  append(...children) {
+    for (const child of children) {
+      if (typeof child === "string") this.textContent += child;
+      else this.children.push(child);
+    }
+  }
+  /** @param {...Element} children */
+  replaceChildren(...children) { this.children = children; this.textContent = ""; }
+  focus() { this.focused = true; }
+  requestSubmit() { this.fire("submit"); }
+}
+
+let nextUuid = 0;
+const uuid = () => `00000000-0000-4000-8000-${String(++nextUuid).padStart(12, "0")}`;
+/** @type {Record<string, any>} */
+let saved = {};
+const storage = {
+  async get() { return structuredClone(saved); },
+  /** @param {any} update */
+  async set(update) { saved = { ...saved, ...structuredClone(update) }; }
+};
+let store = createConversationStore(storage, uuid);
+let inFlight = new Set();
+/** @type {{request: any, owner: any}[]} */
+const native = [];
+const manager = {
+  /** @param {any} request @param {any} owner */
+  send(request, owner) { native.push({ request, owner }); }
+};
+
+/** The popup and full page use the same controller and worker request path. */
+function openView() {
+  const elements = {
+    form: new Element(), input: new Element(), submit: new Element(),
+    status: new Element(), answer: new Element(), history: new Element()
+  };
+  /** @type {MockPort[]} */
+  const ports = [];
+  const runtime = {
+    /** @param {{name: string}} info */
+    connect(info) {
+      assert.equal(info.name, ASK_PORT_NAME);
+      const ui = new MockPort(info.name);
+      const worker = new MockPort(info.name);
+      const uiPost = ui.postMessage.bind(ui);
+      const workerPost = worker.postMessage.bind(worker);
+      const uiDisconnect = ui.disconnect.bind(ui);
+      const workerDisconnect = worker.disconnect.bind(worker);
+      ui.postMessage = (message) => { uiPost(message); worker.emitMessage(message); };
+      worker.postMessage = (message) => { workerPost(message); ui.emitMessage(message); };
+      ui.disconnect = () => { uiDisconnect(); worker.emitDisconnect(); };
+      worker.disconnect = () => { workerDisconnect(); ui.emitDisconnect(); };
+      serveConversationAskPort(worker, { manager, store, inFlight, createRequestId: () => `req_${native.length + 1}` });
+      ports.push(ui);
+      return ui;
+    },
+    /** @param {any} message */
+    async sendMessage(message) {
+      if (message.type === "pervue.conversations.list") return { ok: true, value: await store.list() };
+      if (message.type === "pervue.conversations.get") return { ok: true, value: await store.get(message.conversation_id) };
+      throw new Error("unexpected worker message");
+    }
+  };
+  const view = bindAskForm(/** @type {any} */ (elements), runtime);
+  return {
+    view, elements, ports,
+    /** @param {string} question */
+    ask(question) { elements.input.value = question; elements.form.fire("submit"); }
+  };
+}
+
+/** @param {number} index @param {string} answer @param {string} [session] */
+function answerRequest(index, answer, session) {
+  const { request, owner } = native[index];
+  /** @param {string} name @param {any} payload */
+  const event = (name, payload) => owner.onEvent({
+    version: 1, type: "event", request_id: request.request_id, event: name, payload
+  });
+  if (session) event("conversation.created", { conversation_id: session });
+  event("response.started", { provider_id: "codex", conversation_id: session ?? request.payload.conversation_id });
+  event("response.delta", { text: answer.slice(0, 5) });
+  event("response.delta", { text: answer.slice(5) });
+  event("response.completed", {});
+}
+
+async function settle() {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+const popup = openView();
+popup.ask("First question");
+assert.equal(native.length, 1);
+assert.deepEqual(native[0].request.payload.input, { text: "First question" });
+answerRequest(0, "First answer", "host_session_1");
+await settle();
+const id = /** @type {string} */ (popup.view.getConversationId());
+assert.ok(id?.startsWith("conv_"));
+assert.deepEqual(popup.elements.history.children.map((item) => item.children[1].textContent),
+  ["First question", "First answer"]);
+assert.equal((await store.get(id)).provider_session_id, undefined, "the page never sees native metadata");
+assert.equal((await store.getPrivate(id)).provider_session_id, "host_session_1");
+
+popup.ask("Follow up in popup");
+await settle();
+assert.equal(native.length, 2);
+assert.equal(native[1].request.payload.conversation_id, "host_session_1");
+assert.deepEqual(native[1].request.payload.input.history, [
+  { role: "user", text: "First question" },
+  { role: "assistant", text: "First answer" }
+]);
+answerRequest(1, "Second answer");
+await settle();
+assert.equal(popup.view.getConversationId(), id);
+assert.deepEqual(popup.elements.history.children.map((item) => item.children[1].textContent),
+  ["First question", "First answer", "Follow up in popup", "Second answer"]);
+
+// Closing the popup and restarting the worker keeps the recent index and ID.
+store = createConversationStore(storage, uuid);
+inFlight = new Set();
+const reopened = openView();
+assert.equal((await store.list())[0].id, id);
+assert.equal(await reopened.view.loadConversation(id), true);
+assert.equal(reopened.view.getConversationId(), id);
+assert.equal(reopened.elements.history.children.length, 4);
+
+// The popup handoff URL carries only the stable local ID. Full view loads it
+// and continues through the exact same request protocol and worker bridge.
+const fullPageUrl = new URL(`chrome-extension://test/src/fullpage/index.html?conversation=${id}`);
+assert.equal(fullPageUrl.searchParams.get("conversation"), id);
+assert.equal(fullPageUrl.href.includes("host_session_1"), false);
+const fullPage = openView();
+assert.equal(await fullPage.view.loadConversation(fullPageUrl.searchParams.get("conversation") ?? ""), true);
+fullPage.ask("Follow up in full view");
+await settle();
+assert.equal(native.length, 3);
+assert.equal(native[2].request.payload.conversation_id, "host_session_1");
+assert.deepEqual(native[2].request.payload.input.history.map((/** @type {any} */ message) => message.text),
+  ["First question", "First answer", "Follow up in popup", "Second answer"]);
+answerRequest(2, "Third answer");
+await settle();
+const complete = await store.get(id);
+assert.deepEqual(complete.messages.map((/** @type {any} */ message) => message.text), [
+  "First question", "First answer", "Follow up in popup", "Second answer",
+  "Follow up in full view", "Third answer"
+]);
+assert.equal(fullPage.view.getConversationId(), id);
+assert.deepEqual(dialogueHistory(complete).map((message) => message.text), complete.messages.map((/** @type {any} */ message) => message.text));
+assert.equal(fullPage.elements.history.children.length, 6);
+
+// A second surface cannot submit concurrently into the same conversation.
+reopened.ask("One more");
+await settle();
+assert.equal(native.length, 4);
+fullPage.ask("Conflicting follow up");
+await settle();
+assert.equal(native.length, 4);
+assert.equal(fullPage.elements.status.textContent.includes("another question"), true);
+answerRequest(3, "Fourth answer");
+await settle();
+
+// Unknown schema versions are refused without silently replacing the data.
+const original = structuredClone(saved);
+saved["pervue.conversations"].schema_version = 2;
+let rejected = false;
+try {
+  await store.list();
+} catch (error) {
+  rejected = /compatible Pervue version/.test(/** @type {Error} */ (error).message);
+}
+assert.equal(rejected, true, "a future schema version must not be discarded");
+assert.equal(saved["pervue.conversations"].schema_version, 2);
+saved = original;
+
+console.log("CON-01/02/03, EXT-05/06/07, TST-06 conversation continuity passed");

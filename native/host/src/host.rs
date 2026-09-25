@@ -469,6 +469,7 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                 provider_id,
                 conversation_id,
                 text,
+                history,
                 has_context,
             } => {
                 let provider_id = provider_id.decode().into_owned();
@@ -478,6 +479,9 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                         Some(provider) => (
                             provider.send(SendRequest {
                                 text: text.decode().into_owned(),
+                                history: history
+                                    .and_then(|raw| serde_json::from_slice(raw).ok())
+                                    .unwrap_or_default(),
                                 conversation_id: conversation_id.clone(),
                                 has_context,
                             }),

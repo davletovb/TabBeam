@@ -13,6 +13,14 @@
         <h1>Ask from the browser.</h1>
       </header>
 
+      <nav class="conversation-nav" aria-label="Conversations">
+        <label for="recent-conversations">Recent conversations</label>
+        <select id="recent-conversations"><option value="">No recent conversations</option></select>
+        <button id="new-conversation" class="secondary" type="button">New conversation</button>
+      </nav>
+
+      <section id="conversation-history" class="conversation-history" aria-label="Conversation history" aria-live="polite"></section>
+
       <form id="ask-form" class="composer">
         <label class="sr-only" for="ask-input">Ask anything</label>
         <textarea id="ask-input" rows="3" placeholder="Ask anything…"></textarea>
@@ -31,7 +39,7 @@
 
       <section id="answer" class="answer" aria-label="Answer" aria-busy="false" hidden></section>
 
-      <button id="open-full-page" class="secondary" type="button">Continue in full view</button>
+      <button id="open-full-page" class="secondary" type="button" disabled>Continue in full view</button>
     </main>
 
     <script type="module" src="./popup.js"></script>

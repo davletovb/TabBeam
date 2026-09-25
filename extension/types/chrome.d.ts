@@ -61,6 +61,12 @@ interface PervueChrome {
   action: {
     openPopup(): Promise<void>;
   };
+  storage: {
+    local: {
+      get(key: string): Promise<Record<string, any>>;
+      set(values: Record<string, any>): Promise<void>;
+    };
+  };
 }
 
 declare var chrome: PervueChrome;
