@@ -55,6 +55,8 @@ interface PervueChrome {
   };
   tabs: {
     create(properties: { url: string }): Promise<unknown>;
+    query(query: { active: boolean; currentWindow: boolean }): Promise<{ id?: number; url?: string; title?: string }[]>;
+    sendMessage(tabId: number, message: any, options: { frameId: number }): Promise<any>;
   };
 }
 

@@ -12,6 +12,7 @@
     "type": "module"
   },
   "permissions": [
+    "activeTab",
     "contextMenus",
     "nativeMessaging"
   ],

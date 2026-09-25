@@ -14,7 +14,7 @@ The current foundation provides:
 - toolbar popup;
 - full-page extension route;
 - MV3 module service worker;
-- HTTP/HTTPS content-script scaffold;
+- HTTP/HTTPS content script for explicit selection and readable-page capture;
 - keyboard-command scaffold;
 - context-menu scaffold;
 - service-worker-owned Native Messaging connection manager;
@@ -52,6 +52,12 @@ The popup asks the native host one question at a time and streams the answer bac
 - Closing the popup drops the rest of that answer. The request still runs to its own terminal event; cancellation is EXT-12.
 - Only the extension's own pages can open the ask port. The service worker disconnects ports from content scripts.
 - Milestone A always asks the host's deterministic `fake` provider (`DEFAULT_PROVIDER_ID` in `src/background/ask-bridge.js`). Provider selection comes with Milestone B.
+
+## Browser context (CTX-01 through CTX-04)
+
+The popup starts with **No context**. To attach context, click **Use selection** after selecting text on the page, or **Use this page** to extract readable text. The popup shows the page title, sanitized URL, a text preview, and whether capture was truncated. Press **Ask** to send the question and the chosen context together; **No context** clears it. A fresh popup starts without context. No capture happens on popup open or a normal Ask.
+
+The content script responds only to explicit capture messages. Selection supports regular text and focused text-field selections, up to 16 KiB of UTF-8. Page extraction prefers readable text from `main` or `article`, falls back to `body` when those are empty, skips scripts, navigation, hidden content, and form/editable surfaces, and stops at 64 KiB of UTF-8 or 5,000 text nodes in total. Capture is limited to the top frame. The service worker checks the response size again, gets the active tab's title and URL, keeps at most 256 title code points and 2,048 URL bytes, removes URL credentials, query, and fragment, and rejects unsupported pages. Failed capture leaves Ask usable without context. Permission and unavailability outcomes use `CONTEXT_UNAVAILABLE`, and site access is used only for the explicit popup action; the choice is not persisted.
 
 ### Trying it against the local host
 

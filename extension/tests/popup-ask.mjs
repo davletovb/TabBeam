@@ -95,7 +95,8 @@ function cancellableEvent(fields) {
   };
 }
 
-function openPopup() {
+/** @param {{getContext(): any | null, isPending(): boolean}} [contextControls] */
+function openPopup(contextControls) {
   const elements = {
     form: new FakeForm(),
     input: new FakeTextArea(),
@@ -128,7 +129,7 @@ function openPopup() {
     }
   };
 
-  bindAskForm(/** @type {any} */ (elements), runtime);
+  bindAskForm(/** @type {any} */ (elements), runtime, contextControls);
 
   return {
     ...elements,
@@ -173,6 +174,25 @@ function openPopup() {
       return elements.submit.getAttribute("aria-disabled") === "true";
     }
   };
+}
+
+{
+  // Ask waits for an explicit capture to settle, then includes its previewed
+  // context. No choice continues to send only the question.
+  let pending = true;
+  const context = {
+    mode: "page",
+    text: "Visible article text",
+    truncated: false,
+    page: { title: "Example", url: "https://example.com/" }
+  };
+  const popup = openPopup({ isPending: () => pending, getContext: () => context });
+  popup.ask("Summarize");
+  assert.equal(popup.ports.length, 0);
+  assert.equal(popup.statusText, "Wait for context capture to finish.");
+  pending = false;
+  popup.ask("Summarize");
+  assert.deepEqual(popup.ports[0].messages, [{ type: "ask", text: "Summarize", context }]);
 }
 
 /**

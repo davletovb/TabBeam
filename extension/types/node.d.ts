@@ -14,6 +14,10 @@ declare module "node:child_process" {
   export function spawn(command: string, args: string[], options: object): any;
 }
 
+declare module "node:vm" {
+  export function runInNewContext(code: string, context: object): unknown;
+}
+
 declare module "node:fs" {
   interface RmOptions {
     recursive?: boolean;

@@ -1,5 +1,6 @@
 import { ASK_TERMINAL_EVENTS, QUESTION_TOO_LONG } from "../shared/ask-port.js";
 import { RequestTooLargeError } from "./native-connection.js";
+import { MAX_PAGE_BYTES, MAX_SELECTION_BYTES, utf8ByteLength } from "../shared/limits.js";
 
 /** @typedef {import("../shared/ask-port.js").AskPort} AskPort */
 /** @typedef {import("./native-connection.js").RequestOwner} RequestOwner */
@@ -13,6 +14,13 @@ const EMPTY_QUESTION = Object.freeze({
   code: "INVALID_REQUEST",
   reason: "INVALID_PAYLOAD",
   message: "Type a question first.",
+  retryable: false
+});
+
+const INVALID_CONTEXT = Object.freeze({
+  code: "INVALID_REQUEST",
+  reason: "INVALID_PAYLOAD",
+  message: "The selected page context is invalid. Choose a source again or use No context.",
   retryable: false
 });
 
@@ -137,6 +145,17 @@ export function serveAskPort(port, options) {
       forward(failed(null, EMPTY_QUESTION));
       return;
     }
+    const context = message.context;
+    if (context !== undefined && !isValidContext(context)) {
+      forward(failed(null, INVALID_CONTEXT));
+      return;
+    }
+    const safeContext = context === undefined ? undefined : {
+      mode: context.mode,
+      text: context.text,
+      truncated: context.truncated,
+      page: { title: context.page.title, url: context.page.url }
+    };
 
     const requestId = nextRequestId();
     const request = {
@@ -144,7 +163,11 @@ export function serveAskPort(port, options) {
       type: "request",
       request_id: requestId,
       method: "conversation.send",
-      payload: { provider_id: providerId, input: { text } }
+      payload: {
+        provider_id: providerId,
+        input: { text },
+        ...(safeContext === undefined ? {} : { context: safeContext })
+      }
     };
 
     try {
@@ -164,6 +187,43 @@ export function serveAskPort(port, options) {
       );
     }
   });
+}
+
+/** @param {any} context */
+function isValidContext(context) {
+  if (
+    !context ||
+    (context.mode !== "selection" && context.mode !== "page") ||
+    typeof context.text !== "string" ||
+    context.text.trim() === "" ||
+    typeof context.truncated !== "boolean" ||
+    typeof context.page?.title !== "string" ||
+    typeof context.page?.url !== "string"
+  ) {
+    return false;
+  }
+  const limit = context.mode === "selection" ? MAX_SELECTION_BYTES : MAX_PAGE_BYTES;
+  if (
+    utf8ByteLength(context.text) > limit ||
+    utf8ByteLength(context.page.title) > 1024 ||
+    /[\uD800-\uDFFF]/u.test(context.text) ||
+    /[\uD800-\uDFFF]/u.test(context.page.title)
+  ) {
+    return false;
+  }
+  try {
+    const url = new URL(context.page.url);
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      url.username === "" &&
+      url.password === "" &&
+      url.search === "" &&
+      url.hash === "" &&
+      utf8ByteLength(context.page.url) <= 2048
+    );
+  } catch {
+    return false;
+  }
 }
 
 /**

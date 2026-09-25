@@ -4,6 +4,7 @@ import {
   NATIVE_HOST_NAME,
   createNativeConnectionManager
 } from "./native-connection.js";
+import { handleContextCapture } from "./selection-capture.js";
 
 const MENU_ID = "pervue-open-full-page";
 
@@ -49,7 +50,7 @@ chrome.contextMenus.onClicked.addListener(
 chrome.runtime.onMessage.addListener(
   (
     /** @type {any} */ message,
-    /** @type {any} */ _sender,
+    /** @type {any} */ sender,
     /** @type {(response: any) => void} */ sendResponse
   ) => {
     if (message?.type === "pervue.health") {
@@ -58,7 +59,15 @@ chrome.runtime.onMessage.addListener(
         surface: "background",
         version: chrome.runtime.getManifest().version
       });
+      return;
     }
+    return handleContextCapture(
+      message,
+      sender,
+      sendResponse,
+      chrome.tabs,
+      chrome.runtime.getURL("src/popup/index.html")
+    );
   }
 );
 

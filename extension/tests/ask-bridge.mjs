@@ -10,7 +10,7 @@ import {
   createNativeConnectionManager
 } from "../src/background/native-connection.js";
 import { ASK_PORT_NAME, QUESTION_TOO_LONG } from "../src/shared/ask-port.js";
-import { MAX_NATIVE_MESSAGE_BYTES } from "../src/shared/limits.js";
+import { MAX_NATIVE_MESSAGE_BYTES, MAX_PAGE_BYTES, MAX_SELECTION_BYTES } from "../src/shared/limits.js";
 import { MockPort } from "./support/mock-port.mjs";
 
 const POPUP_URL = "chrome-extension://pervue-test/src/popup/index.html";
@@ -107,6 +107,56 @@ function errorOf(message) {
   page.emitMessage({ type: "ask", text: "And again?" });
   assert.equal(nativePorts[0].messages.length, 1);
   assert.equal(manager.pendingRequestCount, 1);
+}
+
+{
+  // Explicitly selected context reaches the host as structured request data.
+  // The bridge copies only the fields it validates.
+  const { nativePorts, openPage } = makeWorker();
+  const context = {
+    mode: "selection",
+    text: "A quoted passage",
+    truncated: false,
+    page: { title: "Example", url: "https://example.com/story" },
+    unexpected: "discard me"
+  };
+  openPage().emitMessage({ type: "ask", text: "Explain this", context });
+  assert.deepEqual(nativePorts[0].messages[0].payload.context, {
+    mode: "selection",
+    text: context.text,
+    truncated: false,
+    page: context.page
+  });
+}
+
+{
+  // Malformed, over-limit, or sensitive URL context never opens a native port.
+  const good = {
+    mode: "page",
+    text: "Readable page",
+    truncated: false,
+    page: { title: "Example", url: "https://example.com/story" }
+  };
+  for (const context of [
+    { ...good, mode: "other" },
+    { ...good, text: "x".repeat(MAX_PAGE_BYTES + 1) },
+    { ...good, mode: "selection", text: "x".repeat(MAX_SELECTION_BYTES + 1) },
+    { ...good, text: "bad\ud800text" },
+    { ...good, page: { ...good.page, title: "bad\udc00title" } },
+    { ...good, page: { ...good.page, url: "https://example.com/story?token=secret" } },
+    { ...good, page: { ...good.page, url: "chrome://settings/" } }
+  ]) {
+    const { nativePorts, openPage } = makeWorker();
+    const page = openPage();
+    page.emitMessage({ type: "ask", text: "Explain", context });
+    assert.equal(nativePorts.length, 0);
+    assert.deepEqual(errorOf(page.messages[0]), {
+      code: "INVALID_REQUEST",
+      reason: "INVALID_PAYLOAD",
+      message: "The selected page context is invalid. Choose a source again or use No context.",
+      retryable: false
+    });
+  }
 }
 
 {

@@ -45,6 +45,42 @@ h1 {
   gap: 8px;
 }
 
+.context-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.context-choices legend {
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+.context-choices button {
+  min-height: 32px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.context-choices button[aria-pressed="true"] {
+  background: CanvasText;
+  color: Canvas;
+}
+
+.context-preview {
+  max-height: 96px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
+  border-radius: 8px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 textarea {
   width: 100%;
   resize: none;
