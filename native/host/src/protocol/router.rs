@@ -1,12 +1,54 @@
 //! Dispatches validated requests to per-method handlers.
 
+use std::borrow::Cow;
 use std::io::Write;
 
-use super::events::EventError;
+use super::events::{ErrorBody, ErrorCode, EventError};
 use super::json::JsonStr;
 use super::request::{Method, Request, RequestId};
 
-/// Handlers for the v1 methods. Each handler writes the request's events.
+/// What a handler's request did, for diagnostics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Outcome {
+    pub end: End,
+    /// The ID announced by the request's `conversation.created` event, if it
+    /// sent one.
+    pub created_conversation_id: Option<Cow<'static, str>>,
+}
+
+/// How a request's events ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum End {
+    /// The request's last event was its successful terminal event.
+    Completed,
+    /// The request ended with `response.failed` carrying this error.
+    Failed {
+        code: ErrorCode,
+        reason: &'static str,
+    },
+}
+
+impl Outcome {
+    /// A request that completed without creating a conversation.
+    pub const COMPLETED: Self = Self {
+        end: End::Completed,
+        created_conversation_id: None,
+    };
+
+    /// A request that failed with `error` without creating a conversation.
+    pub const fn failed(error: &ErrorBody<'static>) -> Self {
+        Self {
+            end: End::Failed {
+                code: error.code,
+                reason: error.reason,
+            },
+            created_conversation_id: None,
+        }
+    }
+}
+
+/// Handlers for the v1 methods. Each handler writes the request's events and
+/// reports how the request ended and any conversation it created.
 pub trait Handlers {
     fn conversation_send<W: Write + ?Sized>(
         &mut self,
@@ -14,21 +56,21 @@ pub trait Handlers {
         request_id: RequestId<'_>,
         provider_id: JsonStr<'_>,
         conversation_id: Option<JsonStr<'_>>,
-    ) -> Result<(), EventError>;
+    ) -> Result<Outcome, EventError>;
 
     fn provider_status<W: Write + ?Sized>(
         &mut self,
         output: &mut W,
         request_id: RequestId<'_>,
         provider_id: Option<JsonStr<'_>>,
-    ) -> Result<(), EventError>;
+    ) -> Result<Outcome, EventError>;
 
     fn request_cancel<W: Write + ?Sized>(
         &mut self,
         output: &mut W,
         request_id: RequestId<'_>,
         target_request_id: RequestId<'_>,
-    ) -> Result<(), EventError>;
+    ) -> Result<Outcome, EventError>;
 }
 
 /// Routes `request` to the handler for its method.
@@ -36,7 +78,7 @@ pub fn dispatch<H: Handlers, W: Write + ?Sized>(
     handlers: &mut H,
     output: &mut W,
     request: &Request<'_>,
-) -> Result<(), EventError> {
+) -> Result<Outcome, EventError> {
     match request.method {
         Method::ConversationSend {
             provider_id,
@@ -70,10 +112,10 @@ mod tests {
             _request_id: RequestId<'_>,
             provider_id: JsonStr<'_>,
             _conversation_id: Option<JsonStr<'_>>,
-        ) -> Result<(), EventError> {
+        ) -> Result<Outcome, EventError> {
             assert!(provider_id.equals_ascii("fake"));
             self.conversation_calls += 1;
-            Ok(())
+            Ok(Outcome::COMPLETED)
         }
 
         fn provider_status<W: Write + ?Sized>(
@@ -81,9 +123,9 @@ mod tests {
             _output: &mut W,
             _request_id: RequestId<'_>,
             _provider_id: Option<JsonStr<'_>>,
-        ) -> Result<(), EventError> {
+        ) -> Result<Outcome, EventError> {
             self.status_calls += 1;
-            Ok(())
+            Ok(Outcome::COMPLETED)
         }
 
         fn request_cancel<W: Write + ?Sized>(
@@ -91,9 +133,9 @@ mod tests {
             _output: &mut W,
             _request_id: RequestId<'_>,
             _target_request_id: RequestId<'_>,
-        ) -> Result<(), EventError> {
+        ) -> Result<Outcome, EventError> {
             self.cancel_calls += 1;
-            Ok(())
+            Ok(Outcome::COMPLETED)
         }
     }
 

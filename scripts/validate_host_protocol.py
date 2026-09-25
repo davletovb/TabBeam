@@ -67,6 +67,25 @@ def validate_event(event, event_validator, error_validator, status_validator):
             )
 
 
+def validate_diagnostics(stderr: bytes, request_count: int) -> int:
+    """Checks the host's stderr (OBS-01): one JSON record per line, from
+    host.started through one record per request to a clean host.stopped."""
+    records = [json.loads(line) for line in stderr.decode("utf-8").splitlines()]
+    events = [record.get("event") for record in records]
+    if events[:1] != ["host.started"] or events[-1:] != ["host.stopped"]:
+        raise AssertionError(f"diagnostics do not start and stop the host: {events}")
+    request_events = events[1:-1]
+    if len(request_events) != request_count or not all(
+        event.startswith("request.") for event in request_events
+    ):
+        raise AssertionError(
+            f"expected {request_count} request records, got {request_events}"
+        )
+    if records[-1].get("exit_code") != 0:
+        raise AssertionError(f"host.stopped reports {records[-1]}")
+    return len(records)
+
+
 def compact(value) -> bytes:
     return json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
@@ -109,6 +128,8 @@ def main() -> None:
         raise AssertionError(
             f"host exited {proc.returncode}: {proc.stderr.decode('utf-8', errors='replace')}"
         )
+
+    diagnostics = validate_diagnostics(proc.stderr, len(driven))
 
     events = parse_frames(proc.stdout)
     if not events or events[0].get("event") != "host.ready":
@@ -175,7 +196,8 @@ def main() -> None:
     print(
         f"Host conformance passed: {len(events)} emitted frames, "
         f"{sum(1 for kind, _ in driven if kind == 'valid')} valid requests, "
-        f"{sum(1 for kind, _ in driven if kind == 'invalid')} invalid requests."
+        f"{sum(1 for kind, _ in driven if kind == 'invalid')} invalid requests, "
+        f"{diagnostics} diagnostics records."
     )
 
 

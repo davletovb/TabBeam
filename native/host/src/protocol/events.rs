@@ -215,15 +215,12 @@ pub fn write_request_failure<W: Write + ?Sized>(
     output: &mut W,
     failure: &RequestFailure<'_>,
 ) -> Result<(), EventError> {
-    let (reason, message) = match failure.kind {
-        FailureKind::Malformed => ("MALFORMED_MESSAGE", "Malformed request."),
-        FailureKind::InvalidEnvelope => ("INVALID_ENVELOPE", "Invalid request envelope."),
-        FailureKind::InvalidPayload => ("INVALID_PAYLOAD", "Invalid request payload."),
-        FailureKind::UnknownMethod => ("UNKNOWN_METHOD", "Unsupported method."),
-        FailureKind::UnsupportedVersion => (
-            "UNSUPPORTED_PROTOCOL_VERSION",
-            "Unsupported protocol version.",
-        ),
+    let message = match failure.kind {
+        FailureKind::Malformed => "Malformed request.",
+        FailureKind::InvalidEnvelope => "Invalid request envelope.",
+        FailureKind::InvalidPayload => "Invalid request payload.",
+        FailureKind::UnknownMethod => "Unsupported method.",
+        FailureKind::UnsupportedVersion => "Unsupported protocol version.",
     };
 
     // v1 §8.1: a correlated version failure also reports the versions involved.
@@ -240,7 +237,7 @@ pub fn write_request_failure<W: Write + ?Sized>(
     let payload = ResponseFailed {
         error: ErrorBody {
             code: ErrorCode::InvalidRequest,
-            reason,
+            reason: failure.kind.reason(),
             message,
             retryable: false,
         },

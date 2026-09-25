@@ -64,6 +64,12 @@ class HostPort {
     this.child.stderr.on("data", (/** @type {Uint8Array} */ chunk) => {
       this.stderr.push(decoder.decode(chunk));
     });
+    this.child.stdin.on("error", (/** @type {Error} */ error) => {
+      // A host that rejects a frame may close stdin while a write is pending.
+      // Keep EPIPE as a controlled test failure; the exit handler below can
+      // replace it with the host's exit code and stderr diagnostics.
+      this.error ??= new Error(`native host stdin write failed: ${error.message}`);
+    });
     this.child.on("error", (/** @type {Error} */ error) => {
       this.error = error;
       this.close();

@@ -169,3 +169,70 @@ fn print_manifest_rejects_anything_but_extension_ids() {
         );
     }
 }
+
+/// Splits stdout into frames, failing on any byte outside a whole frame.
+fn frames_only(mut stdout: &[u8]) -> Vec<serde_json::Value> {
+    let mut frames = Vec::new();
+    while !stdout.is_empty() {
+        let (prefix, rest) = stdout.split_at(4);
+        let length = u32::from_ne_bytes(prefix.try_into().unwrap()) as usize;
+        frames.push(serde_json::from_slice(&rest[..length]).expect("a frame is JSON"));
+        stdout = &rest[length..];
+    }
+    frames
+}
+
+#[test]
+fn diagnostics_go_to_stderr_and_never_into_the_frames() {
+    let requests = [
+        r#"{"version":1,"type":"request","request_id":"req_a","method":"conversation.send","payload":{"provider_id":"fake","input":{"text":"hi"}}}"#,
+        "{not json",
+        r#"{"version":1,"type":"request","request_id":"req_b","method":"provider.status","payload":{"provider_id":"codex"}}"#,
+    ];
+    let input: Vec<u8> = requests.iter().flat_map(|request| frame(request)).collect();
+    let output = run_host(&[ORIGIN], &input);
+    assert_eq!(output.status.code(), Some(0));
+
+    // stdout: host.ready, four events for req_a, one failure each for the
+    // malformed frame and req_b, and nothing else.
+    let frames = frames_only(&output.stdout);
+    assert_eq!(frames.len(), 7);
+
+    // stderr: one JSON object per line, from host.started to host.stopped.
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let records: Vec<serde_json::Value> = stderr
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("a diagnostics line is JSON"))
+        .collect();
+    let events: Vec<&str> = records
+        .iter()
+        .map(|record| record["event"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        events,
+        [
+            "host.started",
+            "request.completed",
+            "request.rejected",
+            "request.failed",
+            "host.stopped"
+        ]
+    );
+    // req_a started a conversation, so its record names the created one.
+    assert_eq!(records[1]["conversation_id"], "fake-conversation");
+    assert_eq!(records[4]["exit_code"], 0);
+}
+
+#[test]
+fn the_logged_exit_code_matches_the_process() {
+    let oversized = (1024_u32 * 1024 + 1).to_ne_bytes();
+    let output = run_host(&[ORIGIN], &oversized);
+    assert_eq!(output.status.code(), Some(4));
+
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let last: serde_json::Value = serde_json::from_str(stderr.lines().last().unwrap()).unwrap();
+    assert_eq!(last["event"], "host.stopped");
+    assert_eq!(last["reason"], "frame_too_large");
+    assert_eq!(last["exit_code"], 4);
+    assert!(output.stdout.len() > 4, "host.ready is still written");
+}
