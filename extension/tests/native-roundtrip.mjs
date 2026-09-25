@@ -92,7 +92,7 @@ class HostPort {
       return;
     }
     this.disconnected = true;
-    this.onDisconnect.emit();
+    this.onDisconnect.emit(undefined);
   }
 
   disconnect() {
@@ -131,7 +131,7 @@ function pairedPorts() {
       }
       local.disconnected = true;
       remote.disconnected = true;
-      remote.onDisconnect.emit();
+      remote.onDisconnect.emit(undefined);
     };
   }
   return { ui, worker };
@@ -304,15 +304,9 @@ try {
 
   // SEC-01: a serialized request at exactly 1 MiB passes. One byte above
   // fails in the extension before postMessage touches the native port.
-  const base = encoder.encode(JSON.stringify({
-    request_id: "req_roundtrip_3",
-    ...question("")
-  })).length;
+  const base = encoder.encode(JSON.stringify(question(""))).length;
   const exact = "x".repeat(MAX_NATIVE_MESSAGE_BYTES - base);
-  assert.equal(encoder.encode(JSON.stringify({
-    request_id: "req_roundtrip_3",
-    ...question(exact)
-  })).length, MAX_NATIVE_MESSAGE_BYTES);
+  assert.equal(encoder.encode(JSON.stringify(question(exact))).length, MAX_NATIVE_MESSAGE_BYTES);
   events.length = 0;
   ask(exact);
   await until(() => events.at(-1)?.event === "response.completed");
