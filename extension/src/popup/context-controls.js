@@ -12,6 +12,7 @@ export function bindContextControls(elements, runtime) {
   /** @type {any | null} */
   let context = null;
   let pending = false;
+  let handoffPending = false;
   let generation = 0;
 
   /** @param {"none" | "selection" | "page"} mode */
@@ -24,6 +25,7 @@ export function bindContextControls(elements, runtime) {
   function clear() {
     generation += 1;
     pending = false;
+    handoffPending = false;
     context = null;
     selection.disabled = false;
     page.disabled = false;
@@ -58,17 +60,17 @@ export function bindContextControls(elements, runtime) {
   }
 
   // A menu opens the popup while extraction may still be running. Keep Ask
-  // blocked until its one-time handoff completes; No context cancels it.
+  // blocked until its one-time handoff completes; an explicit choice replaces it.
   function beginMenuHandoff() {
     const current = ++generation;
     pending = true;
-    selection.disabled = true;
-    page.disabled = true;
+    handoffPending = true;
     status.textContent = "Preparing browser context…";
     /** @param {{available?: boolean, result?: any} | null} handoff */
     return (handoff) => {
       if (generation !== current) return;
       pending = false;
+      handoffPending = false;
       selection.disabled = false;
       page.disabled = false;
       if (handoff?.available) {
@@ -82,10 +84,11 @@ export function bindContextControls(elements, runtime) {
 
   /** @param {"selection" | "page"} mode */
   async function capture(mode) {
-    if (pending) {
+    if (pending && !handoffPending) {
       return;
     }
     const current = ++generation;
+    handoffPending = false;
     context = null;
     setChoice("none");
     pending = true;
