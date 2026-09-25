@@ -100,7 +100,7 @@ function errorOf(message) {
       }
     }
   ]);
-  assert.equal(DEFAULT_PROVIDER_ID, "fake");
+  assert.equal(DEFAULT_PROVIDER_ID, "codex");
   assert.equal(manager.pendingRequestCount, 1);
 
   // A second message on the same port is not a second question.

@@ -45,6 +45,8 @@ pub enum Method<'a> {
     ConversationSend {
         provider_id: JsonStr<'a>,
         conversation_id: Option<JsonStr<'a>>,
+        /// `input.text`: the user's question.
+        text: JsonStr<'a>,
     },
     ProviderStatus {
         provider_id: Option<JsonStr<'a>>,
@@ -299,7 +301,7 @@ fn method_name(value: JsonStr<'_>) -> Option<MethodName> {
 fn parse_conversation_payload(payload: &[u8]) -> Result<Method<'_>, FailureKind> {
     let mut provider_id = None;
     let mut conversation_id = None;
-    let mut saw_input = false;
+    let mut text = None;
     let mut invalid = false;
 
     let has_members = walk_payload_object(payload, |key, reader| {
@@ -307,8 +309,8 @@ fn parse_conversation_payload(payload: &[u8]) -> Result<Method<'_>, FailureKind>
             provider_id = read_nonempty_string(reader)?;
             invalid |= provider_id.is_none();
         } else if key.equals_ascii("input") {
-            saw_input = true;
-            invalid |= read_object(reader)?.is_none_or(|input| parse_input(input).is_err());
+            text = read_object(reader)?.and_then(|input| parse_input(input).ok());
+            invalid |= text.is_none();
         } else if key.equals_ascii("conversation_id") {
             conversation_id = read_nonempty_string(reader)?;
             invalid |= conversation_id.is_none();
@@ -320,33 +322,36 @@ fn parse_conversation_payload(payload: &[u8]) -> Result<Method<'_>, FailureKind>
         Ok(())
     })?;
 
-    match provider_id {
-        Some(provider_id) if has_members && saw_input && !invalid => Ok(Method::ConversationSend {
-            provider_id,
-            conversation_id,
-        }),
+    match (provider_id, text) {
+        (Some(provider_id), Some(text)) if has_members && !invalid => {
+            Ok(Method::ConversationSend {
+                provider_id,
+                conversation_id,
+                text,
+            })
+        }
         _ => Err(FailureKind::InvalidPayload),
     }
 }
 
-fn parse_input(input: &[u8]) -> Result<(), FailureKind> {
-    let mut saw_text = false;
+/// Validates `input` and returns its `text`.
+fn parse_input(input: &[u8]) -> Result<JsonStr<'_>, FailureKind> {
+    let mut text = None;
     let mut invalid = false;
 
     let has_members = walk_payload_object(input, |key, reader| {
         if key.equals_ascii("text") {
-            saw_text = true;
-            invalid |= read_nonempty_string(reader)?.is_none();
+            text = read_nonempty_string(reader)?;
+            invalid |= text.is_none();
         } else {
             reader.skip_value().map_err(payload_error)?;
         }
         Ok(())
     })?;
 
-    if has_members && saw_text && !invalid {
-        Ok(())
-    } else {
-        Err(FailureKind::InvalidPayload)
+    match text {
+        Some(text) if has_members && !invalid => Ok(text),
+        _ => Err(FailureKind::InvalidPayload),
     }
 }
 
@@ -519,12 +524,30 @@ mod tests {
         let Method::ConversationSend {
             provider_id,
             conversation_id,
+            text,
         } = request.method
         else {
             panic!("unexpected method: {:?}", request.method);
         };
         assert!(provider_id.equals_ascii("fake"));
         assert_eq!(conversation_id, None);
+        assert_eq!(text.decode(), "Hello");
+    }
+
+    #[test]
+    fn keeps_the_question_text_with_escapes_resolved() {
+        // `input.text` reaches the provider decoded; it is the one payload
+        // member the host passes on.
+        let input = envelope(
+            "req_t",
+            "conversation.send",
+            r#"{"provider_id":"fake","input":{"text":"caf\u00e9\n\"quoted\" \ud83d\ude00","other":1}}"#,
+        );
+        let request = parse_request(input.as_bytes()).unwrap();
+        let Method::ConversationSend { text, .. } = request.method else {
+            panic!("unexpected method: {:?}", request.method);
+        };
+        assert_eq!(text.decode(), "caf\u{e9}\n\"quoted\" \u{1f600}");
     }
 
     #[test]
@@ -787,11 +810,13 @@ mod tests {
         let Method::ConversationSend {
             provider_id,
             conversation_id,
+            text,
         } = request.method
         else {
             panic!("unexpected method: {:?}", request.method);
         };
         assert!(provider_id.equals_ascii("codex"));
+        assert_eq!(text.decode(), "Hi");
         assert_eq!(conversation_id.map(JsonStr::raw), Some(&b"conv_1"[..]));
     }
 

@@ -1,5 +1,7 @@
 //! Test-only fake provider. See README.md for the mode contract.
 
+mod codex;
+
 use std::ffi::{OsStr, OsString};
 use std::io::{self, BufRead, Read, Write};
 use std::path::Path;
@@ -20,6 +22,8 @@ const NORMAL_LINES: [&str; 3] = [
     r#"{"type":"completed"}"#,
 ];
 const READY_LINE: &str = r#"{"type":"ready"}"#;
+/// The start of a line that never ends.
+const PARTIAL_LINE: &str = r#"{"type":"delta","text":"unfinish"#;
 
 #[derive(Debug, Clone, Copy)]
 enum Mode {
@@ -37,6 +41,7 @@ enum Mode {
     Orphan,
     Escape,
     Detached,
+    Partial,
 }
 
 impl Mode {
@@ -56,6 +61,7 @@ impl Mode {
             "orphan" => Self::Orphan,
             "escape" => Self::Escape,
             "detached" => Self::Detached,
+            "partial" => Self::Partial,
             _ => return None,
         })
     }
@@ -67,6 +73,9 @@ fn main() -> ExitCode {
         .next()
         .unwrap_or_else(|| OsString::from("pervue-fake-provider"));
     let arguments: Vec<OsString> = args.collect();
+    if codex::is_codex(&program) {
+        return codex::main(arguments);
+    }
 
     let mode = match arguments.as_slice() {
         [flag, mode] if flag == OsStr::new("--mode") => Mode::parse(mode),
@@ -75,7 +84,7 @@ fn main() -> ExitCode {
     let Some(mode) = mode else {
         let _ = writeln!(
             io::stderr(),
-            "usage: {} --mode <normal|slow|stderr|exit-nonzero|hang|ignore-cancel|malformed|large|crash|echo|tree|orphan|escape|detached>",
+            "usage: {} --mode <normal|slow|stderr|exit-nonzero|hang|ignore-cancel|malformed|large|crash|echo|tree|orphan|escape|detached|partial>",
             Path::new(&program).display()
         );
         return ExitCode::from(EXIT_USAGE);
@@ -133,6 +142,12 @@ fn run(mode: Mode) -> io::Result<u8> {
         }
         Mode::Orphan => spawn_descendant("hang")?,
         Mode::Escape => spawn_descendant("detached")?,
+        Mode::Partial => {
+            let mut stdout = io::stdout();
+            stdout.write_all(PARTIAL_LINE.as_bytes())?;
+            stdout.flush()?;
+            hang_forever();
+        }
         Mode::Detached => {
             leave_process_group()?;
             let line = format!(r#"{{"type":"detached","pid":{}}}"#, std::process::id());

@@ -146,6 +146,9 @@ pub struct ConversationCreated<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct ResponseStarted<'a> {
     pub provider_id: &'a str,
+    /// The conversation being answered, which v1 §6 recommends including.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conversation_id: Option<&'a str>,
 }
 
 /// Payload of a `response.delta` event.
@@ -157,6 +160,12 @@ pub struct ResponseDelta<'a> {
 /// Payload of a `response.completed` event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct ResponseCompleted {}
+
+/// Payload of a `request.cancelled` event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct RequestCancelled<'a> {
+    pub target_request_id: &'a str,
+}
 
 #[derive(Serialize)]
 struct HostReady {
@@ -186,28 +195,34 @@ pub fn write_host_ready<W: Write + ?Sized>(output: &mut W) -> Result<(), EventEr
     write_envelope(output, None, Event::HostReady, &payload)
 }
 
-/// Writes one event correlated to `request_id`.
+/// Writes one event for a request. `raw_request_id` is the raw token of a
+/// validated [`RequestId`] ([`RequestId::raw`]), which the host keeps after
+/// the request's frame is released, so it is echoed byte for byte (v1 §4).
 pub fn write_event<W: Write + ?Sized, P: Serialize + ?Sized>(
     output: &mut W,
-    request_id: RequestId<'_>,
+    raw_request_id: &[u8],
     event: Event,
     payload: &P,
 ) -> Result<(), EventError> {
-    write_envelope(output, Some(request_id), event, payload)
+    write_envelope(output, Some(raw_request_id), event, payload)
 }
 
-/// Writes a `response.failed` event. `request_id` is `None` only when no valid
-/// ID could be recovered from the request (v1 §3).
+/// Writes a `response.failed` event for a request, as [`write_event`] does.
 pub fn write_failure<W: Write + ?Sized>(
     output: &mut W,
-    request_id: Option<RequestId<'_>>,
+    raw_request_id: &[u8],
     error: ErrorBody<'_>,
 ) -> Result<(), EventError> {
     let payload = ResponseFailed {
         error,
         protocol: None,
     };
-    write_envelope(output, request_id, Event::ResponseFailed, &payload)
+    write_envelope(
+        output,
+        Some(raw_request_id),
+        Event::ResponseFailed,
+        &payload,
+    )
 }
 
 /// Writes the `response.failed` event for a rejected request (v1 §8).
@@ -243,21 +258,26 @@ pub fn write_request_failure<W: Write + ?Sized>(
         },
         protocol,
     };
-    write_envelope(output, failure.request_id, Event::ResponseFailed, &payload)
+    write_envelope(
+        output,
+        failure.request_id.map(RequestId::raw),
+        Event::ResponseFailed,
+        &payload,
+    )
 }
 
 fn write_envelope<W: Write + ?Sized, P: Serialize + ?Sized>(
     output: &mut W,
-    request_id: Option<RequestId<'_>>,
+    raw_request_id: Option<&[u8]>,
     event: Event,
     payload: &P,
 ) -> Result<(), EventError> {
     let mut frame = Vec::with_capacity(256);
     frame.extend_from_slice(br#"{"version":1,"type":"event","request_id":"#);
-    match request_id {
-        Some(request_id) => {
+    match raw_request_id {
+        Some(raw_request_id) => {
             frame.push(b'"');
-            frame.extend_from_slice(request_id.raw());
+            frame.extend_from_slice(raw_request_id);
             frame.push(b'"');
         }
         None => frame.extend_from_slice(b"null"),
@@ -371,7 +391,7 @@ mod tests {
         let mut wire = Vec::new();
         write_event(
             &mut wire,
-            request.request_id,
+            request.request_id.raw(),
             Event::ProviderStatus,
             &status,
         )
@@ -395,7 +415,7 @@ mod tests {
 
         let result = write_event(
             &mut wire,
-            request.request_id,
+            request.request_id.raw(),
             Event::ResponseDelta,
             &ResponseDelta { text: &text },
         );

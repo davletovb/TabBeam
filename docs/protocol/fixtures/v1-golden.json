@@ -235,6 +235,9 @@
       "events": [
         "provider.status",
         "response.completed"
+      ],
+      "repeatable": [
+        "provider.status"
       ]
     }
   ],

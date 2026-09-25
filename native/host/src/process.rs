@@ -48,11 +48,13 @@ const DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
 /// end on their own.
 const JOIN_TIMEOUT: Duration = Duration::from_millis(100);
 
-/// An executable to start, and the arguments to pass it.
+/// An executable to start, the arguments to pass it, and any environment
+/// variables to set for it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessSpec {
     program: PathBuf,
     args: Vec<OsString>,
+    env: Vec<(OsString, OsString)>,
 }
 
 impl ProcessSpec {
@@ -63,6 +65,7 @@ impl ProcessSpec {
         Self {
             program: program.into(),
             args: Vec::new(),
+            env: Vec::new(),
         }
     }
 
@@ -82,6 +85,14 @@ impl ProcessSpec {
         I::Item: Into<OsString>,
     {
         self.args.extend(args.into_iter().map(Into::into));
+        self
+    }
+
+    /// Sets an environment variable for the process. Everything else is
+    /// inherited from the host until SEC-02 narrows it.
+    #[must_use]
+    pub fn env(mut self, key: impl Into<OsString>, value: impl Into<OsString>) -> Self {
+        self.env.push((key.into(), value.into()));
         self
     }
 }
@@ -175,6 +186,7 @@ impl Process {
         let mut command = Command::new(&spec.program);
         command
             .args(&spec.args)
+            .envs(spec.env.iter().map(|(key, value)| (key, value)))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -278,6 +290,19 @@ impl Process {
             if Instant::now() >= deadline {
                 return None;
             }
+        }
+    }
+
+    /// Asks the process to stop without waiting: closes stdin and, on POSIX,
+    /// sends SIGTERM to the process group. Keep pulling events to see it exit,
+    /// and call [`Process::kill`] if it outlives your grace period. A process
+    /// that exits after this is reported as [`Ending::Stopped`].
+    pub fn request_stop(&mut self) {
+        self.stdin = None;
+        self.poll_exit();
+        if matches!(self.state, State::Running) {
+            self.ending = Ending::Stopped;
+            tree::request_stop(&self.child);
         }
     }
 

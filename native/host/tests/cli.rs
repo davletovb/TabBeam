@@ -12,8 +12,12 @@ const ORIGIN: &str = "chrome-extension://abcdefghijklmnopabcdefghijklmnop/";
     reason = "these tests start the built host binary; the spawn guard is for the host itself"
 )]
 fn run_host(args: &[&str], stdin: &[u8]) -> Output {
+    // An empty provider search path: whatever is installed on this machine,
+    // the host finds no provider executables.
+    let no_providers = std::env::temp_dir().join("pervue-cli-tests-no-providers");
     let mut child = Command::new(HOST)
         .args(args)
+        .env("PERVUE_PROVIDER_PATH", no_providers)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -64,7 +68,7 @@ fn chrome_windows_launch_shape_runs_the_host() {
 
 #[test]
 fn the_chrome_launch_shape_serves_requests() {
-    let request = r#"{"version":1,"type":"request","request_id":"req_cli","method":"provider.status","payload":{"provider_id":"codex"}}"#;
+    let request = r#"{"version":1,"type":"request","request_id":"req_cli","method":"provider.status","payload":{"provider_id":"missing"}}"#;
     let output = run_host(&[ORIGIN], &frame(request));
     assert_eq!(output.status.code(), Some(0));
 
@@ -74,6 +78,20 @@ fn the_chrome_launch_shape_serves_requests() {
         "{}",
         String::from_utf8_lossy(&output.stdout)
     );
+}
+
+#[test]
+fn the_installed_host_reports_a_missing_codex() {
+    let request = r#"{"version":1,"type":"request","request_id":"req_codex","method":"provider.status","payload":{"provider_id":"codex"}}"#;
+    let output = run_host(&[ORIGIN], &frame(request));
+    assert_eq!(output.status.code(), Some(0));
+
+    let frames = frames_only(&output.stdout);
+    assert_eq!(frames.len(), 3);
+    assert_eq!(frames[1]["event"], "provider.status");
+    assert_eq!(frames[1]["payload"]["provider_id"], "codex");
+    assert_eq!(frames[1]["payload"]["status"]["availability"], "not_found");
+    assert_eq!(frames[2]["event"], "response.completed");
 }
 
 #[test]
@@ -187,7 +205,7 @@ fn diagnostics_go_to_stderr_and_never_into_the_frames() {
     let requests = [
         r#"{"version":1,"type":"request","request_id":"req_a","method":"conversation.send","payload":{"provider_id":"fake","input":{"text":"hi"}}}"#,
         "{not json",
-        r#"{"version":1,"type":"request","request_id":"req_b","method":"provider.status","payload":{"provider_id":"codex"}}"#,
+        r#"{"version":1,"type":"request","request_id":"req_b","method":"provider.status","payload":{"provider_id":"missing"}}"#,
     ];
     let input: Vec<u8> = requests.iter().flat_map(|request| frame(request)).collect();
     let output = run_host(&[ORIGIN], &input);

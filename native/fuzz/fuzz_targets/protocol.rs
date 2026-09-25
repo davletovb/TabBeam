@@ -5,6 +5,7 @@ use pervue_host::diagnostics::Diagnostics;
 use pervue_host::framing;
 use pervue_host::host;
 use pervue_host::limits::MAX_FRAME_SIZE;
+use pervue_host::providers::Providers;
 
 // Treats the input as one request frame and runs it through the host: request
 // validation, routing, event emission, and diagnostics. Whatever the request
@@ -20,7 +21,8 @@ fuzz_target!(|data: &[u8]| {
     framing::write_frame(&mut input, data).expect("frame the request");
     let mut output = Vec::new();
     let mut log = Diagnostics::new(Vec::new());
-    host::run(&mut input.as_slice(), &mut output, &mut log)
+    // Only the in-process fake provider: fuzzing never starts a process.
+    host::run_with(&Providers::scaffold(), &mut input.as_slice(), &mut output, &mut log)
         .expect("host handles one in-memory frame");
 
     let mut frames = output.as_slice();

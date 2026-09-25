@@ -100,8 +100,9 @@ Retryability is reason-dependent:
 ### `REQUEST_CANCELLED`
 The target request was cancelled intentionally.
 
-Typical reason:
+Typical reasons:
 - `USER_CANCELLED`
+- `INPUT_CLOSED`: the extension closed the native connection while the request was in flight, so the host stopped it (PRO-04).
 
 Default retryability: **true** as a new request, but the cancelled request itself is terminal.
 
@@ -140,6 +141,8 @@ Required v1 protocol reasons include:
 - `UNKNOWN_TARGET_REQUEST`
 
 The extension also reports `REQUEST_TOO_LARGE` when it refuses to send a request that would exceed the Native Messaging frame limit (SEC-01, `docs/protocol/native-messaging-v1.json`). The host never receives such a request.
+
+A provider adapter reports `UNKNOWN_CONVERSATION` when `conversation_id` names a conversation it can't continue, such as one started by an earlier host process (PRO-03).
 
 Default retryability: **false** unless the caller changes the request.
 

@@ -6,7 +6,8 @@
 //! lifecycle through [`diagnostics`]. [`limits`]
 //! holds every bound on browser input, and [`manifest`] the caller-identity
 //! checks and the Native Messaging registration. [`process`] starts and
-//! supervises provider processes.
+//! supervises provider processes, and [`stream`] turns their output into
+//! lines.
 
 pub mod diagnostics;
 pub mod framing;
@@ -15,6 +16,8 @@ pub mod limits;
 pub mod manifest;
 pub mod process;
 pub mod protocol;
+pub mod providers;
+pub mod stream;
 
 /// Host version reported by `--version` and in the `host.ready` event.
 pub const HOST_VERSION: &str = env!("CARGO_PKG_VERSION");
