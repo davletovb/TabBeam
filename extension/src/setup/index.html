@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Pervue — Companion setup</title>
+    <link rel="stylesheet" href="./setup.css">
+  </head>
+  <body>
+    <main>
+      <p class="eyebrow">Pervue</p>
+      <h1>Set up the companion app</h1>
+      <p>Pervue packaging is not finished yet. Development builds still require the native companion to be built and registered manually.</p>
+      <ol>
+        <li>Build the native host from the repository with <code>cargo build --manifest-path native/Cargo.toml</code>.</li>
+        <li>Find this extension's ID on <code>chrome://extensions</code>.</li>
+        <li>Run <code>pervue-host --print-manifest &lt;extension-id&gt;</code> and register the printed manifest in Chrome's Native Messaging host location for your operating system.</li>
+        <li>Install and sign in to Codex using its supported authentication flow.</li>
+        <li>Reopen Pervue. The provider status line should report when Codex is ready.</li>
+      </ol>
+      <p>These steps are for development only. Milestone G replaces them with an installable companion package.</p>
+    </main>
+  </body>
+</html>
