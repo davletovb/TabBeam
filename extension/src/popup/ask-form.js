@@ -1,6 +1,7 @@
 import { ASK_PORT_NAME, QUESTION_TOO_LONG } from "../shared/ask-port.js";
 import { MAX_NATIVE_MESSAGE_BYTES, utf8ByteLength } from "../shared/limits.js";
 import { describeFailure } from "../shared/outcomes.js";
+import { recordDuration } from "../shared/performance.js";
 
 /** @typedef {import("../shared/ask-port.js").AskPort} AskPort */
 
@@ -16,7 +17,9 @@ export const WORKER_LOST = "Pervue stopped unexpectedly. Reopen it, then try aga
  *   submit: HTMLButtonElement,
  *   status: HTMLElement,
  *   answer: HTMLElement,
- *   history?: HTMLElement
+ *   history?: HTMLElement,
+ *   cancel?: HTMLButtonElement,
+ *   retry?: HTMLButtonElement
  * }} AskElements
  */
 
@@ -53,6 +56,8 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
   const { form, input, submit, status, answer } = elements;
   const { onOutcome } = options;
   const history = elements.history;
+  const cancel = elements.cancel;
+  const retry = elements.retry;
   /** @type {string | null} */
   let conversationId = null;
   let viewGeneration = 0;
@@ -60,6 +65,10 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
   let submittedText = "";
   /** @type {any} */
   let submittedContext = null;
+  /** @type {{text: string, context: any} | null} */
+  let lastAttempt = null;
+  let requestStartedAt = 0;
+  let firstChunkRecorded = false;
 
   // The port of the question in flight, or null when idle.
   /** @type {AskPort | null} */
@@ -125,6 +134,8 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
     answer.hidden = true;
     options.onConversationId?.(null);
     setStatus(READY_STATUS, "idle");
+    if (cancel) cancel.hidden = true;
+    if (retry) retry.hidden = true;
     input.focus();
     return true;
   }
@@ -132,6 +143,22 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     ask();
+  });
+
+  cancel?.addEventListener("click", () => {
+    if (!active) return;
+    try {
+      active.postMessage({ type: "cancel" });
+      cancel.disabled = true;
+      setStatus("Stopping…", "cancelled", "cancelled");
+    } catch {
+      finish(active, WORKER_LOST, "failed", "internal-error", true, true);
+    }
+  });
+
+  retry?.addEventListener("click", () => {
+    if (!lastAttempt || active || loadPending) return;
+    ask(lastAttempt);
   });
 
   input.addEventListener("keydown", (event) => {
@@ -150,9 +177,12 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
   });
 
   setStatus(READY_STATUS, "idle");
+  if (cancel) cancel.hidden = true;
+  if (retry) retry.hidden = true;
   input.focus();
 
-  function ask() {
+  /** @param {{text: string, context: any} | null} [attempt] */
+  function ask(attempt = null) {
     // Duplicate-submit guard: a question in flight blocks every other submit
     // path (Enter, the button, requestSubmit), not just the button.
     if (active !== null || loadPending) {
@@ -163,7 +193,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
       return;
     }
 
-    const text = input.value;
+    const text = attempt?.text ?? input.value;
     if (text.trim() === "") {
       setStatus("Type a question first.", "idle");
       return;
@@ -187,12 +217,23 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
     active = port;
     ++viewGeneration;
     submittedText = text;
-    submittedContext = contextControls?.getContext();
+    submittedContext = attempt ? attempt.context : contextControls?.getContext();
+    lastAttempt = {
+      text,
+      context: submittedContext === undefined ? null : structuredClone(submittedContext)
+    };
+    requestStartedAt = globalThis.performance?.now?.() ?? 0;
+    firstChunkRecorded = false;
     options.onRequestStarted?.();
     if (history) history.append(bubble("user", text, "pending"));
     answer.textContent = "";
     answer.hidden = true;
     setBusy(true);
+    if (cancel) {
+      cancel.hidden = false;
+      cancel.disabled = false;
+    }
+    if (retry) retry.hidden = true;
     setStatus("Sending…", "pending");
 
     port.onMessage.addListener((/** @type {any} */ event) => {
@@ -202,7 +243,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
     });
     port.onDisconnect.addListener(() => {
       if (port === active) {
-        finish(port, WORKER_LOST, "failed", "internal-error");
+        finish(port, WORKER_LOST, "failed", "internal-error", true, true);
       }
     });
     try {
@@ -215,7 +256,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
     } catch {
       // No events will follow a question the port couldn't carry, such as
       // one over Chrome's 64 MiB message limit, so fail it now.
-      finish(port, WORKER_LOST, "failed", "internal-error");
+      finish(port, WORKER_LOST, "failed", "internal-error", true, true);
     }
   }
 
@@ -236,13 +277,18 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
         break;
       case "response.delta":
         if (typeof event.payload?.text === "string") {
+          if (!firstChunkRecorded) {
+            firstChunkRecorded = true;
+            const endedAt = globalThis.performance?.now?.() ?? requestStartedAt;
+            recordDuration("first_response_chunk", requestStartedAt, endedAt);
+          }
           answer.hidden = false;
           // Text nodes only: provider output is never parsed as HTML.
           answer.append(event.payload.text);
         }
         break;
       case "response.completed":
-        finish(port, "Answer complete.", "done");
+        finish(port, "Answer complete.", "done", null, true, false);
         if (history && input.value === submittedText) input.value = "";
         contextControls?.consume?.(submittedContext);
         onOutcome?.({ kind: "completed" });
@@ -257,7 +303,14 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
         // A conversation the store no longer has can't be reloaded: keep the
         // message that says to start a new one.
         const reload = event.payload?.error?.reason !== "UNKNOWN_CONVERSATION";
-        finish(port, shown, kind === "cancelled" ? "cancelled" : "failed", kind, reload);
+        finish(
+          port,
+          shown,
+          kind === "cancelled" ? "cancelled" : "failed",
+          kind,
+          reload,
+          event.payload?.error?.retryable === true
+        );
         onOutcome?.({ kind, message });
         break;
       }
@@ -274,10 +327,15 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
    * @param {string | null} [kind] the failure kind, for a failure
    * @param {boolean} [reload] whether to show the saved conversation again
    */
-  function finish(port, message, state, kind = null, reload = true) {
+  function finish(port, message, state, kind = null, reload = true, retryable = false) {
     active = null;
     port.disconnect();
     setBusy(false);
+    if (cancel) {
+      cancel.hidden = true;
+      cancel.disabled = false;
+    }
+    if (retry) retry.hidden = !retryable;
     setStatus(message, state, kind);
     // A question that ended without an answer, failed or stopped, before its
     // conversation existed leaves nothing saved: drop its provisional bubble.
