@@ -685,6 +685,32 @@ function request(id, method = "provider.status") {
 }
 
 {
+  // A forgotten request stops being routed: its owner hears nothing more,
+  // not its late events nor a disconnect, and the others are unaffected.
+  const { manager, ports } = makeHarness();
+  /** @type {string[]} */
+  const heard = [];
+  manager.send(request("req_forgotten"), {
+    onEvent: (event) => heard.push(`forgotten ${event.event}`),
+    onDisconnect: () => heard.push("forgotten disconnect")
+  });
+  manager.send(request("req_kept"), {
+    onEvent: (event) => heard.push(`kept ${event.event}`),
+    onDisconnect: () => heard.push("kept disconnect")
+  });
+
+  assert.equal(manager.forget("req_forgotten"), true);
+  assert.equal(manager.forget("req_forgotten"), false);
+  assert.equal(manager.forget("req_never_sent"), false);
+  assert.equal(manager.pendingRequestCount, 1);
+  ports[0].onMessage.emit({ request_id: "req_forgotten", event: "response.completed" });
+  ports[0].onMessage.emit({ request_id: "req_kept", event: "provider.status" });
+  ports[0].onDisconnect.emit(undefined);
+  assert.deepEqual(heard, ["kept provider.status", "kept disconnect"]);
+  assert.equal(ports[0].disconnectCalls, 0);
+}
+
+{
   // The host name and limits match the shared contract that the native host's
   // tests also check (docs/protocol/native-messaging-v1.json).
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");

@@ -38,6 +38,8 @@ class Element {
   setAttribute(key, value) { this.attributes.set(key, String(value)); }
   /** @param {string} key */
   getAttribute(key) { return this.attributes.get(key); }
+  /** @param {string} key */
+  removeAttribute(key) { this.attributes.delete(key); }
   /** @param {...unknown} values */
   append(...values) {
     for (const value of values) {

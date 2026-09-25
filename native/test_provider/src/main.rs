@@ -42,6 +42,8 @@ enum Mode {
     Escape,
     Detached,
     Partial,
+    Env,
+    Args,
 }
 
 impl Mode {
@@ -62,6 +64,8 @@ impl Mode {
             "escape" => Self::Escape,
             "detached" => Self::Detached,
             "partial" => Self::Partial,
+            "env" => Self::Env,
+            "args" => Self::Args,
             _ => return None,
         })
     }
@@ -79,24 +83,28 @@ fn main() -> ExitCode {
 
     let mode = match arguments.as_slice() {
         [flag, mode] if flag == OsStr::new("--mode") => Mode::parse(mode),
+        // Only `args` takes arguments of its own.
+        [flag, mode, ..] if flag == OsStr::new("--mode") && mode == OsStr::new("args") => {
+            Some(Mode::Args)
+        }
         _ => None,
     };
     let Some(mode) = mode else {
         let _ = writeln!(
             io::stderr(),
-            "usage: {} --mode <normal|slow|stderr|exit-nonzero|hang|ignore-cancel|malformed|large|crash|echo|tree|orphan|escape|detached|partial>",
+            "usage: {} --mode <normal|slow|stderr|exit-nonzero|hang|ignore-cancel|malformed|large|crash|echo|tree|orphan|escape|detached|partial|env|args [argument...]>",
             Path::new(&program).display()
         );
         return ExitCode::from(EXIT_USAGE);
     };
 
-    match run(mode) {
+    match run(mode, arguments.get(2..).unwrap_or_default()) {
         Ok(status) => ExitCode::from(status),
         Err(_) => ExitCode::from(EXIT_FAILURE),
     }
 }
 
-fn run(mode: Mode) -> io::Result<u8> {
+fn run(mode: Mode, rest: &[OsString]) -> io::Result<u8> {
     match mode {
         Mode::Normal => stream_lines(false)?,
         Mode::Slow => stream_lines(true)?,
@@ -147,6 +155,29 @@ fn run(mode: Mode) -> io::Result<u8> {
             stdout.write_all(PARTIAL_LINE.as_bytes())?;
             stdout.flush()?;
             hang_forever();
+        }
+        Mode::Env => {
+            let environment: serde_json::Map<String, serde_json::Value> = std::env::vars_os()
+                .map(|(name, value)| {
+                    (
+                        name.to_string_lossy().into_owned(),
+                        value.to_string_lossy().into_owned().into(),
+                    )
+                })
+                .collect();
+            let cwd = std::env::current_dir()?.to_string_lossy().into_owned();
+            let launch = serde_json::json!({"cwd": cwd, "env": environment});
+            write_line(&mut io::stdout(), &launch.to_string())?;
+        }
+        Mode::Args => {
+            let args: Vec<String> = rest
+                .iter()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect();
+            write_line(
+                &mut io::stdout(),
+                &serde_json::Value::from(args).to_string(),
+            )?;
         }
         Mode::Detached => {
             leave_process_group()?;

@@ -1,11 +1,6 @@
 import { MAX_PAGE_BYTES, MAX_SELECTION_BYTES, utf8ByteLength } from "../shared/limits.js";
 
-/** @typedef {{code: string, reason: string, message: string, retryable: boolean}} ErrorBody */
-
-// Milestone B's first provider (PRO-03). The host reports a missing or
-// signed-out Codex as a normalized failure; choosing among providers arrives
-// with EXT-04.
-export const DEFAULT_PROVIDER_ID = "codex";
+/** @typedef {import("../shared/provider-status.js").ErrorBody} ErrorBody */
 
 export const EMPTY_QUESTION = Object.freeze({
   code: "INVALID_REQUEST",

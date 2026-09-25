@@ -20,6 +20,7 @@ The current foundation provides:
 - service-worker-owned Native Messaging connection manager;
 - popup and full-page ask/stream UI backed by the native host;
 - versioned local conversation history with a recent-conversation picker;
+- popup provider state and failure states (EXT-04);
 - dependency-free smoke/lifecycle validation.
 
 ## Native Messaging connection lifecycle
@@ -47,12 +48,46 @@ The popup and full-page view ask the native host one question at a time and stre
 - Each question opens its own runtime port to the service worker (contract: `src/shared/ask-port.js`). The service worker sends one `conversation.send`, persists the completed turn, and forwards that request's protocol events in order, ending with exactly one terminal event.
 - While a question is in flight, every other submit is ignored, whether it comes from Enter, the Ask button or `requestSubmit()`. The input stays editable.
 - Deltas are appended as text nodes as they arrive, so provider output is never parsed as HTML.
-- Completion and failure show in the status line without reloading. Failures show the error's `message`.
+- Completion and failure show in the status line without reloading. A failure shows the error's `message`, which the host and the service worker write to say what to do next, and the line names the failure's kind in `data-kind` (see [Provider state and failures](#provider-state-and-failures)).
 - A question over the native host's 1 MiB limit is refused in the popup before it's sent ("Your question is too long…"). The service worker checks the whole request too, and reports `INVALID_REQUEST` / `REQUEST_TOO_LARGE`.
 - When the native port closes before the answer finishes, the service worker reports the failure itself, in the DOC-02 vocabulary, based on Chrome's `runtime.lastError`. A missing host, or one registered only for other extensions, is `HOST_NOT_INSTALLED` and not retryable. A host that can't start or that disconnects is `HOST_UNAVAILABLE`.
 - Closing the popup leaves the native request running; its answer is saved when it finishes. Reopen the popup to see the recent thread. Cancellation is EXT-12.
 - Only the extension's own pages can open the ask port. The service worker disconnects ports from content scripts.
 - New conversations use Codex. The extension stores a stable `conv_<UUID>` ID, message history, title, source records, and optional page-context metadata in versioned `chrome.storage.local` records, keeping up to 30 recent threads within a 6 MiB budget. Individual stored messages and long conversations are bounded; older turns may be pruned and large messages show a truncation note. On a quota error it evicts older conversations and retries. Native provider session IDs remain private to the service worker and adapter. The recent picker loads a saved thread; **New conversation** clears the active thread; **Continue in full view** opens the same ID in the larger view. Follow-ups send bounded prior dialogue so the adapter can continue even after a native session is lost. One question per conversation runs at a time across both views.
+- Both views ask Codex, the first real provider (`DEFAULT_PROVIDER_ID` in `src/shared/providers.js`). Choosing among providers is EXT-15.
+
+## Provider state and failures
+
+When the popup opens, a line under its title shows the state of the companion app and of Codex (EXT-04). The popup sends `{type: "pervue.provider-status"}` to the service worker (contract: `src/shared/provider-status.js`), which asks the host for `provider.status` (`src/background/status-bridge.js`) and passes on only its normalized fields. The line reads "Checking Codex…", then one of:
+
+| State | Line |
+|---|---|
+| Ready | Codex is ready. |
+| Codex not installed | Codex isn't installed. Install it, then try again. |
+| Codex not signed in | Codex isn't signed in. Sign in to Codex, then try again. |
+| Codex can't start | Codex is installed but can't start. Reinstall it, then try again. |
+| Companion app missing, or unreachable | The failure's own message, such as "Pervue's companion app isn't installed. Install it, then try again." |
+| Companion app not answering within 15 seconds | Pervue's companion app didn't answer in time. Try again. |
+| No answer from the service worker within 20 seconds, or an unknown state | Pervue couldn't check Codex. |
+
+A status or error that doesn't follow DOC-02, such as a status missing a capability or an error whose `code` isn't one of DOC-02's, means the companion app speaks another version of the protocol: "Pervue's companion app needs an update. Update it, then try again." (`HOST_UNAVAILABLE` / `HOST_PROTOCOL_MISMATCH`). The service worker waits 15 seconds for the host's answer (`PROVIDER_STATUS_TIMEOUT_MS`); the host gives up on a stuck sign-in check after 10, so only a host that has stopped answering takes that long. Then the worker answers `REQUEST_TIMEOUT` / `REQUEST_DEADLINE_EXCEEDED` and stops listening for that request, so nothing stays pending in the worker. Asking stays possible whatever the line says, and each question keeps the line current: an answer shows Codex ready, and a missing app or provider, or a sign-in, shows what the question found.
+
+A failed question's status line shows the error's message and its kind, decided by the DOC-02 `code` alone (`src/shared/outcomes.js`), never by the message:
+
+| `code` | `data-kind` | How it looks |
+|---|---|---|
+| `HOST_NOT_INSTALLED` | `host-missing` | amber: setup to do |
+| `HOST_UNAVAILABLE` | `host-unavailable` | red |
+| `PROVIDER_NOT_FOUND` | `provider-missing` | amber: setup to do |
+| `PROVIDER_NOT_AUTHENTICATED` | `provider-signed-out` | amber: setup to do |
+| `PROVIDER_FAILED` | `provider-failed` | red |
+| `REQUEST_TIMEOUT` | `timeout` | red |
+| `REQUEST_CANCELLED` | `cancelled` | neutral: its state is `cancelled`, not `failed` |
+| `CONTEXT_UNAVAILABLE` | `context-unavailable` | red |
+| `INVALID_REQUEST` | `invalid-request` | red |
+| `INTERNAL_ERROR`, or an unknown code | `internal-error` | red |
+
+An error without a message gets its kind's own, which says what to do next without naming ports, hosts, or processes. Internal errors, and requests the host rejects as a protocol mismatch, add their request ID ("Reference: req_…"), which the host's diagnostics record. The popup has no Stop button yet (EXT-12), but a cancelled request already shows as stopped rather than failed.
 
 ## Browser context (CTX-01 through CTX-04)
 
@@ -76,7 +111,7 @@ Until packaging registers the host (Milestone G), register a development build b
    ```
 
    The macOS directory is `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/`. On Windows, save the file anywhere, then create the registry key `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.pervue.host` and set its default value to the file's full path. The manifest allows only the IDs you pass, and its `path` is the host binary that printed it.
-4. Open the popup and ask anything. The fake provider answers "Fake provider response."
+4. Open the popup. Its first line shows whether the companion app is found and Codex is installed and signed in; with Codex ready, ask anything. A host started by Chrome gets a minimal `PATH`, so install Codex where the host looks (see "Codex" in `native/README.md`), or set `PERVUE_PROVIDER_PATH` in the environment Chrome starts with.
 
 ## Validation
 

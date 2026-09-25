@@ -33,6 +33,8 @@ class Element {
   }
   /** @param {string} name @param {string} value */
   setAttribute(name, value) { this.attributes.set(name, String(value)); }
+  /** @param {string} name */
+  removeAttribute(name) { this.attributes.delete(name); }
   /** @param {...(string | Element)} children */
   append(...children) {
     for (const child of children) {

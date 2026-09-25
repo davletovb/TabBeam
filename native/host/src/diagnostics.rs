@@ -3,9 +3,15 @@
 //! The host writes one JSON object per line to stderr. stdout carries only
 //! Native Messaging frames, so diagnostics can never corrupt them. A record
 //! names identifiers, timings, and outcomes, but never request content: no
-//! prompt text, page context, unknown payload members, or raw frame bytes.
-//! Identifiers are truncated, and JSON escaping keeps each record on one line
-//! whatever they contain.
+//! prompt text, page context, unknown payload members, raw frame bytes, or
+//! anything a provider wrote.
+//!
+//! A record copies only identifiers Pervue made itself (SEC-02): request IDs
+//! in the shape the extension gives every request ([`request_id`]), and the
+//! providers the host serves and conversations it created ([`issued_id`]).
+//! Any other identifier a request carries is written as [`REDACTED`]. So a
+//! record never holds free text, a secret sent where an ID belongs, whatever
+//! its format, or characters that could forge or split a record.
 
 use std::borrow::Cow;
 use std::io::Write;
@@ -15,8 +21,11 @@ use serde::Serialize;
 
 use crate::protocol::events::ErrorCode;
 
-/// Longest identifier, in characters, copied into a record.
-pub const MAX_LOGGED_ID_CHARS: usize = 128;
+/// What a record holds in place of an identifier it won't copy.
+pub const REDACTED: &str = "[redacted]";
+
+/// How every request ID the extension creates starts, before a random UUID.
+pub const REQUEST_ID_PREFIX: &str = "req_";
 
 /// Lifecycle events a record can describe.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -141,12 +150,35 @@ impl<W: Write> Diagnostics<W> {
     }
 }
 
-/// `text` cut to [`MAX_LOGGED_ID_CHARS`] characters, marked with `…` when cut.
-pub fn loggable_id(text: Cow<'_, str>) -> Cow<'_, str> {
-    match text.char_indices().nth(MAX_LOGGED_ID_CHARS) {
-        None => text,
-        Some((end, _)) => Cow::Owned(format!("{}…", &text[..end])),
+/// A request ID as a record may hold it: only in the shape the extension
+/// gives every request, [`REQUEST_ID_PREFIX`] then a random UUID in lowercase
+/// hex (`req_4f1c2a7e-9b3d-4c21-8e0f-2a6b5c7d8e9f`). Any other ID becomes
+/// [`REDACTED`]: the host can't tell what a caller-chosen ID holds.
+pub fn request_id(id: Cow<'_, str>) -> Cow<'_, str> {
+    if is_generated_request_id(&id) {
+        id
+    } else {
+        Cow::Borrowed(REDACTED)
     }
+}
+
+/// `id` as a record may hold it: kept if the host itself `issued` it, such as
+/// the name of a provider it serves or a conversation it created, and
+/// [`REDACTED`] if a request merely named it.
+pub fn issued_id(id: &str, issued: bool) -> Cow<'_, str> {
+    Cow::Borrowed(if issued { id } else { REDACTED })
+}
+
+/// Whether `id` is [`REQUEST_ID_PREFIX`] then a UUID: 8, 4, 4, 4, and 12
+/// lowercase hex digits, joined by `-`.
+fn is_generated_request_id(id: &str) -> bool {
+    id.strip_prefix(REQUEST_ID_PREFIX).is_some_and(|uuid| {
+        uuid.len() == 36
+            && uuid.bytes().enumerate().all(|(index, byte)| match index {
+                8 | 13 | 18 | 23 => byte == b'-',
+                _ => matches!(byte, b'0'..=b'9' | b'a'..=b'f'),
+            })
+    })
 }
 
 /// Whole milliseconds in `duration`, saturating.
@@ -250,35 +282,68 @@ mod tests {
         );
     }
 
+    const REQUEST: &str = "req_4f1c2a7e-9b3d-4c21-8e0f-2a6b5c7d8e9f";
+
     #[test]
-    fn identifiers_cannot_break_a_line_or_grow_without_bound() {
+    fn request_ids_are_kept_only_in_the_extensions_shape() {
+        for id in [REQUEST, "req_00000000-0000-0000-0000-000000000000"] {
+            assert!(matches!(request_id(Cow::Borrowed(id)), Cow::Borrowed(kept) if kept == id));
+        }
+        for id in [
+            "",
+            "req_1",
+            "req_status",
+            "4f1c2a7e-9b3d-4c21-8e0f-2a6b5c7d8e9f",
+            "REQ_4f1c2a7e-9b3d-4c21-8e0f-2a6b5c7d8e9f",
+            "req_4F1C2A7E-9B3D-4C21-8E0F-2A6B5C7D8E9F",
+            "req_4f1c2a7e9b3d4c218e0f2a6b5c7d8e9f",
+            "req_4f1c2a7e-9b3d-4c21-8e0f-2a6b5c7d8e9",
+            "req_4f1c2a7e-9b3d-4c21-8e0f-2a6b5c7d8e9f0",
+            "req_4f1c2a7e_9b3d-4c21-8e0f-2a6b5c7d8e9f",
+            "req_4f1c2a7g-9b3d-4c21-8e0f-2a6b5c7d8e9f",
+            "req_4f1c2a7e-9b3d-4c21-8e0f-2a6b5c7d8e9é",
+            // Credentials, recognizable or not.
+            "sk-proj-abcdEFGH1234",
+            "sk-short",
+            "ya29.a0AfH6SMBx3dEFGHijklMNOP",
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig",
+            "req_sk-proj-abcdEFGH1234",
+            "hunter2",
+        ] {
+            assert_eq!(request_id(Cow::Borrowed(id)), REDACTED, "{id:?}");
+        }
+        // Decoded from JSON escapes, the ID is still checked.
+        assert_eq!(request_id(Cow::Owned(REQUEST.to_owned())), REQUEST);
+    }
+
+    #[test]
+    fn identifiers_are_kept_only_when_the_host_issued_them() {
+        assert_eq!(issued_id("codex", true), "codex");
+        assert_eq!(
+            issued_id("conv_00ff00ff00ff00ff", true),
+            "conv_00ff00ff00ff00ff"
+        );
+        for named in ["codex", "conv_00ff00ff00ff00ff", "sk-proj-abcdEFGH1234"] {
+            assert_eq!(issued_id(named, false), REDACTED);
+        }
+    }
+
+    #[test]
+    fn identifiers_can_neither_forge_nor_split_a_record() {
+        let forged = "req_1\n{\"ts\":\"forged\",\"event\":\"host.stopped\"}";
+        let long = "é".repeat(500);
         let mut diagnostics = Diagnostics::with_clock(Vec::new(), fixed_clock);
         let mut record = Record::new(LifecycleEvent::RequestCompleted);
-        record.provider_id = Some(loggable_id(Cow::Borrowed(
-            "fake\n{\"ts\":\"forged\",\"event\":\"host.stopped\"}",
-        )));
-        record.conversation_id = Some(loggable_id(Cow::Owned("é".repeat(500))));
+        record.request_id = Some(request_id(Cow::Borrowed(forged)));
+        record.provider_id = Some(issued_id(forged, false));
+        record.conversation_id = Some(issued_id(&long, false));
         diagnostics.record(&record);
 
         let records = lines(diagnostics);
         assert_eq!(records.len(), 1);
-        assert_eq!(
-            records[0]["provider_id"],
-            "fake\n{\"ts\":\"forged\",\"event\":\"host.stopped\"}"
-        );
-        let conversation_id = records[0]["conversation_id"].as_str().unwrap();
-        assert_eq!(conversation_id.chars().count(), MAX_LOGGED_ID_CHARS + 1);
-        assert!(conversation_id.ends_with('…'));
-    }
-
-    #[test]
-    fn short_identifiers_are_kept_whole() {
-        let exact = "a".repeat(MAX_LOGGED_ID_CHARS);
-        assert_eq!(loggable_id(Cow::Borrowed(&exact)), exact.as_str());
-        assert!(matches!(
-            loggable_id(Cow::Borrowed("req")),
-            Cow::Borrowed("req")
-        ));
+        for field in ["request_id", "provider_id", "conversation_id"] {
+            assert_eq!(records[0][field], REDACTED, "{field}");
+        }
     }
 
     #[test]

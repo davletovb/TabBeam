@@ -20,6 +20,8 @@ class Element {
   fire(event) { return this.listeners.get(event)?.({ preventDefault() {} }); }
   /** @param {string} key @param {string} value */
   setAttribute(key, value) { this.attributes.set(key, value); }
+  /** @param {string} key */
+  removeAttribute(key) { this.attributes.delete(key); }
   /** @param {...any} values */
   append(...values) { this.children = [...this.children ?? [], ...values]; }
   /** @param {...any} values */

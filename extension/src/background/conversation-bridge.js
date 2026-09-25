@@ -1,7 +1,8 @@
 import {
-  DEFAULT_PROVIDER_ID, EMPTY_QUESTION, INVALID_CONTEXT, HOST_START_FAILED,
+  EMPTY_QUESTION, INVALID_CONTEXT, HOST_START_FAILED,
   copyContext, createRequestId, failed, hostDisconnectError, isValidContext
 } from "./ask-bridge.js";
+import { DEFAULT_PROVIDER_ID } from "../shared/providers.js";
 import { RequestTooLargeError } from "./native-connection.js";
 import { dialogueHistory, CONVERSATION_ID_PATTERN } from "../shared/conversation-model.js";
 import { ASK_TERMINAL_EVENTS, QUESTION_TOO_LONG } from "../shared/ask-port.js";

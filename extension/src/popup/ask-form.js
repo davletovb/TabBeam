@@ -1,13 +1,13 @@
 import { ASK_PORT_NAME, QUESTION_TOO_LONG } from "../shared/ask-port.js";
 import { MAX_NATIVE_MESSAGE_BYTES, utf8ByteLength } from "../shared/limits.js";
+import { describeFailure } from "../shared/outcomes.js";
 
 /** @typedef {import("../shared/ask-port.js").AskPort} AskPort */
 
 export const READY_STATUS = "Press Enter to ask. Shift+Enter adds a line.";
 
-const GENERIC_FAILURE = "Something went wrong. Try again.";
-const WORKER_LOST =
-  "Pervue's background service stopped. Reopen the popup and try again.";
+/** When the extension's own service worker is gone before an answer ends. */
+export const WORKER_LOST = "Pervue stopped unexpectedly. Reopen it, then try again.";
 
 /**
  * @typedef {{
@@ -21,18 +21,37 @@ const WORKER_LOST =
  */
 
 /**
+ * How a question ended, for the provider line: `completed`, or a failure
+ * kind from ../shared/outcomes.js with the message shown.
+ *
+ * @typedef {{kind: string, message?: string}} Outcome
+ */
+
+/**
  * Wires the ask form to the service worker. Each question opens its own
  * runtime port (../shared/ask-port.js) and renders that request's events as
  * they arrive. Only one question runs at a time; the input stays editable
  * while an answer streams.
  *
+ * A failure shows its message, and the status line names its kind in
+ * `data-kind` (EXT-04), so a missing companion app or provider, a sign-in, a
+ * provider failure, a timeout, and a cancellation each look different. A
+ * cancellation is not a failure: its state is `cancelled`.
+ *
  * @param {AskElements} elements
  * @param {{connect(connectInfo: {name: string}): AskPort, sendMessage?(message: any): Promise<any>}} runtime
  * @param {{getContext(): any | null, isPending(): boolean, consume?(context: any): void}} [contextControls]
- * @param {{onConversationId?(id: string | null): void, onSaved?(): void, onRequestStarted?(): void, storageChanges?: {addListener(callback: (changes: any, area: string) => void): void}}} [options]
+ * @param {{
+ *   onOutcome?: (outcome: Outcome) => void,
+ *   onConversationId?(id: string | null): void,
+ *   onSaved?(): void,
+ *   onRequestStarted?(): void,
+ *   storageChanges?: {addListener(callback: (changes: any, area: string) => void): void}
+ * }} [options]
  */
 export function bindAskForm(elements, runtime, contextControls, options = {}) {
   const { form, input, submit, status, answer } = elements;
+  const { onOutcome } = options;
   const history = elements.history;
   /** @type {string | null} */
   let conversationId = null;
@@ -152,7 +171,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
     // The native host could never accept this question, and Chrome refuses a
     // runtime message over 64 MiB outright, so don't send it.
     if (utf8ByteLength(text) > MAX_NATIVE_MESSAGE_BYTES) {
-      setStatus(QUESTION_TOO_LONG.message, "failed");
+      setStatus(QUESTION_TOO_LONG.message, "failed", "invalid-request");
       return;
     }
 
@@ -161,7 +180,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
     try {
       port = runtime.connect({ name: ASK_PORT_NAME });
     } catch {
-      setStatus(WORKER_LOST, "failed");
+      setStatus(WORKER_LOST, "failed", "internal-error");
       return;
     }
 
@@ -183,7 +202,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
     });
     port.onDisconnect.addListener(() => {
       if (port === active) {
-        finish(port, WORKER_LOST, "failed");
+        finish(port, WORKER_LOST, "failed", "internal-error");
       }
     });
     try {
@@ -196,7 +215,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
     } catch {
       // No events will follow a question the port couldn't carry, such as
       // one over Chrome's 64 MiB message limit, so fail it now.
-      finish(port, WORKER_LOST, "failed");
+      finish(port, WORKER_LOST, "failed", "internal-error");
     }
   }
 
@@ -226,11 +245,22 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
         finish(port, "Answer complete.", "done");
         if (history && input.value === submittedText) input.value = "";
         contextControls?.consume?.(submittedContext);
+        onOutcome?.({ kind: "completed" });
         break;
-      case "response.failed":
-        finish(port, failureMessage(event.payload?.error), "failed",
-          event.payload?.error?.reason === "UNKNOWN_CONVERSATION");
+      case "response.failed": {
+        const { kind, message, reference } = describeFailure(event.payload?.error);
+        // A request ID lets the host's diagnostics be matched to this failure.
+        const shown =
+          reference && typeof event.request_id === "string"
+            ? `${message} Reference: ${event.request_id}`
+            : message;
+        // A conversation the store no longer has can't be reloaded: keep the
+        // message that says to start a new one.
+        const reload = event.payload?.error?.reason !== "UNKNOWN_CONVERSATION";
+        finish(port, shown, kind === "cancelled" ? "cancelled" : "failed", kind, reload);
+        onOutcome?.({ kind, message });
         break;
+      }
       default:
         // Sources are persisted by the background worker for later display.
         break;
@@ -241,15 +271,19 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
    * @param {AskPort} port
    * @param {string} message
    * @param {string} state
+   * @param {string | null} [kind] the failure kind, for a failure
+   * @param {boolean} [reload] whether to show the saved conversation again
    */
-  function finish(port, message, state, skipReload = false) {
+  function finish(port, message, state, kind = null, reload = true) {
     active = null;
     port.disconnect();
     setBusy(false);
-    setStatus(message, state);
-    if (history && !conversationId && state === "failed") history.replaceChildren();
-    if (history && conversationId && !skipReload) {
-      void loadConversation(conversationId, state === "failed").then((loaded) => {
+    setStatus(message, state, kind);
+    // A question that ended without an answer, failed or stopped, before its
+    // conversation existed leaves nothing saved: drop its provisional bubble.
+    if (history && !conversationId && state !== "done") history.replaceChildren();
+    if (history && conversationId && reload) {
+      void loadConversation(conversationId, state !== "done").then((loaded) => {
         if (loaded) options.onSaved?.();
       });
     }
@@ -265,19 +299,17 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
   /**
    * @param {string} message
    * @param {string} state
+   * @param {string | null} [kind] the failure kind, for a failure
    */
-  function setStatus(message, state) {
+  function setStatus(message, state, kind = null) {
     status.textContent = message;
     status.setAttribute("data-state", state);
+    if (kind === null) {
+      status.removeAttribute("data-kind");
+    } else {
+      status.setAttribute("data-kind", kind);
+    }
   }
 
   return { getConversationId: () => conversationId, loadConversation, newConversation };
-}
-
-/** @param {any} error */
-function failureMessage(error) {
-  const message = error?.message;
-  return typeof message === "string" && message.trim() !== ""
-    ? message
-    : GENERIC_FAILURE;
 }

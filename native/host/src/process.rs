@@ -4,6 +4,8 @@
 //! argument array, with no shell and no `PATH` search, and supervises it until
 //! it has exited and been reaped:
 //!
+//! - the process gets only the environment variables its [`ProcessSpec`]
+//!   lists, never the host's whole environment (SEC-02);
 //! - stdin, stdout, and stderr are three separate pipes, so a provider never
 //!   shares the host's own Native Messaging streams;
 //! - output arrives in chunks of at most [`MAX_CHUNK_BYTES`], in the order each
@@ -50,13 +52,14 @@ const DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
 /// end on their own.
 const JOIN_TIMEOUT: Duration = Duration::from_millis(100);
 
-/// An executable to start, the arguments to pass it, and any environment
-/// variables to set for it.
+/// An executable to start, the arguments to pass it, its environment, and
+/// where to run it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessSpec {
     program: PathBuf,
     args: Vec<OsString>,
     env: Vec<(OsString, OsString)>,
+    current_dir: Option<PathBuf>,
 }
 
 impl ProcessSpec {
@@ -68,6 +71,7 @@ impl ProcessSpec {
             program: program.into(),
             args: Vec::new(),
             env: Vec::new(),
+            current_dir: None,
         }
     }
 
@@ -90,11 +94,33 @@ impl ProcessSpec {
         self
     }
 
-    /// Sets an environment variable for the process. Everything else is
-    /// inherited from the host until SEC-02 narrows it.
+    /// Sets an environment variable for the process. Its environment starts
+    /// empty: it gets only the variables set here, none of the host's.
     #[must_use]
     pub fn env(mut self, key: impl Into<OsString>, value: impl Into<OsString>) -> Self {
         self.env.push((key.into(), value.into()));
+        self
+    }
+
+    /// Sets each of `vars`, as [`ProcessSpec::env`] does.
+    #[must_use]
+    pub fn envs<I, K, V>(mut self, vars: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<OsString>,
+        V: Into<OsString>,
+    {
+        self.env.extend(
+            vars.into_iter()
+                .map(|(key, value)| (key.into(), value.into())),
+        );
+        self
+    }
+
+    /// Runs the process in `dir` instead of the host's working directory.
+    #[must_use]
+    pub fn current_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.current_dir = Some(dir.into());
         self
     }
 }
@@ -190,10 +216,14 @@ impl Process {
         let mut command = Command::new(&spec.program);
         command
             .args(&spec.args)
+            .env_clear()
             .envs(spec.env.iter().map(|(key, value)| (key, value)))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        if let Some(dir) = &spec.current_dir {
+            command.current_dir(dir);
+        }
         tree::configure(&mut command);
         let mut child = command.spawn()?;
         let exit_watch = tree::ExitWatch::new(&child);

@@ -1,6 +1,7 @@
 import { bindAskForm } from "./ask-form.js";
 import { bindContextControls } from "./context-controls.js";
 import { preloadMenuContext } from "./menu-preload.js";
+import { bindProviderState } from "./provider-state.js";
 import { bindRecentConversations } from "../shared/recent-conversations.js";
 
 /**
@@ -30,6 +31,10 @@ const contextControls = bindContextControls(
 const fullView = requireElement("#open-full-page", HTMLButtonElement);
 const recent = requireElement("#recent-conversations", HTMLSelectElement);
 let interacted = false;
+const providerState = bindProviderState(
+  requireElement("#provider-state", HTMLElement),
+  chrome.runtime
+);
 const view = bindAskForm(
   {
     form: requireElement("#ask-form", HTMLFormElement),
@@ -42,6 +47,7 @@ const view = bindAskForm(
   chrome.runtime,
   contextControls,
   {
+    onOutcome: (outcome) => providerState.update(outcome),
     onConversationId(id) { fullView.disabled = !id; },
     onSaved() { void recentIndex.refresh(); },
     onRequestStarted() { interacted = true; },
