@@ -15,8 +15,8 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::ffi::OsString;
-use std::io::{self, Read, Write};
 use std::hash::{BuildHasher, RandomState};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime};
@@ -231,8 +231,13 @@ impl Provider for Codex {
         let mut prompt = request.text;
         let resume = match &conversation_id {
             None => None,
-            Some(conversation_id) => match self.conversations.borrow().get(conversation_id).cloned()
-                .or_else(|| read_thread(&self.session_dir, conversation_id)) {
+            Some(conversation_id) => match self
+                .conversations
+                .borrow()
+                .get(conversation_id)
+                .cloned()
+                .or_else(|| read_thread(&self.session_dir, conversation_id))
+            {
                 Some(thread_id) => Some(thread_id),
                 None if !request.history.is_empty() => None,
                 None => return Box::new(Scripted::failed(UNKNOWN_CONVERSATION)),
@@ -329,14 +334,19 @@ fn installed_session_dir() -> PathBuf {
     #[cfg(not(windows))]
     let base = std::env::var_os("XDG_DATA_HOME")
         .filter(|path| Path::new(path).is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share").into_os_string()));
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .map(|home| PathBuf::from(home).join(".local/share").into_os_string())
+        });
     base.map(PathBuf::from)
         .unwrap_or_else(|| std::env::temp_dir().join("pervue-data"))
         .join("pervue/codex-sessions")
 }
 
 fn session_name(id: &str) -> bool {
-    id.len() == 21 && id.starts_with("conv_") && id[5..].bytes().all(|byte| byte.is_ascii_hexdigit())
+    id.len() == 21
+        && id.starts_with("conv_")
+        && id[5..].bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn read_thread(dir: &Path, id: &str) -> Option<String> {
@@ -344,7 +354,11 @@ fn read_thread(dir: &Path, id: &str) -> Option<String> {
         return None;
     }
     let mut content = String::new();
-    std::fs::File::open(dir.join(id)).ok()?.take(129).read_to_string(&mut content).ok()?;
+    std::fs::File::open(dir.join(id))
+        .ok()?
+        .take(129)
+        .read_to_string(&mut content)
+        .ok()?;
     output::is_thread_id(&content).then_some(content)
 }
 
@@ -367,7 +381,10 @@ fn save_thread(dir: &Path, id: &str, thread: &str) -> io::Result<()> {
         options.mode(0o600);
     }
     let mut file = options.open(&path)?;
-    if let Err(error) = file.write_all(thread.as_bytes()).and_then(|()| file.sync_all()) {
+    if let Err(error) = file
+        .write_all(thread.as_bytes())
+        .and_then(|()| file.sync_all())
+    {
         let _ = std::fs::remove_file(path);
         return Err(error);
     }
@@ -541,12 +558,13 @@ impl Turn {
         let conversation_id = match &self.conversation_id {
             Some(conversation_id) => conversation_id.clone(),
             None => {
-                let mut conversations = self.conversations.borrow_mut();
-                let conversation_id = new_conversation_id(&conversations);
+                let conversation_id = new_conversation_id(&self.conversations.borrow());
                 if save_thread(&self.session_dir, &conversation_id, &thread_id).is_err() {
                     return self.end(Update::Failed(SESSION_STORE_FAILED));
                 }
-                conversations.insert(conversation_id.clone(), thread_id);
+                self.conversations
+                    .borrow_mut()
+                    .insert(conversation_id.clone(), thread_id);
                 self.queue
                     .push_back(Update::ConversationCreated(conversation_id.clone()));
                 conversation_id

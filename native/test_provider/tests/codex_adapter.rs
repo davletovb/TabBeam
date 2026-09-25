@@ -9,8 +9,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use pervue_host::diagnostics::Diagnostics;
 use pervue_host::conversation::{HistoryMessage, Role};
+use pervue_host::diagnostics::Diagnostics;
 use pervue_host::framing;
 use pervue_host::host;
 use pervue_host::protocol::events::{Authentication, Availability, Capability, ErrorCode};
@@ -433,15 +433,28 @@ fn a_new_host_recovers_the_codex_thread_without_exposing_it() {
 
     // adapter() constructs a new registry with an empty in-memory map.
     let second = visible(&run_to_end(
-        codex.adapter().send(SendRequest {
-            conversation_id: Some(conversation_id.clone()),
-            ..ask("second")
-        }).as_mut(),
+        codex
+            .adapter()
+            .send(SendRequest {
+                conversation_id: Some(conversation_id.clone()),
+                ..ask("second")
+            })
+            .as_mut(),
     ));
-    assert_eq!(second[0], Update::Started { conversation_id: Some(conversation_id.clone()) });
+    assert_eq!(
+        second[0],
+        Update::Started {
+            conversation_id: Some(conversation_id.clone())
+        }
+    );
     assert_eq!(second[1], Update::Delta("You asked: second".to_owned()));
     assert_eq!(second[2], Update::Completed);
-    assert!(codex.invocations().iter().any(|invocation| invocation.contains(&format!("resume {stored} -"))));
+    assert!(
+        codex
+            .invocations()
+            .iter()
+            .any(|invocation| invocation.contains(&format!("resume {stored} -")))
+    );
     codex.assert_nothing_left_running();
 }
 
@@ -449,14 +462,23 @@ fn a_new_host_recovers_the_codex_thread_without_exposing_it() {
 fn a_missing_native_session_uses_the_bounded_dialogue() {
     let codex = FakeCodex::install("answers", "signed-in");
     let updates = visible(&run_to_end(
-        codex.adapter().send(SendRequest {
-            conversation_id: Some("conv_missing".to_owned()),
-            history: vec![
-                HistoryMessage { role: Role::User, text: "first question".to_owned() },
-                HistoryMessage { role: Role::Assistant, text: "first answer".to_owned() },
-            ],
-            ..ask("follow up")
-        }).as_mut(),
+        codex
+            .adapter()
+            .send(SendRequest {
+                conversation_id: Some("conv_missing".to_owned()),
+                history: vec![
+                    HistoryMessage {
+                        role: Role::User,
+                        text: "first question".to_owned(),
+                    },
+                    HistoryMessage {
+                        role: Role::Assistant,
+                        text: "first answer".to_owned(),
+                    },
+                ],
+                ..ask("follow up")
+            })
+            .as_mut(),
     ));
     assert!(matches!(&updates[0], Update::ConversationCreated(_)));
     assert!(codex.prompts()[0].contains("first question"));

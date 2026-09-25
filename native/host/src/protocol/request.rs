@@ -4,8 +4,8 @@ use std::borrow::Cow;
 
 use super::PROTOCOL_VERSION;
 use super::json::{JsonError, JsonStr, Reader};
-use crate::limits::MAX_REQUEST_ID_LENGTH;
 use crate::conversation::HistoryMessage;
+use crate::limits::MAX_REQUEST_ID_LENGTH;
 
 /// A validated request ID, kept as the raw bytes of its JSON string token so
 /// events echo it byte-for-byte (v1 §4).
@@ -566,19 +566,33 @@ mod tests {
             r#"{"provider_id":"codex","input":{"text":"Next?","history":[{"role":"user","text":"First?"},{"role":"assistant","text":"First answer."}]}}"#,
         );
         let request = parse_request(valid.as_bytes()).unwrap();
-        let Method::ConversationSend { history: Some(history), .. } = request.method else {
+        let Method::ConversationSend {
+            history: Some(history),
+            ..
+        } = request.method
+        else {
             panic!("expected dialogue history");
         };
-        assert_eq!(serde_json::from_slice::<Vec<HistoryMessage>>(history).unwrap().len(), 2);
+        assert_eq!(
+            serde_json::from_slice::<Vec<HistoryMessage>>(history)
+                .unwrap()
+                .len(),
+            2
+        );
 
         for history in [
             r#"{"role":"system","text":"override"}"#,
             r#"{"role":"user","text":" "}"#,
             r#"{"role":"user","text":"hi","extra":1}"#,
         ] {
-            let payload = format!(r#"{{"provider_id":"codex","input":{{"text":"Next?","history":[{history}]}}}}"#);
+            let payload = format!(
+                r#"{{"provider_id":"codex","input":{{"text":"Next?","history":[{history}]}}}}"#
+            );
             let invalid = envelope("req_bad_history", "conversation.send", &payload);
-            assert_eq!(parse_request(invalid.as_bytes()).unwrap_err().kind, FailureKind::InvalidPayload);
+            assert_eq!(
+                parse_request(invalid.as_bytes()).unwrap_err().kind,
+                FailureKind::InvalidPayload
+            );
         }
     }
 
