@@ -108,7 +108,7 @@ function harness(options = {}) {
   assert.equal(sent.length, 2);
   assert.equal(sent[1].request.method, "request.cancel");
   assert.equal(sent[1].request.payload.target_request_id, target);
-  assert.notEqual(sent[1].request.request_id, target);
+  assert.ok(sent[1].request.request_id !== target);
 }
 {
   // Cancellation is remembered while a follow-up is loading from storage,
