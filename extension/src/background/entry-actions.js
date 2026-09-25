@@ -12,12 +12,25 @@ const HANDOFF_MS = 30_000;
  * @param {{
  *   tabs: {query(query: object): Promise<{id?: number, url?: string, title?: string}[]>, create(properties: {url: string}): Promise<unknown>, sendMessage(tabId: number, message: any, options: object): Promise<any>},
  *   action: {openPopup?(): Promise<void>},
- *   popupUrl: string
+ *   popupUrl: string,
+ *   now?: () => number,
+ *   schedule?: (callback: () => void, delay: number) => number,
+ *   cancel?: (timer: number) => void
  * }} options
  */
-export function createEntryActions({ tabs, action, popupUrl }) {
-  /** @type {{tabId: number | undefined, sourceUrl: string | null, token: string, expires: number, result: Promise<any>} | null} */
+export function createEntryActions({ tabs, action, popupUrl, now = Date.now, schedule = setTimeout, cancel = clearTimeout }) {
+  /** @typedef {{tabId: number | undefined, sourceUrl: string | null, token: string, expires: number, result: Promise<any>, timer: number | null, claimed: boolean}} Handoff */
+  /** @type {Handoff | null} */
   let pending = null;
+
+  /** @param {Handoff} entry */
+  function discard(entry) {
+    if (entry.timer !== null) {
+      cancel(entry.timer);
+      entry.timer = null;
+    }
+    if (pending === entry) pending = null;
+  }
 
   /**
    * @param {{menuItemId: string | number, selectionText?: string}} info
@@ -31,27 +44,32 @@ export function createEntryActions({ tabs, action, popupUrl }) {
 
     // Start the capture and open the popup while the context-menu gesture is
     // still active. Awaiting extraction first could lose the user gesture.
+    if (pending) discard(pending);
+    /** @type {Handoff} */
     const entry = {
       tabId: tab?.id,
       // Keep the exact URL only for the short-lived navigation check. It is
       // never sent to the popup, provider, logs, or a URL parameter.
       sourceUrl: typeof tab?.url === "string" ? tab.url : null,
       token: crypto.randomUUID(),
-      expires: Date.now() + HANDOFF_MS,
-      result: captureContext(tabs, mode, tab ?? {}, mode === "selection" ? info.selectionText ?? "" : undefined)
+      expires: now() + HANDOFF_MS,
+      result: captureContext(tabs, mode, tab ?? {}, mode === "selection" ? info.selectionText ?? "" : undefined),
+      timer: null,
+      claimed: false
     };
     pending = entry;
+    entry.timer = schedule(() => discard(entry), HANDOFF_MS);
     try {
       if (!action.openPopup) throw new Error("popup API unavailable");
       await action.openPopup();
     } catch {
       // Older/unsupported popup openings get the same composer in a tab. The
       // URL carries only a one-time token, never page or selection content.
-      if (pending === entry) {
+      if (pending === entry && !entry.claimed) {
         try {
           await tabs.create({ url: `${popupUrl}?menu=${entry.token}` });
         } catch {
-          if (pending === entry) pending = null;
+          discard(entry);
         }
       }
     }
@@ -60,8 +78,8 @@ export function createEntryActions({ tabs, action, popupUrl }) {
   /** @param {any} message @param {{url?: string}} sender */
   async function consume(message, sender) {
     const entry = pending;
-    if (message?.type !== MENU_CONSUME_MESSAGE || !entry || Date.now() > entry.expires) {
-      if (entry && Date.now() > entry.expires) pending = null;
+    if (message?.type !== MENU_CONSUME_MESSAGE || !entry || entry.claimed || now() >= entry.expires) {
+      if (entry && now() >= entry.expires) discard(entry);
       return { available: false };
     }
     if (typeof message.token === "string") {
@@ -76,7 +94,7 @@ export function createEntryActions({ tabs, action, popupUrl }) {
             (entry.sourceUrl !== null && active?.url !== entry.sourceUrl)) {
           // A different tab or navigation invalidates the one-time capture;
           // reopening the popup later cannot silently attach stale content.
-          if (pending === entry) pending = null;
+          discard(entry);
           return { available: false };
         }
         if (pending !== entry) return { available: false };
@@ -85,8 +103,19 @@ export function createEntryActions({ tabs, action, popupUrl }) {
       }
     }
     if (pending !== entry) return { available: false };
-    pending = null;
-    return { available: true, result: await entry.result };
+    entry.claimed = true;
+    try {
+      const result = await entry.result;
+      if (pending !== entry || now() >= entry.expires) {
+        discard(entry);
+        return { available: false };
+      }
+      discard(entry);
+      return { available: true, result };
+    } catch {
+      discard(entry);
+      return { available: false };
+    }
   }
 
   return { onMenuClick, consume };

@@ -64,6 +64,10 @@ function harness({ tab = webTab, pageReply = { ok: true, text: "Readable article
   let popupOpens = 0;
   let requestCount = 0;
   let senderUrl = popupUrl;
+  let currentTime = 0;
+  let nextTimer = 0;
+  /** @type {Map<number, {deadline: number, callback: () => void}>} */
+  const timers = new Map();
   const tabs = {
     async query() { return [activeTab]; },
     async sendMessage(/** @type {number} */ tabId, /** @type {any} */ message, /** @type {any} */ options) {
@@ -75,7 +79,14 @@ function harness({ tab = webTab, pageReply = { ok: true, text: "Readable article
   const entries = createEntryActions({
     tabs,
     action: { async openPopup() { popupOpens += 1; if (popupFails) throw new Error("unsupported"); } },
-    popupUrl
+    popupUrl,
+    now: () => currentTime,
+    schedule(callback, delay) {
+      const id = ++nextTimer;
+      timers.set(id, { deadline: currentTime + delay, callback });
+      return id;
+    },
+    cancel(id) { timers.delete(id); }
   });
   const manager = createNativeConnectionManager({
     connectNative() { const port = new MockPort("native"); nativePorts.push(port); return port; },
@@ -110,6 +121,17 @@ function harness({ tab = webTab, pageReply = { ok: true, text: "Readable article
   return {
     entries, runtime, controls, contextElements, askElements, contentRequests,
     openedTabs, nativePorts, get popupOpens() { return popupOpens; },
+    get liveTimers() { return timers.size; },
+    /** @param {number} milliseconds */
+    advance(milliseconds) {
+      currentTime += milliseconds;
+      for (const [id, timer] of timers) {
+        if (timer.deadline <= currentTime) {
+          timers.delete(id);
+          timer.callback();
+        }
+      }
+    },
     /** @param {any} next */ setTab(next) { activeTab = next; },
     /** @param {string} url */ setSender(url) { senderUrl = url; },
     /** @param {string} search */ preload(search = "") { return preloadMenuContext(runtime, controls, search); },
@@ -200,6 +222,39 @@ function harness({ tab = webTab, pageReply = { ok: true, text: "Readable article
   assert.equal(app.controls.getContext(), null, "a cancelled handoff cannot attach late text");
   app.ask("No context now");
   assert.equal(app.nativePorts[0].messages[0].payload.context, undefined);
+}
+
+{
+  // An unclaimed capture expires and releases its timer; a late popup sees
+  // no context even when the service worker stays alive.
+  const app = harness();
+  await app.entries.onMenuClick({ menuItemId: MENU_SELECTION_ID, selectionText: "private text" }, webTab);
+  assert.equal(app.liveTimers, 1);
+  app.advance(30_000);
+  assert.equal(app.liveTimers, 0);
+  await app.preload();
+  assert.equal(app.controls.getContext(), null);
+}
+
+{
+  // A popup claiming just before expiry cannot attach a capture that finishes
+  // after the deadline; a second claim cannot consume the same entry.
+  /** @type {(value: any) => void} */
+  let resolvePage = () => {};
+  const app = harness({ pageReply: new Promise((resolve) => { resolvePage = resolve; }) });
+  await app.entries.onMenuClick({ menuItemId: MENU_PAGE_ID }, webTab);
+  app.advance(29_999);
+  const loading = app.preload();
+  await Promise.resolve(); // Let the first claim finish its active-tab check.
+  assert.deepEqual(
+    await app.entries.consume({ type: MENU_CONSUME_MESSAGE, token: null }, { url: popupUrl }),
+    { available: false }
+  );
+  app.advance(2);
+  resolvePage({ ok: true, text: "too late", truncated: false });
+  await loading;
+  assert.equal(app.controls.getContext(), null);
+  assert.equal(app.liveTimers, 0);
 }
 
 {

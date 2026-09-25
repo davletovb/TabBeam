@@ -9,6 +9,8 @@ export default [
         console: "readonly",
         crypto: "readonly",
         Date: "readonly",
+        setTimeout: "readonly",
+        clearTimeout: "readonly",
         document: "readonly",
         window: "readonly",
         URL: "readonly",
