@@ -1,4 +1,5 @@
 import { MAX_NATIVE_MESSAGE_BYTES, utf8ByteLength } from "../shared/limits.js";
+import { recordDuration } from "../shared/performance.js";
 
 export const NATIVE_HOST_NAME = "com.pervue.host";
 
@@ -110,6 +111,7 @@ export class NativeConnectionManager {
       return this.port;
     }
 
+    const startedAt = globalThis.performance?.now?.() ?? 0;
     const port = this.connectNative(this.hostName);
     if (!port || typeof port.postMessage !== "function") {
       throw new Error("connectNative did not return a valid port");
@@ -135,6 +137,8 @@ export class NativeConnectionManager {
     port.onMessage.addListener(onMessage);
     port.onDisconnect.addListener(onDisconnect);
     this.port = port;
+    const endedAt = globalThis.performance?.now?.() ?? startedAt;
+    recordDuration("native_connection", startedAt, endedAt);
     return port;
   }
 
