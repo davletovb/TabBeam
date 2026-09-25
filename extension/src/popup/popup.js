@@ -67,7 +67,8 @@ const recentIndex = bindRecentConversations(recent, chrome.runtime, view);
 void bindThemeSelect(
   requireElement("#theme-select", HTMLSelectElement),
   chrome.storage.local,
-  document.documentElement
+  document.documentElement,
+  chrome.storage.onChanged
 );
 
 bindDiagnostics(
