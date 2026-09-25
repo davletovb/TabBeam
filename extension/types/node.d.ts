@@ -10,6 +10,14 @@ declare module "node:assert/strict" {
   export default assert;
 }
 
+declare module "node:child_process" {
+  export function spawn(command: string, args: string[], options: object): any;
+}
+
+declare module "node:vm" {
+  export function runInNewContext(code: string, context: object): unknown;
+}
+
 declare module "node:fs" {
   interface RmOptions {
     recursive?: boolean;
@@ -56,6 +64,7 @@ declare module "node:url" {
 
 declare const process: {
   cwd(): string;
+  argv: string[];
 };
 
 interface ImportMeta {

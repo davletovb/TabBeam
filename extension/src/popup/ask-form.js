@@ -27,8 +27,9 @@ const WORKER_LOST =
  *
  * @param {AskElements} elements
  * @param {{connect(connectInfo: {name: string}): AskPort}} runtime
+ * @param {{getContext(): any | null, isPending(): boolean}} [contextControls]
  */
-export function bindAskForm(elements, runtime) {
+export function bindAskForm(elements, runtime, contextControls) {
   const { form, input, submit, status, answer } = elements;
 
   // The port of the question in flight, or null when idle.
@@ -62,6 +63,10 @@ export function bindAskForm(elements, runtime) {
     // Duplicate-submit guard: a question in flight blocks every other submit
     // path (Enter, the button, requestSubmit), not just the button.
     if (active !== null) {
+      return;
+    }
+    if (contextControls?.isPending()) {
+      setStatus("Wait for context capture to finish.", "idle");
       return;
     }
 
@@ -103,7 +108,8 @@ export function bindAskForm(elements, runtime) {
       }
     });
     try {
-      port.postMessage({ type: "ask", text });
+      const context = contextControls?.getContext();
+      port.postMessage(context ? { type: "ask", text, context } : { type: "ask", text });
     } catch {
       // No events will follow a question the port couldn't carry, such as
       // one over Chrome's 64 MiB message limit, so fail it now.
