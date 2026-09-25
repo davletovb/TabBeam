@@ -11,6 +11,16 @@ const PROVIDER: &str = env!("CARGO_BIN_EXE_pervue-fake-provider");
 const DEADLINE: Duration = Duration::from_secs(10);
 const MIB: usize = 1024 * 1024;
 
+/// The grace period of a cancel that should stop a process promptly. On POSIX
+/// the stop request, SIGTERM, ends the process well inside a long grace period.
+/// Windows has no stop request that reaches a process not reading its input,
+/// so there a short grace period ends in a kill.
+const PROMPT_STOP_GRACE: Duration = if cfg!(unix) {
+    Duration::from_secs(5)
+} else {
+    Duration::from_millis(300)
+};
+
 fn stream(mode: &str, max_line_bytes: usize) -> LineStream {
     LineStream::new(spawn(mode), max_line_bytes)
 }
@@ -133,7 +143,7 @@ fn cancelling_mid_chunk_drops_the_partial_line_and_stops_promptly() {
     }
 
     let started = Instant::now();
-    stream.cancel(Duration::from_secs(5));
+    stream.cancel(PROMPT_STOP_GRACE);
     assert_eq!(stream.buffered_bytes(), 0);
     // No line follows a cancel: the next thing delivered is the stop.
     let terminal = stream.next(deadline).expect("the stream should stop");
@@ -149,7 +159,7 @@ fn cancelling_between_lines_delivers_nothing_more() {
     assert!(matches!(stream.next(deadline), Some(Output::Line(_))));
 
     let started = Instant::now();
-    stream.cancel(Duration::from_secs(5));
+    stream.cancel(PROMPT_STOP_GRACE);
     let terminal = stream.next(deadline).expect("the stream should stop");
     let Output::Stopped(exit) = terminal else {
         panic!("expected a stopped state, got {terminal:?}");

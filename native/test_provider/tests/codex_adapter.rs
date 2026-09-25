@@ -32,6 +32,16 @@ const TEST_LIMITS: Limits = Limits {
     finish: Duration::from_millis(300),
 };
 
+/// The grace period of a cancel that should stop a process promptly. On POSIX
+/// the stop request, SIGTERM, ends the process well inside a long grace period.
+/// Windows has no stop request that reaches a process not reading its input,
+/// so there a short grace period ends in a kill.
+const PROMPT_STOP_GRACE: Duration = if cfg!(unix) {
+    Duration::from_secs(5)
+} else {
+    Duration::from_millis(300)
+};
+
 /// A directory holding a fake `codex` and the scenario it follows.
 struct FakeCodex {
     dir: PathBuf,
@@ -522,7 +532,7 @@ fn cancelling_mid_turn_stops_codex_promptly() {
     run_until_started(exchange.as_mut());
 
     let started = Instant::now();
-    exchange.cancel(Duration::from_secs(5));
+    exchange.cancel(PROMPT_STOP_GRACE);
     assert_eq!(run_to_end(exchange.as_mut()), [Update::Stopped]);
     assert!(started.elapsed() < Duration::from_secs(2));
     codex.assert_nothing_left_running();
@@ -538,7 +548,8 @@ fn a_codex_that_ignores_cancellation_is_killed_after_the_grace_period() {
     let started = Instant::now();
     exchange.cancel(grace);
     assert_eq!(run_to_end(exchange.as_mut()), [Update::Stopped]);
-    #[cfg(unix)]
+    // Everywhere the process outlives the stop request: Windows has none to
+    // send, and on POSIX it ignores SIGTERM.
     assert!(started.elapsed() >= grace);
     codex.assert_nothing_left_running();
 }

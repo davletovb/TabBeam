@@ -4,7 +4,6 @@
 //! request: a provider ID only selects an adapter, and the adapter looks for
 //! its own fixed executable name in these directories.
 
-use std::cmp::Reverse;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
@@ -139,6 +138,8 @@ fn usual_locations(home: Option<&Path>) -> Vec<PathBuf> {
 /// The `bin` directories of the Node versions nvm installed, newest first.
 #[cfg(unix)]
 fn nvm_bins(versions: &Path) -> Vec<PathBuf> {
+    use std::cmp::Reverse;
+
     let Ok(entries) = std::fs::read_dir(versions) else {
         return Vec::new();
     };
