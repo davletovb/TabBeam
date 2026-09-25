@@ -35,6 +35,22 @@ jobs:
       - name: Smoke tests
         run: npm --prefix extension test
 
+  native-roundtrip:
+    name: Extension to built host round trip
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal
+      - name: Build host
+        run: cargo +stable build --manifest-path native/Cargo.toml --locked
+      - name: Exercise Native Messaging through popup
+        run: npm --prefix extension run test:roundtrip
+
   protocol:
     name: Protocol fixtures
     runs-on: ubuntu-latest

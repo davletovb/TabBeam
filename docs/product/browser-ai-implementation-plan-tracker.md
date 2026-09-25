@@ -150,7 +150,7 @@ Reached after **Milestone H**:
 | EXT-03 | Implement minimal popup ask/stream UI | A | Extension | EXT-01, EXT-02 | IMPLEMENTED — VERIFY |
 | SEC-01 | Enforce browser/native trust-boundary limits | A | Security | NAT-02, NAT-03 | IMPLEMENTED — VERIFY |
 | OBS-01 | Add structured native lifecycle diagnostics | A | Observability | NAT-03, DOC-02 | IMPLEMENTED — VERIFY |
-| TST-03 | Add extension ↔ host streamed round-trip integration test | A | Testing | TST-02, EXT-02, EXT-03, NAT-03 | BACKLOG |
+| TST-03 | Add extension ↔ host streamed round-trip integration test | A | Testing | TST-02, EXT-02, EXT-03, NAT-03 | IMPLEMENTED — VERIFY |
 | NAT-04 | Implement provider process manager | B | Native | NAT-03 | BACKLOG |
 | NAT-05 | Implement native stream manager | B | Native | NAT-04 | BACKLOG |
 | PRO-01 | Implement provisional provider adapter contract | B | Provider | DOC-02, NAT-04, NAT-05 | BACKLOG |
@@ -591,7 +591,13 @@ Reached after **Milestone H**:
 **Notes**
 - Also pin SEC-01's size boundary end to end with the built host: a request whose frame is exactly 1 MiB reaches the host and is answered, and one byte more is refused by the extension without reaching it (suggested in the SEC-01 review).
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `extension/tests/native-roundtrip.mjs` launches the built host with a Chrome origin and sends real Native Messaging frames through the extension connection manager, ask bridge, and popup renderer.
+- The test checks the host's deterministic fake-provider event ordering, request ID correlation, visible incremental rendering, a host-generated provider failure, and recovery.
+- It sends one serialized request at exactly 1 MiB, rejects one byte over before the host sees it, and confirms the same host handles a subsequent question.
+- `npm --prefix extension run test:roundtrip` runs in the dedicated `native-roundtrip` CI job after building the host. The in-memory runtime/DOM ports stand in for Chrome; the native host binary and protocol are real.
 
 ---
 
@@ -1505,7 +1511,7 @@ Update this section whenever item statuses change.
 | Stage | Total | Verified | Implemented — Verify | In Progress | Ready | Backlog | Blocked | Deferred |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | Foundation | 5 | 0 | 5 | 0 | 0 | 0 | 0 | 0 |
-| A — Native round trip | 8 | 0 | 7 | 0 | 0 | 1 | 0 | 0 |
+| A — Native round trip | 8 | 0 | 8 | 0 | 0 | 0 | 0 | 0 |
 | B — First provider | 10 | 0 | 0 | 0 | 0 | 10 | 0 | 0 |
 | C — Conversation continuity | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
 | D — Browser context | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 |
@@ -1515,7 +1521,7 @@ Update this section whenever item statuses change.
 | G — Installable product | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 |
 | H — Search/citations | 8 | 0 | 0 | 0 | 0 | 8 | 0 | 0 |
 | Post-milestone | 6 | 0 | 0 | 0 | 0 | 4 | 0 | 2 |
-| **Total** | **81** | **0** | **12** | **0** | **0** | **67** | **0** | **2** |
+| **Total** | **81** | **0** | **13** | **0** | **0** | **66** | **0** | **2** |
 
 ### Milestone completion rule
 
