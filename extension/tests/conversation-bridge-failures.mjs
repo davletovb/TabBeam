@@ -113,7 +113,8 @@ function harness(options = {}) {
 {
   // Cancellation is remembered while a follow-up is loading from storage,
   // then sent immediately after the native request is registered.
-  let release;
+  /** @type {(value: any) => void} */
+  let release = () => {};
   const stored = new Promise((resolve) => { release = resolve; });
   const { port, sent } = harness({ getPrivate: () => stored });
   port.emitMessage({ type: "ask", text: "Follow-up", conversation_id: id });
