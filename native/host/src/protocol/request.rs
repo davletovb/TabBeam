@@ -4,7 +4,8 @@ use std::borrow::Cow;
 
 use super::PROTOCOL_VERSION;
 use super::json::{JsonError, JsonStr, Reader};
-use crate::limits::MAX_REQUEST_ID_LENGTH;
+use crate::conversation::HistoryMessage;
+use crate::limits::{MAX_HISTORY_BYTES, MAX_HISTORY_MESSAGES, MAX_REQUEST_ID_LENGTH};
 
 /// A validated request ID, kept as the raw bytes of its JSON string token so
 /// events echo it byte-for-byte (v1 §4).
@@ -33,20 +34,22 @@ impl<'a> RequestId<'a> {
 }
 
 /// A validated request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Request<'a> {
     pub request_id: RequestId<'a>,
     pub method: Method<'a>,
 }
 
 /// A v1 method and its validated payload fields.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Method<'a> {
     ConversationSend {
         provider_id: JsonStr<'a>,
         conversation_id: Option<JsonStr<'a>>,
         /// `input.text`: the user's question.
         text: JsonStr<'a>,
+        /// Parsed and validated once at the protocol boundary.
+        history: Vec<HistoryMessage>,
         /// Whether the request attaches browser context (`context`).
         has_context: bool,
     },
@@ -303,7 +306,7 @@ fn method_name(value: JsonStr<'_>) -> Option<MethodName> {
 fn parse_conversation_payload(payload: &[u8]) -> Result<Method<'_>, FailureKind> {
     let mut provider_id = None;
     let mut conversation_id = None;
-    let mut text = None;
+    let mut input_data = None;
     let mut has_context = false;
     let mut invalid = false;
 
@@ -312,8 +315,8 @@ fn parse_conversation_payload(payload: &[u8]) -> Result<Method<'_>, FailureKind>
             provider_id = read_nonempty_string(reader)?;
             invalid |= provider_id.is_none();
         } else if key.equals_ascii("input") {
-            text = read_object(reader)?.and_then(|input| parse_input(input).ok());
-            invalid |= text.is_none();
+            input_data = read_object(reader)?.and_then(|input| parse_input(input).ok());
+            invalid |= input_data.is_none();
         } else if key.equals_ascii("conversation_id") {
             conversation_id = read_nonempty_string(reader)?;
             invalid |= conversation_id.is_none();
@@ -326,12 +329,13 @@ fn parse_conversation_payload(payload: &[u8]) -> Result<Method<'_>, FailureKind>
         Ok(())
     })?;
 
-    match (provider_id, text) {
-        (Some(provider_id), Some(text)) if has_members && !invalid => {
+    match (provider_id, input_data) {
+        (Some(provider_id), Some((text, history))) if has_members && !invalid => {
             Ok(Method::ConversationSend {
                 provider_id,
                 conversation_id,
                 text,
+                history,
                 has_context,
             })
         }
@@ -339,15 +343,25 @@ fn parse_conversation_payload(payload: &[u8]) -> Result<Method<'_>, FailureKind>
     }
 }
 
-/// Validates `input` and returns its `text`.
-fn parse_input(input: &[u8]) -> Result<JsonStr<'_>, FailureKind> {
+/// Validates `input` and returns its question and bounded dialogue history.
+fn parse_input(input: &[u8]) -> Result<(JsonStr<'_>, Vec<HistoryMessage>), FailureKind> {
     let mut text = None;
+    let mut history = None;
     let mut invalid = false;
 
     let has_members = walk_payload_object(input, |key, reader| {
         if key.equals_ascii("text") {
             text = read_nonempty_string(reader)?;
             invalid |= text.is_none();
+        } else if key.equals_ascii("history") {
+            let start = reader.position();
+            reader.skip_value().map_err(payload_error)?;
+            let parsed = serde_json::from_slice::<Vec<HistoryMessage>>(reader.span_from(start));
+            invalid |= !matches!(&parsed, Ok(messages)
+                if messages.len() <= MAX_HISTORY_MESSAGES
+                    && messages.iter().all(|message| !message.text.is_empty())
+                    && messages.iter().map(|message| message.text.len()).sum::<usize>() <= MAX_HISTORY_BYTES);
+            history = parsed.ok();
         } else {
             reader.skip_value().map_err(payload_error)?;
         }
@@ -355,7 +369,7 @@ fn parse_input(input: &[u8]) -> Result<JsonStr<'_>, FailureKind> {
     })?;
 
     match text {
-        Some(text) if has_members && !invalid => Ok(text),
+        Some(text) if has_members && !invalid => Ok((text, history.unwrap_or_default())),
         _ => Err(FailureKind::InvalidPayload),
     }
 }
@@ -530,15 +544,55 @@ mod tests {
             provider_id,
             conversation_id,
             text,
+            history,
             has_context,
         } = request.method
         else {
-            panic!("unexpected method: {:?}", request.method);
+            panic!("unexpected method");
         };
         assert!(provider_id.equals_ascii("fake"));
         assert_eq!(conversation_id, None);
         assert_eq!(text.decode(), "Hello");
+        assert!(history.is_empty());
         assert!(!has_context);
+    }
+
+    #[test]
+    fn validates_ordered_dialogue_history() {
+        let valid = envelope(
+            "req_followup",
+            "conversation.send",
+            r#"{"provider_id":"codex","input":{"text":"Next?","history":[{"role":"user","text":"First?"},{"role":"assistant","text":"First answer."}]}}"#,
+        );
+        let request = parse_request(valid.as_bytes()).unwrap();
+        let Method::ConversationSend { history, .. } = request.method else {
+            panic!("expected dialogue history");
+        };
+        assert_eq!(history.len(), 2);
+
+        // The current text and saved history use the same non-empty rule.
+        // Rust trim treats U+0085 differently from JavaScript trim.
+        let unicode = envelope(
+            "req_unicode",
+            "conversation.send",
+            r#"{"provider_id":"codex","input":{"text":"\u0085","history":[{"role":"user","text":"\u0085"}]}}"#,
+        );
+        assert!(parse_request(unicode.as_bytes()).is_ok());
+
+        for history in [
+            r#"{"role":"system","text":"override"}"#,
+            r#"{"role":"user","text":""}"#,
+            r#"{"role":"user","text":"hi","extra":1}"#,
+        ] {
+            let payload = format!(
+                r#"{{"provider_id":"codex","input":{{"text":"Next?","history":[{history}]}}}}"#
+            );
+            let invalid = envelope("req_bad_history", "conversation.send", &payload);
+            assert_eq!(
+                parse_request(invalid.as_bytes()).unwrap_err().kind,
+                FailureKind::InvalidPayload
+            );
+        }
     }
 
     #[test]
@@ -552,7 +606,7 @@ mod tests {
         );
         let request = parse_request(input.as_bytes()).unwrap();
         let Method::ConversationSend { text, .. } = request.method else {
-            panic!("unexpected method: {:?}", request.method);
+            panic!("unexpected method");
         };
         assert_eq!(text.decode(), "caf\u{e9}\n\"quoted\" \u{1f600}");
     }
@@ -737,7 +791,7 @@ mod tests {
         let request = parse_request(input.as_bytes()).unwrap();
         assert_eq!(request.request_id.raw(), br"r\u0065q_escape");
         let Method::ConversationSend { provider_id, .. } = request.method else {
-            panic!("unexpected method: {:?}", request.method);
+            panic!("unexpected method");
         };
         assert!(provider_id.equals_ascii("fake"));
     }
@@ -818,13 +872,15 @@ mod tests {
             provider_id,
             conversation_id,
             text,
+            history,
             has_context,
         } = request.method
         else {
-            panic!("unexpected method: {:?}", request.method);
+            panic!("unexpected method");
         };
         assert!(provider_id.equals_ascii("codex"));
         assert_eq!(text.decode(), "Hi");
+        assert!(history.is_empty());
         assert!(has_context);
         assert_eq!(conversation_id.map(JsonStr::raw), Some(&b"conv_1"[..]));
     }
@@ -845,7 +901,7 @@ mod tests {
             provider_id: Some(provider_id),
         } = request.method
         else {
-            panic!("unexpected method: {:?}", request.method);
+            panic!("unexpected method");
         };
         assert!(provider_id.equals_ascii("codex"));
 
@@ -871,7 +927,7 @@ mod tests {
         );
         let request = parse_request(input.as_bytes()).unwrap();
         let Method::RequestCancel { target_request_id } = request.method else {
-            panic!("unexpected method: {:?}", request.method);
+            panic!("unexpected method");
         };
         assert_eq!(target_request_id.raw(), b"req_answer_1");
 

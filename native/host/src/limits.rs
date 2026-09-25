@@ -12,6 +12,10 @@ pub const MAX_JSON_DEPTH: usize = 128;
 /// Longest request ID accepted, in characters (protocol v1 §2).
 pub const MAX_REQUEST_ID_LENGTH: usize = 128;
 
+/// Maximum normalized prior dialogue supplied with a follow-up.
+pub const MAX_HISTORY_MESSAGES: usize = 32;
+pub const MAX_HISTORY_BYTES: usize = 128 * 1024;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -27,6 +31,8 @@ mod tests {
         assert_eq!(contract["max_frame_bytes"], MAX_FRAME_SIZE);
         assert_eq!(contract["max_json_depth"], MAX_JSON_DEPTH);
         assert_eq!(contract["max_request_id_length"], MAX_REQUEST_ID_LENGTH);
+        assert_eq!(contract["max_history_messages"], MAX_HISTORY_MESSAGES);
+        assert_eq!(contract["max_history_bytes"], MAX_HISTORY_BYTES);
         assert_eq!(contract["host_name"], HOST_NAME);
     }
 }

@@ -19,6 +19,8 @@ export default [
         HTMLButtonElement: "readonly",
         HTMLFormElement: "readonly",
         HTMLTextAreaElement: "readonly",
+        HTMLSelectElement: "readonly",
+        structuredClone: "readonly",
         TextEncoder: "readonly",
         NodeFilter: "readonly",
         WeakMap: "readonly"
@@ -43,6 +45,7 @@ export default [
         TextEncoder: "readonly",
         TextDecoder: "readonly",
         setTimeout: "readonly",
+        structuredClone: "readonly",
         URL: "readonly"
       }
     },

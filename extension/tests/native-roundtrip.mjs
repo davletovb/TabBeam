@@ -4,7 +4,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { serveAskPort } from "../src/background/ask-bridge.js";
+import { serveConversationAskPort } from "../src/background/conversation-bridge.js";
+import { createConversationStore } from "../src/background/conversation-store.js";
 import { createNativeConnectionManager } from "../src/background/native-connection.js";
 import { checkProviderStatus } from "../src/background/status-bridge.js";
 import { bindAskForm } from "../src/popup/ask-form.js";
@@ -219,6 +220,14 @@ function question(text) {
 let native;
 let nextId = 0;
 let providerId = "fake";
+/** @type {Record<string, any>} */
+const savedConversations = {};
+const store = createConversationStore({
+  async get(/** @type {string} */ key) { return { [key]: savedConversations[key] }; },
+  async set(/** @type {Record<string, any>} */ values) { Object.assign(savedConversations, values); },
+  async remove(/** @type {string} */ key) { delete savedConversations[key]; }
+});
+const inFlight = new Set();
 const manager = createNativeConnectionManager({
   connectNative(name) {
     assert.equal(name, "com.pervue.host");
@@ -248,8 +257,10 @@ bindAskForm(/** @type {any} */ (elements), {
   connect({ name }) {
     assert.equal(name, ASK_PORT_NAME);
     const { ui, worker } = pairedPorts();
-    serveAskPort(/** @type {any} */ (worker), {
+    serveConversationAskPort(/** @type {any} */ (worker), {
       manager,
+      store,
+      inFlight,
       providerId,
       createRequestId: () => `req_roundtrip_${++nextId}`
     });

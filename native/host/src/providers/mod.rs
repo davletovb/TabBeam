@@ -14,6 +14,7 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
+use crate::conversation::HistoryMessage;
 use crate::protocol::events::{ErrorBody, ProviderState};
 pub use crate::stream::BUSY_LIMIT;
 
@@ -26,6 +27,9 @@ pub mod fake;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SendRequest {
     pub text: String,
+    /// Previous user and assistant messages, in order. Adapters without a
+    /// native continuation can use these to reconstruct the dialogue.
+    pub history: Vec<HistoryMessage>,
     /// The conversation to continue, or `None` to start one.
     pub conversation_id: Option<String>,
     /// Whether the request attaches browser context (`payload.context`). An

@@ -5,9 +5,8 @@
 //! working directory, with the question on stdin. Its JSON lines become
 //! protocol updates (see [`output`]). Codex's own session IDs stay inside the
 //! adapter: each conversation gets a Pervue ID, mapped to the Codex thread it
-//! continues with `codex exec resume`. The map lives in the host process, so
-//! a conversation can be continued only while the host that started it runs;
-//! conversation continuity is Milestone C.
+//! continues with `codex exec resume`. The provider-specific mapping is kept
+//! in private native files, so a new host can resume a stored conversation.
 //!
 //! Before each request, `codex login status` checks the sign-in, because a
 //! signed-out `codex exec` retries the network instead of failing. Only its
@@ -22,6 +21,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::ffi::{OsStr, OsString};
 use std::hash::{BuildHasher, RandomState};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime};
@@ -29,6 +29,7 @@ use std::time::{Duration, Instant, SystemTime};
 use super::discovery::SearchPath;
 use super::environment;
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
+use crate::conversation::normalized_prompt;
 use crate::process::{Event, Exit, Process, ProcessSpec};
 use crate::protocol::events::{
     Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ProviderState,
@@ -146,6 +147,13 @@ const MALFORMED_OUTPUT: ErrorBody<'static> = ErrorBody {
     retryable: false,
 };
 
+const SESSION_STORE_FAILED: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::InternalError,
+    reason: "SESSION_STORE_FAILED",
+    message: "Codex's conversation could not be saved. Check available disk space and try again.",
+    retryable: true,
+};
+
 /// Pervue conversation IDs mapped to the Codex threads they continue.
 type Conversations = Rc<RefCell<HashMap<String, String>>>;
 
@@ -193,24 +201,30 @@ impl Launch {
 pub struct Codex {
     search: SearchPath,
     launch: Rc<Launch>,
+    session_dir: Option<PathBuf>,
     limits: Limits,
     conversations: Conversations,
 }
 
 impl Codex {
-    /// The adapter of an installed host: the platform lookup rules, and an
-    /// empty workspace in the user's own cache directory.
+    /// The adapter of an installed host: the platform lookup rules, an empty
+    /// workspace in the user's own cache directory, and conversation mappings
+    /// in the user's data directory.
     pub fn installed() -> Self {
         let host: Vec<_> = std::env::vars_os().collect();
-        Self::new(SearchPath::from_env(), workspace::default(&host))
+        let mut codex = Self::new(SearchPath::from_env(), workspace::default(&host));
+        codex.session_dir = installed_session_dir();
+        codex
     }
 
     /// Looks for `codex` in `search`, and runs it in `work_dir`, which it
     /// creates when needed and refuses if other users could change it, with
-    /// variables from the host's environment.
+    /// variables from the host's environment. Conversation mappings go
+    /// beside `work_dir`, never inside it, in `<work_dir>.sessions`.
     pub fn new(search: SearchPath, work_dir: PathBuf) -> Self {
         Self {
             search,
+            session_dir: Some(work_dir.with_extension("sessions")),
             launch: Rc::new(Launch::new(work_dir, std::env::vars_os().collect())),
             limits: LIMITS,
             conversations: Rc::default(),
@@ -235,6 +249,13 @@ impl Codex {
     #[must_use]
     pub fn with_limits(mut self, limits: Limits) -> Self {
         self.limits = limits;
+        self
+    }
+
+    /// Overrides the native mapping directory, for isolated host tests.
+    #[must_use]
+    pub fn with_session_dir(mut self, session_dir: PathBuf) -> Self {
+        self.session_dir = Some(session_dir);
         self
     }
 
@@ -280,20 +301,42 @@ impl Provider for Codex {
         if request.has_context {
             return Box::new(Scripted::failed(PAGE_CONTEXT_UNSUPPORTED));
         }
-        let resume = match &request.conversation_id {
+        let mut conversation_id = request.conversation_id;
+        let mut prompt = request.text;
+        let mut fallback_prompt =
+            (!request.history.is_empty()).then(|| normalized_prompt(&request.history, &prompt));
+        let resume = match &conversation_id {
             None => None,
-            Some(conversation_id) => match self.conversations.borrow().get(conversation_id) {
-                Some(thread_id) => Some(thread_id.clone()),
+            Some(conversation_id) => match self
+                .conversations
+                .borrow()
+                .get(conversation_id)
+                .cloned()
+                .or_else(|| {
+                    self.session_dir
+                        .as_deref()
+                        .and_then(|dir| read_thread(dir, conversation_id))
+                }) {
+                Some(thread_id) => Some(thread_id),
+                None if !request.history.is_empty() => None,
                 None => return Box::new(Scripted::failed(UNKNOWN_CONVERSATION)),
             },
         };
+        if resume.is_none() && !request.history.is_empty() {
+            // If a provider has no native session (or its mapping was lost),
+            // the ordered, bounded dialogue still reaches the new turn.
+            prompt = fallback_prompt.take().expect("history is present");
+            conversation_id = None;
+        }
         let mut turn = Turn {
             stage: Stage::Done,
             executable,
             launch: Rc::clone(&self.launch),
-            prompt: request.text,
+            session_dir: self.session_dir.clone(),
+            prompt,
+            fallback_prompt,
             resume,
-            conversation_id: request.conversation_id,
+            conversation_id,
             conversations: Rc::clone(&self.conversations),
             finish_grace: self.limits.finish,
             queue: VecDeque::new(),
@@ -363,6 +406,68 @@ fn after(duration: Duration) -> Instant {
     now.checked_add(duration).unwrap_or(now)
 }
 
+fn installed_session_dir() -> Option<PathBuf> {
+    #[cfg(windows)]
+    let base = std::env::var_os("LOCALAPPDATA").or_else(|| std::env::var_os("APPDATA"));
+    #[cfg(not(windows))]
+    let base = std::env::var_os("XDG_DATA_HOME")
+        .filter(|path| Path::new(path).is_absolute())
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .map(|home| PathBuf::from(home).join(".local/share").into_os_string())
+        });
+    base.map(PathBuf::from)
+        .map(|path| path.join("pervue/codex-sessions"))
+}
+
+fn session_name(id: &str) -> bool {
+    id.len() == 21
+        && id.starts_with("conv_")
+        && id[5..].bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn read_thread(dir: &Path, id: &str) -> Option<String> {
+    if !session_name(id) {
+        return None;
+    }
+    let mut content = String::new();
+    std::fs::File::open(dir.join(id))
+        .ok()?
+        .take(129)
+        .read_to_string(&mut content)
+        .ok()?;
+    output::is_thread_id(&content).then_some(content)
+}
+
+fn save_thread(dir: &Path, id: &str, thread: &str) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        let mut builder = std::fs::DirBuilder::new();
+        builder.recursive(true).mode(0o700).create(dir)?;
+    }
+    #[cfg(not(unix))]
+    std::fs::create_dir_all(dir)?;
+
+    let path = dir.join(id);
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&path)?;
+    if let Err(error) = file
+        .write_all(thread.as_bytes())
+        .and_then(|()| file.sync_all())
+    {
+        let _ = std::fs::remove_file(path);
+        return Err(error);
+    }
+    Ok(())
+}
+
 /// A new Pervue conversation ID. It is random so it reveals nothing about the
 /// Codex thread behind it.
 fn new_conversation_id(conversations: &HashMap<String, String>) -> String {
@@ -426,7 +531,10 @@ struct Turn {
     stage: Stage,
     executable: PathBuf,
     launch: Rc<Launch>,
+    session_dir: Option<PathBuf>,
     prompt: String,
+    /// Used once if a mapped Codex thread no longer exists before the turn starts.
+    fallback_prompt: Option<String>,
     /// The Codex thread to resume, when continuing a conversation.
     resume: Option<String>,
     conversation_id: Option<String>,
@@ -539,9 +647,17 @@ impl Turn {
         let conversation_id = match &self.conversation_id {
             Some(conversation_id) => conversation_id.clone(),
             None => {
-                let mut conversations = self.conversations.borrow_mut();
-                let conversation_id = new_conversation_id(&conversations);
-                conversations.insert(conversation_id.clone(), thread_id);
+                let conversation_id = new_conversation_id(&self.conversations.borrow());
+                if self
+                    .session_dir
+                    .as_deref()
+                    .is_none_or(|dir| save_thread(dir, &conversation_id, &thread_id).is_err())
+                {
+                    return self.end(Update::Failed(SESSION_STORE_FAILED));
+                }
+                self.conversations
+                    .borrow_mut()
+                    .insert(conversation_id.clone(), thread_id);
                 self.queue
                     .push_back(Update::ConversationCreated(conversation_id.clone()));
                 conversation_id
@@ -611,6 +727,20 @@ impl Exchange for Turn {
                         .map_or(deadline, |finish_by| deadline.min(finish_by));
                     match stream.next(wait) {
                         Some(Output::Line(line)) => self.on_line(&line),
+                        Some(Output::Final(_))
+                            if !self.cancelled
+                                && !self.started
+                                && self.resume.is_some()
+                                && self.fallback_prompt.is_some() =>
+                        {
+                            self.resume = None;
+                            self.conversation_id = None;
+                            self.thread_id = None;
+                            self.outcome = None;
+                            self.finish_by = None;
+                            self.prompt = self.fallback_prompt.take().expect("checked above");
+                            self.start();
+                        }
                         Some(Output::Final(exit) | Output::Stopped(exit)) => {
                             let update = if self.cancelled {
                                 Update::Stopped

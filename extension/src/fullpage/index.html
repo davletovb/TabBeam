@@ -8,15 +8,24 @@
   </head>
   <body>
     <main class="page-shell">
-      <p class="eyebrow">Pervue</p>
-      <h1>Full conversation view</h1>
-      <p>
-        This is the foundation route for the richer conversation surface.
-        Conversation continuity arrives in Milestone C.
-      </p>
-      <p id="entry" class="status" role="status"></p>
+      <header>
+        <p class="eyebrow">Pervue</p>
+        <h1>Conversation</h1>
+      </header>
+      <nav class="conversation-nav" aria-label="Conversations">
+        <label for="recent-conversations">Recent conversations</label>
+        <select id="recent-conversations"><option value="">No recent conversations</option></select>
+        <button id="new-conversation" type="button">New conversation</button>
+      </nav>
+      <section id="conversation-history" class="conversation-history" aria-label="Conversation history" aria-live="polite"></section>
+      <section id="answer" class="answer" aria-label="Answer in progress" aria-busy="false" hidden></section>
+      <form id="ask-form" class="composer">
+        <label for="ask-input">Ask a follow-up</label>
+        <textarea id="ask-input" rows="4" placeholder="Ask anything…"></textarea>
+        <button id="ask-submit" type="submit" aria-disabled="false">Ask</button>
+      </form>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
     </main>
-
     <script type="module" src="./fullpage.js"></script>
   </body>
 </html>

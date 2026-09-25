@@ -35,6 +35,12 @@ export function bindContextControls(elements, runtime) {
     status.textContent = "No context attached. Choose a source to grant access for this question.";
   }
 
+  /** Clear only the capture sent with a completed turn. A later capture wins. */
+  /** @param {any} sentContext */
+  function consume(sentContext) {
+    if (context === sentContext && !pending) clear();
+  }
+
   /** @param {any} result @param {"selection" | "page"} mode */
   function showCapture(result, mode) {
     if (
@@ -127,6 +133,8 @@ export function bindContextControls(elements, runtime) {
   return {
     getContext: () => context,
     isPending: () => pending,
+    clear,
+    consume,
     beginMenuHandoff
   };
 }

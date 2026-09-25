@@ -10,6 +10,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use pervue_host::conversation::{HistoryMessage, Role};
 use pervue_host::protocol::events::{Authentication, Availability, Capability, ErrorCode};
 use pervue_host::providers::codex::{CODEX_VARIABLES, Codex, LIMITS, Limits};
 use pervue_host::providers::environment::INHERITED;
@@ -22,6 +23,7 @@ const DEADLINE: Duration = Duration::from_secs(20);
 fn ask(text: &str) -> SendRequest {
     SendRequest {
         text: text.to_owned(),
+        history: Vec::new(),
         conversation_id: None,
         has_context: false,
     }
@@ -517,6 +519,73 @@ fn assert_refused(codex: &FakeCodex) {
 }
 
 #[test]
+fn a_new_host_recovers_the_codex_thread_without_exposing_it() {
+    let codex = FakeCodex::install("answers", "signed-in");
+    let first = visible(&run_to_end(codex.adapter().send(ask("first")).as_mut()));
+    let Update::ConversationCreated(conversation_id) = &first[0] else {
+        panic!("expected a conversation: {first:?}");
+    };
+    let stored = std::fs::read_to_string(codex.dir.join("work.sessions").join(conversation_id))
+        .expect("the native mapping survives the host");
+    assert!(!conversation_id.contains(stored.as_str()));
+
+    // adapter() constructs a new registry with an empty in-memory map.
+    let second = visible(&run_to_end(
+        codex
+            .adapter()
+            .send(SendRequest {
+                conversation_id: Some(conversation_id.clone()),
+                ..ask("second")
+            })
+            .as_mut(),
+    ));
+    assert_eq!(
+        second[0],
+        Update::Started {
+            conversation_id: Some(conversation_id.clone())
+        }
+    );
+    assert_eq!(second[1], Update::Delta("You asked: second".to_owned()));
+    assert_eq!(second[2], Update::Completed);
+    assert!(
+        codex
+            .invocations()
+            .iter()
+            .any(|invocation| invocation.contains(&format!("resume {stored} -")))
+    );
+    codex.assert_nothing_left_running();
+}
+
+#[test]
+fn a_missing_native_session_uses_the_bounded_dialogue() {
+    let codex = FakeCodex::install("answers", "signed-in");
+    let updates = visible(&run_to_end(
+        codex
+            .adapter()
+            .send(SendRequest {
+                conversation_id: Some("conv_missing".to_owned()),
+                history: vec![
+                    HistoryMessage {
+                        role: Role::User,
+                        text: "first question".to_owned(),
+                    },
+                    HistoryMessage {
+                        role: Role::Assistant,
+                        text: "first answer".to_owned(),
+                    },
+                ],
+                ..ask("follow up")
+            })
+            .as_mut(),
+    ));
+    assert!(matches!(&updates[0], Update::ConversationCreated(_)));
+    assert!(codex.prompts()[0].contains("first question"));
+    assert!(codex.prompts()[0].contains("first answer"));
+    assert!(codex.prompts()[0].ends_with("follow up"));
+    codex.assert_nothing_left_running();
+}
+
+#[test]
 fn an_unknown_conversation_fails_without_running_codex() {
     // Only IDs this host issued map to a Codex thread: nothing a request
     // names, even a real thread ID, reaches Codex's command line.
@@ -632,6 +701,45 @@ fn a_lost_codex_session_fails_as_a_process_exit() {
         failure(&updates),
         (ErrorCode::ProviderFailed, "PROCESS_EXITED")
     );
+}
+
+#[test]
+fn a_lost_codex_thread_retries_once_with_dialogue() {
+    let codex = FakeCodex::install("answers", "signed-in");
+    let adapter = codex.adapter();
+    let first = visible(&run_to_end(adapter.send(ask("first")).as_mut()));
+    let Update::ConversationCreated(conversation_id) = first[0].clone() else {
+        panic!("expected a conversation");
+    };
+    codex.set("resume-fails", "signed-in");
+    let updates = visible(&run_to_end(
+        adapter
+            .send(SendRequest {
+                conversation_id: Some(conversation_id.clone()),
+                history: vec![
+                    HistoryMessage {
+                        role: Role::User,
+                        text: "first".to_owned(),
+                    },
+                    HistoryMessage {
+                        role: Role::Assistant,
+                        text: "first answer".to_owned(),
+                    },
+                ],
+                ..ask("again")
+            })
+            .as_mut(),
+    ));
+    assert!(matches!(&updates[0], Update::ConversationCreated(id) if id != &conversation_id));
+    assert!(matches!(updates.last(), Some(Update::Completed)));
+    assert!(
+        codex
+            .invocations()
+            .iter()
+            .any(|line| line.contains("resume thread-"))
+    );
+    assert!(codex.prompts().last().unwrap().contains("first answer"));
+    codex.assert_nothing_left_running();
 }
 
 #[test]

@@ -1,6 +1,8 @@
 import { ASK_PORT_NAME } from "../shared/ask-port.js";
 import { PROVIDER_STATUS_MESSAGE } from "../shared/provider-status.js";
-import { isExtensionPage, serveAskPort } from "./ask-bridge.js";
+import { isExtensionPage } from "./ask-bridge.js";
+import { serveConversationAskPort } from "./conversation-bridge.js";
+import { createConversationStore } from "./conversation-store.js";
 import { checkProviderStatus } from "./status-bridge.js";
 import {
   NATIVE_HOST_NAME,
@@ -24,6 +26,8 @@ const nativeConnectionManager = createNativeConnectionManager({
   connectNative: (hostName) => chrome.runtime.connectNative(hostName),
   getLastError: () => chrome.runtime.lastError?.message ?? null
 });
+const conversations = createConversationStore(chrome.storage.local);
+const inFlightConversations = new Set();
 
 /** @param {string} entry */
 async function openFullPage(entry) {
@@ -80,6 +84,19 @@ chrome.runtime.onMessage.addListener(
       entryActions.consume(message, sender).then(sendResponse);
       return true;
     }
+    if (message?.type === "pervue.conversations.list" ||
+        message?.type === "pervue.conversations.get") {
+      if (!isExtensionPage(sender, chrome.runtime.getURL(""))) {
+        sendResponse({ ok: false, error: "Access denied." });
+        return;
+      }
+      const result = message.type === "pervue.conversations.list"
+        ? conversations.list()
+        : conversations.get(message.conversation_id);
+      result.then((value) => sendResponse({ ok: true, value }),
+        () => sendResponse({ ok: false, error: "Conversation history unavailable." }));
+      return true;
+    }
     return handleContextCapture(
       message,
       sender,
@@ -101,7 +118,11 @@ chrome.runtime.onConnect.addListener(
       port.disconnect();
       return;
     }
-    serveAskPort(port, { manager: nativeConnectionManager });
+    serveConversationAskPort(port, {
+      manager: nativeConnectionManager,
+      store: conversations,
+      inFlight: inFlightConversations
+    });
   }
 );
 

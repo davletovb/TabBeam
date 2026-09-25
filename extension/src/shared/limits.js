@@ -4,6 +4,10 @@
 /** Largest Native Messaging payload the host accepts, in UTF-8 bytes. */
 export const MAX_NATIVE_MESSAGE_BYTES = 1024 * 1024;
 
+/** Bounded native dialogue fallback (protocol v1 §5.1). */
+export const MAX_HISTORY_MESSAGES = 32;
+export const MAX_HISTORY_BYTES = 128 * 1024;
+
 /** Largest selected-text payload returned from a page (UTF-8 bytes). */
 export const MAX_SELECTION_BYTES = 16 * 1024;
 

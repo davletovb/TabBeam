@@ -3,5 +3,7 @@
   "host_name": "com.pervue.host",
   "max_frame_bytes": 1048576,
   "max_json_depth": 128,
-  "max_request_id_length": 128
+  "max_request_id_length": 128,
+  "max_history_messages": 32,
+  "max_history_bytes": 131072
 }

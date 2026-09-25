@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createEntryActions, MENU_CONSUME_MESSAGE, MENU_PAGE_ID, MENU_SELECTION_ID } from "../src/background/entry-actions.js";
-import { serveAskPort } from "../src/background/ask-bridge.js";
+import { serveConversationAskPort } from "../src/background/conversation-bridge.js";
+import { createConversationStore } from "../src/background/conversation-store.js";
 import { createNativeConnectionManager } from "../src/background/native-connection.js";
 import { bindAskForm } from "../src/popup/ask-form.js";
 import { bindContextControls } from "../src/popup/context-controls.js";
@@ -94,6 +95,14 @@ function harness({ tab = webTab, pageReply = { ok: true, text: "Readable article
     connectNative() { const port = new MockPort("native"); nativePorts.push(port); return port; },
     reportError() { throw new Error("unexpected callback failure"); }
   });
+  /** @type {Record<string, any>} */
+  const saved = {};
+  const store = createConversationStore({
+    async get(/** @type {string} */ key) { return { [key]: saved[key] }; },
+    async set(/** @type {Record<string, any>} */ values) { Object.assign(saved, values); },
+    async remove(/** @type {string} */ key) { delete saved[key]; }
+  });
+  const inFlight = new Set();
   const runtime = {
     /** @param {any} message */
     sendMessage(message) { return entries.consume(message, { url: senderUrl }); },
@@ -102,7 +111,8 @@ function harness({ tab = webTab, pageReply = { ok: true, text: "Readable article
       assert.equal(info.name, ASK_PORT_NAME);
       const ui = new MockPort(info.name);
       const worker = new MockPort(info.name, { url: senderUrl });
-      serveAskPort(worker, { manager, createRequestId: () => `req_journey_${++requestCount}` });
+      serveConversationAskPort(worker, { manager, store, inFlight,
+        createRequestId: () => `req_journey_${++requestCount}` });
       const uiPost = ui.postMessage.bind(ui);
       const workerPost = worker.postMessage.bind(worker);
       ui.postMessage = (message) => { uiPost(message); worker.emitMessage(message); };
@@ -170,6 +180,7 @@ function harness({ tab = webTab, pageReply = { ok: true, text: "Readable article
     version: 1, type: "event", request_id: "req_journey_1",
     event: "response.delta", payload: { text: "<img src=x onerror=bad()>" }
   });
+  await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(app.askElements.answer.textContent, "<img src=x onerror=bad()>");
 }
 

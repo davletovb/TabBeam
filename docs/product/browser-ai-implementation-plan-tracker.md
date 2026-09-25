@@ -161,18 +161,18 @@ Reached after **Milestone H**:
 | SEC-02 | Harden provider process invocation and log redaction | B | Security | NAT-04, PRO-03, OBS-01 | IMPLEMENTED — VERIFY |
 | TST-04 | Add hostile fake-process integration matrix | B | Testing | NAT-04, NAT-05, PRO-04 | IMPLEMENTED — VERIFY |
 | TST-05 | Add opt-in real Codex/OpenAI smoke test | B | Testing | PRO-03, PRO-04 | IMPLEMENTED — VERIFY |
-| CON-01 | Define provider-neutral conversation/message/source model | C | Conversation | DOC-01, PRO-03 | BACKLOG |
-| CON-02 | Implement conversation persistence and recent index | C | Conversation | CON-01 | BACKLOG |
-| CON-03 | Implement native provider-session bridge | C | Conversation | CON-01, PRO-03 | BACKLOG |
-| EXT-05 | Implement popup follow-up flow | C | Extension | CON-02, CON-03 | BACKLOG |
-| EXT-06 | Implement full-page conversation UI | C | Extension | CON-01, CON-02 | BACKLOG |
-| EXT-07 | Implement popup → full-page continuation handoff | C | Extension | EXT-05, EXT-06 | BACKLOG |
-| TST-06 | Add conversation continuity end-to-end tests | C | Testing | EXT-07, CON-03 | BACKLOG |
+| CON-01 | Define provider-neutral conversation/message/source model | C | Conversation | DOC-01, PRO-03 | IMPLEMENTED — VERIFY |
+| CON-02 | Implement conversation persistence and recent index | C | Conversation | CON-01 | IMPLEMENTED — VERIFY |
+| CON-03 | Implement native provider-session bridge | C | Conversation | CON-01, PRO-03 | IMPLEMENTED — VERIFY |
+| EXT-05 | Implement popup follow-up flow | C | Extension | CON-02, CON-03 | IMPLEMENTED — VERIFY |
+| EXT-06 | Implement full-page conversation UI | C | Extension | CON-01, CON-02 | IMPLEMENTED — VERIFY |
+| EXT-07 | Implement popup → full-page continuation handoff | C | Extension | EXT-05, EXT-06 | IMPLEMENTED — VERIFY |
+| TST-06 | Add conversation continuity end-to-end tests | C | Testing | EXT-07, CON-03 | IMPLEMENTED — VERIFY |
 | CTX-01 | Capture selected text safely | D | Context | EXT-01 | IMPLEMENTED — VERIFY |
 | CTX-02 | Capture current-tab title/URL metadata | D | Context | EXT-01 | IMPLEMENTED — VERIFY |
 | CTX-03 | Implement bounded readable-page extraction | D | Context | CTX-02 | IMPLEMENTED — VERIFY |
 | CTX-04 | Implement explicit page-context permission/intent policy | D | Context / Security | CTX-01, CTX-03 | IMPLEMENTED — VERIFY |
-| EXT-08 | Add context mode/control to popup request flow | D | Extension | CTX-01, CTX-03, CTX-04, EXT-05 | BLOCKED |
+| EXT-08 | Add context mode/control to popup request flow | D | Extension | CTX-01, CTX-03, CTX-04, EXT-05 | IMPLEMENTED — VERIFY |
 | EXT-09 | Add selection/current-page context-menu actions | D | Extension | CTX-01, CTX-03 | IMPLEMENTED — VERIFY |
 | EXT-10 | Add keyboard command entry path | D | Extension | EXT-03 | IMPLEMENTED — VERIFY |
 | SEC-03 | Add context size limits, minimization, and safe UI/log handling | D | Security | CTX-03, CTX-04 | IMPLEMENTED — VERIFY |
@@ -532,7 +532,7 @@ Reached after **Milestone H**:
 - Popup ↔ service-worker contract, one runtime port per question: `extension/src/shared/ask-port.js`
 - Service-worker bridge sending one `conversation.send` per question, forwarding its events in order to one terminal event, reporting a missing or unregistered host as `HOST_NOT_INSTALLED` and a host that can't start or disconnects as `HOST_UNAVAILABLE`, and serving only the extension's own pages: `extension/src/background/ask-bridge.js`, `extension/src/background/service-worker.js`
 - Popup lifecycle, incremental rendering, duplicate-submit, text-only rendering, failure, and lost-worker tests: `extension/tests/popup-ask.mjs`
-- Bridge tests for request shape, event order, concurrent pages, native disconnect and its host-error classification, connect and post failures, closed pages, empty questions, and sender checks: `extension/tests/ask-bridge.mjs`
+- Bridge tests for request shape, event order, concurrent pages, native disconnect, context forwarding, size refusal, storage errors, and sender checks: `extension/tests/conversation-continuity.mjs`, `extension/tests/conversation-bridge-failures.mjs`, `extension/tests/browser-context-journey.mjs`.
 - Service-worker wiring smoke test: `extension/tests/manifest-smoke.mjs`
 - Milestone A asks the host's deterministic `fake` provider; provider selection arrives with Milestone B.
 - Development host registration for trying the popup: `extension/README.md`
@@ -856,7 +856,10 @@ Reached after **Milestone H**:
 - Message supports ID, role, text, timestamp, status, optional provider metadata, optional sources.
 - Provider session IDs are implementation metadata, not user-facing primary IDs.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `extension/src/shared/conversation-model.js` defines versioned conversation IDs, titles, page-context metadata, bounded normalized dialogue, and a public view without native provider session metadata. `extension/src/background/conversation-store.js` records timestamps, provider ID, messages with roles/status/IDs, sources, and optional provider metadata.
 
 ### CON-02 — Implement conversation persistence and recent index
 **Area:** Conversation  
@@ -871,7 +874,10 @@ Reached after **Milestone H**:
 - Recent index can open a stored conversation.
 - Schema versioning exists for persisted data.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `extension/src/background/conversation-store.js` serializes writes to versioned per-conversation `chrome.storage.local` records with a small recent index, bounded content, and quota eviction. Both views load history through service-worker messages; `extension/tests/conversation-continuity.mjs` reopens a thread after simulating a worker restart, and `extension/tests/conversation-store-quota.mjs` exercises quota recovery.
 
 ### CON-03 — Implement native provider-session bridge
 **Area:** Conversation  
@@ -882,7 +888,10 @@ Reached after **Milestone H**:
 - Providers without native continuation can still receive normalized conversation context.
 - Native session metadata is recoverable enough for the chosen persistence model.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `native/host/src/providers/codex/mod.rs` persists private Codex thread mappings across host processes, resumes known threads, and rebuilds from bounded dialogue if a mapping is lost. `native/host/src/protocol/request.rs` accepts validated `input.history`; `native/host/src/conversation.rs` supplies normalized dialogue to providers without a usable native session. Fake-Codex adapter tests exercise recovery and fallback.
 
 ### EXT-05 — Implement popup follow-up flow
 **Area:** Extension  
@@ -893,7 +902,10 @@ Reached after **Milestone H**:
 - Prior messages render correctly.
 - New response streams into the existing thread.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `extension/src/popup/ask-form.js` renders saved turns, reuses the stable conversation ID, and streams the next answer into that thread. The service-worker bridge prevents simultaneous turns in one conversation and persists the answer even after the popup closes.
 
 ### EXT-06 — Implement full-page conversation UI
 **Area:** Extension  
@@ -904,7 +916,10 @@ Reached after **Milestone H**:
 - Displays complete history and longer responses.
 - Uses the same request protocol/native host as popup.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `extension/src/fullpage/` opens a stored ID from its URL, displays its history, offers recent conversations and follow-ups, and shares the popup's ask controller and worker request protocol.
 
 ### EXT-07 — Implement popup → full-page continuation handoff
 **Area:** Extension  
@@ -915,7 +930,10 @@ Reached after **Milestone H**:
 - No prompt or answer duplication occurs.
 - A follow-up from full view continues the same conversation.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- The popup's **Continue in full view** opens the full-page route with its existing stable ID. `extension/tests/conversation-continuity.mjs` checks one copy of each prompt and answer after the handoff.
 
 ### TST-06 — Add conversation continuity end-to-end tests
 **Area:** Testing  
@@ -925,7 +943,10 @@ Reached after **Milestone H**:
 - Ask in popup → follow up → open full page → follow up again.
 - Conversation ID and message ordering remain stable throughout.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `extension/tests/conversation-continuity.mjs` exercises popup Ask, popup follow-up, worker restart, full-page load and follow-up, stable ID, ordered messages, pending handoff refresh, bounded dialogue, native continuation metadata, concurrent-turn refusal, and schema mismatch. `extension/tests/conversation-bridge-failures.mjs` covers the production bridge's invalid context, disconnect, size refusal, and storage failure lock; quota tests cover eviction. Native adapter tests cover persisted thread recovery and dialogue fallback. Extension `npm test`, lint, typecheck, and build pass; native test execution requires CI in this workspace.
 
 ---
 
@@ -946,7 +967,7 @@ Reached after **Milestone H**:
 - The popup's explicit **Use selection** action requests capture only on click, shows a preview, and attaches it only on a later Ask; **No context** clears it: `extension/src/popup/context-controls.js`, `extension/src/popup/ask-form.js`.
 - The service worker accepts capture only from the popup, requests the active tab's top-frame content script, normalizes unavailable pages and empty selections as `CONTEXT_UNAVAILABLE`, and checks the size of the response: `extension/src/background/selection-capture.js`.
 - The content script reads regular selections and focused text-field selections only upon the capture message, limits UTF-8 text to 16 KiB without splitting Unicode characters, and reports truncation: `extension/src/content/content-script.js`.
-- `extension/tests/selection-capture.mjs` covers explicit gating, bounds, Unicode, input selection, restricted pages, unauthorized callers, and clear-during-capture behavior; `extension/tests/ask-bridge.mjs` covers request attachment.
+- `extension/tests/selection-capture.mjs` covers explicit gating, bounds, Unicode, input selection, restricted pages, unauthorized callers, and clear-during-capture behavior; `extension/tests/browser-context-journey.mjs` covers request attachment through the production bridge.
 
 ### CTX-02 — Capture current-tab title/URL metadata
 **Area:** Context  
@@ -996,7 +1017,7 @@ Reached after **Milestone H**:
 **Implementation evidence**
 - The popup begins with No context, shows explicit selection/page choices, permission outcome and preview, permits clearing while capture is pending, and keeps context only in popup memory: `extension/src/popup/context-controls.js`.
 - The service worker accepts capture requests only from the popup with explicit click intent, uses the active tab's top frame, and never stores access decisions; the ask bridge validates and attaches only chosen structured context: `extension/src/background/selection-capture.js`, `extension/src/background/ask-bridge.js`.
-- `extension/tests/selection-capture.mjs`, `extension/tests/popup-ask.mjs`, and `extension/tests/ask-bridge.mjs` cover intent, failure, no-context Ask, and attached context.
+- `extension/tests/selection-capture.mjs`, `extension/tests/popup-ask.mjs`, `extension/tests/browser-context-journey.mjs`, and `extension/tests/conversation-bridge-failures.mjs` cover intent, failure, no-context Ask, and attached context.
 
 ### EXT-08 — Add context mode/control to popup request flow
 **Area:** Extension  
@@ -1006,10 +1027,10 @@ Reached after **Milestone H**:
 - Popup can initiate Ask, Selection, and This Page behavior without cluttering the command surface.
 - Attached context is visible enough that the user understands what will be sent.
 
-**Status:** BLOCKED — awaiting EXT-05 popup follow-up flow
+**Status:** IMPLEMENTED — VERIFY
 
-**Existing foundation**
-- CTX-01–04 already provide the popup's No context, Use selection, and Use this page controls, capture preview, and structured context on the first Ask. This item remains for the EXT-05 follow-up flow and its context behavior; reuse those controls rather than rebuilding them.
+**Implementation evidence**
+- CTX-01–04 provide the popup's No context, Use selection, and Use this page controls, capture preview, and structured context. The shared follow-up form sends the user's explicit choice with that turn, then clears it; saved conversations retain page metadata but no raw captured page text. Codex still reports `PAGE_CONTEXT_UNSUPPORTED` until provider context support is implemented.
 
 ### EXT-09 — Add selection/current-page context-menu actions
 **Area:** Extension  
@@ -1644,15 +1665,15 @@ Update this section whenever item statuses change.
 | Foundation | 5 | 0 | 5 | 0 | 0 | 0 | 0 | 0 |
 | A — Native round trip | 8 | 0 | 8 | 0 | 0 | 0 | 0 | 0 |
 | B — First provider | 10 | 0 | 10 | 0 | 0 | 0 | 0 | 0 |
-| C — Conversation continuity | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
-| D — Browser context | 9 | 0 | 8 | 0 | 0 | 0 | 1 | 0 |
+| C — Conversation continuity | 7 | 0 | 7 | 0 | 0 | 0 | 0 | 0 |
+| D — Browser context | 9 | 0 | 9 | 0 | 0 | 0 | 0 | 0 |
 | MVP closure | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
 | E — Second provider | 5 | 0 | 0 | 0 | 0 | 5 | 0 | 0 |
 | F — Reusable native core | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
 | G — Installable product | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 |
 | H — Search/citations | 8 | 0 | 0 | 0 | 0 | 8 | 0 | 0 |
 | Post-milestone | 6 | 0 | 0 | 0 | 0 | 4 | 0 | 2 |
-| **Total** | **81** | **0** | **31** | **0** | **0** | **47** | **1** | **2** |
+| **Total** | **81** | **0** | **39** | **0** | **0** | **40** | **0** | **2** |
 
 ### Milestone completion rule
 

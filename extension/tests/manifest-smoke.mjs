@@ -3,11 +3,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { ASK_PORT_NAME } from "../src/shared/ask-port.js";
+import { MAX_HISTORY_BYTES, MAX_HISTORY_MESSAGES } from "../src/shared/limits.js";
 import { PROVIDER_STATUS_MESSAGE } from "../src/shared/provider-status.js";
 import { MockPort } from "./support/mock-port.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const manifestPath = path.join(root, "manifest.json");
+const contract = JSON.parse(fs.readFileSync(path.join(root, "../docs/protocol/native-messaging-v1.json"), "utf8"));
+assert.equal(contract.max_history_messages, MAX_HISTORY_MESSAGES);
+assert.equal(contract.max_history_bytes, MAX_HISTORY_BYTES);
 /** @type {any} */
 const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
 
@@ -17,6 +21,7 @@ assert.equal(manifest.background.service_worker, "src/background/service-worker.
 assert.equal(manifest.background.type, "module");
 assert.ok(manifest.permissions.includes("contextMenus"));
 assert.ok(manifest.permissions.includes("nativeMessaging"));
+assert.ok(manifest.permissions.includes("storage"));
 assert.ok(manifest.permissions.includes("activeTab"));
 assert.ok(manifest.commands._execute_action?.suggested_key);
 assert.equal(manifest.commands["open-pervue-full-page"], undefined);
@@ -99,6 +104,7 @@ globalThis.chrome = /** @type {any} */ ({
     create: (/** @type {any} */ properties) => { menuItems.push(properties); return properties.id; }
   },
   action: { openPopup: async () => {} },
+  storage: { local: { async get() { return {}; }, async set() {} } },
   tabs: {
     create: async () => ({ id: 1 })
   }

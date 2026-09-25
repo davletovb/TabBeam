@@ -15,7 +15,8 @@ export const WORKER_LOST = "Pervue stopped unexpectedly. Reopen it, then try aga
  *   input: HTMLTextAreaElement,
  *   submit: HTMLButtonElement,
  *   status: HTMLElement,
- *   answer: HTMLElement
+ *   answer: HTMLElement,
+ *   history?: HTMLElement
  * }} AskElements
  */
 
@@ -38,17 +39,95 @@ export const WORKER_LOST = "Pervue stopped unexpectedly. Reopen it, then try aga
  * cancellation is not a failure: its state is `cancelled`.
  *
  * @param {AskElements} elements
- * @param {{connect(connectInfo: {name: string}): AskPort}} runtime
- * @param {{getContext(): any | null, isPending(): boolean}} [contextControls]
- * @param {{onOutcome?: (outcome: Outcome) => void}} [options]
+ * @param {{connect(connectInfo: {name: string}): AskPort, sendMessage?(message: any): Promise<any>}} runtime
+ * @param {{getContext(): any | null, isPending(): boolean, consume?(context: any): void}} [contextControls]
+ * @param {{
+ *   onOutcome?: (outcome: Outcome) => void,
+ *   onConversationId?(id: string | null): void,
+ *   onSaved?(): void,
+ *   onRequestStarted?(): void,
+ *   storageChanges?: {addListener(callback: (changes: any, area: string) => void): void}
+ * }} [options]
  */
 export function bindAskForm(elements, runtime, contextControls, options = {}) {
   const { form, input, submit, status, answer } = elements;
   const { onOutcome } = options;
+  const history = elements.history;
+  /** @type {string | null} */
+  let conversationId = null;
+  let viewGeneration = 0;
+  let loadPending = false;
+  let submittedText = "";
+  /** @type {any} */
+  let submittedContext = null;
 
   // The port of the question in flight, or null when idle.
   /** @type {AskPort | null} */
   let active = null;
+
+  /** @param {string} id */
+  async function loadConversation(id, preserveStatus = false) {
+    if (!history || typeof runtime.sendMessage !== "function" || active) return false;
+    const generation = ++viewGeneration;
+    loadPending = true;
+    try {
+      const result = await runtime.sendMessage?.({ type: "pervue.conversations.get", conversation_id: id });
+      if (generation !== viewGeneration || active) return false;
+      if (result?.ok !== true || !result.value) throw new Error("unavailable");
+      conversationId = result.value.id;
+      renderHistory(result.value.messages);
+      answer.textContent = "";
+      answer.hidden = true;
+      options.onConversationId?.(conversationId);
+      return true;
+    } catch {
+      if (generation === viewGeneration && !preserveStatus) setStatus("Conversation history unavailable.", "failed");
+      return false;
+    } finally {
+      if (generation === viewGeneration) loadPending = false;
+    }
+  }
+
+  options.storageChanges?.addListener((changes, area) => {
+    if (area === "local" && conversationId && !active && !loadPending &&
+        changes[`pervue.conversation.${conversationId}`]) {
+      void loadConversation(conversationId, true);
+    }
+  });
+
+  /** @param {any[]} messages */
+  function renderHistory(messages) {
+    if (!history) return;
+    history.replaceChildren(...messages.map((message) => bubble(message.role, message.text, message.status)));
+  }
+
+  /** @param {string} role @param {string} text @param {string} state */
+  function bubble(role, text, state) {
+    const owner = history?.ownerDocument ?? document;
+    const item = owner.createElement("article");
+    item.className = `message message-${role}`;
+    item.setAttribute("data-state", state);
+    const label = owner.createElement("strong");
+    label.textContent = role === "user" ? "You" : "Pervue";
+    const body = owner.createElement("p");
+    body.textContent = text || (state === "pending" ? "Answering…" : "No answer.");
+    item.append(label, body);
+    return item;
+  }
+
+  function newConversation() {
+    if (active) return false;
+    ++viewGeneration;
+    loadPending = false;
+    conversationId = null;
+    history?.replaceChildren();
+    answer.textContent = "";
+    answer.hidden = true;
+    options.onConversationId?.(null);
+    setStatus(READY_STATUS, "idle");
+    input.focus();
+    return true;
+  }
 
   form.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -76,7 +155,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
   function ask() {
     // Duplicate-submit guard: a question in flight blocks every other submit
     // path (Enter, the button, requestSubmit), not just the button.
-    if (active !== null) {
+    if (active !== null || loadPending) {
       return;
     }
     if (contextControls?.isPending()) {
@@ -106,6 +185,11 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
     }
 
     active = port;
+    ++viewGeneration;
+    submittedText = text;
+    submittedContext = contextControls?.getContext();
+    options.onRequestStarted?.();
+    if (history) history.append(bubble("user", text, "pending"));
     answer.textContent = "";
     answer.hidden = true;
     setBusy(true);
@@ -122,8 +206,12 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
       }
     });
     try {
-      const context = contextControls?.getContext();
-      port.postMessage(context ? { type: "ask", text, context } : { type: "ask", text });
+      const context = submittedContext;
+      port.postMessage({
+        type: "ask", text,
+        ...(history && conversationId ? { conversation_id: conversationId } : {}),
+        ...(context ? { context } : {})
+      });
     } catch {
       // No events will follow a question the port couldn't carry, such as
       // one over Chrome's 64 MiB message limit, so fail it now.
@@ -137,6 +225,12 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
    */
   function render(port, event) {
     switch (event?.event) {
+      case "conversation.created":
+        if (history && typeof event.payload?.conversation_id === "string") {
+          conversationId = event.payload.conversation_id;
+          options.onConversationId?.(conversationId);
+        }
+        break;
       case "response.started":
         setStatus("Answering…", "pending");
         break;
@@ -149,6 +243,8 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
         break;
       case "response.completed":
         finish(port, "Answer complete.", "done");
+        if (history && input.value === submittedText) input.value = "";
+        contextControls?.consume?.(submittedContext);
         onOutcome?.({ kind: "completed" });
         break;
       case "response.failed": {
@@ -158,12 +254,15 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
           reference && typeof event.request_id === "string"
             ? `${message} Reference: ${event.request_id}`
             : message;
-        finish(port, shown, kind === "cancelled" ? "cancelled" : "failed", kind);
+        // A conversation the store no longer has can't be reloaded: keep the
+        // message that says to start a new one.
+        const reload = event.payload?.error?.reason !== "UNKNOWN_CONVERSATION";
+        finish(port, shown, kind === "cancelled" ? "cancelled" : "failed", kind, reload);
         onOutcome?.({ kind, message });
         break;
       }
       default:
-        // conversation.created and response.source belong to later items.
+        // Sources are persisted by the background worker for later display.
         break;
     }
   }
@@ -173,12 +272,21 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
    * @param {string} message
    * @param {string} state
    * @param {string | null} [kind] the failure kind, for a failure
+   * @param {boolean} [reload] whether to show the saved conversation again
    */
-  function finish(port, message, state, kind = null) {
+  function finish(port, message, state, kind = null, reload = true) {
     active = null;
     port.disconnect();
     setBusy(false);
     setStatus(message, state, kind);
+    // A question that ended without an answer, failed or stopped, before its
+    // conversation existed leaves nothing saved: drop its provisional bubble.
+    if (history && !conversationId && state !== "done") history.replaceChildren();
+    if (history && conversationId && reload) {
+      void loadConversation(conversationId, state !== "done").then((loaded) => {
+        if (loaded) options.onSaved?.();
+      });
+    }
   }
 
   /** @param {boolean} busy */
@@ -202,4 +310,6 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
       status.setAttribute("data-kind", kind);
     }
   }
+
+  return { getConversationId: () => conversationId, loadConversation, newConversation };
 }

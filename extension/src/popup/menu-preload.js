@@ -11,8 +11,11 @@ export async function preloadMenuContext(runtime, controls, search) {
   const finish = controls.beginMenuHandoff();
   try {
     const token = new URLSearchParams(search).get("menu");
-    finish(await runtime.sendMessage({ type: MENU_CONSUME_MESSAGE, token }));
+    const handoff = await runtime.sendMessage({ type: MENU_CONSUME_MESSAGE, token });
+    finish(handoff);
+    return handoff?.available === true;
   } catch {
     finish(null);
+    return false;
   }
 }

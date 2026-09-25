@@ -9,6 +9,7 @@
 //! supervises provider processes, and [`stream`] turns their output into
 //! lines.
 
+pub mod conversation;
 pub mod diagnostics;
 pub mod framing;
 pub mod host;
