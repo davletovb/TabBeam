@@ -200,9 +200,10 @@ assert.equal(statusResponses[0].error.reason, "HOST_START_FAILED");
 
 // OBS-02: diagnostics are extension-page-only and expose only sanitized
 // versions/provider state/recent normalized failure.
-let diagnosticsResponse;
+/** @type {any} */
+let diagnosticsResponse = null;
 assert.equal(
-  onMessage({ type: DIAGNOSTICS_MESSAGE }, { url: popupUrl }, (response) => {
+  onMessage({ type: DIAGNOSTICS_MESSAGE }, { url: popupUrl }, (/** @type {any} */ response) => {
     diagnosticsResponse = response;
   }),
   undefined
