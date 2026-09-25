@@ -9,7 +9,7 @@
 //! ```
 
 use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
@@ -21,6 +21,17 @@ const HOST: &str = env!("CARGO_BIN_EXE_pervue-host");
 const ORIGIN: &str = "chrome-extension://abcdefghijklmnopabcdefghijklmnop/";
 /// A real model can take a while.
 const ANSWER_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// The host under test. It is killed and reaped however the test ends, even
+/// on a timeout, so a stuck Codex never leaves it running.
+struct Host(Child);
+
+impl Drop for Host {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
 
 fn frame(payload: &str) -> Vec<u8> {
     let mut wire = Vec::new();
@@ -39,15 +50,17 @@ fn live_codex_answers_a_question() {
         return;
     }
 
-    let mut host = Command::new(HOST)
-        .arg(ORIGIN)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .expect("start the host");
-    let mut stdin = host.stdin.take().expect("stdin");
-    let mut stdout = host.stdout.take().expect("stdout");
+    let mut host = Host(
+        Command::new(HOST)
+            .arg(ORIGIN)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .expect("start the host"),
+    );
+    let mut stdin = host.0.stdin.take().expect("stdin");
+    let mut stdout = host.0.stdout.take().expect("stdout");
 
     let (sender, events) = mpsc::channel::<Value>();
     let reader = thread::spawn(move || {
@@ -89,7 +102,7 @@ fn live_codex_answers_a_question() {
         }
     }
     drop(stdin);
-    assert!(host.wait().expect("the host exits").success());
+    assert!(host.0.wait().expect("the host exits").success());
     reader.join().unwrap();
 
     let status = received

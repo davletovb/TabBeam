@@ -783,6 +783,9 @@ Reached after **Milestone H**:
 - Environment forwarding is minimal and documented.
 - Secrets/tokens are redacted from logs.
 
+**Notes**
+- From the PR #17 review: when a provider exits on its own, `stop_leftovers` (`native/host/src/process.rs`) kills its process group right after reaping it. If the provider left no descendants, the group ID is already free, so in principle the kill could reach an unrelated group that took the ID in those microseconds. Seeing the exit before reaping would close this: `waitid` with `WNOWAIT` on Linux, and `EVFILT_PROC`/`NOTE_EXIT` through kqueue on macOS, where nix has no `waitid`.
+
 **Status:** BACKLOG
 
 ### TST-04 — Add hostile fake-process integration matrix

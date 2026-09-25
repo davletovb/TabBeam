@@ -520,9 +520,13 @@ mod tree {
     }
 
     /// Kills what is left of the group after the child was reaped. A process
-    /// group ID stays reserved while any member is alive, and the host signals
-    /// the group right after reaping the child, so this reaches only the
-    /// child's own descendants.
+    /// group ID stays reserved while any member is alive, so when the child
+    /// left descendants, this reaches only them. When it left none, the ID is
+    /// free again: a group that took it in the microseconds since the reaping
+    /// would be hit instead, which takes process IDs wrapping around within
+    /// that window. Signalling before reaping would close it, but seeing the
+    /// exit without reaping needs `waitid` with `WNOWAIT`, which nix doesn't
+    /// offer on macOS (SEC-02).
     pub fn stop_leftovers(child: &Child) {
         signal_group(child, Signal::SIGKILL);
     }

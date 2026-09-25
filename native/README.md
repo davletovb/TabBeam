@@ -213,7 +213,7 @@ PERVUE_LIVE_CODEX=1 cargo test -p pervue-host --test live_codex -- --nocapture
 - `Error` when a line grew past the stream's limit or wasn't UTF-8. The process is killed at once.
 - `Stopped(exit)` after `cancel(grace)`.
 
-The process manager's chunks end wherever a read did, even inside a UTF-8 character. The stream manager reassembles lines across any number of chunks, drops a `\r` before a `\n`, and checks each line is UTF-8 once it is complete. It holds at most one line of up to the limit and the lines of one chunk, and the process manager reads at most 16 chunks ahead, so a provider that floods its output waits on its own writes instead of growing the host's memory. stderr is counted and discarded, because it is written for people and can hold secrets. `cancel(grace)` drops everything not yet delivered, asks the process to stop (`request_stop`), and kills it once `grace` passes.
+The process manager's chunks end wherever a read did, even inside a UTF-8 character. The stream manager reassembles lines across any number of chunks, drops a `\r` before a `\n`, and checks each line is UTF-8 once it is complete. The limit counts a line as delivered, without its line ending. It holds at most one line of up to the limit and the lines of one chunk, and the process manager reads at most 16 chunks ahead, so a provider that floods its output waits on its own writes instead of growing the host's memory. stderr is counted and discarded, because it is written for people and can hold secrets. `cancel(grace)` drops everything not yet delivered, asks the process to stop (`request_stop`), and kills it once `grace` passes.
 
 `split_text` cuts outgoing text into pieces of bounded size, never inside a character; the host uses it for `response.delta`.
 
@@ -249,6 +249,7 @@ let exit = process.terminate(Duration::from_secs(2)); // the deadline passed
 What it can't do yet:
 
 - A descendant that leaves the process group, for example with `setsid`, is out of reach. If it holds the output open, the host stops waiting one second after the provider exits and reports `output_closed: false`.
+- When a provider exits on its own, the host kills its group right after reaping it. If the provider left nothing behind, the group ID is free again by then. The kill would reach another group only if one took that ID within microseconds, which takes process IDs wrapping around in that window. Closing the gap needs a way to see the exit before reaping, which nix offers on Linux (`waitid` with `WNOWAIT`) but not on macOS (SEC-02).
 - On Windows only the provider process itself is stopped; stopping its descendants too needs a Job Object (ADR-0001). Windows has no SIGTERM, so closing stdin is the only stop request there.
 - If the host itself is killed outright, it can't clean up. A provider that reads stdin sees end of file.
 - Providers inherit the host's environment and working directory, apart from variables their spec sets with `env`. SEC-02 narrows what they receive.

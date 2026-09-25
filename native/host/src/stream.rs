@@ -6,8 +6,8 @@
 //! - output arrives in chunks cut wherever a read ended, even inside a
 //!   multi-byte UTF-8 character; lines are reassembled across any number of
 //!   chunks, and each is checked to be UTF-8 only once it is complete;
-//! - a line longer than the stream's limit ends the stream with an error
-//!   instead of growing the host's memory;
+//! - a line longer than the stream's limit, not counting its line ending,
+//!   ends the stream with an error instead of growing the host's memory;
 //! - stderr is counted and discarded: it is meant for people, and it can hold
 //!   secrets such as masked keys;
 //! - the stream ends in exactly one terminal state: [`Output::Final`] after a
@@ -47,8 +47,9 @@ pub enum Output {
     Stopped(Exit),
 }
 
-/// Splits a byte stream into lines, holding at most `max_line_bytes` of an
-/// unfinished line.
+/// Splits a byte stream into lines of at most `max_line_bytes`, not counting
+/// their line endings. It holds at most that much of an unfinished line, plus
+/// a `\r` that a `\n` may still turn into its line ending.
 #[derive(Debug)]
 pub struct LineSplitter {
     pending: Vec<u8>,
@@ -68,19 +69,28 @@ impl LineSplitter {
     pub fn push(&mut self, bytes: &[u8], lines: &mut VecDeque<String>) -> Result<(), StreamError> {
         let mut rest = bytes;
         while let Some(end) = rest.iter().position(|&byte| byte == b'\n') {
-            if self.pending.len() + end > self.max_line_bytes {
+            let content = &rest[..end];
+            // The `\r` before this `\n` may have come in an earlier chunk.
+            let carriage_return = content.last().or(self.pending.last()) == Some(&b'\r');
+            let length = self.pending.len() + content.len() - usize::from(carriage_return);
+            if length > self.max_line_bytes {
                 return Err(StreamError::LineTooLong);
             }
-            self.pending.extend_from_slice(&rest[..end]);
-            rest = &rest[end + 1..];
-            if self.pending.last() == Some(&b'\r') {
+            self.pending.extend_from_slice(content);
+            if carriage_return {
                 self.pending.pop();
             }
+            rest = &rest[end + 1..];
             let line = String::from_utf8(std::mem::take(&mut self.pending))
                 .map_err(|_| StreamError::InvalidUtf8)?;
             lines.push_back(line);
         }
-        if self.pending.len() + rest.len() > self.max_line_bytes {
+        // A `\r` at the end may yet be dropped, so it may pass the limit.
+        let carriage_return = rest.last().or(self.pending.last()) == Some(&b'\r');
+        let limit = self
+            .max_line_bytes
+            .saturating_add(usize::from(carriage_return));
+        if self.pending.len() + rest.len() > limit {
             return Err(StreamError::LineTooLong);
         }
         self.pending.extend_from_slice(rest);
@@ -88,11 +98,16 @@ impl LineSplitter {
     }
 
     /// Ends the input and returns its last line if that had no line ending.
+    /// Without a `\n`, a `\r` at its end is part of the line.
     pub fn finish(&mut self) -> Result<Option<String>, StreamError> {
-        if self.pending.is_empty() {
+        let line = std::mem::take(&mut self.pending);
+        if line.is_empty() {
             return Ok(None);
         }
-        String::from_utf8(std::mem::take(&mut self.pending))
+        if line.len() > self.max_line_bytes {
+            return Err(StreamError::LineTooLong);
+        }
+        String::from_utf8(line)
             .map(Some)
             .map_err(|_| StreamError::InvalidUtf8)
     }
@@ -320,6 +335,52 @@ mod tests {
             push_all(&mut splitter, &[b"e"]),
             Err(StreamError::LineTooLong)
         );
+    }
+
+    #[test]
+    fn a_crlf_line_may_reach_the_limit_too() {
+        // The limit counts a line as delivered, without its `\r\n`, wherever a
+        // chunk ends: even between the `\r` and the `\n`.
+        let text = b"abcd\r\n";
+        for cut in 0..=text.len() {
+            let mut splitter = LineSplitter::new(4);
+            let lines = push_all(&mut splitter, &[&text[..cut], &text[cut..]]).unwrap();
+            assert_eq!(lines, ["abcd"], "cut at {cut}");
+        }
+        let mut splitter = LineSplitter::new(4);
+        let bytes: Vec<&[u8]> = text.chunks(1).collect();
+        assert_eq!(push_all(&mut splitter, &bytes).unwrap(), ["abcd"]);
+
+        let mut splitter = LineSplitter::new(4);
+        assert_eq!(
+            push_all(&mut splitter, &[b"abcde\r\n"]),
+            Err(StreamError::LineTooLong)
+        );
+    }
+
+    #[test]
+    fn a_held_carriage_return_counts_unless_a_line_feed_follows() {
+        // `abcd\r` may wait for its `\n`, but anything else makes it too long.
+        for next in [&b"x"[..], b"\r\n", b"\r"] {
+            let mut splitter = LineSplitter::new(4);
+            assert_eq!(
+                push_all(&mut splitter, &[b"abcd\r"]).unwrap(),
+                Vec::<String>::new()
+            );
+            assert_eq!(
+                push_all(&mut splitter, &[next]),
+                Err(StreamError::LineTooLong),
+                "{next:?}"
+            );
+        }
+
+        // Without a line ending, the `\r` is part of the last line.
+        let mut splitter = LineSplitter::new(4);
+        push_all(&mut splitter, &[b"abcd\r"]).unwrap();
+        assert_eq!(splitter.finish(), Err(StreamError::LineTooLong));
+        let mut splitter = LineSplitter::new(5);
+        push_all(&mut splitter, &[b"abcd\r"]).unwrap();
+        assert_eq!(splitter.finish().unwrap().as_deref(), Some("abcd\r"));
     }
 
     #[test]
