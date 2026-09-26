@@ -138,12 +138,17 @@ jobs:
         run: |
           node fuzz/fuzz-support.mjs frame-corpus fuzz/corpus/frame_reader
           node fuzz/fuzz-support.mjs protocol-corpus fuzz/corpus/protocol
+          node fuzz/fuzz-support.mjs stream-corpus fuzz/corpus/stream_lines
       # fuzz-support.mjs derives -max_len from the shared frame limit in
       # docs/protocol/native-messaging-v1.json.
       - name: Smoke-run frame fuzz target
         run: |
           max_len=$(node fuzz/fuzz-support.mjs max-len frame_reader)
           cargo +nightly fuzz run frame_reader fuzz/corpus/frame_reader -- -runs=1000 -max_len="$max_len"
+      - name: Smoke-run standalone stream fuzz target
+        run: |
+          max_len=$(node fuzz/fuzz-support.mjs max-len stream_lines)
+          cargo +nightly fuzz run stream_lines fuzz/corpus/stream_lines -- -runs=1000 -max_len="$max_len"
       - name: Smoke-run protocol fuzz target
         run: |
           max_len=$(node fuzz/fuzz-support.mjs max-len protocol)

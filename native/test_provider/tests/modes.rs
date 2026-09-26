@@ -41,6 +41,10 @@ fn drain<R: Read + Send + 'static>(mut stream: R) -> JoinHandle<Vec<u8>> {
     })
 }
 
+#[allow(
+    clippy::disallowed_methods,
+    reason = "this harness starts the fake provider binary, not a provider from browser input"
+)]
 fn run(args: &[&str], stdin: &[u8], timeout: Duration) -> Outcome {
     let child = Command::new(PROVIDER)
         .args(args)

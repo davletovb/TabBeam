@@ -2,7 +2,7 @@
 
 use libfuzzer_sys::fuzz_target;
 use pervue_host::diagnostics::Diagnostics;
-use pervue_host::framing;
+use pervue_core::framing;
 use pervue_host::host;
 use pervue_host::limits::MAX_FRAME_SIZE;
 use pervue_host::providers::Providers;

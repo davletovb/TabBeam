@@ -195,6 +195,10 @@ fn run(mode: Mode, rest: &[OsString]) -> io::Result<u8> {
 
 /// Starts this executable in `mode` as a child that shares this process's
 /// stdout and stderr, and leaves it running.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the fake provider spawns a descendant to test process-tree cleanup"
+)]
 fn spawn_descendant(mode: &str) -> io::Result<()> {
     Command::new(std::env::current_exe()?)
         .args(["--mode", mode])

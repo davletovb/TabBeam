@@ -18,8 +18,10 @@ serde_json = "1.0"
 nix = { version = "0.31", default-features = false, features = ["resource", "signal"] }
 
 [dev-dependencies]
-# The process manager (NAT-04) is tested here, against this crate's binary.
+# Host adapter tests use the host; process and stream integration tests import
+# core directly and run against this crate's fake-provider binary.
 pervue-host = { path = "../host" }
+pervue-core = { path = "../core" }
 
 [target.'cfg(unix)'.dev-dependencies]
 nix = { version = "0.31", default-features = false, features = ["process", "signal"] }

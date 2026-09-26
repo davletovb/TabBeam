@@ -27,7 +27,6 @@ use crate::HOST_VERSION;
 use crate::diagnostics::{
     self, Diagnostics, LifecycleEvent, LoggedError, Record, issued_id, millis,
 };
-use crate::framing::{self, FrameError};
 use crate::limits::MAX_FRAME_SIZE;
 use crate::protocol::events::{
     self, Capability, ConversationCreated, ErrorBody, ErrorCode, Event, ProviderStatus,
@@ -35,7 +34,8 @@ use crate::protocol::events::{
 };
 use crate::protocol::request::{self, Method, RequestFailure, RequestId};
 use crate::providers::{Exchange, Providers, Scripted, SendRequest, StatusOfAll, Timeouts, Update};
-use crate::stream::split_text;
+use pervue_core::framing::{self, FrameError};
+use pervue_core::stream::split_text;
 
 /// Why the host stopped before a clean end of stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -918,10 +918,10 @@ mod tests {
 
     use super::*;
     use crate::HOST_VERSION;
-    use crate::framing::PREFIX_SIZE;
     use crate::limits::MAX_FRAME_SIZE;
     use crate::protocol::events::Capabilities;
     use crate::providers::{Provider, fake};
+    use pervue_core::framing::PREFIX_SIZE;
 
     fn framed(payloads: &[&str]) -> Vec<u8> {
         let mut wire = Vec::new();

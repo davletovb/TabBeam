@@ -4,8 +4,8 @@
 
 use std::time::{Duration, Instant};
 
-use pervue_host::process::{Ending, Process, ProcessSpec};
-use pervue_host::stream::{LineStream, Output, StreamError};
+use pervue_core::process::{Ending, Process, ProcessSpec};
+use pervue_core::stream::{LineStream, Output, StreamError};
 
 const PROVIDER: &str = env!("CARGO_BIN_EXE_pervue-fake-provider");
 const DEADLINE: Duration = Duration::from_secs(10);

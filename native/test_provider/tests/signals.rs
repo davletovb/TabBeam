@@ -42,6 +42,10 @@ impl Guard {
 }
 
 /// Starts `mode` and waits until it has announced readiness.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "this harness starts the fake provider binary to test signal handling"
+)]
 fn spawn_ready(mode: &str) -> Guard {
     let child = Command::new(PROVIDER)
         .args(["--mode", mode])
