@@ -14,6 +14,8 @@ export function bindContextControls(elements, runtime) {
   let pending = false;
   let handoffPending = false;
   let generation = 0;
+  let supported = true;
+  let providerLabel = "This provider";
 
   /** @param {"none" | "selection" | "page"} mode */
   function setChoice(mode) {
@@ -27,12 +29,12 @@ export function bindContextControls(elements, runtime) {
     pending = false;
     handoffPending = false;
     context = null;
-    selection.disabled = false;
-    page.disabled = false;
+    selection.disabled = !supported;
+    page.disabled = !supported;
     preview.hidden = true;
     preview.textContent = "";
     setChoice("none");
-    status.textContent = "";
+    status.textContent = supported ? "" : `${providerLabel} doesn't support browser context yet.`;
   }
 
   /** Clear only the capture sent with a completed turn. A later capture wins. */
@@ -68,6 +70,10 @@ export function bindContextControls(elements, runtime) {
   // A menu opens the popup while extraction may still be running. Keep Ask
   // blocked until its one-time handoff completes; an explicit choice replaces it.
   function beginMenuHandoff() {
+    if (!supported) {
+      clear();
+      return () => {};
+    }
     const current = ++generation;
     pending = true;
     handoffPending = true;
@@ -77,8 +83,8 @@ export function bindContextControls(elements, runtime) {
       if (generation !== current) return;
       pending = false;
       handoffPending = false;
-      selection.disabled = false;
-      page.disabled = false;
+      selection.disabled = !supported;
+      page.disabled = !supported;
       if (handoff?.available) {
         const mode = handoff.result?.context?.mode;
         showCapture(handoff.result, mode === "selection" ? "selection" : "page");
@@ -90,6 +96,10 @@ export function bindContextControls(elements, runtime) {
 
   /** @param {"selection" | "page"} mode */
   async function capture(mode) {
+    if (!supported) {
+      clear();
+      return;
+    }
     if (pending && !handoffPending) {
       return;
     }
@@ -120,8 +130,8 @@ export function bindContextControls(elements, runtime) {
     } finally {
       if (generation === current) {
         pending = false;
-        selection.disabled = false;
-        page.disabled = false;
+        selection.disabled = !supported;
+        page.disabled = !supported;
       }
     }
   }
@@ -135,6 +145,25 @@ export function bindContextControls(elements, runtime) {
     isPending: () => pending,
     clear,
     consume,
-    beginMenuHandoff
+    beginMenuHandoff,
+    /** @param {boolean} nextSupported @param {string} [label] */
+    setSupported(nextSupported, label = "This provider") {
+      const wasSupported = supported;
+      supported = nextSupported === true;
+      providerLabel = label;
+      if (wasSupported && !supported) {
+        clear();
+        return;
+      }
+      // A capture still running keeps its buttons disabled until it ends.
+      const capturing = pending && !handoffPending;
+      selection.disabled = !supported || capturing;
+      page.disabled = !supported || capturing;
+      if (!supported && !context) {
+        status.textContent = `${providerLabel} doesn't support browser context yet.`;
+      } else if (!wasSupported && supported && !context && !pending) {
+        status.textContent = "";
+      }
+    }
   };
 }

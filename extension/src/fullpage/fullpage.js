@@ -3,6 +3,7 @@ import { CONVERSATIONS_KEY } from "../background/conversation-store.js";
 import { bindConversationList } from "../shared/conversation-list.js";
 import { bindDrawer } from "./drawer.js";
 import { bindProviderState } from "../popup/provider-state.js";
+import { bindProviderSelector } from "../shared/provider-selector.js";
 import { renderMarkdown } from "../shared/markdown.js";
 import { createStreamReveal } from "../shared/stream-reveal.js";
 import { bindThemeSelect } from "../shared/theme.js";
@@ -25,7 +26,13 @@ const providerState = bindProviderState(
   requireElement("#provider-state", HTMLElement),
   chrome.runtime,
   {},
-  { setupLink: requireElement("#companion-setup", HTMLElement) }
+  { setupLink: requireElement("#companion-setup", HTMLElement), checkOnOpen: false }
+);
+const providerSelector = bindProviderSelector(
+  requireElement("#provider-select", HTMLSelectElement),
+  chrome.runtime,
+  chrome.storage.local,
+  { onChange: (selection) => providerState.follow(selection) }
 );
 const view = bindAskForm({
   form: requireElement("#ask-form", HTMLFormElement),
@@ -38,7 +45,14 @@ const view = bindAskForm({
   retry: requireElement("#ask-retry", HTMLButtonElement)
 }, chrome.runtime, undefined, {
   onOutcome: (outcome) => providerState.update(outcome),
-  onConversationId(id) {
+  getProviderId: () => providerSelector.getProviderId(),
+  onConversationLoaded(conversation) {
+    if (conversation?.provider_id) providerSelector.lock(conversation.provider_id);
+    else providerSelector.unlock();
+  },
+  onConversationId(id, providerId) {
+    // Locked to the provider the question went to, not whatever is shown.
+    if (id) providerSelector.lock(providerId ?? providerSelector.getProviderId());
     const url = new URL(window.location.href);
     if (id) url.searchParams.set("conversation", id);
     else url.searchParams.delete("conversation");
@@ -47,7 +61,11 @@ const view = bindAskForm({
     showTitle();
   },
   onSaved() { void conversations.refresh(); },
-  onRequestStarted() { interacted = true; },
+  onRequestStarted() {
+    interacted = true;
+    providerSelector.hold(true);
+  },
+  onRequestEnded() { providerSelector.hold(false); },
   renderMessage: renderMarkdown,
   renderAnswer: createStreamReveal({
     render: (element, text) => renderMarkdown(element, text, { interactive: false }),

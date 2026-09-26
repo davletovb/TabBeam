@@ -1,5 +1,6 @@
 import { ASK_PORT_NAME } from "../shared/ask-port.js";
 import { PROVIDER_STATUS_MESSAGE } from "../shared/provider-status.js";
+import { DEFAULT_PROVIDER_ID, isProviderId } from "../shared/providers.js";
 import { DIAGNOSTICS_MESSAGE } from "../shared/diagnostics.js";
 import { isExtensionPage } from "./ask-bridge.js";
 import { serveConversationAskPort } from "./conversation-bridge.js";
@@ -86,8 +87,11 @@ chrome.runtime.onMessage.addListener(
       if (!isExtensionPage(sender, chrome.runtime.getURL(""))) {
         return;
       }
-      checkProviderStatus({ manager: nativeConnectionManager }).then((response) => {
-        diagnostics.noteProvider(response);
+      const providerId = isProviderId(message.provider_id)
+        ? message.provider_id
+        : DEFAULT_PROVIDER_ID;
+      checkProviderStatus({ manager: nativeConnectionManager, providerId }).then((response) => {
+        if (message.record_diagnostics !== false) diagnostics.noteProvider(response);
         sendResponse(response);
       });
       return true;

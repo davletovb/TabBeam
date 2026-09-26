@@ -1,22 +1,28 @@
 /**
- * Providers as the extension names them. What the extension does never
- * depends on a provider's ID (DOC-02 §5): the ID only chooses the provider
- * the host runs, and the label is how the popup refers to it.
+ * User-selectable providers. IDs only select native adapters; feature behavior
+ * is driven by provider.status capabilities, never by ID checks in UI code.
  */
-
-// Milestone B's first provider (PRO-03). Choosing among providers is EXT-15.
 export const DEFAULT_PROVIDER_ID = "codex";
 
-const LABELS = new Map([
-  ["codex", "Codex"],
-  ["fake", "The test provider"]
+export const USER_PROVIDERS = Object.freeze([
+  Object.freeze({ id: "codex", label: "Codex" }),
+  Object.freeze({ id: "claude", label: "Claude" })
 ]);
 
-/**
- * The name the popup uses for a provider: its label, or else its ID.
- *
- * @param {string} providerId
- */
+/** @type {Map<string, string>} */
+const LABELS = new Map(
+  USER_PROVIDERS.map(({ id, label }) => /** @type {[string, string]} */ ([id, label]))
+);
+LABELS.set("fake", "The test provider");
+
+export const PROVIDER_ID_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/;
+
+/** @param {string} providerId */
 export function providerLabel(providerId) {
   return LABELS.get(providerId) ?? providerId;
+}
+
+/** @param {unknown} providerId */
+export function isProviderId(providerId) {
+  return typeof providerId === "string" && PROVIDER_ID_PATTERN.test(providerId);
 }

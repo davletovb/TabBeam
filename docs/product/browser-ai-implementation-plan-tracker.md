@@ -184,11 +184,11 @@ Reached after **Milestone H**:
 | EXT-14 | Complete keyboard/accessibility baseline | MVP closure | Extension | EXT-03, EXT-06, EXT-11 | VERIFIED |
 | TST-08 | Add MVP critical-journey E2E suite | MVP closure | Testing | TST-06, TST-07, EXT-09, EXT-10, EXT-13 | VERIFIED |
 | TST-09 | Add startup/first-chunk performance budgets | MVP closure | Testing / Performance | TST-08 | VERIFIED |
-| PRO-05 | Implement Claude discovery and authentication status | E | Provider | PRO-01, PRO-02 | BACKLOG |
-| PRO-06 | Implement Claude request + streaming adapter | E | Provider | PRO-05, NAT-04, NAT-05 | BACKLOG |
-| PRO-07 | Reconcile provider contract from Codex + Claude evidence | E | Provider | PRO-03, PRO-06 | BACKLOG |
-| EXT-15 | Add capability-aware provider selector | E | Extension | PRO-07, EXT-04 | BACKLOG |
-| TST-10 | Add cross-provider contract test suite | E | Testing | PRO-07 | BACKLOG |
+| PRO-05 | Implement Claude discovery and authentication status | E | Provider | PRO-01, PRO-02 | IMPLEMENTED — VERIFY |
+| PRO-06 | Implement Claude request + streaming adapter | E | Provider | PRO-05, NAT-04, NAT-05 | IMPLEMENTED — VERIFY |
+| PRO-07 | Reconcile provider contract from Codex + Claude evidence | E | Provider | PRO-03, PRO-06 | IMPLEMENTED — VERIFY |
+| EXT-15 | Add capability-aware provider selector | E | Extension | PRO-07, EXT-04 | IMPLEMENTED — VERIFY |
+| TST-10 | Add cross-provider contract test suite | E | Testing | PRO-07 | IMPLEMENTED — VERIFY |
 | LIB-01 | Extract reusable process primitives | F | Native Library | PRO-07, TST-10 | BACKLOG |
 | LIB-02 | Extract reusable Native Messaging primitives | F | Native Library | NAT-02, TST-03 | BACKLOG |
 | LIB-03 | Extract reusable stream primitives | F | Native Library | NAT-05, TST-10 | BACKLOG |
@@ -1252,7 +1252,12 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 - Availability/auth status maps to the same normalized app model.
 - No Claude-specific conditions are added to popup code.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `native/host/src/providers/claude/mod.rs` discovers the fixed `claude` executable through the shared platform search rules and maps `claude auth status` exit state into the normalized availability/authentication model without forwarding account output.
+- The Claude process inherits only the shared safe environment plus non-secret Claude configuration paths; provider credentials remain owned by Claude Code.
+
 
 ### PRO-06 — Implement Claude request + streaming adapter
 **Area:** Provider  
@@ -1263,7 +1268,13 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 - Cancellation/errors are normalized.
 - Continuation behavior is exposed as a capability rather than assumed.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- The Claude adapter sends a structured stream-json user message on stdin, parses Claude stream-json output, emits provider-neutral deltas/progress/completion, resumes mapped sessions with `--resume`, rebuilds a lost native session from bounded dialogue history, and uses the shared cancellation/process/stream machinery.
+- `native/test_provider/tests/claude_adapter.rs` covers discovery, auth, stdin/argv separation, streaming, result fallback, continuation, cancellation, and normalized failures.
+- `native/host/tests/live_claude.rs` provides an opt-in built-host smoke test against a real authenticated Claude CLI (`PERVUE_LIVE_CLAUDE=1|required`).
+
 
 ### PRO-07 — Reconcile provider contract from Codex + Claude evidence
 **Area:** Provider  
@@ -1277,7 +1288,13 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 - No interface method exists solely for hypothetical future providers.
 - Capability model reflects observed differences between the two real adapters.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `native/host/src/providers/mod.rs` now documents the provider contract as the shared surface proven by two real adapters rather than a provisional Codex-only interface.
+- Codex and Claude share status/send/cancel/update semantics while observed differences stay in capabilities: Claude initially reports `page_context: false`; Codex reports it true. Both adapters persist opaque native-session mappings across host restarts and can rebuild from bounded dialogue when a native session cannot be resumed; the provider-neutral contract does not expose either runtime's session IDs.
+- No Claude-only method was added to the common `Provider` trait.
+
 
 ### EXT-15 — Add capability-aware provider selector
 **Area:** Extension  
@@ -1288,7 +1305,14 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 - Unsupported controls are hidden/disabled based on capability data.
 - Provider switching does not silently claim continuation when unsafe.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `extension/src/shared/provider-selector.js` exposes Codex and Claude through one persistent selector, probes both through the normalized status bridge, disables unavailable runtimes for new conversations, and locks existing conversations to their stored provider.
+- Popup and full-page ask flows send the selected provider ID for new conversations without provider-specific branching.
+- Browser-context controls consume `page_context` capability data: when Claude is selected they are disabled with an explanatory state instead of silently dropping context.
+- `extension/tests/provider-selector.mjs` covers persistence, missing-provider fallback, conversation locking, and capability-aware context controls.
+
 
 ### TST-10 — Add cross-provider contract test suite
 **Area:** Testing  
@@ -1298,7 +1322,13 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 - The same provider-neutral test cases run against Codex and Claude adapters.
 - Differences are expressed through capabilities, not test exceptions scattered through UI code.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `native/test_provider/tests/provider_contract.rs` runs the same normalized status → ask → stream → continue cases against both the Codex and Claude adapters.
+- Capability differences are asserted as data rather than UI/test exceptions.
+- The regular native workspace suite also includes the provider-specific Codex and Claude adapter matrices.
+
 
 ---
 
@@ -1718,12 +1748,12 @@ Update this section whenever item statuses change.
 | C — Conversation continuity | 7 | 7 | 0 | 0 | 0 | 0 | 0 | 0 |
 | D — Browser context | 9 | 9 | 0 | 0 | 0 | 0 | 0 | 0 |
 | MVP closure | 7 | 7 | 0 | 0 | 0 | 0 | 0 | 0 |
-| E — Second provider | 5 | 0 | 0 | 0 | 0 | 5 | 0 | 0 |
+| E — Second provider | 5 | 0 | 5 | 0 | 0 | 0 | 0 | 0 |
 | F — Reusable native core | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
 | G — Installable product | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 |
 | H — Search/citations | 8 | 0 | 0 | 0 | 0 | 8 | 0 | 0 |
 | Post-milestone | 6 | 0 | 0 | 0 | 0 | 4 | 0 | 2 |
-| **Total** | **81** | **46** | **0** | **0** | **0** | **33** | **0** | **2** |
+| **Total** | **81** | **46** | **5** | **0** | **0** | **28** | **0** | **2** |
 
 ### Milestone completion rule
 

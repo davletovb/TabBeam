@@ -53,9 +53,12 @@ export const WORKER_LOST = "Pervue stopped unexpectedly. Reopen it, then try aga
  * @param {{getContext(): any | null, isPending(): boolean, consume?(context: any): void}} [contextControls]
  * @param {{
  *   onOutcome?: (outcome: Outcome) => void,
- *   onConversationId?(id: string | null): void,
+ *   onConversationId?(id: string | null, providerId?: string): void,
+ *   onConversationLoaded?(conversation: any | null): void,
+ *   getProviderId?(): string,
  *   onSaved?(): void,
  *   onRequestStarted?(): void,
+ *   onRequestEnded?(): void,
  *   renderMessage?(body: HTMLElement, text: string): void,
  *   renderAnswer?(answer: HTMLElement, text: string): Promise<void>,
  *   storageChanges?: {addListener(callback: (changes: any, area: string) => void): void}
@@ -72,6 +75,8 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
   let viewGeneration = 0;
   let loadPending = false;
   let submittedText = "";
+  /** The provider the question in flight was sent to. @type {string | undefined} */
+  let submittedProvider;
   /** @type {any} */
   let submittedContext = null;
   /** @type {{text: string, conversationId: string | null} | null} */
@@ -121,6 +126,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
       const nextConversationId = result.value.id;
       if (!preserveRetry || conversationId !== nextConversationId) clearRetry();
       conversationId = nextConversationId;
+      options.onConversationLoaded?.(result.value);
       renderHistory(result.value.messages);
       clearAnswer();
       options.onConversationId?.(conversationId);
@@ -202,6 +208,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
     history?.replaceChildren();
     clearAnswer();
     options.onConversationId?.(null);
+    options.onConversationLoaded?.(null);
     setStatus(message, state);
     hideControl(cancel);
     hideControl(retry);
@@ -288,6 +295,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
     active = port;
     ++viewGeneration;
     submittedText = text;
+    submittedProvider = options.getProviderId?.();
     submittedContext = contextControls?.getContext();
     lastAttempt = { text, conversationId };
     requestStartedAt = globalThis.performance?.now?.() ?? 0;
@@ -320,6 +328,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
       const context = submittedContext;
       port.postMessage({
         type: "ask", text,
+        ...(submittedProvider ? { provider_id: submittedProvider } : {}),
         ...(history && conversationId ? { conversation_id: conversationId } : {}),
         ...(attempt && conversationId ? { retry: true } : {}),
         ...(context ? { context } : {})
@@ -341,7 +350,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
         if (history && typeof event.payload?.conversation_id === "string") {
           conversationId = event.payload.conversation_id;
           if (lastAttempt) lastAttempt.conversationId = conversationId;
-          options.onConversationId?.(conversationId);
+          options.onConversationId?.(conversationId, submittedProvider);
         }
         break;
       case "response.started":
@@ -411,6 +420,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
   function finish(port, message, state, kind = null, reload = true, retryable = false) {
     active = null;
     port.disconnect();
+    options.onRequestEnded?.();
     setBusy(false);
     hideControl(cancel);
     if (retry) {

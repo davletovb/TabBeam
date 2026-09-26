@@ -2,6 +2,7 @@ import { bindAskForm } from "./ask-form.js";
 import { bindContextControls } from "./context-controls.js";
 import { preloadMenuContext } from "./menu-preload.js";
 import { bindProviderState } from "./provider-state.js";
+import { bindProviderSelector } from "../shared/provider-selector.js";
 import { bindSuggestions } from "./suggestions.js";
 import { conversationToResume, rememberConversation } from "./session.js";
 import { CONVERSATIONS_KEY } from "../background/conversation-store.js";
@@ -55,7 +56,23 @@ const providerState = bindProviderState(
   requireElement("#provider-state", HTMLElement),
   chrome.runtime,
   {},
-  { setupLink: requireElement("#companion-setup", HTMLElement) }
+  { setupLink: requireElement("#companion-setup", HTMLElement), checkOnOpen: false }
+);
+const providerSelector = bindProviderSelector(
+  requireElement("#provider-select", HTMLSelectElement),
+  chrome.runtime,
+  chrome.storage.local,
+  {
+    onChange(selection) {
+      providerState.follow(selection);
+      const { label, status, providerChanged } = selection;
+      const pageContext = status?.capabilities?.page_context;
+      // Until a provider's status says otherwise, the host decides: a
+      // provider change never keeps the previous provider's answer.
+      if (pageContext === false) contextControls.setSupported(false, label);
+      else if (pageContext === true || providerChanged) contextControls.setSupported(true, label);
+    }
+  }
 );
 const view = bindAskForm(
   {
@@ -72,7 +89,14 @@ const view = bindAskForm(
   contextControls,
   {
     onOutcome: (outcome) => providerState.update(outcome),
-    onConversationId(id) {
+    getProviderId: () => providerSelector.getProviderId(),
+    onConversationLoaded(conversation) {
+      if (conversation?.provider_id) providerSelector.lock(conversation.provider_id);
+      else providerSelector.unlock();
+    },
+    onConversationId(id, providerId) {
+      // Locked to the provider the question went to, not whatever is shown.
+      if (id) providerSelector.lock(providerId ?? providerSelector.getProviderId());
       fullView.disabled = !id;
       remember(id);
       historyList.render();
@@ -81,7 +105,11 @@ const view = bindAskForm(
       remember(view.getConversationId());
       void refreshLists();
     },
-    onRequestStarted() { interacted = true; },
+    onRequestStarted() {
+      interacted = true;
+      providerSelector.hold(true);
+    },
+    onRequestEnded() { providerSelector.hold(false); },
     renderMessage: renderMarkdown,
     renderAnswer: createStreamReveal({
       render: (element, text) => renderMarkdown(element, text, { interactive: false }),

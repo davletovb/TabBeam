@@ -152,17 +152,17 @@ Command-line errors, such as a usage error or an invalid `--print-manifest` ID, 
 
 ## Providers
 
-Provider support is four layers, each with its own tests: the adapter contract the request loop drives (PRO-01), the adapters behind it (the Codex adapter is PRO-02 to PRO-04), the stream manager that reads provider output as lines (NAT-05), and the process manager that runs provider processes (NAT-04).
+Provider support is four layers, each with its own tests: the normalized adapter contract the request loop drives (PRO-01/PRO-07), the Codex and Claude adapters behind it, the stream manager that reads provider output as lines (NAT-05), and the process manager that runs provider processes (NAT-04).
 
 ### Adapter contract
 
-`host/src/providers/mod.rs` defines the contract. It stays provisional until a second real provider works (framework §10.1).
+`host/src/providers/mod.rs` defines the contract. PRO-07 reconciles it from the two working adapters: Codex and Claude. The shared surface contains only behaviors both can express; differences such as browser-context support remain capability values rather than provider-specific methods.
 
 - A `Provider` has an ID, which requests name, and `Timeouts`: how long a request may take to start answering, how long it may then go without progress, and how long a stopped request's process gets to exit.
 - `status()` and `send(request)` start an `Exchange`: a state machine the request loop drives. `next(deadline)` returns the next `Update`, or `None` once the deadline passes, and never blocks longer, so one slow provider can't hold up other requests. Output that keeps arriving without an update can keep it working at most `BUSY_LIMIT` (5 ms) past the deadline, so a flooding provider can't either.
 - Updates are in protocol terms: `ConversationCreated`, `Started`, `Delta`, `Status`, and `Activity` (progress with nothing to show, which counts for the idle timeout), then one terminal update, `Completed`, `Failed`, or `Stopped`. Command lines, output formats, and provider session IDs stay inside the adapter.
 - `cancel(grace)` stops the work. The exchange then ends with `Stopped`, or with the terminal update it had already reached, and kills any process still running after `grace`.
-- `Providers::installed()` is the registry of an installed host: `fake` and `codex`, which `provider.status` without a provider ID reports in that order. `Providers::scaffold()` holds only `fake`, which starts no processes, for fuzzing and protocol tests.
+- `Providers::installed()` is the registry of an installed host: `fake`, `codex`, and `claude`. `provider.status` can query either real adapter through the same request shape. `Providers::scaffold()` holds only `fake`, which starts no processes, for fuzzing and protocol tests.
 
 ### Codex
 
@@ -211,6 +211,29 @@ PERVUE_LIVE_CODEX=1 cargo test -p pervue-host --test live_codex -- --nocapture
 ```
 
 Unset, as in CI's usual runs, the test passes at once. Set to `1`, it is skipped, and passes, when Codex isn't installed or isn't signed in. Set to `required`, those fail it instead. Before printing anything, it checks the events and the host's diagnostics for the values of `OPENAI_API_KEY` and `CODEX_API_KEY` and for anything shaped like an API key. The **Live Codex smoke test** workflow (`.github/workflows/live-codex.yml`) runs it only when started by hand: with a repository secret `OPENAI_API_KEY`, Codex signs in with it, reading it on stdin, and the test runs with `PERVUE_LIVE_CODEX=required`; without the secret, the test is skipped.
+
+### Claude
+
+`host/src/providers/claude/` is the Claude Code CLI adapter (PRO-05/06).
+
+- **Discovery.** Claude uses the same platform-controlled `SearchPath` rules as Codex, but searches for the fixed executable name `claude`. No request or webpage can choose an executable path.
+- **Status.** `provider.status` runs `claude auth status` and uses only its exit status: 0 means authenticated, 1 unauthenticated, and anything else is unknown. stdout/stderr are discarded because the command can identify the account.
+- **Requests.** Pervue runs Claude in non-interactive print mode with `--output-format stream-json --input-format stream-json --verbose --include-partial-messages --permission-mode default --tools "" --strict-mcp-config --disallowedTools "mcp__*"`, so no built-in tools run and none of the user's MCP servers load. The user prompt is a structured JSON user message on stdin, never an argv value. The process runs in its own private empty `claude-workspace`, using the same workspace trust checks as Codex, and automatic updating is disabled while Pervue owns the process.
+- **Answers.** `stream_event` text deltas become `response.delta`; separate assistant messages are separated by a blank line. If a compatible Claude build produces no partial text, the final `result.result` is used as a fallback answer. Unknown progress events remain provider-neutral `Activity` updates. After a successful `result`, Claude gets a short finish grace to shut down, even if it keeps writing output; a lingering process is then stopped without turning the completed answer into a timeout.
+- **Conversations.** Claude's `system/init` session ID stays inside the adapter. Pervue exposes an opaque `conv_…` ID and resumes the mapped Claude session with `--resume`. The conversation→session mapping is persisted in Pervue's user-data directory and recovered by a fresh host; with no user-data directory it is kept in memory for the host's lifetime. A mapping is rewritten only when Claude reports a different session, and a failed rewrite after an answer has streamed doesn't fail that answer. If the mapping is missing and bounded dialogue history is available, the adapter starts a fresh Claude session under a new conversation. If Claude says the mapped session no longer exists (in its `result`, or on stderr before `init`), the adapter drops the stale mapping and, with history, retries once as a fresh Claude session under the same conversation ID; without history the request fails as `UNKNOWN_CONVERSATION`. Any other failure of a resumed run keeps the mapping, so a crash or a rejected flag never discards the native session.
+- **Cancellation and failures.** Cancellation uses the shared process/stream manager. Authentication, rate-limit, process-exit, malformed-output, and availability failures map into the same normalized error vocabulary as Codex.
+- **Capabilities.** `streaming`, `continuation`, and `cancellation` are `true`; `web_search` is `"unknown"`; `page_context`, `attachments`, and `model_selection` are `false`. Browser context is intentionally not sent to Claude yet, so the capability-aware extension disables those controls when Claude is selected rather than silently dropping context.
+
+`test_provider/tests/claude_adapter.rs` runs the adapter against a fake `claude`, and `test_provider/tests/provider_contract.rs` runs the same provider-neutral status/ask/continue contract against both Codex and Claude (TST-10).
+
+The opt-in live smoke test exercises the built host against the installed Claude CLI:
+
+```bash
+cd native
+PERVUE_LIVE_CLAUDE=1 cargo test -p pervue-host --test live_claude -- --nocapture
+```
+
+Set `PERVUE_LIVE_CLAUDE=required` when Claude is expected to be installed and authenticated.
 
 ### Stream manager
 

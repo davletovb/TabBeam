@@ -1,21 +1,9 @@
-//! The Codex CLI adapter: discovery and sign-in status (PRO-02), requests and
-//! streaming (PRO-03), and cancellation, timeouts, and failures (PRO-04).
+//! Claude Code CLI adapter (PRO-05/06).
 //!
-//! A request runs `codex exec --json` in a read-only sandbox, from an empty
-//! working directory, with the question on stdin. Its JSON lines become
-//! protocol updates (see [`output`]). Codex's own session IDs stay inside the
-//! adapter: each conversation gets a Pervue ID, mapped to the Codex thread it
-//! continues with `codex exec resume`. The provider-specific mapping is kept
-//! in private native files, so a new host can resume a stored conversation.
-//!
-//! Before each request, `codex login status` checks the sign-in, because a
-//! signed-out `codex exec` retries the network instead of failing. Only its
-//! exit status is read: its output names the account and a masked key.
-//!
-//! Codex runs in a workspace nobody but its user can change ([`workspace`]),
-//! with a minimal environment (SEC-02): the variables every provider gets
-//! ([`environment::INHERITED`]), Codex's own settings, and a `PATH` that
-//! starts with Codex's directory.
+//! Pervue discovers the fixed `claude` executable through the shared provider
+//! search path, checks `claude auth status`, and drives print mode through
+//! stream-json on stdin/stdout. Provider session IDs remain private to this
+//! adapter; the host and extension see only opaque Pervue conversation IDs.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
@@ -26,6 +14,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime};
 
+use super::codex::workspace;
 use super::discovery::SearchPath;
 use super::environment;
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
@@ -37,37 +26,36 @@ use crate::protocol::events::{
 use crate::stream::{BUSY_LIMIT, LineStream, Output};
 
 pub mod output;
-pub(crate) mod workspace;
 
 use output::Line;
 
-pub const ID: &str = "codex";
+pub const ID: &str = "claude";
+const EXECUTABLE: &str = "claude";
 
-/// The executable the adapter looks for.
-const EXECUTABLE: &str = "codex";
+/// Non-secret Claude/Node configuration needed to reproduce a working CLI
+/// launch from Chrome's much smaller environment. Proxies are already in
+/// [`environment::INHERITED`]; Node reads extra CA certificates only from
+/// `NODE_EXTRA_CA_CERTS`.
+pub const CLAUDE_VARIABLES: &[&str] = &[
+    "CLAUDE_CONFIG_DIR",
+    "CLAUDE_CODE_GIT_BASH_PATH",
+    "NODE_EXTRA_CA_CERTS",
+];
 
-/// Codex's own settings, passed on when set: where it keeps its settings,
-/// sign-in, and state, and an extra CA certificate for its connections.
-pub const CODEX_VARIABLES: &[&str] = &["CODEX_HOME", "CODEX_SQLITE_HOME", "CODEX_CA_CERTIFICATE"];
+/// How much of Claude's stderr a turn keeps, to tell a missing session apart
+/// from any other early exit. Never logged or forwarded.
+const STDERR_TAIL_BYTES: usize = 4096;
 
-/// Longest line of Codex output. One line holds a whole answer, which can be
-/// long; a line past this ends the request instead of growing memory.
 pub const MAX_LINE_BYTES: usize = 8 * 1024 * 1024;
 
-/// The adapter's time limits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
-    /// The host's limits for each request.
     pub timeouts: Timeouts,
-    /// How long `codex login status` may take before the sign-in counts as
-    /// unknown.
     pub probe: Duration,
-    /// How long Codex gets to save its session and exit after the turn ended.
+    /// How long Claude may linger after its terminal `result` event.
     pub finish: Duration,
 }
 
-/// Codex answers without token deltas, so a long silence can be a model
-/// thinking; five minutes without any progress means it is stuck.
 pub const LIMITS: Limits = Limits {
     timeouts: Timeouts {
         start: Duration::from_secs(60),
@@ -78,14 +66,13 @@ pub const LIMITS: Limits = Limits {
     finish: Duration::from_secs(5),
 };
 
-/// What this adapter supports. Answers arrive a message at a time, not token
-/// by token. Browser context is framed as untrusted reference data in the
-/// prompt; attachments and model selection are not passed to Codex yet.
+/// Claude's first proven adapter surface. Page context is deliberately
+/// unsupported until its own untrusted-context/tool boundary is implemented.
 pub const CAPABILITIES: Capabilities = Capabilities {
     streaming: Capability::Supported,
     continuation: Capability::Supported,
     web_search: Capability::Unknown,
-    page_context: Capability::Supported,
+    page_context: Capability::Unsupported,
     attachments: Capability::Unsupported,
     model_selection: Capability::Unsupported,
     cancellation: Capability::Supported,
@@ -94,21 +81,14 @@ pub const CAPABILITIES: Capabilities = Capabilities {
 const NOT_INSTALLED: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::ProviderNotFound,
     reason: "EXECUTABLE_NOT_FOUND",
-    message: "Codex isn't installed. Install the Codex CLI, then try again.",
+    message: "Claude isn't installed. Install Claude Code, then try again.",
     retryable: false,
 };
 
 const NOT_SIGNED_IN: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::ProviderNotAuthenticated,
     reason: "LOGIN_REQUIRED",
-    message: "Codex isn't signed in. Run \"codex login\" in a terminal, then try again.",
-    retryable: false,
-};
-
-const CONTEXT_TOOLS_ENABLED: ErrorBody<'static> = ErrorBody {
-    code: ErrorCode::InvalidRequest,
-    reason: "PAGE_CONTEXT_TOOLS_ENABLED",
-    message: "Pervue won't send browser context to Codex while user-configured MCP servers are enabled. Disable them or choose No context.",
+    message: "Claude isn't signed in. Run \"claude auth login\" in a terminal, then try again.",
     retryable: false,
 };
 
@@ -122,48 +102,51 @@ const UNKNOWN_CONVERSATION: ErrorBody<'static> = ErrorBody {
 const START_FAILED: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROVIDER_UNAVAILABLE",
-    message: "Codex couldn't start. Reinstall the Codex CLI, then try again.",
+    message: "Claude couldn't start. Reinstall Claude Code, then try again.",
     retryable: false,
 };
 
 const NO_WORKSPACE: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "WORKSPACE_UNAVAILABLE",
-    message: "Pervue couldn't prepare a private folder for Codex. Make sure your cache folder exists and only you can change it, then try again.",
+    message: "Pervue couldn't prepare a private folder for Claude. Check your cache folder and try again.",
     retryable: false,
 };
 
 const PROCESS_EXITED: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROCESS_EXITED",
-    message: "Codex stopped unexpectedly. Try again.",
+    message: "Claude stopped unexpectedly. Try again.",
     retryable: true,
 };
 
 const MALFORMED_OUTPUT: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "MALFORMED_PROVIDER_OUTPUT",
-    message: "Codex answered in a way Pervue doesn't understand. Update Codex and Pervue, then try again.",
+    message: "Claude answered in a way Pervue doesn't understand. Update Claude Code and Pervue, then try again.",
+    retryable: false,
+};
+
+const SESSION_GONE: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::InvalidRequest,
+    reason: "UNKNOWN_CONVERSATION",
+    message: "Claude's saved session no longer exists. Start a new conversation.",
     retryable: false,
 };
 
 const SESSION_STORE_FAILED: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::InternalError,
     reason: "SESSION_STORE_FAILED",
-    message: "Codex's conversation could not be saved. Check available disk space and try again.",
+    message: "Claude's conversation could not be saved. Check available disk space and try again.",
     retryable: true,
 };
 
-/// Pervue conversation IDs mapped to the Codex threads they continue.
 type Conversations = Rc<RefCell<HashMap<String, String>>>;
 
-/// How Codex processes start: where they run, and what environment they get.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Launch {
     work_dir: PathBuf,
-    /// Variables copied from the host's environment.
     inherited: Vec<(OsString, OsString)>,
-    /// The host's `PATH`.
     path: Option<OsString>,
 }
 
@@ -172,18 +155,15 @@ impl Launch {
         let path = environment::lookup(&host, "PATH").map(OsStr::to_os_string);
         Self {
             work_dir,
-            inherited: environment::inherit(host, CODEX_VARIABLES),
+            inherited: environment::inherit(host, CLAUDE_VARIABLES),
             path,
         }
     }
 
-    /// The workspace, created if needed and checked before every launch:
-    /// the path Codex runs in and is pointed at.
     fn workspace(&self) -> std::io::Result<PathBuf> {
         workspace::prepare(&self.work_dir)
     }
 
-    /// `codex` with `args`, in `workspace`, with only its environment.
     fn command<I>(&self, workspace: &Path, executable: &Path, args: I) -> ProcessSpec
     where
         I: IntoIterator,
@@ -192,35 +172,33 @@ impl Launch {
         ProcessSpec::new(executable)
             .args(args)
             .envs(self.inherited.iter().cloned())
+            .env("DISABLE_AUTOUPDATER", "1")
             .env("PATH", search_path_for(executable, self.path.as_deref()))
             .current_dir(workspace)
     }
 }
 
-/// The Codex CLI adapter.
-pub struct Codex {
+pub struct Claude {
     search: SearchPath,
     launch: Rc<Launch>,
+    /// Where conversation-to-session mappings are kept across host restarts.
+    /// Without one (no data directory), they are kept in memory only.
     session_dir: Option<PathBuf>,
     limits: Limits,
     conversations: Conversations,
 }
 
-impl Codex {
-    /// The adapter of an installed host: the platform lookup rules, an empty
-    /// workspace in the user's own cache directory, and conversation mappings
-    /// in the user's data directory.
+impl Claude {
     pub fn installed() -> Self {
         let host: Vec<_> = std::env::vars_os().collect();
-        let mut codex = Self::new(SearchPath::from_env(), workspace::default(&host));
-        codex.session_dir = installed_session_dir();
-        codex
+        let mut claude = Self::new(
+            SearchPath::from_env(),
+            workspace::default_for(&host, "claude"),
+        );
+        claude.session_dir = installed_session_dir();
+        claude
     }
 
-    /// Looks for `codex` in `search`, and runs it in `work_dir`, which it
-    /// creates when needed and refuses if other users could change it, with
-    /// variables from the host's environment. Conversation mappings go
-    /// beside `work_dir`, never inside it, in `<work_dir>.sessions`.
     pub fn new(search: SearchPath, work_dir: PathBuf) -> Self {
         Self {
             search,
@@ -231,8 +209,6 @@ impl Codex {
         }
     }
 
-    /// Takes the variables Codex gets from `host` instead of the host's own
-    /// environment.
     #[must_use]
     pub fn with_environment<I>(mut self, host: I) -> Self
     where
@@ -245,17 +221,23 @@ impl Codex {
         self
     }
 
-    /// Replaces the default time limits.
     #[must_use]
     pub fn with_limits(mut self, limits: Limits) -> Self {
         self.limits = limits;
         self
     }
 
-    /// Overrides the native mapping directory, for isolated host tests.
     #[must_use]
     pub fn with_session_dir(mut self, session_dir: PathBuf) -> Self {
         self.session_dir = Some(session_dir);
+        self
+    }
+
+    /// Keeps conversation mappings in memory only, as when the host has no
+    /// data directory.
+    #[must_use]
+    pub fn without_session_dir(mut self) -> Self {
+        self.session_dir = None;
         self
     }
 
@@ -264,17 +246,17 @@ impl Codex {
     }
 }
 
-impl Provider for Codex {
+impl Provider for Claude {
     fn id(&self) -> &str {
         ID
     }
 
-    fn capabilities(&self) -> Capabilities {
-        CAPABILITIES
-    }
-
     fn timeouts(&self) -> Timeouts {
         self.limits.timeouts
+    }
+
+    fn capabilities(&self) -> Capabilities {
+        CAPABILITIES
     }
 
     fn status(&self) -> Box<dyn Exchange> {
@@ -300,41 +282,32 @@ impl Provider for Codex {
         let Some(executable) = self.executable() else {
             return Box::new(Scripted::failed(NOT_INSTALLED));
         };
-        let context_turn = request.context.is_some();
-        if context_turn && !context_configuration_is_safe(&self.launch) {
-            return Box::new(Scripted::failed(CONTEXT_TOOLS_ENABLED));
+        // The host enforces page_context=false before this method is called.
+        if request.context.is_some() {
+            return Box::new(Scripted::failed(MALFORMED_OUTPUT));
         }
 
         let mut conversation_id = request.conversation_id;
         let mut fallback_prompt = (!request.history.is_empty())
-            .then(|| provider_prompt(&request.history, request.context.as_ref(), &request.text));
-        let mut prompt = match request.context.as_ref() {
-            Some(context) => provider_prompt(&[], Some(context), &request.text),
-            None => request.text,
-        };
+            .then(|| provider_prompt(&request.history, None, &request.text));
+        let mut prompt = request.text;
         let resume = match &conversation_id {
             None => None,
-            Some(conversation_id) => match self
-                .conversations
-                .borrow()
-                .get(conversation_id)
-                .cloned()
-                .or_else(|| {
-                    self.session_dir
-                        .as_deref()
-                        .and_then(|dir| read_thread(dir, conversation_id))
-                }) {
-                Some(thread_id) => Some(thread_id),
+            Some(id) => match self.conversations.borrow().get(id).cloned().or_else(|| {
+                self.session_dir
+                    .as_deref()
+                    .and_then(|dir| read_session(dir, id))
+            }) {
+                Some(session) => Some(session),
                 None if !request.history.is_empty() => None,
                 None => return Box::new(Scripted::failed(UNKNOWN_CONVERSATION)),
             },
         };
         if resume.is_none() && !request.history.is_empty() {
-            // If a provider has no native session (or its mapping was lost),
-            // the ordered, bounded dialogue still reaches the new turn.
             prompt = fallback_prompt.take().expect("history is present");
             conversation_id = None;
         }
+
         let mut turn = Turn {
             stage: Stage::Done,
             executable,
@@ -346,12 +319,14 @@ impl Provider for Codex {
             conversation_id,
             conversations: Rc::clone(&self.conversations),
             finish_grace: self.limits.finish,
-            restrict_tools: context_turn,
             queue: VecDeque::new(),
             cancelled: false,
-            thread_id: None,
             started: false,
+            announced: false,
+            rebuilding: false,
+            saw_delta: false,
             messages: 0,
+            break_before_text: false,
             outcome: None,
             finish_by: None,
         };
@@ -362,64 +337,10 @@ impl Provider for Codex {
                     give_up: after(self.limits.probe),
                 };
             }
-            // The sign-in can't be checked; the request itself will tell.
             Err(_) => turn.start(),
         }
         Box::new(turn)
     }
-}
-
-fn context_configuration_is_safe(launch: &Launch) -> bool {
-    let home = environment::lookup(&launch.inherited, "CODEX_HOME")
-        .map(PathBuf::from)
-        .or_else(|| {
-            #[cfg(unix)]
-            {
-                environment::lookup(&launch.inherited, "HOME")
-                    .map(PathBuf::from)
-                    .map(|home| home.join(".codex"))
-            }
-            #[cfg(not(unix))]
-            {
-                environment::lookup(&launch.inherited, "USERPROFILE")
-                    .map(PathBuf::from)
-                    .map(|home| home.join(".codex"))
-            }
-        });
-    let Some(home) = home else {
-        return true;
-    };
-
-    // Plugin caches/install directories and hook files are safe to leave in
-    // place because context turns explicitly disable those Codex features at
-    // invocation time. User-configured MCP servers are different: Codex
-    // exposes them independently of the plugin/apps feature gates, so fail
-    // closed until Pervue can disable each effective server deterministically.
-    let mut configs = vec![home.join("config.toml")];
-    if home.exists() {
-        let Ok(entries) = std::fs::read_dir(&home) else {
-            return false;
-        };
-        configs.extend(
-            entries
-                .filter_map(Result::ok)
-                .map(|entry| entry.path())
-                .filter(|path| {
-                    path.file_name()
-                        .and_then(OsStr::to_str)
-                        .is_some_and(|name| name.ends_with(".config.toml"))
-                }),
-        );
-    }
-    configs.into_iter().all(|path| {
-        if !path.exists() {
-            return true;
-        }
-        let Ok(config) = std::fs::read_to_string(path) else {
-            return false;
-        };
-        !config.to_ascii_lowercase().contains("mcp_servers")
-    })
 }
 
 fn status_update(availability: Availability, authentication: Authentication) -> Update {
@@ -433,10 +354,9 @@ fn status_update(availability: Availability, authentication: Authentication) -> 
     }
 }
 
-/// `codex login status`: exit status 0 means signed in, 1 signed out.
 fn probe(launch: &Launch, executable: &Path) -> std::io::Result<Process> {
     let workspace = launch.workspace()?;
-    let mut process = Process::spawn(&launch.command(&workspace, executable, ["login", "status"]))?;
+    let mut process = Process::spawn(&launch.command(&workspace, executable, ["auth", "status"]))?;
     process.close_stdin();
     Ok(process)
 }
@@ -449,9 +369,6 @@ fn signed_in(exit: &Exit) -> Authentication {
     }
 }
 
-/// The host's `PATH` with the executable's own directory first. npm installs
-/// `codex` as a Node script next to `node`, and a host started by Chrome
-/// inherits a `PATH` that may not include that directory.
 fn search_path_for(executable: &Path, inherited: Option<&OsStr>) -> OsString {
     let dirs = executable
         .parent()
@@ -478,7 +395,7 @@ fn installed_session_dir() -> Option<PathBuf> {
                 .map(|home| PathBuf::from(home).join(".local/share").into_os_string())
         });
     base.map(PathBuf::from)
-        .map(|path| path.join("pervue/codex-sessions"))
+        .map(|path| path.join("pervue/claude-sessions"))
 }
 
 fn session_name(id: &str) -> bool {
@@ -487,7 +404,7 @@ fn session_name(id: &str) -> bool {
         && id[5..].bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-fn read_thread(dir: &Path, id: &str) -> Option<String> {
+fn read_session(dir: &Path, id: &str) -> Option<String> {
     if !session_name(id) {
         return None;
     }
@@ -497,10 +414,16 @@ fn read_thread(dir: &Path, id: &str) -> Option<String> {
         .take(129)
         .read_to_string(&mut content)
         .ok()?;
-    output::is_thread_id(&content).then_some(content)
+    output::is_session_id(&content).then_some(content)
 }
 
-fn save_thread(dir: &Path, id: &str, thread: &str) -> io::Result<()> {
+fn save_session(dir: &Path, id: &str, session: &str) -> io::Result<()> {
+    if !session_name(id) || !output::is_session_id(session) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid session mapping",
+        ));
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;
@@ -512,25 +435,25 @@ fn save_thread(dir: &Path, id: &str, thread: &str) -> io::Result<()> {
 
     let path = dir.join(id);
     let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
+    options.write(true).create(true).truncate(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    let mut file = options.open(&path)?;
-    if let Err(error) = file
-        .write_all(thread.as_bytes())
-        .and_then(|()| file.sync_all())
-    {
-        let _ = std::fs::remove_file(path);
-        return Err(error);
-    }
-    Ok(())
+    let mut file = options.open(path)?;
+    file.write_all(session.as_bytes())?;
+    file.sync_all()
 }
 
-/// A new Pervue conversation ID. It is random so it reveals nothing about the
-/// Codex thread behind it.
+/// Removes a stored mapping, if any. Best effort: a mapping that can't be
+/// removed is still replaced by the next save.
+fn forget_session(dir: &Path, id: &str) {
+    if session_name(id) {
+        let _ = std::fs::remove_file(dir.join(id));
+    }
+}
+
 fn new_conversation_id(conversations: &HashMap<String, String>) -> String {
     loop {
         let id = format!(
@@ -543,7 +466,6 @@ fn new_conversation_id(conversations: &HashMap<String, String>) -> String {
     }
 }
 
-/// The `provider.status` check.
 enum StatusCheck {
     Probing { process: Process, give_up: Instant },
     Done(VecDeque<Update>),
@@ -555,7 +477,6 @@ impl Exchange for StatusCheck {
         loop {
             let authentication = match self {
                 Self::Done(updates) => return updates.pop_front(),
-                // Checked first, so output that keeps coming can't put it off.
                 Self::Probing { process, give_up } if Instant::now() >= *give_up => {
                     process.kill();
                     Authentication::Unknown
@@ -563,7 +484,6 @@ impl Exchange for StatusCheck {
                 Self::Probing { process, give_up } => {
                     match process.next_event(deadline.min(*give_up)) {
                         Some(Event::Exited(exit)) => signed_in(&exit),
-                        // The probe's output names the account: never read.
                         Some(Event::Stdout(_) | Event::Stderr(_)) => {
                             if Instant::now() >= busy_until {
                                 return None;
@@ -587,96 +507,87 @@ impl Exchange for StatusCheck {
     }
 }
 
-/// One `conversation.send`: the sign-in probe, then the `codex exec` turn.
 struct Turn {
     stage: Stage,
     executable: PathBuf,
     launch: Rc<Launch>,
     session_dir: Option<PathBuf>,
     prompt: String,
-    /// Used once if a mapped Codex thread no longer exists before the turn starts.
+    /// Used once when a mapped Claude session is stale.
     fallback_prompt: Option<String>,
-    /// The Codex thread to resume, when continuing a conversation.
     resume: Option<String>,
     conversation_id: Option<String>,
     conversations: Conversations,
     finish_grace: Duration,
-    /// Browser context is untrusted, so context turns run with Codex's
-    /// interactive/tool surfaces disabled.
-    restrict_tools: bool,
-    /// Updates produced but not yet returned.
     queue: VecDeque<Update>,
     cancelled: bool,
-    thread_id: Option<String>,
+    /// This Claude run sent `init`.
     started: bool,
+    /// `Started` went to the host. A history rebuild after that doesn't send
+    /// it again.
+    announced: bool,
+    /// Rerunning from history under the same conversation ID, after Claude
+    /// said the mapped session no longer exists.
+    rebuilding: bool,
+    saw_delta: bool,
     messages: usize,
-    /// How the turn ended, once Codex said so.
+    break_before_text: bool,
     outcome: Option<Result<(), ErrorBody<'static>>>,
-    /// When to stop waiting for Codex to exit after the turn ended.
     finish_by: Option<Instant>,
 }
 
 enum Stage {
-    Probing {
-        process: Process,
-        give_up: Instant,
-    },
+    Probing { process: Process, give_up: Instant },
     Running(LineStream),
-    /// Finished: any process has been dropped, which reaps it.
     Done,
 }
 
 impl Turn {
-    /// Starts `codex exec` and hands it the question.
     fn start(&mut self) {
         let Ok(workspace) = self.launch.workspace() else {
             return self.end(Update::Failed(NO_WORKSPACE));
         };
         let mut args: Vec<OsString> = [
-            "exec",
-            "--json",
-            "--skip-git-repo-check",
-            "--sandbox",
-            "read-only",
+            "-p",
+            "--output-format",
+            "stream-json",
+            "--input-format",
+            "stream-json",
+            "--verbose",
+            "--include-partial-messages",
+            "--permission-mode",
+            "default",
+            // Pervue's Claude adapter is a conversational provider, not an
+            // agent. Disable built-in tools, load none of the user's MCP
+            // servers, and deny MCP tools explicitly as well.
+            "--tools",
+            "",
+            "--strict-mcp-config",
+            "--disallowedTools",
+            "mcp__*",
         ]
         .map(OsString::from)
         .into();
-        if self.restrict_tools {
-            // Page text is attacker-controlled. A context turn is deliberately
-            // answer-only: no local shell/image tools, apps/plugins/hooks,
-            // web search, orchestrator MCP, or subagents. User-configured MCP
-            // servers are refused before this point because they are not all
-            // controlled by those feature gates.
-            for setting in [
-                "features.shell_tool=false",
-                "features.view_image=false",
-                "features.apps=false",
-                "features.plugins=false",
-                "features.hooks=false",
-                "features.multi_agent=false",
-                "features.multi_agent_v2=false",
-                "features.web_search_request=false",
-                "features.web_search_cached=false",
-                "features.standalone_web_search=false",
-                "web_search=\"disabled\"",
-                "orchestrator.mcp.enabled=false",
-            ] {
-                args.extend(["-c".into(), setting.into()]);
+        if let Some(session) = &self.resume {
+            args.extend([OsString::from("--resume"), OsString::from(session)]);
+        }
+        let input = serde_json::json!({
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [{"type": "text", "text": &self.prompt}]
             }
-        }
-        args.push("-C".into());
-        args.push(workspace.clone().into());
-        if let Some(thread_id) = &self.resume {
-            args.extend(["resume", thread_id].map(OsString::from));
-        }
-        args.push("-".into());
+        })
+        .to_string()
+            + "\n";
         match Process::spawn(&self.launch.command(&workspace, &self.executable, args)) {
             Ok(mut process) => {
-                // The question goes on stdin: it can exceed the size one
-                // argument may have, and no shell ever sees it.
-                let _ = process.write(std::mem::take(&mut self.prompt).as_bytes());
+                let _ = process.write(input.as_bytes());
                 process.close_stdin();
-                self.stage = Stage::Running(LineStream::new(process, MAX_LINE_BYTES));
+                self.prompt.clear();
+                self.stage = Stage::Running(
+                    LineStream::new(process, MAX_LINE_BYTES).keeping_stderr_tail(STDERR_TAIL_BYTES),
+                );
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 self.end(Update::Failed(NOT_INSTALLED))
@@ -685,74 +596,139 @@ impl Turn {
         }
     }
 
-    /// Queues the terminal update and drops any process, which reaps it.
     fn end(&mut self, update: Update) {
         self.queue.push_back(update);
         self.stage = Stage::Done;
     }
 
-    /// Acts on one line of Codex output.
     fn on_line(&mut self, line: &str) {
         if self.cancelled || self.outcome.is_some() {
             return;
         }
         match output::parse(line) {
             Err(_) => self.end(Update::Failed(MALFORMED_OUTPUT)),
-            Ok(Line::ThreadStarted(thread_id)) => self.thread_id = Some(thread_id),
-            Ok(Line::TurnStarted) => self.turn_started(),
-            Ok(Line::AgentMessage(text)) => {
+            Ok(Line::Init(session)) => {
+                if self.started {
+                    return self.end(Update::Failed(MALFORMED_OUTPUT));
+                }
+                self.started = true;
+                let conversation = match self.conversation_id.clone() {
+                    // A rebuild replaces the stale session behind the same
+                    // conversation ID, so the extension sees no new one.
+                    Some(id) if self.rebuilding => {
+                        if self.remember(&id, session).is_err() {
+                            return self.end(Update::Failed(SESSION_STORE_FAILED));
+                        }
+                        id
+                    }
+                    Some(id) => id,
+                    None => {
+                        let id = new_conversation_id(&self.conversations.borrow());
+                        if self.remember(&id, session).is_err() {
+                            return self.end(Update::Failed(SESSION_STORE_FAILED));
+                        }
+                        self.conversation_id = Some(id.clone());
+                        self.queue
+                            .push_back(Update::ConversationCreated(id.clone()));
+                        id
+                    }
+                };
+                if !self.announced {
+                    self.announced = true;
+                    self.queue.push_back(Update::Started {
+                        conversation_id: Some(conversation),
+                    });
+                }
+            }
+            Ok(Line::MessageStart) => {
+                if !self.started {
+                    return self.end(Update::Failed(MALFORMED_OUTPUT));
+                }
+                if self.messages > 0 {
+                    self.break_before_text = true;
+                }
+                self.messages += 1;
+            }
+            Ok(Line::TextDelta(mut text)) => {
                 if !self.started {
                     return self.end(Update::Failed(MALFORMED_OUTPUT));
                 }
                 if !text.is_empty() {
-                    // Later messages continue the answer after a blank line.
-                    let text = if self.messages == 0 {
-                        text
-                    } else {
-                        format!("\n\n{text}")
-                    };
-                    self.messages += 1;
+                    if self.messages == 0 {
+                        self.messages = 1;
+                    }
+                    if self.break_before_text && self.saw_delta {
+                        text.insert_str(0, "\n\n");
+                    }
+                    self.break_before_text = false;
+                    self.saw_delta = true;
                     self.queue.push_back(Update::Delta(text));
                 }
             }
             Ok(Line::Progress) => self.queue.push_back(Update::Activity),
-            Ok(Line::TurnCompleted) if !self.started => self.end(Update::Failed(MALFORMED_OUTPUT)),
-            Ok(Line::TurnCompleted) => self.turn_ended(Ok(())),
-            Ok(Line::TurnFailed(message)) => self.turn_ended(Err(output::turn_failure(&message))),
+            Ok(Line::ResultSuccess { session_id, text }) => {
+                if !self.started {
+                    return self.end(Update::Failed(MALFORMED_OUTPUT));
+                }
+                if let (Some(session), Some(conversation)) =
+                    (session_id, self.conversation_id.clone())
+                {
+                    self.follow_session(&conversation, session);
+                }
+                if !self.saw_delta && !text.is_empty() {
+                    self.saw_delta = true;
+                    self.queue.push_back(Update::Delta(text));
+                }
+                self.turn_ended(Ok(()));
+            }
+            Ok(Line::ResultFailed(error)) => self.turn_ended(Err(error)),
             Ok(Line::Ignored) => {}
         }
     }
 
-    fn turn_started(&mut self) {
-        if self.started {
+    /// Records `session` for `conversation`: on disk when there is a session
+    /// directory, and in memory.
+    fn remember(&self, conversation: &str, session: String) -> io::Result<()> {
+        if let Some(dir) = &self.session_dir {
+            save_session(dir, conversation, &session)?;
+        }
+        self.conversations
+            .borrow_mut()
+            .insert(conversation.to_owned(), session);
+        Ok(())
+    }
+
+    /// Follows the session a finished turn reports, which a resumed or forked
+    /// session may have changed. The answer is already out, so a failed write
+    /// doesn't fail the turn: the new session is kept in memory, and the stale
+    /// mapping is dropped so a restarted host rebuilds from history instead of
+    /// resuming the wrong session.
+    fn follow_session(&self, conversation: &str, session: String) {
+        let current = self
+            .conversations
+            .borrow()
+            .get(conversation)
+            .cloned()
+            .or_else(|| self.resume.clone());
+        if current.as_deref() == Some(session.as_str()) {
             return;
         }
-        let Some(thread_id) = self.thread_id.clone() else {
-            return self.end(Update::Failed(MALFORMED_OUTPUT));
-        };
-        self.started = true;
-        let conversation_id = match &self.conversation_id {
-            Some(conversation_id) => conversation_id.clone(),
-            None => {
-                let conversation_id = new_conversation_id(&self.conversations.borrow());
-                if self
-                    .session_dir
-                    .as_deref()
-                    .is_none_or(|dir| save_thread(dir, &conversation_id, &thread_id).is_err())
-                {
-                    return self.end(Update::Failed(SESSION_STORE_FAILED));
-                }
-                self.conversations
-                    .borrow_mut()
-                    .insert(conversation_id.clone(), thread_id);
-                self.queue
-                    .push_back(Update::ConversationCreated(conversation_id.clone()));
-                conversation_id
+        if self.remember(conversation, session.clone()).is_err() {
+            if let Some(dir) = &self.session_dir {
+                forget_session(dir, conversation);
             }
-        };
-        self.queue.push_back(Update::Started {
-            conversation_id: Some(conversation_id),
-        });
+            self.conversations
+                .borrow_mut()
+                .insert(conversation.to_owned(), session);
+        }
+    }
+
+    /// Drops a mapping Claude says no longer exists.
+    fn forget(&self, conversation: &str) {
+        self.conversations.borrow_mut().remove(conversation);
+        if let Some(dir) = &self.session_dir {
+            forget_session(dir, conversation);
+        }
     }
 
     fn turn_ended(&mut self, outcome: Result<(), ErrorBody<'static>>) {
@@ -760,12 +736,55 @@ impl Turn {
         self.finish_by = Some(after(self.finish_grace));
     }
 
-    /// The terminal update once the process has exited.
+    /// Reruns the turn from bounded history under the same conversation ID,
+    /// once, after Claude said the mapped session no longer exists.
+    fn rebuild_from_history(&mut self) {
+        self.resume = None;
+        self.rebuilding = true;
+        self.outcome = None;
+        self.finish_by = None;
+        self.started = false;
+        self.saw_delta = false;
+        self.messages = 0;
+        self.break_before_text = false;
+        self.prompt = self
+            .fallback_prompt
+            .take()
+            .expect("checked before fallback");
+        self.start();
+    }
+
+    /// Claude exited. `session_gone` says it reported, on stderr before `init`,
+    /// that the session it was asked to resume doesn't exist.
+    fn ended(&mut self, exit: &Exit, session_gone: bool) {
+        if self.cancelled {
+            return self.end(Update::Stopped);
+        }
+        let stale = self.resume.is_some()
+            && !self.saw_delta
+            && match self.outcome {
+                Some(Err(error)) => error.reason == "UNKNOWN_CONVERSATION",
+                Some(Ok(())) => false,
+                None => session_gone && exit.status.is_some_and(|status| !status.success()),
+            };
+        if !stale {
+            let update = self.exited(exit);
+            return self.end(update);
+        }
+        if let Some(conversation) = self.conversation_id.clone() {
+            self.forget(&conversation);
+        }
+        if self.fallback_prompt.is_some() {
+            self.rebuild_from_history();
+        } else {
+            self.end(Update::Failed(SESSION_GONE));
+        }
+    }
+
     fn exited(&mut self, exit: &Exit) -> Update {
         match self.outcome.take() {
             Some(Ok(())) => Update::Completed,
             Some(Err(error)) => Update::Failed(error),
-            // The process ended without finishing the turn.
             None if exit.status.is_some_and(|status| status.success()) => {
                 Update::Failed(MALFORMED_OUTPUT)
             }
@@ -781,14 +800,11 @@ impl Exchange for Turn {
             if let Some(update) = self.queue.pop_front() {
                 return Some(update);
             }
-            // Output that keeps coming without an update, such as lines the
-            // adapter ignores, gives the caller its turn back.
             if Instant::now() >= busy_until {
                 return None;
             }
             match &mut self.stage {
                 Stage::Done => return None,
-                // Checked first, so output that keeps coming can't put it off.
                 Stage::Probing { process, give_up } if Instant::now() >= *give_up => {
                     process.kill();
                     self.start();
@@ -801,40 +817,32 @@ impl Exchange for Turn {
                             }
                             _ => self.start(),
                         },
-                        // The probe's output names the account: never read.
                         Some(Event::Stdout(_) | Event::Stderr(_)) => {}
-                        // Its time is up: the arm above stops it.
                         None if Instant::now() >= *give_up => {}
                         None => return None,
                     }
                 }
                 Stage::Running(stream) => {
+                    // Checked first, so output that keeps coming after the
+                    // turn ended can't put it off.
+                    if self
+                        .finish_by
+                        .is_some_and(|finish_by| Instant::now() >= finish_by)
+                    {
+                        self.finish_by = None;
+                        stream.cancel(Duration::ZERO);
+                    }
                     let wait = self
                         .finish_by
                         .map_or(deadline, |finish_by| deadline.min(finish_by));
                     match stream.next(wait) {
                         Some(Output::Line(line)) => self.on_line(&line),
-                        Some(Output::Final(_))
-                            if !self.cancelled
-                                && !self.started
-                                && self.resume.is_some()
-                                && self.fallback_prompt.is_some() =>
-                        {
-                            self.resume = None;
-                            self.conversation_id = None;
-                            self.thread_id = None;
-                            self.outcome = None;
-                            self.finish_by = None;
-                            self.prompt = self.fallback_prompt.take().expect("checked above");
-                            self.start();
-                        }
                         Some(Output::Final(exit) | Output::Stopped(exit)) => {
-                            let update = if self.cancelled {
-                                Update::Stopped
-                            } else {
-                                self.exited(&exit)
-                            };
-                            self.end(update);
+                            let session_gone = !self.started
+                                && output::names_unknown_session(&String::from_utf8_lossy(
+                                    stream.stderr_tail(),
+                                ));
+                            self.ended(&exit, session_gone);
                         }
                         Some(Output::Error(_)) => {
                             let update = if self.cancelled {
@@ -844,14 +852,10 @@ impl Exchange for Turn {
                             };
                             self.end(update);
                         }
-                        None => match self.finish_by {
-                            // The turn is over but Codex hasn't exited.
-                            Some(finish_by) if Instant::now() >= finish_by => {
-                                self.finish_by = None;
-                                stream.cancel(Duration::ZERO);
-                            }
-                            _ => return None,
-                        },
+                        None if self
+                            .finish_by
+                            .is_some_and(|finish_by| Instant::now() >= finish_by) => {}
+                        None => return None,
                     }
                 }
             }
@@ -867,33 +871,9 @@ impl Exchange for Turn {
         self.queue.clear();
         match &mut self.stage {
             Stage::Running(stream) => stream.cancel(grace),
-            // The probe is harmless to kill, and nothing has started.
             Stage::Probing { .. } => self.end(Update::Stopped),
             Stage::Done if finished => self.queue.push_back(Update::Stopped),
             Stage::Done => {}
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn codex_s_directory_comes_first_on_its_path() {
-        let (codex, inherited) = if cfg!(unix) {
-            ("/opt/codex/bin/codex", "/usr/bin:/bin")
-        } else {
-            (r"C:\npm\codex.cmd", r"C:\Windows;C:\bin")
-        };
-        let path = search_path_for(Path::new(codex), Some(OsStr::new(inherited)));
-        let dirs: Vec<PathBuf> = std::env::split_paths(&path).collect();
-        assert_eq!(dirs[0], Path::new(codex).parent().unwrap());
-        assert_eq!(dirs.len(), 3);
-        let alone = search_path_for(Path::new(codex), None);
-        assert_eq!(
-            std::env::split_paths(&alone).collect::<Vec<_>>(),
-            [Path::new(codex).parent().unwrap()]
-        );
     }
 }
