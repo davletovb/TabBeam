@@ -1,7 +1,7 @@
 //! Provider adapters (PRO-01).
 //!
-//! The adapter contract is provisional until a second real provider works
-//! (framework §10.1). A [`Provider`] reports its status and serves requests
+//! The adapter contract is the shared surface proven by the Codex and Claude
+//! adapters (PRO-07). A [`Provider`] reports its status and serves requests
 //! through [`Exchange`]s: state machines the host loop drives, which never
 //! block past the deadline they are given, and never keep working past it for
 //! longer than [`BUSY_LIMIT`], however fast a provider writes. That lets one
@@ -18,6 +18,7 @@ use crate::conversation::{BrowserContext, HistoryMessage};
 use crate::protocol::events::{Capabilities, ErrorBody, ProviderState};
 pub use crate::stream::BUSY_LIMIT;
 
+pub mod claude;
 pub mod codex;
 pub mod discovery;
 pub mod environment;
@@ -122,12 +123,14 @@ impl Providers {
         Self(providers)
     }
 
-    /// The providers of an installed host: the fake scaffold and Codex, found
-    /// by the platform lookup rules in [`codex::Codex::installed`].
+    /// The providers of an installed host. The fake scaffold stays registered
+    /// for deterministic protocol diagnostics; real adapters use the same
+    /// platform discovery rules.
     pub fn installed() -> Self {
         Self(vec![
             Box::new(fake::Fake),
             Box::new(codex::Codex::installed()),
+            Box::new(claude::Claude::installed()),
         ])
     }
 
