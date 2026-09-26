@@ -44,5 +44,5 @@ The native host and all native tooling are written in Rust.
 ## Verification of the port
 
 - Before the C sources were removed, the Rust host matched the C host byte-for-byte, including exit statuses, on about 2.3 million differential inputs. The original CMake mode harness and C signal test passed against the Rust fake provider.
-- The protocol conformance harness (`scripts/validate_host_protocol.py`) and the golden fixtures carried over unchanged.
+- The protocol conformance harness (`scripts/validate-host-protocol.mjs`) and the golden fixtures carried over unchanged.
 - Review then made two deliberate behavior changes on top of the port. The host accepts Chrome's Windows launch shape (`--parent-window=<handle>` after the origin), which the C host rejected. Duplicate member names are now rejected in every object of a method payload, as protocol v1 §1 rule 9 requires; the C host only rejected duplicates of the members it interpreted.
