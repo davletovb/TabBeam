@@ -150,7 +150,6 @@ pub const CLAUDE_TEST_LIMITS: ClaudeLimits = ClaudeLimits {
         stop_grace: Duration::from_millis(300),
     },
     probe: Duration::from_secs(5),
-    finish: Duration::from_millis(300),
 };
 
 /// A directory holding a fake `claude` CLI and its scenario.
@@ -196,25 +195,6 @@ impl FakeClaude {
 
     pub fn read(&self, file: &str) -> String {
         std::fs::read_to_string(self.dir.join(file)).unwrap_or_default()
-    }
-
-    pub fn pids(&self) -> Vec<u32> {
-        self.read("claude-pids")
-            .lines()
-            .map(|pid| pid.parse().expect("a pid"))
-            .collect()
-    }
-
-    pub fn assert_nothing_left_running(&self) {
-        #[cfg(unix)]
-        for pid in self.pids() {
-            use nix::errno::Errno;
-            use nix::sys::signal::kill;
-            use nix::unistd::Pid;
-
-            let pid = Pid::from_raw(i32::try_from(pid).expect("pid fits in pid_t"));
-            assert_eq!(kill(pid, None), Err(Errno::ESRCH), "{pid} is still around");
-        }
     }
 }
 
