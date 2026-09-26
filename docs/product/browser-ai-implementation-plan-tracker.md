@@ -1292,7 +1292,7 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 
 **Implementation evidence**
 - `native/host/src/providers/mod.rs` now documents the provider contract as the shared surface proven by two real adapters rather than a provisional Codex-only interface.
-- Codex and Claude share status/send/cancel/update semantics while observed differences stay in capabilities: Claude initially reports `page_context: false`; Codex reports it true. Claude may reconstruct continuation from bounded dialogue after a host restart while Codex can also recover a persisted native session mapping.
+- Codex and Claude share status/send/cancel/update semantics while observed differences stay in capabilities: Claude initially reports `page_context: false`; Codex reports it true. Both adapters persist opaque native-session mappings across host restarts and can rebuild from bounded dialogue when a native session cannot be resumed; the provider-neutral contract does not expose either runtime's session IDs.
 - No Claude-only method was added to the common `Provider` trait.
 
 
