@@ -331,8 +331,9 @@ try {
     .getEntriesByName(PERFORMANCE_MARKS.native_connection).at(-1)?.duration;
   const firstChunk = globalThis.performance
     .getEntriesByName(PERFORMANCE_MARKS.first_response_chunk).at(-1)?.duration;
-  assert.ok(typeof nativeReady === "number");
-  assert.ok(typeof firstChunk === "number");
+  if (typeof nativeReady !== "number" || typeof firstChunk !== "number") {
+    throw new Error("production performance measures were not recorded");
+  }
   assert.ok(
     withinPerformanceBudget("native_connection", nativeReady),
     "built host native readiness " + nativeReady.toFixed(1) + " ms exceeded " +
