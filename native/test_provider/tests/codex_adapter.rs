@@ -242,16 +242,17 @@ fn page_context_reaches_codex_as_untrusted_reference_data() {
         "features.apps=false",
         "features.plugins=false",
         "features.hooks=false",
+        "features.multi_agent=false",
         "features.multi_agent_v2=false",
         "features.web_search_request=false",
         "features.web_search_cached=false",
         "features.standalone_web_search=false",
         "web_search=\"disabled\"",
         "orchestrator.mcp.enabled=false",
-        "agents.enabled=false",
     ] {
         assert!(command.contains(&format!("-c {setting}")), "{command}");
     }
+    assert!(!command.contains("agents.enabled"), "{command}");
 
     let updates = run_to_end(adapter.status().as_mut());
     let Update::Status { status, .. } = &updates[0] else {
