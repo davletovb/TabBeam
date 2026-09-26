@@ -208,6 +208,9 @@ function openPopup(contextControls, outcomes = []) {
     },
     get busy() {
       return elements.submit.getAttribute("aria-disabled") === "true";
+    },
+    get activeElement() {
+      return ownerDocument.activeElement;
     }
   };
 }
@@ -376,7 +379,7 @@ function hostEvent(event, payload = {}) {
   assert.equal(popup.busy, false);
   assert.equal(popup.cancel.hidden, true);
   assert.equal(popup.retry.hidden, false);
-  assert.equal(popup.input.focused, true);
+  assert.equal(popup.activeElement, popup.input);
 
   popup.input.value = "edited after stop";
   popup.clickRetry();
@@ -384,7 +387,7 @@ function hostEvent(event, payload = {}) {
   assert.deepEqual(popup.ports[1].messages, [{ type: "ask", text: "Long answer" }]);
   assert.equal(popup.retry.hidden, true);
   assert.equal(popup.cancel.hidden, false);
-  assert.equal(popup.input.focused, true);
+  assert.equal(popup.activeElement, popup.input);
 }
 
 {
