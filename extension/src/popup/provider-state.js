@@ -3,6 +3,7 @@ import { PROVIDER_STATUS_MESSAGE } from "../shared/provider-status.js";
 import { DEFAULT_PROVIDER_ID, providerLabel } from "../shared/providers.js";
 
 /** @typedef {import("../shared/provider-status.js").ProviderStatusResponse} ProviderStatusResponse */
+/** @typedef {{kind: string, message?: string}} Outcome */
 
 /**
  * How long the popup waits for the provider's status before it stops saying
