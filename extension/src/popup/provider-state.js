@@ -47,59 +47,81 @@ const STATE_KINDS = new Set([
 export function bindProviderState(element, runtime, timers = {}, options = {}) {
   const schedule = timers.schedule ?? setTimeout;
   const cancel = timers.cancel ?? clearTimeout;
-  const label = providerLabel(DEFAULT_PROVIDER_ID);
   const setupLink = options.setupLink;
-  let checking = true;
-
-  show({ state: "checking", kind: null, message: `Checking ${label}…` });
-  const timer = schedule(() => settle(unknownView(label)), STATUS_WAIT_MS);
-
-  /** @param {ProviderView} view */
-  function settle(view) {
-    if (checking) {
-      checking = false;
-      cancel(timer);
-      show(view);
-    }
-  }
-
-  /** @type {Promise<any>} */
-  let sent;
-  try {
-    sent = Promise.resolve(runtime.sendMessage({ type: PROVIDER_STATUS_MESSAGE }));
-  } catch (error) {
-    sent = Promise.reject(error);
-  }
-  sent.then(
-    (response) => settle(providerView(response, label)),
-    // The service worker is gone; the next question reports that itself.
-    () => settle(unknownView(label))
-  );
+  let providerId = DEFAULT_PROVIDER_ID;
+  let checking = false;
+  /** @type {any} */
+  let timer = null;
+  let generation = 0;
 
   /** @param {ProviderView} view */
   function show(view) {
     element.textContent = view.message;
     element.setAttribute("data-state", view.state);
-    if (view.kind === null) {
-      element.removeAttribute("data-kind");
-    } else {
-      element.setAttribute("data-kind", view.kind);
-    }
+    if (view.kind === null) element.removeAttribute("data-kind");
+    else element.setAttribute("data-kind", view.kind);
     element.hidden = false;
     if (setupLink) {
       setupLink.hidden = view.kind !== "host-missing" && view.kind !== "host-unavailable";
     }
   }
 
+  /** @param {string} nextProvider @param {any} [knownResponse] @param {boolean} [explicit] */
+  function setProvider(nextProvider, knownResponse, explicit = true) {
+    providerId = nextProvider;
+    const label = providerLabel(providerId);
+    generation += 1;
+    const current = generation;
+    if (timer !== null) cancel(timer);
+    if (knownResponse !== undefined) {
+      checking = false;
+      timer = null;
+      show(providerView(knownResponse, label));
+      return;
+    }
+    checking = true;
+    show({ state: "checking", kind: null, message: `Checking ${label}…` });
+    timer = schedule(() => {
+      if (current !== generation) return;
+      checking = false;
+      timer = null;
+      show(unknownView(label));
+    }, STATUS_WAIT_MS);
+
+    let sent;
+    try {
+      sent = Promise.resolve(runtime.sendMessage({
+        type: PROVIDER_STATUS_MESSAGE,
+        ...(explicit ? { provider_id: providerId } : {})
+      }));
+    } catch (error) {
+      sent = Promise.reject(error);
+    }
+    sent.then(
+      (response) => {
+        if (current !== generation || !checking) return;
+        checking = false;
+        if (timer !== null) cancel(timer);
+        timer = null;
+        show(providerView(response, label));
+      },
+      () => {
+        if (current !== generation || !checking) return;
+        checking = false;
+        if (timer !== null) cancel(timer);
+        timer = null;
+        show(unknownView(label));
+      }
+    );
+  }
+
+  // Preserve the original EXT-04 wire shape for the default-provider check.
+  setProvider(DEFAULT_PROVIDER_ID, undefined, false);
+
   return {
-    /**
-     * Keeps the line in step with a question's outcome: an answer means the
-     * provider is ready, and a missing app or provider, or a sign-in, shows
-     * what the question found. Other failures leave the line as it is.
-     *
-     * @param {{kind: string, message?: string}} outcome
-     */
+    setProvider,
     update(outcome) {
+      const label = providerLabel(providerId);
       /** @type {ProviderView | null} */
       let view = null;
       if (outcome.kind === "completed") {
@@ -109,7 +131,9 @@ export function bindProviderState(element, runtime, timers = {}, options = {}) {
       }
       if (view !== null) {
         checking = false;
-        cancel(timer);
+        generation += 1;
+        if (timer !== null) cancel(timer);
+        timer = null;
         show(view);
       }
     }
