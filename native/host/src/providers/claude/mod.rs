@@ -9,6 +9,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::ffi::{OsStr, OsString};
 use std::hash::{BuildHasher, RandomState};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime};
@@ -32,7 +33,11 @@ pub const ID: &str = "claude";
 const EXECUTABLE: &str = "claude";
 
 /// Non-secret Claude configuration needed to find the user's normal CLI state.
-pub const CLAUDE_VARIABLES: &[&str] = &["CLAUDE_CONFIG_DIR", "CLAUDE_CODE_GIT_BASH_PATH"];
+pub const CLAUDE_VARIABLES: &[&str] = &[
+    "CLAUDE_CONFIG_DIR",
+    "CLAUDE_CODE_GIT_BASH_PATH",
+    "NODE_EXTRA_CA_CERTS",
+];
 
 pub const MAX_LINE_BYTES: usize = 8 * 1024 * 1024;
 
@@ -40,6 +45,7 @@ pub const MAX_LINE_BYTES: usize = 8 * 1024 * 1024;
 pub struct Limits {
     pub timeouts: Timeouts,
     pub probe: Duration,
+    pub finish: Duration,
 }
 
 pub const LIMITS: Limits = Limits {
@@ -49,6 +55,7 @@ pub const LIMITS: Limits = Limits {
         stop_grace: Duration::from_secs(2),
     },
     probe: Duration::from_secs(10),
+    finish: Duration::from_secs(5),
 };
 
 /// Claude's first proven adapter surface. Page context is deliberately
@@ -112,6 +119,13 @@ const MALFORMED_OUTPUT: ErrorBody<'static> = ErrorBody {
     retryable: false,
 };
 
+const SESSION_STORE_FAILED: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::InternalError,
+    reason: "SESSION_STORE_FAILED",
+    message: "Claude's conversation could not be saved. Check available disk space and try again.",
+    retryable: true,
+};
+
 type Conversations = Rc<RefCell<HashMap<String, String>>>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -153,6 +167,7 @@ impl Launch {
 pub struct Claude {
     search: SearchPath,
     launch: Rc<Launch>,
+    session_dir: Option<PathBuf>,
     limits: Limits,
     conversations: Conversations,
 }
@@ -160,15 +175,18 @@ pub struct Claude {
 impl Claude {
     pub fn installed() -> Self {
         let host: Vec<_> = std::env::vars_os().collect();
-        Self::new(
+        let mut claude = Self::new(
             SearchPath::from_env(),
             workspace::default_for(&host, "claude"),
-        )
+        );
+        claude.session_dir = installed_session_dir();
+        claude
     }
 
     pub fn new(search: SearchPath, work_dir: PathBuf) -> Self {
         Self {
             search,
+            session_dir: Some(work_dir.with_extension("sessions")),
             launch: Rc::new(Launch::new(work_dir, std::env::vars_os().collect())),
             limits: LIMITS,
             conversations: Rc::default(),
@@ -190,6 +208,12 @@ impl Claude {
     #[must_use]
     pub fn with_limits(mut self, limits: Limits) -> Self {
         self.limits = limits;
+        self
+    }
+
+    #[must_use]
+    pub fn with_session_dir(mut self, session_dir: PathBuf) -> Self {
+        self.session_dir = Some(session_dir);
         self
     }
 
