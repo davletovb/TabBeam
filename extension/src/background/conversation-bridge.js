@@ -164,7 +164,12 @@ export function serveConversationAskPort(port, options) {
       if (conversationId) {
         await store.setSession(conversationId, providerSessionId);
       } else {
-        const created = await store.create({ providerId, providerSessionId, text: question, context });
+        const created = await store.create({
+          providerId: selectedProvider,
+          providerSessionId,
+          text: question,
+          context
+        });
         conversationId = created.id;
         assistantId = created.assistantId;
         inFlight.add(created.id);
@@ -207,6 +212,7 @@ export function serveConversationAskPort(port, options) {
   let question = "";
   /** @type {any} */
   let context;
+  let selectedProvider = providerId;
 
   port.onMessage.addListener((/** @type {any} */ message) => {
     if (asked) {
@@ -265,7 +271,7 @@ export function serveConversationAskPort(port, options) {
         let sessionId;
         /** @type {{role: string, text: string}[]} */
         let history = [];
-        let selectedProvider = requestedProvider ?? providerId;
+        selectedProvider = requestedProvider ?? providerId;
         if (requestedId) {
           const stored = await store.getPrivate(requestedId);
           if (cancelRequested) {
