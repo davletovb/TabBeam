@@ -507,7 +507,7 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                 conversation_id,
                 text,
                 history,
-                has_context,
+                context,
             } => {
                 let provider_id = provider_id.decode().into_owned();
                 let conversation_id = conversation_id.map(|id| id.decode().into_owned());
@@ -518,7 +518,7 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                             text: text.decode().into_owned(),
                             history,
                             conversation_id: conversation_id.clone(),
-                            has_context,
+                            context,
                         }),
                         Some(provider.timeouts()),
                     ),
@@ -1164,7 +1164,7 @@ mod tests {
         }
 
         fn send(&self, request: SendRequest) -> Box<dyn Exchange> {
-            let context = if request.has_context { "+context" } else { "" };
+            let context = if request.context.is_some() { "+context" } else { "" };
             self.calls
                 .borrow_mut()
                 .push(format!("send:{}{context}", request.text));
