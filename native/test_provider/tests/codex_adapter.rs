@@ -10,7 +10,9 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use pervue_host::conversation::{BrowserContext, BrowserContextMode, BrowserPageContext, HistoryMessage, Role};
+use pervue_host::conversation::{
+    BrowserContext, BrowserContextMode, BrowserPageContext, HistoryMessage, Role,
+};
 use pervue_host::protocol::events::{Authentication, Availability, Capability, ErrorCode};
 use pervue_host::providers::codex::{CODEX_VARIABLES, Codex, LIMITS, Limits};
 use pervue_host::providers::environment::INHERITED;
