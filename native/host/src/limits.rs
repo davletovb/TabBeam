@@ -40,6 +40,13 @@ mod tests {
         assert_eq!(contract["max_request_id_length"], MAX_REQUEST_ID_LENGTH);
         assert_eq!(contract["max_history_messages"], MAX_HISTORY_MESSAGES);
         assert_eq!(contract["max_history_bytes"], MAX_HISTORY_BYTES);
+        assert_eq!(contract["max_selection_bytes"], MAX_SELECTION_BYTES);
+        assert_eq!(contract["max_page_bytes"], MAX_PAGE_BYTES);
+        assert_eq!(
+            contract["max_context_title_bytes"],
+            MAX_CONTEXT_TITLE_BYTES
+        );
+        assert_eq!(contract["max_context_url_bytes"], MAX_CONTEXT_URL_BYTES);
         assert_eq!(contract["host_name"], HOST_NAME);
     }
 }
