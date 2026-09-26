@@ -12,6 +12,11 @@ import { bindAskForm } from "../src/popup/ask-form.js";
 import { bindProviderState } from "../src/popup/provider-state.js";
 import { ASK_PORT_NAME, QUESTION_TOO_LONG } from "../src/shared/ask-port.js";
 import { MAX_NATIVE_MESSAGE_BYTES } from "../src/shared/limits.js";
+import {
+  PERFORMANCE_BUDGETS_MS,
+  PERFORMANCE_MARKS,
+  withinPerformanceBudget
+} from "../src/shared/performance.js";
 import { MockEvent } from "./support/mock-port.mjs";
 
 // This test uses the built pervue-host, not a mock of its JSON router or
@@ -302,6 +307,7 @@ function ask(text) {
 }
 
 try {
+  globalThis.performance.clearMeasures();
   ask("What is Pervue?");
   await until(() => events.at(-1)?.event === "response.completed");
   assert.deepEqual(
@@ -320,6 +326,31 @@ try {
   assert.equal(elements.status.getAttribute("data-state"), "done");
   assert.equal(elements.answer.textContent, "Fake provider response.");
   assert.equal(manager.pendingRequestCount, 0);
+
+  const nativeReady = globalThis.performance
+    .getEntriesByName(PERFORMANCE_MARKS.native_connection).at(-1)?.duration;
+  const firstChunk = globalThis.performance
+    .getEntriesByName(PERFORMANCE_MARKS.first_response_chunk).at(-1)?.duration;
+  assert.ok(typeof nativeReady === "number");
+  assert.ok(typeof firstChunk === "number");
+  assert.ok(
+    withinPerformanceBudget("native_connection", nativeReady),
+    "built host native readiness " + nativeReady.toFixed(1) + " ms exceeded " +
+      PERFORMANCE_BUDGETS_MS.native_connection + " ms"
+  );
+  assert.ok(
+    withinPerformanceBudget("first_response_chunk", firstChunk),
+    "built host first chunk " + firstChunk.toFixed(1) + " ms exceeded " +
+      PERFORMANCE_BUDGETS_MS.first_response_chunk + " ms"
+  );
+  console.log(JSON.stringify({
+    native_connection_ms: Number(nativeReady.toFixed(3)),
+    first_response_chunk_ms: Number(firstChunk.toFixed(3)),
+    budgets_ms: {
+      native_connection: PERFORMANCE_BUDGETS_MS.native_connection,
+      first_response_chunk: PERFORMANCE_BUDGETS_MS.first_response_chunk
+    }
+  }));
 
   events.length = 0;
   // Selecting a missing provider produces a real host failure, which the
