@@ -7,7 +7,7 @@ import { bindThemeSelect } from "../shared/theme.js";
 import { bindDiagnostics } from "./diagnostics.js";
 import { recordDuration } from "../shared/performance.js";
 
-const popupStartedAt = globalThis.performance?.now?.() ?? 0;
+const popupStartedAt = 0;
 
 /**
  * @template {HTMLElement} T
@@ -39,6 +39,7 @@ let interacted = false;
 const providerState = bindProviderState(
   requireElement("#provider-state", HTMLElement),
   chrome.runtime,
+  {},
   { setupLink: requireElement("#companion-setup", HTMLElement) }
 );
 const view = bindAskForm(
