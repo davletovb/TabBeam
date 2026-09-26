@@ -65,10 +65,7 @@ const providerSelector = bindProviderSelector(
   {
     onChange({ providerId, label, status, providerChanged }) {
       if (providerChanged) {
-        providerState.setProvider(
-          providerId,
-          status ? { provider_id: providerId, status } : undefined
-        );
+        providerState.setProvider(providerId);
       }
       const pageContext = status?.capabilities?.page_context;
       if (pageContext === true) contextControls.setSupported(true, label);
