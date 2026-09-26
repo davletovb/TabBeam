@@ -291,7 +291,7 @@ Every request ends exactly once, with a matching diagnostics record, every proce
 
 ## Fuzz targets
 
-With nightly Rust and [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz) (`cargo install cargo-fuzz`):
+With Node 22, nightly Rust and [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz) (`cargo install cargo-fuzz`):
 
 ```bash
 cd native
