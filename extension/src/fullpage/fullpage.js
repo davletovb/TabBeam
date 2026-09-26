@@ -3,6 +3,7 @@ import { CONVERSATIONS_KEY } from "../background/conversation-store.js";
 import { bindConversationList } from "../shared/conversation-list.js";
 import { bindDrawer } from "./drawer.js";
 import { bindProviderState } from "../popup/provider-state.js";
+import { bindProviderSelector } from "../shared/provider-selector.js";
 import { renderMarkdown } from "../shared/markdown.js";
 import { createStreamReveal } from "../shared/stream-reveal.js";
 import { bindThemeSelect } from "../shared/theme.js";
@@ -27,6 +28,21 @@ const providerState = bindProviderState(
   {},
   { setupLink: requireElement("#companion-setup", HTMLElement) }
 );
+const providerSelector = bindProviderSelector(
+  requireElement("#provider-select", HTMLSelectElement),
+  chrome.runtime,
+  chrome.storage.local,
+  {
+    onChange({ providerId, status, providerChanged }) {
+      if (providerChanged) {
+        providerState.setProvider(
+          providerId,
+          status ? { provider_id: providerId, status } : undefined
+        );
+      }
+    }
+  }
+);
 const view = bindAskForm({
   form: requireElement("#ask-form", HTMLFormElement),
   input,
@@ -38,7 +54,13 @@ const view = bindAskForm({
   retry: requireElement("#ask-retry", HTMLButtonElement)
 }, chrome.runtime, undefined, {
   onOutcome: (outcome) => providerState.update(outcome),
+  getProviderId: () => providerSelector.getProviderId(),
+  onConversationLoaded(conversation) {
+    if (conversation?.provider_id) providerSelector.lock(conversation.provider_id);
+    else providerSelector.unlock();
+  },
   onConversationId(id) {
+    if (id) providerSelector.lock(providerSelector.getProviderId());
     const url = new URL(window.location.href);
     if (id) url.searchParams.set("conversation", id);
     else url.searchParams.delete("conversation");
