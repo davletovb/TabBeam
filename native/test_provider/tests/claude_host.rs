@@ -101,4 +101,5 @@ fn ignored_claude_flood_does_not_starve_status_or_cancel() {
             .last()
             .is_some_and(|event| event.at.duration_since(session.sent[2]) < Duration::from_secs(2))
     );
+    claude.assert_nothing_left_running();
 }
