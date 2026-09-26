@@ -54,6 +54,8 @@ export const WORKER_LOST = "Pervue stopped unexpectedly. Reopen it, then try aga
  * @param {{
  *   onOutcome?: (outcome: Outcome) => void,
  *   onConversationId?(id: string | null): void,
+ *   onConversationLoaded?(conversation: any | null): void,
+ *   getProviderId?(): string,
  *   onSaved?(): void,
  *   onRequestStarted?(): void,
  *   renderMessage?(body: HTMLElement, text: string): void,
@@ -121,6 +123,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
       const nextConversationId = result.value.id;
       if (!preserveRetry || conversationId !== nextConversationId) clearRetry();
       conversationId = nextConversationId;
+      options.onConversationLoaded?.(result.value);
       renderHistory(result.value.messages);
       clearAnswer();
       options.onConversationId?.(conversationId);
@@ -202,6 +205,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
     history?.replaceChildren();
     clearAnswer();
     options.onConversationId?.(null);
+    options.onConversationLoaded?.(null);
     setStatus(message, state);
     hideControl(cancel);
     hideControl(retry);
@@ -320,6 +324,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
       const context = submittedContext;
       port.postMessage({
         type: "ask", text,
+        ...(options.getProviderId ? { provider_id: options.getProviderId() } : {}),
         ...(history && conversationId ? { conversation_id: conversationId } : {}),
         ...(attempt && conversationId ? { retry: true } : {}),
         ...(context ? { context } : {})
