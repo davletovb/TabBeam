@@ -198,40 +198,6 @@ assert.equal(fullPage.view.getConversationId(), id);
 assert.deepEqual(dialogueHistory(complete).map((message) => message.text), complete.messages.map((/** @type {any} */ message) => message.text));
 assert.equal(fullPage.elements.history.children.length, 6);
 
-// Retrying a failed follow-up reuses the failed pair instead of appending a
-// duplicate "You" turn to persisted or rendered history.
-const retryView = openView();
-assert.equal(await retryView.view.loadConversation(id), true);
-retryView.ask("Retry this turn");
-await settle();
-const failedIndex = native.length - 1;
-native[failedIndex].owner.onEvent({
-  version: 1, type: "event",
-  request_id: native[failedIndex].request.request_id,
-  event: "response.failed",
-  payload: { error: {
-    code: "PROVIDER_FAILED", reason: "PROCESS_EXITED",
-    message: "Provider stopped.", retryable: true
-  } }
-});
-await settle();
-const failedRecord = await store.getPrivate(id);
-const failedLength = failedRecord.messages.length;
-assert.equal(failedRecord.messages.at(-2).text, "Retry this turn");
-assert.equal(failedRecord.messages.at(-1).status, "failed");
-retryView.elements.retry.fire("click");
-await settle();
-const retryIndex = native.length - 1;
-answerRequest(retryIndex, "Retried answer");
-await settle();
-const retriedRecord = await store.getPrivate(id);
-assert.equal(retriedRecord.messages.length, failedLength);
-assert.equal(
-  retriedRecord.messages.filter((message) => message.role === "user" && message.text === "Retry this turn").length,
-  1
-);
-assert.equal(retriedRecord.messages.at(-1).text, "Retried answer");
-
 // A second surface cannot submit concurrently into the same conversation.
 reopened.ask("One more");
 await settle();
@@ -269,6 +235,40 @@ unavailable.elements.input.value = "Draft follow up";
 answerRequest(5, "Working now", "host_session_2");
 await settle();
 assert.equal(unavailable.elements.input.value, "Draft follow up");
+
+// Retrying a failed follow-up reuses the failed pair instead of appending a
+// duplicate "You" turn to persisted or rendered history.
+const retryView = openView();
+assert.equal(await retryView.view.loadConversation(id), true);
+retryView.ask("Retry this turn");
+await settle();
+const failedIndex = native.length - 1;
+native[failedIndex].owner.onEvent({
+  version: 1, type: "event",
+  request_id: native[failedIndex].request.request_id,
+  event: "response.failed",
+  payload: { error: {
+    code: "PROVIDER_FAILED", reason: "PROCESS_EXITED",
+    message: "Provider stopped.", retryable: true
+  } }
+});
+await settle();
+const failedRecord = await store.getPrivate(id);
+const failedLength = failedRecord.messages.length;
+assert.equal(failedRecord.messages.at(-2).text, "Retry this turn");
+assert.equal(failedRecord.messages.at(-1).status, "failed");
+retryView.elements.retry.fire("click");
+await settle();
+const retryIndex = native.length - 1;
+answerRequest(retryIndex, "Retried answer");
+await settle();
+const retriedRecord = await store.getPrivate(id);
+assert.equal(retriedRecord.messages.length, failedLength);
+assert.equal(
+  retriedRecord.messages.filter((message) => message.role === "user" && message.text === "Retry this turn").length,
+  1
+);
+assert.equal(retriedRecord.messages.at(-1).text, "Retried answer");
 
 // Eviction between viewing and asking must preserve the actionable NOT_FOUND
 // failure instead of replacing it with a failed history reload.
