@@ -364,6 +364,74 @@ fn after(duration: Duration) -> Instant {
     now.checked_add(duration).unwrap_or(now)
 }
 
+fn installed_session_dir() -> Option<PathBuf> {
+    #[cfg(windows)]
+    let base = std::env::var_os("LOCALAPPDATA").or_else(|| std::env::var_os("APPDATA"));
+    #[cfg(not(windows))]
+    let base = std::env::var_os("XDG_DATA_HOME")
+        .filter(|path| Path::new(path).is_absolute())
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .map(|home| PathBuf::from(home).join(".local/share").into_os_string())
+        });
+    base.map(PathBuf::from)
+        .map(|path| path.join("pervue/claude-sessions"))
+}
+
+fn session_name(id: &str) -> bool {
+    id.len() == 21
+        && id.starts_with("conv_")
+        && id[5..].bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn read_session(dir: &Path, id: &str) -> Option<String> {
+    if !session_name(id) {
+        return None;
+    }
+    let mut content = String::new();
+    std::fs::File::open(dir.join(id))
+        .ok()?
+        .take(129)
+        .read_to_string(&mut content)
+        .ok()?;
+    output::is_session_id(&content).then_some(content)
+}
+
+fn write_session(dir: &Path, id: &str, session: &str, create_new: bool) -> io::Result<()> {
+    if !session_name(id) || !output::is_session_id(session) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid conversation or Claude session id",
+        ));
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        let mut builder = std::fs::DirBuilder::new();
+        builder.recursive(true).mode(0o700).create(dir)?;
+    }
+    #[cfg(not(unix))]
+    std::fs::create_dir_all(dir)?;
+
+    let path = dir.join(id);
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true);
+    if create_new {
+        options.create_new(true);
+    } else {
+        options.create(true).truncate(true);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&path)?;
+    file.write_all(session.as_bytes())?;
+    file.sync_all()
+}
+
 fn new_conversation_id(conversations: &HashMap<String, String>) -> String {
     loop {
         let id = format!(
