@@ -82,7 +82,7 @@ export function serveConversationAskPort(port, options) {
         method: "request.cancel",
         payload: { target_request_id: targetRequestId }
       }, {
-        onEvent(event) {
+        onEvent(/** @type {any} */ event) {
           if (event?.event === "response.failed") {
             cancelFailed(event.payload?.error ?? {
               code: "INVALID_REQUEST",
