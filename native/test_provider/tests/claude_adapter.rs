@@ -48,7 +48,11 @@ impl FakeClaude {
     }
 
     fn file_name() -> &'static str {
-        if cfg!(windows) { "claude.exe" } else { "claude" }
+        if cfg!(windows) {
+            "claude.exe"
+        } else {
+            "claude"
+        }
     }
 
     fn set(&self, print: &str, auth: &str) {
@@ -204,7 +208,12 @@ fn status_uses_shared_discovery_and_auth_exit_status() {
         status(&claude.adapter()),
         (Availability::Available, Authentication::Unknown)
     );
-    assert!(claude.invocations().iter().all(|line| line == "auth status"));
+    assert!(
+        claude
+            .invocations()
+            .iter()
+            .all(|line| line == "auth status")
+    );
 }
 
 #[test]
@@ -260,9 +269,18 @@ fn request_streams_with_tools_disabled_and_keeps_question_off_argv() {
 fn claude_inherits_node_extra_ca_certs_but_not_arbitrary_secrets() {
     let claude = FakeClaude::install("answers", "signed-in");
     let adapter = claude.adapter().with_environment([
-        (OsString::from("NODE_EXTRA_CA_CERTS"), OsString::from("/tmp/company-ca.pem")),
-        (OsString::from("HTTPS_PROXY"), OsString::from("http://proxy.example")),
-        (OsString::from("SECRET_TOKEN"), OsString::from("do-not-pass")),
+        (
+            OsString::from("NODE_EXTRA_CA_CERTS"),
+            OsString::from("/tmp/company-ca.pem"),
+        ),
+        (
+            OsString::from("HTTPS_PROXY"),
+            OsString::from("http://proxy.example"),
+        ),
+        (
+            OsString::from("SECRET_TOKEN"),
+            OsString::from("do-not-pass"),
+        ),
     ]);
     run_to_end(adapter.send(ask("hello")).as_mut());
     let environment = claude.read("claude-environment");
