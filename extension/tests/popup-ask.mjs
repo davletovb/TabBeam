@@ -229,6 +229,8 @@ function openPopup(contextControls, outcomes = []) {
   popup.ask("Summarize");
   assert.equal(popup.ports.length, 0);
   assert.equal(popup.statusText, "Wait for context capture to finish.");
+  // Feedback on what was just done stays visible, unlike the idle hint.
+  assert.equal(popup.statusState, "notice");
   pending = false;
   popup.ask("Summarize");
   assert.deepEqual(popup.ports[0].messages, [{ type: "ask", text: "Summarize", context }]);
@@ -297,6 +299,7 @@ function hostEvent(event, payload = {}) {
 
   assert.equal(popup.ports.length, 0);
   assert.equal(popup.statusText, "Type a question first.");
+  assert.equal(popup.statusState, "notice");
   assert.equal(popup.busy, false);
 }
 

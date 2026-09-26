@@ -8,6 +8,9 @@ import { recordDuration } from "../shared/performance.js";
 
 export const READY_STATUS = "Press Enter to ask. Shift+Enter adds a line.";
 
+/** When the conversation on screen was deleted, here or in another view. */
+export const DELETED_STATUS = "This conversation was deleted. Ask something to start a new one.";
+
 /** When the extension's own service worker is gone before an answer ends. */
 export const WORKER_LOST = "Pervue stopped unexpectedly. Reopen it, then try again.";
 
@@ -40,7 +43,10 @@ export const WORKER_LOST = "Pervue stopped unexpectedly. Reopen it, then try aga
  * A failure shows its message, and the status line names its kind in
  * `data-kind` (EXT-04), so a missing companion app or provider, a sign-in, a
  * provider failure, a timeout, and a cancellation each look different. A
- * cancellation is not a failure: its state is `cancelled`.
+ * cancellation is not a failure: its state is `cancelled`. Feedback on
+ * something the person just did (an empty question, a capture still running,
+ * a conversation deleted from under them) is `notice`; `idle` is only the
+ * resting hint.
  *
  * @param {AskElements} elements
  * @param {{connect(connectInfo: {name: string}): AskPort, sendMessage?(message: any): Promise<any>}} runtime
@@ -128,9 +134,14 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
   }
 
   options.storageChanges?.addListener((changes, area) => {
-    if (area === "local" && conversationId && !active && !loadPending && !revealing &&
-        changes[`pervue.conversation.${conversationId}`]) {
-      void loadConversation(conversationId, true);
+    const change = area === "local" && conversationId ? changes[`pervue.conversation.${conversationId}`] : undefined;
+    if (!change || active) return;
+    if (change.newValue === undefined) {
+      // Deleted, here or in another view: there's nothing left to show or to
+      // follow up on.
+      reset(DELETED_STATUS, "notice");
+    } else if (!loadPending && !revealing) {
+      void loadConversation(conversationId ?? "", true);
     }
   });
 
@@ -176,18 +187,24 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
 
   function newConversation() {
     if (active) return false;
+    reset(READY_STATUS, "idle");
+    input.focus();
+    return true;
+  }
+
+  /** Leaves the conversation for a new one. @param {string} message @param {string} state */
+  function reset(message, state) {
     ++viewGeneration;
     loadPending = false;
+    revealing = false;
     conversationId = null;
     clearRetry();
     history?.replaceChildren();
     clearAnswer();
     options.onConversationId?.(null);
-    setStatus(READY_STATUS, "idle");
+    setStatus(message, state);
     hideControl(cancel);
     hideControl(retry);
-    input.focus();
-    return true;
   }
 
   form.addEventListener("submit", (event) => {
@@ -243,13 +260,13 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
       return;
     }
     if (contextControls?.isPending()) {
-      setStatus("Wait for context capture to finish.", "idle");
+      setStatus("Wait for context capture to finish.", "notice");
       return;
     }
 
     const text = attempt?.text ?? input.value;
     if (text.trim() === "") {
-      setStatus("Type a question first.", "idle");
+      setStatus("Type a question first.", "notice");
       return;
     }
     // The native host could never accept this question, and Chrome refuses a

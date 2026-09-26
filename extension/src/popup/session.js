@@ -10,7 +10,8 @@
  *
  * The tab → conversation map lives in `chrome.storage.session`: memory only,
  * gone when the browser closes. Pages are keyed by origin and path, without
- * the query or fragment, as context capture does.
+ * the query or fragment, as context capture does; only http(s) pages can be
+ * resumed.
  */
 
 export const RESUME_WINDOW_MS = 30 * 60_000;
@@ -53,8 +54,12 @@ async function readSessions(storage) {
  */
 export async function conversationToResume(storage, tab, saved, now) {
   if (typeof tab?.id !== "number") return null;
+  // Without a web page to match (a chrome:// page, or a URL Chrome doesn't
+  // share), there's no telling whether it's the same page: start fresh.
+  const page = pageKey(tab.url);
+  if (page === null) return null;
   const session = (await readSessions(storage))[String(tab.id)];
-  if (!session || now - session.at > RESUME_WINDOW_MS || session.page !== pageKey(tab.url)) return null;
+  if (!session || now - session.at > RESUME_WINDOW_MS || session.page !== page) return null;
   return saved.some((item) => item.id === session.conversation_id) ? session.conversation_id : null;
 }
 

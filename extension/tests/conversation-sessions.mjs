@@ -5,6 +5,7 @@ import {
   answerConversationMessage
 } from "../src/background/conversation-messages.js";
 import { createConversationStore } from "../src/background/conversation-store.js";
+import { DELETED_STATUS, bindAskForm } from "../src/popup/ask-form.js";
 import { RESUME_WINDOW_MS, TAB_SESSIONS_KEY, conversationToResume, pageKey, rememberConversation } from "../src/popup/session.js";
 import { CONFIRM_MS, bindConversationList, dayGroup, shortWhen } from "../src/shared/conversation-list.js";
 
@@ -97,10 +98,108 @@ const ID_C = "conv_00000000-0000-4000-8000-00000000000c";
   await rememberConversation(session, article, null, now);
   assert.deepEqual(saved[TAB_SESSIONS_KEY], {});
 
+  // Without a web page to match, nothing resumes: not chrome:// pages, and
+  // not a tab whose URL Chrome doesn't share.
+  const settings = { id: 11, url: "chrome://settings" };
+  await rememberConversation(session, settings, ID_A, now);
+  assert.equal(await conversationToResume(session, { id: 11, url: "chrome://extensions" }, exists, now + 1_000), null);
+  assert.equal(await conversationToResume(session, settings, exists, now + 1_000), null);
+  await rememberConversation(session, { id: 12 }, ID_A, now);
+  assert.equal(await conversationToResume(session, { id: 12 }, exists, now + 1_000), null);
+
+  // At most 50 tabs are remembered; the least recently used go first.
+  saved = {};
+  for (let tabId = 1; tabId <= 51; tabId += 1) {
+    await rememberConversation(session, { id: tabId, url: `https://example.com/${tabId}` }, ID_A, now + tabId);
+  }
+  const kept = Object.keys(saved[TAB_SESSIONS_KEY]);
+  assert.equal(kept.length, 50);
+  assert.ok(!kept.includes("1"), "the oldest tab is dropped");
+  assert.ok(kept.includes("51"));
+
   // Storage failures never break the popup.
   const broken = { async get() { throw new Error("gone"); }, async set() { throw new Error("gone"); } };
   assert.equal(await conversationToResume(broken, article, exists, now), null);
   await rememberConversation(broken, article, ID_A, now);
+}
+
+// ---------- A conversation deleted while it's open ----------
+{
+  class Field {
+    constructor() {
+      this.textContent = "";
+      this.className = "";
+      this.value = "";
+      this.hidden = false;
+      /** @type {any[]} */
+      this.children = [];
+      /** @type {Map<string, string>} */
+      this.attributes = new Map();
+      /** @type {Map<string, ((event: any) => void)[]>} */
+      this.listeners = new Map();
+      this.ownerDocument = { activeElement: null, createElement: () => new Field() };
+    }
+    /** @param {string} type @param {(event: any) => void} listener */
+    addEventListener(type, listener) { this.listeners.set(type, [...this.listeners.get(type) ?? [], listener]); }
+    /** @param {string} name @param {string} value */
+    setAttribute(name, value) { this.attributes.set(name, String(value)); }
+    /** @param {string} name */
+    getAttribute(name) { return this.attributes.get(name) ?? null; }
+    /** @param {string} name */
+    removeAttribute(name) { this.attributes.delete(name); }
+    /** @param {...any} nodes */
+    append(...nodes) { this.children.push(...nodes); }
+    /** @param {...any} nodes */
+    replaceChildren(...nodes) { this.children = nodes; }
+    focus() {}
+  }
+  const conversation = {
+    id: ID_A,
+    messages: [
+      { role: "user", text: "Question", status: "complete" },
+      { role: "assistant", text: "Answer", status: "complete" }
+    ]
+  };
+  let loads = 0;
+  /** @type {((changes: any, area: string) => void)[]} */
+  const listeners = [];
+  /** @type {(string | null)[]} */
+  const ids = [];
+  const elements = {
+    form: new Field(), input: new Field(), submit: new Field(),
+    status: new Field(), answer: new Field(), history: new Field()
+  };
+  const view = bindAskForm(/** @type {any} */ (elements), /** @type {any} */ ({
+    connect() { throw new Error("not used"); },
+    async sendMessage() {
+      loads += 1;
+      return { ok: true, value: conversation };
+    }
+  }), undefined, {
+    onConversationId: (id) => ids.push(id),
+    storageChanges: { addListener: (listener) => { listeners.push(listener); } }
+  });
+  /** @param {any} change */
+  const changed = (change) => {
+    for (const listener of listeners) listener({ [`pervue.conversation.${ID_A}`]: change }, "local");
+  };
+  assert.equal(await view.loadConversation(ID_A), true);
+  assert.equal(elements.history.children.length, 2);
+
+  // Saved again elsewhere: reload it.
+  changed({ oldValue: {}, newValue: {} });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(loads, 2);
+  assert.equal(view.getConversationId(), ID_A);
+
+  // Deleted elsewhere: leave it, and say why.
+  changed({ oldValue: {} });
+  assert.equal(view.getConversationId(), null);
+  assert.equal(elements.history.children.length, 0);
+  assert.equal(elements.status.textContent, DELETED_STATUS);
+  assert.equal(elements.status.getAttribute("data-state"), "notice");
+  assert.deepEqual(ids.slice(-1), [null], "the page forgets it too");
+  assert.equal(loads, 2, "no reload of a conversation that's gone");
 }
 
 // ---------- Grouping and times ----------

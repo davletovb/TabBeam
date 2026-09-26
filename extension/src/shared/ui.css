@@ -1045,6 +1045,11 @@ button {
   color: var(--warning);
 }
 
+/* Feedback on something just done: an empty question, a capture in progress. */
+.status[data-state="notice"] {
+  color: var(--text-2);
+}
+
 /* A cancellation is not a failure. */
 .status[data-state="cancelled"] {
   color: var(--text-2);

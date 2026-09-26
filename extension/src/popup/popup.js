@@ -4,6 +4,7 @@ import { preloadMenuContext } from "./menu-preload.js";
 import { bindProviderState } from "./provider-state.js";
 import { bindSuggestions } from "./suggestions.js";
 import { conversationToResume, rememberConversation } from "./session.js";
+import { CONVERSATIONS_KEY } from "../background/conversation-store.js";
 import { bindConversationList } from "../shared/conversation-list.js";
 import { renderMarkdown } from "../shared/markdown.js";
 import { createStreamReveal } from "../shared/stream-reveal.js";
@@ -200,6 +201,11 @@ function refreshLists() {
   return Promise.all([recent.refresh(), historyView.hidden ? Promise.resolve([]) : historyList.refresh()])
     .then(([items]) => items);
 }
+
+// Another view saved or deleted a conversation: keep the lists current.
+chrome.storage.onChanged.addListener((/** @type {Record<string, any>} */ changes, /** @type {string} */ area) => {
+  if (area === "local" && changes[CONVERSATIONS_KEY]) void refreshLists();
+});
 
 historyButton.addEventListener("click", () => showHistory(historyView.hidden));
 requireElement("#close-history", HTMLButtonElement).addEventListener("click", () => showHistory(false));

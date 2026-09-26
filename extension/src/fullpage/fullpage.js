@@ -1,4 +1,5 @@
 import { bindAskForm } from "../popup/ask-form.js";
+import { CONVERSATIONS_KEY } from "../background/conversation-store.js";
 import { bindConversationList } from "../shared/conversation-list.js";
 import { bindDrawer } from "./drawer.js";
 import { bindProviderState } from "../popup/provider-state.js";
@@ -97,6 +98,11 @@ function showTitle() {
   title.textContent = current?.title ?? "New conversation";
   document.title = current ? `${current.title} — Pervue` : "Pervue — Full view";
 }
+
+// Another view saved or deleted a conversation: keep the list current.
+chrome.storage.onChanged.addListener((/** @type {Record<string, any>} */ changes, /** @type {string} */ area) => {
+  if (area === "local" && changes[CONVERSATIONS_KEY]) void conversations.refresh();
+});
 
 requireElement("#history-search", HTMLInputElement).addEventListener("input", (event) => {
   if (event.target instanceof HTMLInputElement) conversations.setQuery(event.target.value);
