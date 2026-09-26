@@ -195,15 +195,21 @@ mod tests {
             Ok(Line::Init("abc-123".to_owned()))
         );
         assert_eq!(
-            parse(r#"{"type":"stream_event","event":{"type":"message_start","message":{"role":"assistant"}}}"#),
+            parse(
+                r#"{"type":"stream_event","event":{"type":"message_start","message":{"role":"assistant"}}}"#
+            ),
             Ok(Line::MessageStart)
         );
         assert_eq!(
-            parse(r#"{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"hi"}}}"#),
+            parse(
+                r#"{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"hi"}}}"#
+            ),
             Ok(Line::TextDelta("hi".to_owned()))
         );
         assert_eq!(
-            parse(r#"{"type":"result","subtype":"success","is_error":false,"result":"done","session_id":"abc-123"}"#),
+            parse(
+                r#"{"type":"result","subtype":"success","is_error":false,"result":"done","session_id":"abc-123"}"#
+            ),
             Ok(Line::ResultSuccess {
                 session_id: Some("abc-123".to_owned()),
                 text: "done".to_owned()
