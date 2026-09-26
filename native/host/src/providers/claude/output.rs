@@ -10,7 +10,10 @@ pub enum Line {
     MessageStart,
     TextDelta(String),
     Progress,
-    ResultSuccess { session_id: Option<String>, text: String },
+    ResultSuccess {
+        session_id: Option<String>,
+        text: String,
+    },
     ResultFailed(ErrorBody<'static>),
     Ignored,
 }
@@ -37,16 +40,25 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
     let kind = event.get("type").and_then(Value::as_str).ok_or(Malformed)?;
     Ok(match kind {
         "system" if event.get("subtype").and_then(Value::as_str) == Some("init") => {
-            let id = event.get("session_id").and_then(Value::as_str).ok_or(Malformed)?;
+            let id = event
+                .get("session_id")
+                .and_then(Value::as_str)
+                .ok_or(Malformed)?;
             if !is_session_id(id) {
                 return Err(Malformed);
             }
             Line::Init(id.to_owned())
         }
         "stream_event" => {
-            let nested = event.get("event").filter(|value| value.is_object()).ok_or(Malformed)?;
-            let nested_type = nested.get("type").and_then(Value::as_str).unwrap_or_default();
-            match nested_type {
+            let nested = event
+                .get("event")
+                .filter(|value| value.is_object())
+                .ok_or(Malformed)?;
+            match nested
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+            {
                 "message_start" => Line::MessageStart,
                 "content_block_delta" => {
                     let delta = nested
@@ -70,10 +82,16 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
         }
         "assistant" | "user" => Line::Progress,
         "result" => {
-            let failed = event.get("is_error").and_then(Value::as_bool).unwrap_or(false)
+            let failed = event
+                .get("is_error")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
                 || event.get("subtype").and_then(Value::as_str) != Some("success");
             if failed {
-                let message = event.get("result").and_then(Value::as_str).unwrap_or_default();
+                let message = event
+                    .get("result")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
                 Line::ResultFailed(result_failure(message))
             } else {
                 let id = event
@@ -109,6 +127,13 @@ const RATE_LIMITED: ErrorBody<'static> = ErrorBody {
     retryable: true,
 };
 
+const UNKNOWN_CONVERSATION: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::InvalidRequest,
+    reason: "UNKNOWN_CONVERSATION",
+    message: "Claude's saved session no longer exists. Pervue will rebuild it from conversation history when possible.",
+    retryable: false,
+};
+
 const UNAVAILABLE: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROVIDER_UNAVAILABLE",
@@ -118,32 +143,41 @@ const UNAVAILABLE: ErrorBody<'static> = ErrorBody {
 
 pub fn result_failure(message: &str) -> ErrorBody<'static> {
     let lower = message.to_ascii_lowercase();
-    let auth_rejected = [
-        "401 unauthorized",
-        "authentication failed",
-        "authentication error",
-        "not authenticated",
-        "not logged in",
-        "please log in",
-        "please login",
-        "oauth token",
+    if [
+        "session no longer exists",
+        "session not found",
+        "no conversation found",
+        "unknown session",
+        "invalid session id",
     ]
     .iter()
-    .any(|phrase| lower.contains(phrase));
-    let rate_limited = [
-        "429 too many requests",
+    .any(|phrase| lower.contains(phrase))
+    {
+        UNKNOWN_CONVERSATION
+    } else if [
+        "authentication failed",
+        "not authenticated",
+        "login required",
+        "not logged in",
+        "oauth token",
+        "401 unauthorized",
+        "invalid api key",
+    ]
+    .iter()
+    .any(|phrase| lower.contains(phrase))
+    {
+        AUTH_REJECTED
+    } else if [
         "rate limit",
         "usage limit",
-        "usage quota",
-        "quota exceeded",
+        "too many requests",
+        "429 too many requests",
         "billing limit",
+        "credit balance",
     ]
     .iter()
-    .any(|phrase| lower.contains(phrase));
-
-    if auth_rejected {
-        AUTH_REJECTED
-    } else if rate_limited {
+    .any(|phrase| lower.contains(phrase))
+    {
         RATE_LIMITED
     } else {
         UNAVAILABLE
@@ -155,10 +189,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_init_delta_and_result() {
+    fn parses_init_message_start_delta_and_result() {
         assert_eq!(
             parse(r#"{"type":"system","subtype":"init","session_id":"abc-123"}"#),
             Ok(Line::Init("abc-123".to_owned()))
+        );
+        assert_eq!(
+            parse(r#"{"type":"stream_event","event":{"type":"message_start","message":{"role":"assistant"}}}"#),
+            Ok(Line::MessageStart)
         );
         assert_eq!(
             parse(r#"{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"hi"}}}"#),
@@ -166,27 +204,10 @@ mod tests {
         );
         assert_eq!(
             parse(r#"{"type":"result","subtype":"success","is_error":false,"result":"done","session_id":"abc-123"}"#),
-            Ok(Line::ResultSuccess { session_id: Some("abc-123".to_owned()), text: "done".to_owned() })
-        );
-    }
-
-    #[test]
-    fn error_classification_matches_phrases_not_substrings() {
-        assert_eq!(
-            result_failure("authentication failed"),
-            AUTH_REJECTED
-        );
-        assert_eq!(
-            result_failure("429 Too Many Requests: rate limit exceeded"),
-            RATE_LIMITED
-        );
-        assert_eq!(
-            result_failure("Failed to generate a response from the author"),
-            UNAVAILABLE
-        );
-        assert_eq!(
-            result_failure("Prompt exceeds context limit"),
-            UNAVAILABLE
+            Ok(Line::ResultSuccess {
+                session_id: Some("abc-123".to_owned()),
+                text: "done".to_owned()
+            })
         );
     }
 
@@ -194,6 +215,34 @@ mod tests {
     fn invalid_session_ids_are_refused() {
         for id in ["", "--help", "../../x", "has space"] {
             assert!(!is_session_id(id), "{id}");
+        }
+    }
+
+    #[test]
+    fn error_classification_uses_specific_phrases() {
+        assert_eq!(
+            result_failure("authentication failed").reason,
+            "AUTH_REJECTED"
+        );
+        assert_eq!(
+            result_failure("rate limit exceeded (429 Too Many Requests)").reason,
+            "PROVIDER_RATE_LIMITED"
+        );
+        assert_eq!(
+            result_failure("session no longer exists").reason,
+            "UNKNOWN_CONVERSATION"
+        );
+
+        for message in [
+            "Failed to generate a response",
+            "The author is unavailable",
+            "Prompt exceeds context limit",
+        ] {
+            assert_eq!(
+                result_failure(message).reason,
+                "PROVIDER_UNAVAILABLE",
+                "{message}"
+            );
         }
     }
 }
