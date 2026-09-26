@@ -120,6 +120,7 @@ export function bindProviderState(element, runtime, timers = {}, options = {}) {
 
   return {
     setProvider,
+    /** @param {{kind: string, message?: string}} outcome */
     update(outcome) {
       const label = providerLabel(providerId);
       /** @type {ProviderView | null} */
