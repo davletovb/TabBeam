@@ -112,7 +112,7 @@ function cancellableEvent(fields) {
 }
 
 /**
- * @param {{getContext(): any | null, isPending(): boolean}} [contextControls]
+ * @param {{getContext(): any | null, isPending(): boolean, consume?(context: any): void}} [contextControls]
  * @param {{kind: string, message?: string}[]} [outcomes] receives each outcome
  */
 function openPopup(contextControls, outcomes = []) {
@@ -403,7 +403,7 @@ function hostEvent(event, payload = {}) {
   const popup = openPopup({
     isPending: () => false,
     getContext: () => currentContext,
-    consume: (context) => consumed.push(context)
+    consume: (/** @type {any} */ context) => consumed.push(context)
   });
   popup.ask("Use context");
   popup.ports[0].emitMessage(hostEvent("response.failed", {
