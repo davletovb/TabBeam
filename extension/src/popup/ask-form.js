@@ -1,5 +1,6 @@
 import { ASK_PORT_NAME, QUESTION_TOO_LONG } from "../shared/ask-port.js";
 import { MAX_NATIVE_MESSAGE_BYTES, utf8ByteLength } from "../shared/limits.js";
+import { copyWithFeedback } from "../shared/clipboard.js";
 import { describeFailure } from "../shared/outcomes.js";
 import { recordDuration } from "../shared/performance.js";
 
@@ -49,6 +50,8 @@ export const WORKER_LOST = "Pervue stopped unexpectedly. Reopen it, then try aga
  *   onConversationId?(id: string | null): void,
  *   onSaved?(): void,
  *   onRequestStarted?(): void,
+ *   renderMessage?(body: HTMLElement, text: string): void,
+ *   renderAnswer?(answer: HTMLElement, text: string): Promise<void>,
  *   storageChanges?: {addListener(callback: (changes: any, area: string) => void): void}
  * }} [options]
  */
@@ -70,6 +73,12 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
   let requestStartedAt = 0;
   let firstChunkRecorded = false;
 
+  // The answer so far, and its reveal, when a renderer types it out.
+  let answerText = "";
+  /** @type {Promise<void> | null} */
+  let reveal = null;
+  let revealing = false;
+
   // The port of the question in flight, or null when idle.
   /** @type {AskPort | null} */
   let active = null;
@@ -80,6 +89,13 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
     if (control.ownerDocument?.activeElement === control) input.focus();
     control.hidden = true;
     control.removeAttribute("aria-disabled");
+  }
+
+  function clearAnswer() {
+    answer.textContent = "";
+    answer.hidden = true;
+    answerText = "";
+    reveal = options.renderAnswer ? options.renderAnswer(answer, "") : null;
   }
 
   function clearRetry() {
@@ -100,8 +116,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
       if (!preserveRetry || conversationId !== nextConversationId) clearRetry();
       conversationId = nextConversationId;
       renderHistory(result.value.messages);
-      answer.textContent = "";
-      answer.hidden = true;
+      clearAnswer();
       options.onConversationId?.(conversationId);
       return true;
     } catch {
@@ -113,7 +128,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
   }
 
   options.storageChanges?.addListener((changes, area) => {
-    if (area === "local" && conversationId && !active && !loadPending &&
+    if (area === "local" && conversationId && !active && !loadPending && !revealing &&
         changes[`pervue.conversation.${conversationId}`]) {
       void loadConversation(conversationId, true);
     }
@@ -133,8 +148,14 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
     item.setAttribute("data-state", state);
     const label = owner.createElement("strong");
     label.textContent = role === "user" ? "You" : "Pervue";
-    const body = owner.createElement("p");
-    body.textContent = text || (state === "pending" ? "Answering…" : "No answer.");
+    const body = owner.createElement("div");
+    body.className = "message-body";
+    if (role === "assistant" && text && options.renderMessage) {
+      body.className = "message-body markdown";
+      options.renderMessage(body, text);
+    } else {
+      body.textContent = text || (state === "pending" ? "Answering…" : "No answer.");
+    }
     item.append(label, body);
     if (role === "assistant" && state === "complete" && text) item.append(copyAction(owner, text));
     return item;
@@ -148,22 +169,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
     copy.className = "message-copy";
     copy.setAttribute("type", "button");
     copy.textContent = "Copy";
-    copy.addEventListener("click", async () => {
-      try {
-        const clipboard = globalThis.navigator?.clipboard;
-        if (!clipboard) throw new Error("clipboard unavailable");
-        await clipboard.writeText(text);
-        copy.textContent = "Copied";
-        copy.setAttribute("data-copied", "true");
-        setTimeout(() => {
-          copy.textContent = "Copy";
-          copy.removeAttribute("data-copied");
-        }, 1500);
-      } catch {
-        copy.textContent = "Couldn't copy";
-        copy.removeAttribute("data-copied");
-      }
-    });
+    copy.addEventListener("click", () => { void copyWithFeedback(copy, text); });
     actions.append(copy);
     return actions;
   }
@@ -175,8 +181,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
     conversationId = null;
     clearRetry();
     history?.replaceChildren();
-    answer.textContent = "";
-    answer.hidden = true;
+    clearAnswer();
     options.onConversationId?.(null);
     setStatus(READY_STATUS, "idle");
     hideControl(cancel);
@@ -272,8 +277,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
     firstChunkRecorded = false;
     options.onRequestStarted?.();
     if (history && !attempt) history.append(bubble("user", text, "pending"));
-    answer.textContent = "";
-    answer.hidden = true;
+    clearAnswer();
     setBusy(true);
     if (cancel) {
       cancel.hidden = false;
@@ -331,8 +335,13 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
             recordDuration("first_response_chunk", requestStartedAt, endedAt);
           }
           answer.hidden = false;
-          // Text nodes only: provider output is never parsed as HTML.
-          answer.append(event.payload.text);
+          if (options.renderAnswer) {
+            answerText += event.payload.text;
+            reveal = options.renderAnswer(answer, answerText);
+          } else {
+            // Text nodes only: provider output is never parsed as HTML.
+            answer.append(event.payload.text);
+          }
         }
         break;
       case "response.completed":
@@ -398,9 +407,26 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
     // conversation existed leaves nothing saved: drop its provisional bubble.
     if (history && !conversationId && state !== "done") history.replaceChildren();
     if (history && conversationId && reload) {
-      void loadConversation(conversationId, state !== "done", retryable).then((loaded) => {
-        if (loaded) options.onSaved?.();
-      });
+      const showSaved = () => {
+        void loadConversation(conversationId ?? "", state !== "done", retryable).then((loaded) => {
+          if (loaded) options.onSaved?.();
+        });
+      };
+      if (state === "done" && reveal) {
+        // Let the answer finish typing out before the saved copy replaces
+        // it, unless the person has moved on by then.
+        const generation = viewGeneration;
+        revealing = true;
+        answer.setAttribute("aria-busy", "true");
+        void reveal.then(() => {
+          revealing = false;
+          if (generation !== viewGeneration) return;
+          answer.setAttribute("aria-busy", "false");
+          showSaved();
+        });
+      } else {
+        showSaved();
+      }
     }
   }
 

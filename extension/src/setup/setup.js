@@ -1,3 +1,4 @@
+import { copyText } from "../shared/clipboard.js";
 import { bindThemeSelect } from "../shared/theme.js";
 import { bindThemeToggle } from "../shared/theme-toggle.js";
 
@@ -12,9 +13,7 @@ for (const button of Array.from(document.querySelectorAll(".copy-command"))) {
   button.addEventListener("click", async () => {
     const command = button.parentElement?.querySelector("code")?.textContent ?? "";
     try {
-      const clipboard = globalThis.navigator?.clipboard;
-      if (!clipboard) throw new Error("clipboard unavailable");
-      await clipboard.writeText(command);
+      await copyText(command);
       button.setAttribute("data-copied", "true");
       button.setAttribute("aria-label", "Copied");
       setTimeout(() => {
