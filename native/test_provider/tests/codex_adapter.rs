@@ -28,6 +28,7 @@ fn ask(text: &str) -> SendRequest {
         history: Vec::new(),
         conversation_id: None,
         context: None,
+        model: None,
     }
 }
 
@@ -420,6 +421,53 @@ fn a_question_streams_its_answer_and_opens_a_conversation() {
     );
     // Codex's own directory comes first on its PATH, for `node`.
     assert_eq!(path, format!("PATH0={}", codex.dir.display()));
+    codex.assert_nothing_left_running();
+}
+
+#[test]
+fn a_chosen_model_goes_to_codex_as_one_argument() {
+    let codex = FakeCodex::install("answers", "signed-in");
+    let adapter = codex.adapter();
+    assert_eq!(
+        adapter.capabilities().model_selection,
+        Capability::Supported
+    );
+    let first = run_to_end(
+        adapter
+            .send(SendRequest {
+                model: Some("gpt-5-codex".to_owned()),
+                ..ask("first")
+            })
+            .as_mut(),
+    );
+    assert_eq!(first.last(), Some(&Update::Completed), "{first:?}");
+    let Update::ConversationCreated(conversation_id) = visible(&first)[0].clone() else {
+        panic!("expected a new conversation: {first:?}");
+    };
+    let invocations = codex.invocations();
+    let (command, _) = invocations[1].split_once('\t').unwrap();
+    assert_eq!(
+        command,
+        format!(
+            "exec --json --skip-git-repo-check --sandbox read-only --model=gpt-5-codex -C {} -",
+            workspace(&codex).display()
+        )
+    );
+
+    // A follow-up with another model resumes the thread with that model.
+    let second = run_to_end(
+        adapter
+            .send(SendRequest {
+                conversation_id: Some(conversation_id),
+                model: Some("o3".to_owned()),
+                ..ask("second")
+            })
+            .as_mut(),
+    );
+    assert_eq!(second.last(), Some(&Update::Completed), "{second:?}");
+    let resumed = codex.invocations()[3].clone();
+    assert!(resumed.contains(" --model=o3 -C "), "{resumed}");
+    assert!(resumed.contains(" resume thread-"), "{resumed}");
     codex.assert_nothing_left_running();
 }
 

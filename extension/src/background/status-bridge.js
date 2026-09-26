@@ -1,6 +1,7 @@
 import { HOST_START_FAILED, createRequestId, hostDisconnectError } from "./ask-bridge.js";
 import { isErrorCode } from "../shared/outcomes.js";
 import { PROVIDER_STATUS_TIMEOUT_MS } from "../shared/provider-status.js";
+import { suggestedModels } from "../shared/models.js";
 import { DEFAULT_PROVIDER_ID } from "../shared/providers.js";
 
 /** @typedef {import("../shared/provider-status.js").ErrorBody} ErrorBody */
@@ -153,10 +154,13 @@ export function normalizedStatus(status) {
     }
     capabilities[key] = value;
   }
+  // Suggested models only mean something where a model can be chosen.
+  const models = capabilities.model_selection === true ? suggestedModels(status.models) : [];
   return {
     availability: status.availability,
     authentication: status.authentication,
-    capabilities
+    capabilities,
+    ...(models.length ? { models } : {})
   };
 }
 

@@ -16,6 +16,7 @@ fn ask(text: &str) -> SendRequest {
         history: Vec::new(),
         conversation_id: None,
         context: None,
+        model: None,
     }
 }
 
@@ -113,12 +114,7 @@ fn provider_differences_are_expressed_only_as_capabilities() {
 
     assert_eq!(codex.capabilities().page_context, Capability::Supported);
     assert_eq!(claude.capabilities().page_context, Capability::Unsupported);
-    assert_eq!(
-        codex.capabilities().model_selection,
-        Capability::Unsupported
-    );
-    assert_eq!(
-        claude.capabilities().model_selection,
-        Capability::Unsupported
-    );
+    // Both take a model; they differ in whether they suggest any (status).
+    assert_eq!(codex.capabilities().model_selection, Capability::Supported);
+    assert_eq!(claude.capabilities().model_selection, Capability::Supported);
 }

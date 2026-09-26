@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Pervue — Companion setup</title>
+    <title>Pervue — Provider &amp; setup</title>
     <script src="../shared/theme-bootstrap.js"></script>
     <link rel="stylesheet" href="../shared/ui.css">
     <link rel="stylesheet" href="./setup.css">
@@ -32,9 +32,31 @@
           <svg class="icon icon-xs" aria-hidden="true"><use href="../shared/icons.svg#terminal"/></svg>
           Developer preview
         </span>
-        <h1>Set up the companion app</h1>
-        <p class="lede">Pervue talks to your AI provider through a small companion app on this computer. Packaging isn't finished yet, so development builds register it by hand. It takes about five minutes.</p>
+        <h1>Provider &amp; setup</h1>
+        <p class="lede">Choose which AI Pervue asks, and connect the small companion app it talks to on this computer.</p>
       </section>
+
+      <section class="settings-card" aria-labelledby="provider-title">
+        <h2 id="provider-title">AI provider</h2>
+        <p class="section-lede">New conversations use this provider. A conversation keeps the provider it started with.</p>
+        <fieldset id="provider-options" class="provider-options">
+          <legend class="sr-only">AI provider</legend>
+        </fieldset>
+
+        <div class="model-field">
+          <label for="model-select">Model</label>
+          <select id="model-select" disabled><option>Provider default</option></select>
+          <div id="model-custom-field" class="model-custom" hidden>
+            <label class="sr-only" for="model-custom">Model ID</label>
+            <input id="model-custom" type="text" autocomplete="off" spellcheck="false" maxlength="128" placeholder="Model ID" aria-describedby="model-note">
+            <button id="model-custom-save" class="button button-outline button-sm" type="button">Use model</button>
+          </div>
+          <p id="model-note" class="field-note" aria-live="polite"></p>
+        </div>
+      </section>
+
+      <h2 class="section-title">Connect the companion</h2>
+      <p class="section-lede">Packaging isn't finished yet, so development builds register the companion by hand. It takes about five minutes.</p>
 
       <ol class="steps">
         <li class="step">

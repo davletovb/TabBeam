@@ -143,10 +143,13 @@ Required v1 protocol reasons include:
 - `UNKNOWN_TARGET_REQUEST`
 - `PAGE_CONTEXT_UNSUPPORTED`
 - `PAGE_CONTEXT_TOOLS_ENABLED`
+- `MODEL_SELECTION_UNSUPPORTED`
 
 The extension also reports `REQUEST_TOO_LARGE` when it refuses to send a request that would exceed the Native Messaging frame limit (SEC-01, `docs/protocol/native-messaging-v1.json`). The host never receives such a request.
 
 A provider adapter reports `UNKNOWN_CONVERSATION` when `conversation_id` has no recoverable session and no usable dialogue history. Codex recovers its native session mapping after host restarts, or starts a new provider session from bounded `input.history` if the mapping has been lost or the resumed thread fails before a turn starts. The host rejects attached browser context with `PAGE_CONTEXT_UNSUPPORTED` when the selected provider does not report `page_context: true`, rather than silently answering without it (§6). Codex reports `page_context: true`; for a context turn it consumes validated browser context only with shell/image/apps/plugins/hooks/web-search/orchestrator-MCP/subagent surfaces disabled. Plugin/cache artifacts do not block the turn. It fails with `PAGE_CONTEXT_TOOLS_ENABLED` only when user-level standalone `mcp_servers` configuration is present and cannot yet be disabled deterministically.
+
+The host likewise rejects a `conversation.send` `model` with `MODEL_SELECTION_UNSUPPORTED` when the selected provider does not report `model_selection: true`, rather than answering with the provider's default. Codex and Claude report `model_selection: true` and pass the model to their CLIs as a single `--model=<id>` argument. Claude suggests its CLI's aliases (`sonnet`, `opus`, `haiku`), which track the latest model of each family; Codex has no stable way to list its models, so it suggests none and passes any valid model ID on. A model a provider doesn't recognize fails the turn as a provider failure.
 
 Default retryability: **false** unless the caller changes the request.
 
@@ -232,7 +235,7 @@ The v1 capability keys are:
 | `web_search` | Provider itself can perform web-grounded retrieval. This does not prevent Pervue's separate search adapter from being used. |
 | `page_context` | Adapter can accept browser page/selection context supplied by Pervue. |
 | `attachments` | Adapter can accept supported non-text attachments. |
-| `model_selection` | Adapter exposes selectable provider models in a stable way. |
+| `model_selection` | Adapter passes a chosen model (`conversation.send` `model`) to the provider. It MAY suggest models in `status.models`. |
 | `cancellation` | In-flight provider work can be actively cancelled rather than merely ignored. |
 
 Rules:

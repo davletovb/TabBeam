@@ -56,6 +56,7 @@ export const WORKER_LOST = "Pervue stopped unexpectedly. Reopen it, then try aga
  *   onConversationId?(id: string | null, providerId?: string): void,
  *   onConversationLoaded?(conversation: any | null): void,
  *   getProviderId?(): string,
+ *   getModel?(providerId: string | undefined): string | undefined,
  *   onSaved?(): void,
  *   onRequestStarted?(): void,
  *   onRequestEnded?(): void,
@@ -296,6 +297,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
     ++viewGeneration;
     submittedText = text;
     submittedProvider = options.getProviderId?.();
+    const submittedModel = options.getModel?.(submittedProvider);
     submittedContext = contextControls?.getContext();
     lastAttempt = { text, conversationId };
     requestStartedAt = globalThis.performance?.now?.() ?? 0;
@@ -329,6 +331,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
       port.postMessage({
         type: "ask", text,
         ...(submittedProvider ? { provider_id: submittedProvider } : {}),
+        ...(submittedModel ? { model: submittedModel } : {}),
         ...(history && conversationId ? { conversation_id: conversationId } : {}),
         ...(attempt && conversationId ? { retry: true } : {}),
         ...(context ? { context } : {})

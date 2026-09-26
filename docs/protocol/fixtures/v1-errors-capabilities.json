@@ -53,6 +53,12 @@
       "reason": "UNKNOWN_METHOD",
       "message": "Unsupported method.",
       "retryable": false
+    },
+    {
+      "code": "INVALID_REQUEST",
+      "reason": "MODEL_SELECTION_UNSUPPORTED",
+      "message": "This AI provider can't switch models. Choose its default model, then ask again.",
+      "retryable": false
     }
   ],
   "provider_statuses": [
@@ -86,6 +92,27 @@
           "model_selection": "unknown",
           "cancellation": "unknown"
         }
+      }
+    },
+    {
+      "provider_id": "claude",
+      "status": {
+        "availability": "available",
+        "authentication": "authenticated",
+        "capabilities": {
+          "streaming": true,
+          "continuation": true,
+          "web_search": "unknown",
+          "page_context": false,
+          "attachments": false,
+          "model_selection": true,
+          "cancellation": true
+        },
+        "models": [
+          {"id": "sonnet", "label": "Sonnet (latest)"},
+          {"id": "opus", "label": "Opus (latest)"},
+          {"id": "haiku", "label": "Haiku (latest)"}
+        ]
       }
     }
   ],

@@ -51,6 +51,7 @@ const referencedFiles = [
   "src/shared/theme-bootstrap.js",
   "src/shared/theme-toggle.js",
   "src/shared/markdown.js",
+  "src/shared/models.js",
   "src/shared/conversation-list.js",
   "src/popup/session.js",
   "src/background/conversation-messages.js",
@@ -75,7 +76,8 @@ const referencedFiles = [
   "src/fullpage/fullpage.css",
   "src/setup/index.html",
   "src/setup/setup.css",
-  "src/setup/setup.js"
+  "src/setup/setup.js",
+  "src/setup/provider-settings.js"
 ];
 
 for (const file of referencedFiles) {

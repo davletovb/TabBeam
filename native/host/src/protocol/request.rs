@@ -57,6 +57,9 @@ pub enum Method<'a> {
         history: Vec<HistoryMessage>,
         /// Validated browser context attached to this turn.
         context: Option<BrowserContext>,
+        /// The model to answer with, validated by [`is_model_id`]; `None`
+        /// uses the provider's default.
+        model: Option<String>,
     },
     ProviderStatus {
         provider_id: Option<JsonStr<'a>>,
@@ -322,10 +325,16 @@ fn parse_conversation_payload(payload: &[u8]) -> Result<Method<'_>, FailureKind>
     let mut conversation_id = None;
     let mut input_data = None;
     let mut context = None;
+    let mut model = None;
     let mut invalid = false;
 
     let has_members = walk_payload_object(payload, |key, reader| {
-        if key.equals_ascii("provider_id") {
+        if key.equals_ascii("model") {
+            model = read_nonempty_string(reader)?
+                .map(|value| value.decode().into_owned())
+                .filter(|value| is_model_id(value));
+            invalid |= model.is_none();
+        } else if key.equals_ascii("provider_id") {
             provider_id = read_nonempty_string(reader)?;
             invalid |= provider_id.is_none();
         } else if key.equals_ascii("input") {
@@ -351,10 +360,29 @@ fn parse_conversation_payload(payload: &[u8]) -> Result<Method<'_>, FailureKind>
                 text,
                 history,
                 context,
+                model,
             })
         }
         _ => Err(FailureKind::InvalidPayload),
     }
+}
+
+/// Longest model ID accepted.
+pub const MAX_MODEL_ID_BYTES: usize = 128;
+
+/// Whether `model` is a model ID a provider may be given. Model IDs reach a
+/// provider's command line, so only a conservative set passes: an ASCII
+/// letter or digit, then letters, digits, and `.`, `_`, `-`, `:`, `/`, `@`.
+/// Nothing can start with `-` (an option), contain whitespace or quotes, or
+/// look like a path from the root.
+pub fn is_model_id(model: &str) -> bool {
+    let bytes = model.as_bytes();
+    !bytes.is_empty()
+        && bytes.len() <= MAX_MODEL_ID_BYTES
+        && bytes[0].is_ascii_alphanumeric()
+        && bytes
+            .iter()
+            .all(|&byte| byte.is_ascii_alphanumeric() || b"._-:/@".contains(&byte))
 }
 
 /// Validates `input` and returns its question and bounded dialogue history.
@@ -632,6 +660,7 @@ mod tests {
             text,
             history,
             context,
+            model,
         } = request.method
         else {
             panic!("unexpected method");
@@ -641,6 +670,7 @@ mod tests {
         assert_eq!(text.decode(), "Hello");
         assert!(history.is_empty());
         assert!(context.is_none());
+        assert!(model.is_none(), "no model means the provider's default");
     }
 
     #[test]
@@ -679,6 +709,56 @@ mod tests {
                 FailureKind::InvalidPayload
             );
         }
+    }
+
+    #[test]
+    fn accepts_a_model_id_and_rejects_anything_else() {
+        for model in [
+            "sonnet",
+            "gpt-5-codex",
+            "claude-opus-4-1@20250805",
+            "org/model:v1.2",
+            "o3",
+        ] {
+            let payload =
+                format!(r#"{{"provider_id":"fake","input":{{"text":"Hi"}},"model":"{model}"}}"#);
+            let data = envelope("req_model", "conversation.send", &payload);
+            let request = parse_request(data.as_bytes()).unwrap();
+            let Method::ConversationSend { model: parsed, .. } = request.method else {
+                panic!("not a conversation request");
+            };
+            assert_eq!(parsed.as_deref(), Some(model));
+        }
+
+        let long = "m".repeat(MAX_MODEL_ID_BYTES + 1);
+        let invalid = [
+            r#""""#.to_owned(),
+            r#""-o""#.to_owned(),
+            r#""--config=x""#.to_owned(),
+            r#"" sonnet""#.to_owned(),
+            r#""son net""#.to_owned(),
+            r#""sonnet\n""#.to_owned(),
+            r#""/bin/sh""#.to_owned(),
+            r#""../model""#.to_owned(),
+            r#""a;id""#.to_owned(),
+            r#""$(id)""#.to_owned(),
+            r#""mod\"el""#.to_owned(),
+            r#""sónnet""#.to_owned(),
+            format!(r#""{long}""#),
+            "7".to_owned(),
+            "null".to_owned(),
+            r#"["sonnet"]"#.to_owned(),
+        ];
+        for value in invalid {
+            let payload =
+                format!(r#"{{"provider_id":"fake","input":{{"text":"Hi"}},"model":{value}}}"#);
+            expect_failure(
+                &envelope("req_bad_model", "conversation.send", &payload),
+                FailureKind::InvalidPayload,
+                Some("req_bad_model"),
+            );
+        }
+        assert!(is_model_id(&"m".repeat(MAX_MODEL_ID_BYTES)));
     }
 
     #[test]
@@ -961,6 +1041,7 @@ mod tests {
             text,
             history,
             context,
+            model: _,
         } = request.method
         else {
             panic!("unexpected method");

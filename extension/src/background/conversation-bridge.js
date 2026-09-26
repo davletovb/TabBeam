@@ -2,6 +2,7 @@ import {
   EMPTY_QUESTION, INVALID_CONTEXT, HOST_START_FAILED,
   copyContext, createRequestId, failed, hostDisconnectError, isValidContext
 } from "./ask-bridge.js";
+import { isModelId } from "../shared/models.js";
 import { DEFAULT_PROVIDER_ID, isProviderId } from "../shared/providers.js";
 import { RequestTooLargeError } from "./native-connection.js";
 import { dialogueHistory, CONVERSATION_ID_PATTERN } from "../shared/conversation-model.js";
@@ -18,6 +19,10 @@ const BUSY = Object.freeze({
 const INVALID_PROVIDER = Object.freeze({
   code: "INVALID_REQUEST", reason: "INVALID_PAYLOAD",
   message: "Choose a valid AI provider.", retryable: false
+});
+const INVALID_MODEL = Object.freeze({
+  code: "INVALID_REQUEST", reason: "INVALID_PAYLOAD",
+  message: "Choose a valid model on the Provider & setup page.", retryable: false
 });
 const STORAGE_FAILED = Object.freeze({
   code: "INTERNAL_ERROR", reason: "CONVERSATION_STORE_FAILED",
@@ -247,6 +252,11 @@ export function serveConversationAskPort(port, options) {
       forward(failed(null, INVALID_PROVIDER));
       return;
     }
+    const model = message.model;
+    if (model !== undefined && !isModelId(model)) {
+      forward(failed(null, INVALID_MODEL));
+      return;
+    }
     const requestedId = message.conversation_id;
     if (requestedId !== undefined &&
         (typeof requestedId !== "string" || !CONVERSATION_ID_PATTERN.test(requestedId))) {
@@ -304,7 +314,8 @@ export function serveConversationAskPort(port, options) {
             provider_id: selectedProvider,
             ...(sessionId ? { conversation_id: sessionId } : {}),
             input: { text: question, ...(history.length ? { history } : {}) },
-            ...(context === undefined ? {} : { context: copyContext(context) })
+            ...(context === undefined ? {} : { context: copyContext(context) }),
+            ...(model === undefined ? {} : { model })
           }
         };
         if (cancelRequested) {
