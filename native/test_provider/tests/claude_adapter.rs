@@ -265,11 +265,8 @@ fn claude_inherits_node_extra_ca_certs_but_not_arbitrary_secrets() {
         (OsString::from("SECRET_TOKEN"), OsString::from("do-not-pass")),
     ]);
     run_to_end(adapter.send(ask("hello")).as_mut());
-    let line = claude
-        .read("claude-environment")
-        .lines()
-        .last()
-        .expect("provider environment");
+    let environment = claude.read("claude-environment");
+    let line = environment.lines().last().expect("provider environment");
     let value: Value = serde_json::from_str(line).unwrap();
     assert_eq!(value["env"]["NODE_EXTRA_CA_CERTS"], "/tmp/company-ca.pem");
     assert_eq!(value["env"]["HTTPS_PROXY"], "http://proxy.example");
@@ -335,7 +332,8 @@ fn stale_resume_rebuilds_once_from_bounded_history() {
     ));
     assert!(matches!(updates[0], Update::ConversationCreated(_)));
     assert_eq!(updates.last(), Some(&Update::Completed));
-    let prompt = claude.prompts().last().expect("fallback prompt");
+    let prompts = claude.prompts();
+    let prompt = prompts.last().expect("fallback prompt");
     assert!(prompt.contains("first question"));
     assert!(prompt.contains("first answer"));
     assert!(prompt.ends_with("follow up"));
@@ -401,7 +399,8 @@ fn missing_native_session_rebuilds_from_bounded_history() {
             .as_mut(),
     ));
     assert!(matches!(updates[0], Update::ConversationCreated(_)));
-    let prompt = claude.prompts().last().expect("history prompt");
+    let prompts = claude.prompts();
+    let prompt = prompts.last().expect("history prompt");
     assert!(prompt.contains("first question"));
     assert!(prompt.contains("first answer"));
     assert!(prompt.ends_with("follow up"));
