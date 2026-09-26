@@ -83,6 +83,7 @@ assert.equal(
 );
 
 // First-chunk instrumentation is emitted by the production ask renderer.
+/** @type {MockPort[]} */
 const ports = [];
 const elements = {
   form: new Form(),
