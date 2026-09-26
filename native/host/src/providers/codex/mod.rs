@@ -29,7 +29,7 @@ use std::time::{Duration, Instant, SystemTime};
 use super::discovery::SearchPath;
 use super::environment;
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
-use crate::conversation::normalized_prompt;
+use crate::conversation::{contextual_prompt, normalized_prompt};
 use crate::process::{Event, Exit, Process, ProcessSpec};
 use crate::protocol::events::{
     Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ProviderState,
@@ -78,14 +78,14 @@ pub const LIMITS: Limits = Limits {
     finish: Duration::from_secs(5),
 };
 
-/// What this adapter supports. Answers arrive a message at a time, not
-/// token by token; page context, attachments, and model selection are not
-/// passed to Codex yet.
+/// What this adapter supports. Answers arrive a message at a time, not token
+/// by token. Browser context is framed as untrusted reference data in the
+/// prompt; attachments and model selection are not passed to Codex yet.
 pub const CAPABILITIES: Capabilities = Capabilities {
     streaming: Capability::Supported,
     continuation: Capability::Supported,
     web_search: Capability::Unknown,
-    page_context: Capability::Unsupported,
+    page_context: Capability::Supported,
     attachments: Capability::Unsupported,
     model_selection: Capability::Unsupported,
     cancellation: Capability::Supported,
@@ -102,13 +102,6 @@ const NOT_SIGNED_IN: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::ProviderNotAuthenticated,
     reason: "LOGIN_REQUIRED",
     message: "Codex isn't signed in. Run \"codex login\" in a terminal, then try again.",
-    retryable: false,
-};
-
-const PAGE_CONTEXT_UNSUPPORTED: ErrorBody<'static> = ErrorBody {
-    code: ErrorCode::InvalidRequest,
-    reason: "PAGE_CONTEXT_UNSUPPORTED",
-    message: "Codex can't use page context yet. Choose No context, then ask again.",
     retryable: false,
 };
 
@@ -296,13 +289,11 @@ impl Provider for Codex {
         let Some(executable) = self.executable() else {
             return Box::new(Scripted::failed(NOT_INSTALLED));
         };
-        // Codex doesn't receive browser context yet (`page_context: false`).
-        // Answering without it would silently ignore what the user attached.
-        if request.has_context {
-            return Box::new(Scripted::failed(PAGE_CONTEXT_UNSUPPORTED));
-        }
         let mut conversation_id = request.conversation_id;
-        let mut prompt = request.text;
+        let mut prompt = match request.context.as_ref() {
+            Some(context) => contextual_prompt(context, &request.text),
+            None => request.text.clone(),
+        };
         let mut fallback_prompt =
             (!request.history.is_empty()).then(|| normalized_prompt(&request.history, &prompt));
         let resume = match &conversation_id {
