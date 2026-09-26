@@ -51,7 +51,9 @@ class FakeElement {
   /** @type {Record<string, string>} */
   const cacheValues = {};
   const cache = {
+    /** @param {string} key */
     getItem(key) { return cacheValues[key] ?? null; },
+    /** @param {string} key @param {string} value */
     setItem(key, value) { cacheValues[key] = value; }
   };
   const storage = {
@@ -126,7 +128,9 @@ class FakeElement {
   /** @type {Record<string, any>} */
   const sessionValues = {};
   const sessionStorage = {
+    /** @param {string} key */
     async get(key) { return { [key]: sessionValues[key] }; },
+    /** @param {Record<string, any>} values */
     async set(values) { Object.assign(sessionValues, structuredClone(values)); }
   };
   const diagnostics = createDiagnosticsState("0.1.0", sessionStorage, () => 1234);
