@@ -116,6 +116,20 @@ export function createConversationStore(storage, newId = () => crypto.randomUUID
       const index = await readIndex();
       return index.recent_ids.map((id) => index.items[id]).filter(Boolean);
     },
+    /**
+     * Deletes a conversation and its record.
+     * @param {string} id
+     */
+    remove(id) {
+      return serialized(async (index) => {
+        await readRecord(index, id);
+        index.recent_ids = index.recent_ids.filter((other) => other !== id);
+        delete index.items[id];
+        delete index.sizes[id];
+        await storage.set({ [CONVERSATIONS_KEY]: index });
+        await storage.remove(recordKey(id));
+      });
+    },
     /** @param {string} id */
     async get(id) {
       await queue;

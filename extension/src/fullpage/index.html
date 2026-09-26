@@ -26,12 +26,15 @@
           New conversation
         </button>
 
-        <nav class="conversation-nav" aria-labelledby="recent-heading">
-          <h2 id="recent-heading" class="sidebar-label">Recent</h2>
-          <label class="sr-only" for="recent-conversations">Recent conversations</label>
-          <select id="recent-conversations" hidden><option value="">No recent conversations</option></select>
-          <ul id="conversation-list" class="conversation-list"></ul>
-          <p id="conversation-list-empty" class="conversation-list-empty">Your conversations will appear here.</p>
+        <nav class="conversation-nav" aria-label="Conversations">
+          <label class="search">
+            <svg class="icon icon-sm" aria-hidden="true"><use href="../shared/icons.svg#search"/></svg>
+            <span class="sr-only">Search conversations</span>
+            <input id="history-search" type="search" placeholder="Search" autocomplete="off" spellcheck="false">
+          </label>
+          <p id="history-status" class="history-status" role="status" aria-live="polite"></p>
+          <div id="conversation-list" class="conversation-list"></div>
+          <p id="conversation-list-empty" class="conversation-list-empty" hidden>Your conversations will appear here.</p>
         </nav>
 
         <div class="sidebar-foot">
