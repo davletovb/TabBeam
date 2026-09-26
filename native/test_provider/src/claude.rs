@@ -99,6 +99,7 @@ fn print_mode(dir: &Path, args: &[String], behavior: &str) -> io::Result<ExitCod
         || !args.iter().any(|arg| arg == "--verbose")
         || !has_pair(args, "--permission-mode", "default")
         || !has_pair(args, "--tools", "")
+        || !args.iter().any(|arg| arg == "--strict-mcp-config")
         || !has_pair(args, "--disallowedTools", "mcp__*")
     {
         let _ = writeln!(io::stderr(), "fake claude: expected safe stream-json flags");
@@ -121,7 +122,15 @@ fn print_mode(dir: &Path, args: &[String], behavior: &str) -> io::Result<ExitCod
         .cloned();
 
     if behavior == "resume-fails" && resumed.is_some() {
-        let _ = writeln!(io::stderr(), "fake claude: session no longer exists");
+        let _ = writeln!(
+            io::stderr(),
+            "No conversation found with session ID: {}",
+            resumed.as_deref().unwrap_or_default()
+        );
+        return Ok(ExitCode::from(1));
+    }
+    if behavior == "resume-crashes" && resumed.is_some() {
+        let _ = writeln!(io::stderr(), "fake claude: crashed before init");
         return Ok(ExitCode::from(1));
     }
     if behavior == "ignores-cancel" {
@@ -149,6 +158,13 @@ fn print_mode(dir: &Path, args: &[String], behavior: &str) -> io::Result<ExitCod
 
     match behavior {
         "hangs" | "ignores-cancel" => hang(),
+        "result-session-gone" if resumed.is_some() => {
+            emit(
+                &mut out,
+                &json!({"type":"result","subtype":"error_during_execution","is_error":true,"result":"No conversation found with session ID","session_id":init_session}),
+            )?;
+            return Ok(ExitCode::from(1));
+        }
         "malformed" => {
             writeln!(out, "{{not-json")?;
             out.flush()?;
@@ -223,6 +239,16 @@ fn print_mode(dir: &Path, args: &[String], behavior: &str) -> io::Result<ExitCod
 
     if behavior == "lingers" {
         hang();
+    }
+    if behavior == "keeps-talking" {
+        let give_up = Instant::now() + ENDLESS;
+        while Instant::now() < give_up {
+            emit(
+                &mut out,
+                &json!({"type":"future.event","detail":"after result"}),
+            )?;
+            thread::sleep(Duration::from_millis(1));
+        }
     }
     Ok(ExitCode::SUCCESS)
 }

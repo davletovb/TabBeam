@@ -9,7 +9,9 @@
 //! - a line longer than the stream's limit, not counting its line ending,
 //!   ends the stream with an error instead of growing the host's memory;
 //! - stderr is counted and discarded: it is meant for people, and it can hold
-//!   secrets such as masked keys;
+//!   secrets such as masked keys. An adapter may opt in to keeping a small,
+//!   bounded tail of it ([`LineStream::keeping_stderr_tail`]) to classify how
+//!   the process failed; that tail is never logged or forwarded;
 //! - the stream ends in exactly one terminal state: [`Output::Final`] after a
 //!   clean end, [`Output::Error`] when the output broke the policy, or
 //!   [`Output::Stopped`] after [`LineStream::cancel`];
@@ -152,6 +154,9 @@ pub struct LineStream {
     lines: LineSplitter,
     ready: VecDeque<String>,
     stderr_bytes: u64,
+    /// The last bytes of stderr, when an adapter asked to keep them.
+    stderr_tail: Vec<u8>,
+    stderr_tail_limit: usize,
     state: State,
 }
 
@@ -175,8 +180,17 @@ impl LineStream {
             lines: LineSplitter::new(max_line_bytes),
             ready: VecDeque::new(),
             stderr_bytes: 0,
+            stderr_tail: Vec::new(),
+            stderr_tail_limit: 0,
             state: State::Reading,
         }
+    }
+
+    /// Keeps the last `limit` bytes of stderr, for [`LineStream::stderr_tail`].
+    #[must_use]
+    pub fn keeping_stderr_tail(mut self, limit: usize) -> Self {
+        self.stderr_tail_limit = limit;
+        self
     }
 
     /// Returns the next line or terminal state, waiting until `deadline` at
@@ -225,6 +239,7 @@ impl LineStream {
                             self.stderr_bytes = self
                                 .stderr_bytes
                                 .saturating_add(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
+                            self.keep_stderr(&bytes);
                         }
                         Event::Exited(exit) => match self.lines.finish() {
                             Ok(last) => {
@@ -266,6 +281,22 @@ impl LineStream {
     /// Bytes the process wrote to stderr, all discarded.
     pub fn stderr_bytes(&self) -> u64 {
         self.stderr_bytes
+    }
+
+    /// The last bytes of stderr kept by [`LineStream::keeping_stderr_tail`],
+    /// possibly starting inside a character. Empty unless asked for.
+    pub fn stderr_tail(&self) -> &[u8] {
+        &self.stderr_tail
+    }
+
+    fn keep_stderr(&mut self, bytes: &[u8]) {
+        if self.stderr_tail_limit == 0 {
+            return;
+        }
+        let bytes = &bytes[bytes.len().saturating_sub(self.stderr_tail_limit)..];
+        let excess = (self.stderr_tail.len() + bytes.len()).saturating_sub(self.stderr_tail_limit);
+        self.stderr_tail.drain(..excess);
+        self.stderr_tail.extend_from_slice(bytes);
     }
 
     /// Bytes of output held in the host: the unfinished line plus complete

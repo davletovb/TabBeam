@@ -18,6 +18,7 @@
 //! ```
 
 use std::io::{Read, Write};
+use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::thread::{self, JoinHandle};
@@ -70,6 +71,9 @@ struct Host {
     events: Receiver<Value>,
     readers: Vec<JoinHandle<()>>,
     stderr: Receiver<String>,
+    /// The host's data directory, so its Claude session mapping lands here
+    /// instead of in the user's own.
+    data: PathBuf,
 }
 
 impl Host {
@@ -80,19 +84,26 @@ impl Host {
     fn start() -> Self {
         let (event_sender, events) = mpsc::channel();
         let (stderr_sender, stderr) = mpsc::channel();
+        let data = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+            .join(format!("pervue-live-claude-{}", std::process::id()));
+        let mut command = Command::new(HOST);
+        command
+            .arg(ORIGIN)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        // The host keeps Claude session mappings under XDG_DATA_HOME, which
+        // Claude itself doesn't inherit.
+        #[cfg(unix)]
+        command.env("XDG_DATA_HOME", &data);
         // Straight into the guard, so the host is reaped whatever happens next.
         let mut host = Self {
-            child: Command::new(HOST)
-                .arg(ORIGIN)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .expect("start the host"),
+            child: command.spawn().expect("start the host"),
             stdin: None,
             events,
             readers: Vec::new(),
             stderr,
+            data,
         };
         host.stdin = host.child.stdin.take();
         let mut stdout = host.child.stdout.take().expect("stdout");
@@ -160,6 +171,7 @@ impl Drop for Host {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        let _ = std::fs::remove_dir_all(&self.data);
     }
 }
 

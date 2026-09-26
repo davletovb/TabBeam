@@ -6,7 +6,7 @@ mod support;
 use std::time::Duration;
 
 use serde_json::Value;
-use support::{FakeClaude, PacedInput, request_id_for, serve_timed_claude};
+use support::{FakeClaude, PacedInput, request_id_for, serve_timed};
 
 fn request(method: &str, request_id: &str, payload: Value) -> String {
     serde_json::json!({
@@ -52,7 +52,7 @@ fn ignored_claude_flood_does_not_starve_status_or_cancel() {
     let flood_id = request_id_for("flood");
     let status_id = request_id_for("status");
     let cancel_id = request_id_for("cancel");
-    let session = serve_timed_claude(
+    let session = serve_timed(
         claude.adapter(),
         input,
         &[flood_id.as_str(), status_id.as_str(), cancel_id.as_str()],

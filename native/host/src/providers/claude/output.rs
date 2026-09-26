@@ -141,9 +141,12 @@ const UNAVAILABLE: ErrorBody<'static> = ErrorBody {
     retryable: true,
 };
 
-pub fn result_failure(message: &str) -> ErrorBody<'static> {
+/// Whether Claude's message says the session it was asked to resume doesn't
+/// exist. Claude reports this in a `result`, or on stderr before `init` as
+/// "No conversation found with session ID: …".
+pub fn names_unknown_session(message: &str) -> bool {
     let lower = message.to_ascii_lowercase();
-    if [
+    [
         "session no longer exists",
         "session not found",
         "no conversation found",
@@ -152,15 +155,25 @@ pub fn result_failure(message: &str) -> ErrorBody<'static> {
     ]
     .iter()
     .any(|phrase| lower.contains(phrase))
-    {
+}
+
+/// Classifies a failed `result` by specific phrases, never bare words such as
+/// "rate" or "auth". Besides Claude's own wording, this covers the raw API
+/// errors it passes on, such as `API Error: 429 {"type":"error","error":{"type":
+/// "rate_limit_error",…}}`.
+pub fn result_failure(message: &str) -> ErrorBody<'static> {
+    let lower = message.to_ascii_lowercase();
+    if names_unknown_session(message) {
         UNKNOWN_CONVERSATION
     } else if [
         "authentication failed",
+        "authentication_error",
         "not authenticated",
         "login required",
         "not logged in",
         "oauth token",
         "401 unauthorized",
+        "api error: 401",
         "invalid api key",
     ]
     .iter()
@@ -169,14 +182,18 @@ pub fn result_failure(message: &str) -> ErrorBody<'static> {
         AUTH_REJECTED
     } else if [
         "rate limit",
+        "rate_limit_error",
         "usage limit",
         "too many requests",
-        "429 too many requests",
+        "api error: 429",
         "billing limit",
         "credit balance",
     ]
     .iter()
     .any(|phrase| lower.contains(phrase))
+        // "5-hour limit reached", "Weekly limit reached"; a context limit is
+        // not something waiting fixes.
+        || (lower.contains("limit reached") && !lower.contains("context"))
     {
         RATE_LIMITED
     } else {
@@ -238,11 +255,34 @@ mod tests {
             result_failure("session no longer exists").reason,
             "UNKNOWN_CONVERSATION"
         );
+        assert_eq!(
+            result_failure("No conversation found with session ID: abc").reason,
+            "UNKNOWN_CONVERSATION"
+        );
+        assert_eq!(
+            result_failure(
+                r#"API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}"#
+            )
+            .reason,
+            "AUTH_REJECTED"
+        );
+        for message in [
+            r#"API Error: 429 {"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}"#,
+            "5-hour limit reached \u{2219} resets 3pm",
+            "Claude AI usage limit reached|1760000000",
+        ] {
+            assert_eq!(
+                result_failure(message).reason,
+                "PROVIDER_RATE_LIMITED",
+                "{message}"
+            );
+        }
 
         for message in [
             "Failed to generate a response",
             "The author is unavailable",
             "Prompt exceeds context limit",
+            "Context limit reached",
         ] {
             assert_eq!(
                 result_failure(message).reason,

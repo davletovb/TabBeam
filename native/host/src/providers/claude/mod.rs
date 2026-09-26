@@ -33,15 +33,18 @@ pub const ID: &str = "claude";
 const EXECUTABLE: &str = "claude";
 
 /// Non-secret Claude/Node configuration needed to reproduce a working CLI
-/// launch from Chrome's much smaller environment.
+/// launch from Chrome's much smaller environment. Proxies are already in
+/// [`environment::INHERITED`]; Node reads extra CA certificates only from
+/// `NODE_EXTRA_CA_CERTS`.
 pub const CLAUDE_VARIABLES: &[&str] = &[
     "CLAUDE_CONFIG_DIR",
     "CLAUDE_CODE_GIT_BASH_PATH",
     "NODE_EXTRA_CA_CERTS",
-    "HTTPS_PROXY",
-    "HTTP_PROXY",
-    "NO_PROXY",
 ];
+
+/// How much of Claude's stderr a turn keeps, to tell a missing session apart
+/// from any other early exit. Never logged or forwarded.
+const STDERR_TAIL_BYTES: usize = 4096;
 
 pub const MAX_LINE_BYTES: usize = 8 * 1024 * 1024;
 
@@ -124,6 +127,13 @@ const MALFORMED_OUTPUT: ErrorBody<'static> = ErrorBody {
     retryable: false,
 };
 
+const SESSION_GONE: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::InvalidRequest,
+    reason: "UNKNOWN_CONVERSATION",
+    message: "Claude's saved session no longer exists. Start a new conversation.",
+    retryable: false,
+};
+
 const SESSION_STORE_FAILED: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::InternalError,
     reason: "SESSION_STORE_FAILED",
@@ -171,6 +181,8 @@ impl Launch {
 pub struct Claude {
     search: SearchPath,
     launch: Rc<Launch>,
+    /// Where conversation-to-session mappings are kept across host restarts.
+    /// Without one (no data directory), they are kept in memory only.
     session_dir: Option<PathBuf>,
     limits: Limits,
     conversations: Conversations,
@@ -218,6 +230,14 @@ impl Claude {
     #[must_use]
     pub fn with_session_dir(mut self, session_dir: PathBuf) -> Self {
         self.session_dir = Some(session_dir);
+        self
+    }
+
+    /// Keeps conversation mappings in memory only, as when the host has no
+    /// data directory.
+    #[must_use]
+    pub fn without_session_dir(mut self) -> Self {
+        self.session_dir = None;
         self
     }
 
@@ -302,6 +322,8 @@ impl Provider for Claude {
             queue: VecDeque::new(),
             cancelled: false,
             started: false,
+            announced: false,
+            rebuilding: false,
             saw_delta: false,
             messages: 0,
             break_before_text: false,
@@ -424,6 +446,14 @@ fn save_session(dir: &Path, id: &str, session: &str) -> io::Result<()> {
     file.sync_all()
 }
 
+/// Removes a stored mapping, if any. Best effort: a mapping that can't be
+/// removed is still replaced by the next save.
+fn forget_session(dir: &Path, id: &str) {
+    if session_name(id) {
+        let _ = std::fs::remove_file(dir.join(id));
+    }
+}
+
 fn new_conversation_id(conversations: &HashMap<String, String>) -> String {
     loop {
         let id = format!(
@@ -491,7 +521,14 @@ struct Turn {
     finish_grace: Duration,
     queue: VecDeque<Update>,
     cancelled: bool,
+    /// This Claude run sent `init`.
     started: bool,
+    /// `Started` went to the host. A history rebuild after that doesn't send
+    /// it again.
+    announced: bool,
+    /// Rerunning from history under the same conversation ID, after Claude
+    /// said the mapped session no longer exists.
+    rebuilding: bool,
     saw_delta: bool,
     messages: usize,
     break_before_text: bool,
@@ -521,9 +558,11 @@ impl Turn {
             "--permission-mode",
             "default",
             // Pervue's Claude adapter is a conversational provider, not an
-            // agent. Disable built-in tools and deny MCP tools explicitly.
+            // agent. Disable built-in tools, load none of the user's MCP
+            // servers, and deny MCP tools explicitly as well.
             "--tools",
             "",
+            "--strict-mcp-config",
             "--disallowedTools",
             "mcp__*",
         ]
@@ -540,14 +579,15 @@ impl Turn {
             }
         })
         .to_string()
-            + "
-";
+            + "\n";
         match Process::spawn(&self.launch.command(&workspace, &self.executable, args)) {
             Ok(mut process) => {
                 let _ = process.write(input.as_bytes());
                 process.close_stdin();
                 self.prompt.clear();
-                self.stage = Stage::Running(LineStream::new(process, MAX_LINE_BYTES));
+                self.stage = Stage::Running(
+                    LineStream::new(process, MAX_LINE_BYTES).keeping_stderr_tail(STDERR_TAIL_BYTES),
+                );
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 self.end(Update::Failed(NOT_INSTALLED))
@@ -572,27 +612,33 @@ impl Turn {
                     return self.end(Update::Failed(MALFORMED_OUTPUT));
                 }
                 self.started = true;
-                let conversation = match &self.conversation_id {
-                    Some(id) => id.clone(),
-                    None => {
-                        let id = new_conversation_id(&self.conversations.borrow());
-                        if self
-                            .session_dir
-                            .as_deref()
-                            .is_none_or(|dir| save_session(dir, &id, &session).is_err())
-                        {
+                let conversation = match self.conversation_id.clone() {
+                    // A rebuild replaces the stale session behind the same
+                    // conversation ID, so the extension sees no new one.
+                    Some(id) if self.rebuilding => {
+                        if self.remember(&id, session).is_err() {
                             return self.end(Update::Failed(SESSION_STORE_FAILED));
                         }
-                        self.conversations.borrow_mut().insert(id.clone(), session);
+                        id
+                    }
+                    Some(id) => id,
+                    None => {
+                        let id = new_conversation_id(&self.conversations.borrow());
+                        if self.remember(&id, session).is_err() {
+                            return self.end(Update::Failed(SESSION_STORE_FAILED));
+                        }
                         self.conversation_id = Some(id.clone());
                         self.queue
                             .push_back(Update::ConversationCreated(id.clone()));
                         id
                     }
                 };
-                self.queue.push_back(Update::Started {
-                    conversation_id: Some(conversation),
-                });
+                if !self.announced {
+                    self.announced = true;
+                    self.queue.push_back(Update::Started {
+                        conversation_id: Some(conversation),
+                    });
+                }
             }
             Ok(Line::MessageStart) => {
                 if !self.started {
@@ -625,18 +671,9 @@ impl Turn {
                     return self.end(Update::Failed(MALFORMED_OUTPUT));
                 }
                 if let (Some(session), Some(conversation)) =
-                    (session_id, self.conversation_id.as_ref())
+                    (session_id, self.conversation_id.clone())
                 {
-                    if self
-                        .session_dir
-                        .as_deref()
-                        .is_none_or(|dir| save_session(dir, conversation, &session).is_err())
-                    {
-                        return self.end(Update::Failed(SESSION_STORE_FAILED));
-                    }
-                    self.conversations
-                        .borrow_mut()
-                        .insert(conversation.clone(), session);
+                    self.follow_session(&conversation, session);
                 }
                 if !self.saw_delta && !text.is_empty() {
                     self.saw_delta = true;
@@ -649,14 +686,61 @@ impl Turn {
         }
     }
 
+    /// Records `session` for `conversation`: on disk when there is a session
+    /// directory, and in memory.
+    fn remember(&self, conversation: &str, session: String) -> io::Result<()> {
+        if let Some(dir) = &self.session_dir {
+            save_session(dir, conversation, &session)?;
+        }
+        self.conversations
+            .borrow_mut()
+            .insert(conversation.to_owned(), session);
+        Ok(())
+    }
+
+    /// Follows the session a finished turn reports, which a resumed or forked
+    /// session may have changed. The answer is already out, so a failed write
+    /// doesn't fail the turn: the new session is kept in memory, and the stale
+    /// mapping is dropped so a restarted host rebuilds from history instead of
+    /// resuming the wrong session.
+    fn follow_session(&self, conversation: &str, session: String) {
+        let current = self
+            .conversations
+            .borrow()
+            .get(conversation)
+            .cloned()
+            .or_else(|| self.resume.clone());
+        if current.as_deref() == Some(session.as_str()) {
+            return;
+        }
+        if self.remember(conversation, session.clone()).is_err() {
+            if let Some(dir) = &self.session_dir {
+                forget_session(dir, conversation);
+            }
+            self.conversations
+                .borrow_mut()
+                .insert(conversation.to_owned(), session);
+        }
+    }
+
+    /// Drops a mapping Claude says no longer exists.
+    fn forget(&self, conversation: &str) {
+        self.conversations.borrow_mut().remove(conversation);
+        if let Some(dir) = &self.session_dir {
+            forget_session(dir, conversation);
+        }
+    }
+
     fn turn_ended(&mut self, outcome: Result<(), ErrorBody<'static>>) {
         self.outcome = Some(outcome);
         self.finish_by = Some(after(self.finish_grace));
     }
 
-    fn reset_for_history_fallback(&mut self) {
+    /// Reruns the turn from bounded history under the same conversation ID,
+    /// once, after Claude said the mapped session no longer exists.
+    fn rebuild_from_history(&mut self) {
         self.resume = None;
-        self.conversation_id = None;
+        self.rebuilding = true;
         self.outcome = None;
         self.finish_by = None;
         self.started = false;
@@ -668,6 +752,33 @@ impl Turn {
             .take()
             .expect("checked before fallback");
         self.start();
+    }
+
+    /// Claude exited. `session_gone` says it reported, on stderr before `init`,
+    /// that the session it was asked to resume doesn't exist.
+    fn ended(&mut self, exit: &Exit, session_gone: bool) {
+        if self.cancelled {
+            return self.end(Update::Stopped);
+        }
+        let stale = self.resume.is_some()
+            && !self.saw_delta
+            && match self.outcome {
+                Some(Err(error)) => error.reason == "UNKNOWN_CONVERSATION",
+                Some(Ok(())) => false,
+                None => session_gone && exit.status.is_some_and(|status| !status.success()),
+            };
+        if !stale {
+            let update = self.exited(exit);
+            return self.end(update);
+        }
+        if let Some(conversation) = self.conversation_id.clone() {
+            self.forget(&conversation);
+        }
+        if self.fallback_prompt.is_some() {
+            self.rebuild_from_history();
+        } else {
+            self.end(Update::Failed(SESSION_GONE));
+        }
     }
 
     fn exited(&mut self, exit: &Exit) -> Update {
@@ -712,30 +823,26 @@ impl Exchange for Turn {
                     }
                 }
                 Stage::Running(stream) => {
+                    // Checked first, so output that keeps coming after the
+                    // turn ended can't put it off.
+                    if self
+                        .finish_by
+                        .is_some_and(|finish_by| Instant::now() >= finish_by)
+                    {
+                        self.finish_by = None;
+                        stream.cancel(Duration::ZERO);
+                    }
                     let wait = self
                         .finish_by
                         .map_or(deadline, |finish_by| deadline.min(finish_by));
                     match stream.next(wait) {
                         Some(Output::Line(line)) => self.on_line(&line),
                         Some(Output::Final(exit) | Output::Stopped(exit)) => {
-                            let fallback = !self.cancelled
-                                && self.resume.is_some()
-                                && self.fallback_prompt.is_some()
-                                && (matches!(
-                                    self.outcome,
-                                    Some(Err(error)) if error.reason == "UNKNOWN_CONVERSATION"
-                                ) || (!self.started
-                                    && exit.status.is_some_and(|status| !status.success())));
-                            if fallback {
-                                self.reset_for_history_fallback();
-                            } else {
-                                let update = if self.cancelled {
-                                    Update::Stopped
-                                } else {
-                                    self.exited(&exit)
-                                };
-                                self.end(update);
-                            }
+                            let session_gone = !self.started
+                                && output::names_unknown_session(&String::from_utf8_lossy(
+                                    stream.stderr_tail(),
+                                ));
+                            self.ended(&exit, session_gone);
                         }
                         Some(Output::Error(_)) => {
                             let update = if self.cancelled {
@@ -745,13 +852,10 @@ impl Exchange for Turn {
                             };
                             self.end(update);
                         }
-                        None => match self.finish_by {
-                            Some(finish_by) if Instant::now() >= finish_by => {
-                                self.finish_by = None;
-                                stream.cancel(Duration::ZERO);
-                            }
-                            _ => return None,
-                        },
+                        None if self
+                            .finish_by
+                            .is_some_and(|finish_by| Instant::now() >= finish_by) => {}
+                        None => return None,
                     }
                 }
             }

@@ -1,117 +1,18 @@
 //! Claude adapter tests against the fake Claude Code CLI.
 
+mod support;
+
 use std::ffi::OsString;
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use pervue_host::conversation::{HistoryMessage, Role};
 use pervue_host::protocol::events::{Authentication, Availability, Capability, ErrorCode};
-use pervue_host::providers::claude::{Claude, Limits};
-use pervue_host::providers::discovery::SearchPath;
-use pervue_host::providers::{Exchange, Provider, SendRequest, Timeouts, Update};
+use pervue_host::providers::claude::Claude;
+use pervue_host::providers::{Exchange, Provider, SendRequest, Update};
 use serde_json::Value;
+use support::FakeClaude;
 
-const PROVIDER: &str = env!("CARGO_BIN_EXE_pervue-fake-provider");
 const DEADLINE: Duration = Duration::from_secs(20);
-const TEST_LIMITS: Limits = Limits {
-    timeouts: Timeouts {
-        start: Duration::from_secs(10),
-        idle: Duration::from_secs(10),
-        stop_grace: Duration::from_millis(300),
-    },
-    probe: Duration::from_secs(5),
-    finish: Duration::from_millis(300),
-};
-
-struct FakeClaude {
-    dir: PathBuf,
-}
-
-impl FakeClaude {
-    fn install(print: &str, auth: &str) -> Self {
-        static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!(
-            "pervue-fake-claude-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join(Self::file_name());
-        if std::fs::hard_link(PROVIDER, &path).is_err() {
-            std::fs::copy(PROVIDER, &path).unwrap();
-        }
-        let fake = Self { dir };
-        fake.set(print, auth);
-        fake
-    }
-
-    fn file_name() -> &'static str {
-        if cfg!(windows) {
-            "claude.exe"
-        } else {
-            "claude"
-        }
-    }
-
-    fn set(&self, print: &str, auth: &str) {
-        std::fs::write(
-            self.dir.join("claude-scenario"),
-            format!("print={print}\nauth={auth}\n"),
-        )
-        .unwrap();
-    }
-
-    fn adapter(&self) -> Claude {
-        Claude::new(SearchPath::new([self.dir.clone()]), self.dir.join("work"))
-            .with_limits(TEST_LIMITS)
-    }
-
-    fn read(&self, name: &str) -> String {
-        std::fs::read_to_string(self.dir.join(name)).unwrap_or_default()
-    }
-
-    fn prompts(&self) -> Vec<String> {
-        self.read("claude-prompts")
-            .split('\0')
-            .filter(|value| !value.is_empty())
-            .map(str::to_owned)
-            .collect()
-    }
-
-    fn invocations(&self) -> Vec<String> {
-        self.read("claude-invocations")
-            .lines()
-            .map(str::to_owned)
-            .collect()
-    }
-
-    fn pids(&self) -> Vec<u32> {
-        self.read("claude-pids")
-            .lines()
-            .map(|pid| pid.parse().expect("a pid"))
-            .collect()
-    }
-
-    fn assert_nothing_left_running(&self) {
-        #[cfg(unix)]
-        for pid in self.pids() {
-            use nix::errno::Errno;
-            use nix::sys::signal::kill;
-            use nix::unistd::Pid;
-
-            let pid = Pid::from_raw(i32::try_from(pid).expect("pid fits in pid_t"));
-            assert_eq!(kill(pid, None), Err(Errno::ESRCH), "{pid} is still around");
-        }
-    }
-}
-
-impl Drop for FakeClaude {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.dir);
-    }
-}
 
 fn ask(text: &str) -> SendRequest {
     SendRequest {
@@ -260,7 +161,7 @@ fn request_streams_with_tools_disabled_and_keeps_question_off_argv() {
     assert!(print.contains("--input-format stream-json"));
     assert!(print.contains("--include-partial-messages"));
     assert!(print.contains("--permission-mode default"));
-    assert!(print.contains("--tools  --disallowedTools mcp__*"));
+    assert!(print.contains("--tools  --strict-mcp-config --disallowedTools mcp__*"));
     assert!(!print.contains("--permission-mode plan"));
     assert!(!print.contains(question));
 }
@@ -329,26 +230,54 @@ fn continuation_resumes_and_survives_adapter_restart() {
     );
 }
 
-#[test]
-fn stale_resume_rebuilds_once_from_bounded_history() {
-    let claude = FakeClaude::install("answers", "signed-in");
-    let adapter = claude.adapter();
+fn prints(claude: &FakeClaude) -> Vec<String> {
+    claude
+        .read("claude-invocations")
+        .lines()
+        .filter(|line| line.starts_with("-p "))
+        .map(str::to_owned)
+        .collect()
+}
+
+fn first_conversation(adapter: &Claude) -> String {
     let first = visible(&run_to_end(adapter.send(ask("first")).as_mut()));
     let Update::ConversationCreated(conversation) = first[0].clone() else {
-        panic!("missing conversation");
+        panic!("missing conversation: {first:?}");
     };
+    conversation
+}
+
+fn follow_up(conversation: &str, history: Vec<HistoryMessage>) -> SendRequest {
+    SendRequest {
+        conversation_id: Some(conversation.to_owned()),
+        history,
+        ..ask("follow up")
+    }
+}
+
+#[test]
+fn stale_resume_rebuilds_once_from_bounded_history_under_the_same_conversation() {
+    let claude = FakeClaude::install("answers", "signed-in");
+    let adapter = claude.adapter();
+    let conversation = first_conversation(&adapter);
 
     claude.set("resume-fails", "signed-in");
     let updates = visible(&run_to_end(
-        adapter
-            .send(SendRequest {
-                conversation_id: Some(conversation),
-                history: history(),
-                ..ask("follow up")
-            })
-            .as_mut(),
+        adapter.send(follow_up(&conversation, history())).as_mut(),
     ));
-    assert!(matches!(updates[0], Update::ConversationCreated(_)));
+    // The stale session is replaced behind the same conversation ID: no new
+    // conversation, and one Started.
+    assert_eq!(
+        updates[0],
+        Update::Started {
+            conversation_id: Some(conversation.clone())
+        }
+    );
+    assert!(
+        !updates
+            .iter()
+            .any(|update| matches!(update, Update::ConversationCreated(_)))
+    );
     assert_eq!(updates.last(), Some(&Update::Completed));
     let prompts = claude.prompts();
     let prompt = prompts.last().expect("fallback prompt");
@@ -356,13 +285,116 @@ fn stale_resume_rebuilds_once_from_bounded_history() {
     assert!(prompt.contains("first answer"));
     assert!(prompt.ends_with("follow up"));
 
-    let prints: Vec<_> = claude
-        .invocations()
-        .into_iter()
-        .filter(|line| line.starts_with("-p "))
+    let runs = prints(&claude);
+    assert!(runs[1].contains("--resume claude-"));
+    assert!(!runs[2].contains("--resume"));
+
+    // The next turn resumes the rebuilt session, even after a restart.
+    claude.set("answers", "signed-in");
+    drop(adapter);
+    let updates = visible(&run_to_end(
+        claude
+            .adapter()
+            .send(follow_up(&conversation, Vec::new()))
+            .as_mut(),
+    ));
+    assert_eq!(updates.last(), Some(&Update::Completed));
+    let resumed = prints(&claude);
+    let stale = resumed_session(&resumed[1]).expect("the stale session");
+    let rebuilt = resumed_session(&resumed[3]).expect("the rebuilt session");
+    assert_ne!(stale, rebuilt);
+}
+
+fn resumed_session(print: &str) -> Option<&str> {
+    let mut args = print.split(' ');
+    args.find(|arg| *arg == "--resume")?;
+    args.next()
+}
+
+#[test]
+fn resume_crash_before_init_keeps_the_native_session() {
+    let claude = FakeClaude::install("answers", "signed-in");
+    let adapter = claude.adapter();
+    let conversation = first_conversation(&adapter);
+
+    claude.set("resume-crashes", "signed-in");
+    let updates = run_to_end(adapter.send(follow_up(&conversation, history())).as_mut());
+    assert_eq!(
+        failure(&updates),
+        (ErrorCode::ProviderFailed, "PROCESS_EXITED")
+    );
+    // No rebuild from history: one print run, and the mapping survives.
+    assert_eq!(prints(&claude).len(), 2);
+    claude.set("answers", "signed-in");
+    let updates = visible(&run_to_end(
+        adapter.send(follow_up(&conversation, history())).as_mut(),
+    ));
+    assert_eq!(updates.last(), Some(&Update::Completed));
+    let resumed = prints(&claude);
+    assert!(resumed[2].contains("--resume claude-"), "{resumed:?}");
+}
+
+#[test]
+fn missing_session_reported_in_result_rebuilds_without_a_second_started() {
+    let claude = FakeClaude::install("answers", "signed-in");
+    let adapter = claude.adapter();
+    let conversation = first_conversation(&adapter);
+
+    claude.set("result-session-gone", "signed-in");
+    let updates = visible(&run_to_end(
+        adapter.send(follow_up(&conversation, history())).as_mut(),
+    ));
+    let started: Vec<_> = updates
+        .iter()
+        .filter(|update| matches!(update, Update::Started { .. }))
         .collect();
-    assert!(prints.iter().any(|line| line.contains("--resume claude-")));
-    assert!(prints.last().is_some_and(|line| !line.contains("--resume")));
+    assert_eq!(
+        started,
+        [&Update::Started {
+            conversation_id: Some(conversation)
+        }]
+    );
+    assert!(
+        !updates
+            .iter()
+            .any(|update| matches!(update, Update::ConversationCreated(_)))
+    );
+    assert_eq!(updates.last(), Some(&Update::Completed));
+    assert!(!prints(&claude)[2].contains("--resume"));
+}
+
+#[test]
+fn missing_session_without_history_fails_as_unknown() {
+    let claude = FakeClaude::install("answers", "signed-in");
+    let adapter = claude.adapter();
+    let conversation = first_conversation(&adapter);
+
+    claude.set("resume-fails", "signed-in");
+    let updates = run_to_end(adapter.send(follow_up(&conversation, Vec::new())).as_mut());
+    assert_eq!(
+        failure(&updates),
+        (ErrorCode::InvalidRequest, "UNKNOWN_CONVERSATION")
+    );
+    // The stale mapping is gone, so the next attempt fails before Claude runs.
+    let runs = prints(&claude).len();
+    let updates = run_to_end(adapter.send(follow_up(&conversation, Vec::new())).as_mut());
+    assert_eq!(
+        failure(&updates),
+        (ErrorCode::InvalidRequest, "UNKNOWN_CONVERSATION")
+    );
+    assert_eq!(prints(&claude).len(), runs);
+}
+
+#[test]
+fn without_a_session_directory_conversations_continue_in_memory() {
+    let claude = FakeClaude::install("answers", "signed-in");
+    let adapter = claude.adapter().without_session_dir();
+    let conversation = first_conversation(&adapter);
+    let updates = visible(&run_to_end(
+        adapter.send(follow_up(&conversation, Vec::new())).as_mut(),
+    ));
+    assert_eq!(updates.last(), Some(&Update::Completed));
+    assert!(prints(&claude)[1].contains("--resume claude-"));
 }
 
 #[test]
@@ -442,6 +474,16 @@ fn result_text_is_fallback_when_partial_deltas_are_absent() {
 #[test]
 fn completed_result_does_not_wait_for_a_lingering_process() {
     let claude = FakeClaude::install("lingers", "signed-in");
+    let started = Instant::now();
+    let updates = visible(&run_to_end(claude.adapter().send(ask("hello")).as_mut()));
+    assert_eq!(updates.last(), Some(&Update::Completed));
+    assert!(started.elapsed() < Duration::from_secs(5));
+    claude.assert_nothing_left_running();
+}
+
+#[test]
+fn output_after_the_result_does_not_put_off_completion() {
+    let claude = FakeClaude::install("keeps-talking", "signed-in");
     let started = Instant::now();
     let updates = visible(&run_to_end(claude.adapter().send(ask("hello")).as_mut()));
     assert_eq!(updates.last(), Some(&Update::Completed));

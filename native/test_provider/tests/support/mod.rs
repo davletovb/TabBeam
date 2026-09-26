@@ -18,7 +18,7 @@ use pervue_host::host;
 use pervue_host::providers::claude::{Claude, Limits as ClaudeLimits};
 use pervue_host::providers::codex::{Codex, Limits};
 use pervue_host::providers::discovery::SearchPath;
-use pervue_host::providers::{Providers, Timeouts};
+use pervue_host::providers::{Provider, Providers, Timeouts};
 use serde_json::Value;
 
 pub const PROVIDER: &str = env!("CARGO_BIN_EXE_pervue-fake-provider");
@@ -202,6 +202,21 @@ impl FakeClaude {
 
     pub fn read(&self, file: &str) -> String {
         std::fs::read_to_string(self.dir.join(file)).unwrap_or_default()
+    }
+
+    pub fn invocations(&self) -> Vec<String> {
+        self.read("claude-invocations")
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    pub fn prompts(&self) -> Vec<String> {
+        self.read("claude-prompts")
+            .split('\0')
+            .filter(|prompt| !prompt.is_empty())
+            .map(str::to_owned)
+            .collect()
     }
 
     pub fn pids(&self) -> Vec<u32> {
@@ -415,42 +430,13 @@ impl Write for TimedSink {
     }
 }
 
-/// Runs a host serving only Claude, with the same timing harness used for
-/// hostile Codex-provider cases.
-pub fn serve_timed_claude(claude: Claude, mut input: PacedInput, waiting: &[&str]) -> Session {
-    let (ended, when_ended) = mpsc::channel();
-    input.ended = Some(when_ended);
-    let sent = Arc::clone(&input.sent);
-    let mut sink = TimedSink {
-        bytes: Vec::new(),
-        parsed: 0,
-        events: Vec::new(),
-        waiting: waiting.iter().map(|id| (*id).to_owned()).collect(),
-        ended: Some(ended),
-    };
-    let providers = Providers::new(vec![Box::new(claude)]);
-    let mut log = Diagnostics::new(Vec::new());
-    let started = Instant::now();
-    host::run_with(&providers, &mut input, &mut sink, &mut log).expect("a clean Claude session");
-    let ended = Instant::now();
-    assert_eq!(
-        sink.parsed,
-        sink.bytes.len(),
-        "the host wrote an incomplete frame"
-    );
-    let sent = sent.lock().unwrap().clone();
-    Session {
-        events: sink.events,
-        records: records(log),
-        sent,
-        started,
-        ended,
-    }
-}
-
-/// Runs a host serving only `codex` on `input`, whose end comes as soon as
+/// Runs a host serving only `provider` on `input`, whose end comes as soon as
 /// every request in `waiting` has ended, and records when each event came.
-pub fn serve_timed(codex: Codex, mut input: PacedInput, waiting: &[&str]) -> Session {
+pub fn serve_timed(
+    provider: impl Provider + 'static,
+    mut input: PacedInput,
+    waiting: &[&str],
+) -> Session {
     let (ended, when_ended) = mpsc::channel();
     input.ended = Some(when_ended);
     let sent = Arc::clone(&input.sent);
@@ -461,7 +447,7 @@ pub fn serve_timed(codex: Codex, mut input: PacedInput, waiting: &[&str]) -> Ses
         waiting: waiting.iter().map(|id| (*id).to_owned()).collect(),
         ended: Some(ended),
     };
-    let providers = Providers::new(vec![Box::new(codex)]);
+    let providers = Providers::new(vec![Box::new(provider)]);
     let mut log = Diagnostics::new(Vec::new());
     let started = Instant::now();
     host::run_with(&providers, &mut input, &mut sink, &mut log).expect("a clean session");
