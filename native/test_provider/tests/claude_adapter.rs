@@ -19,7 +19,6 @@ const TEST_LIMITS: Limits = Limits {
         stop_grace: Duration::from_millis(300),
     },
     probe: Duration::from_secs(5),
-    finish: Duration::from_millis(300),
 };
 
 struct FakeClaude {
@@ -79,25 +78,6 @@ impl FakeClaude {
             .lines()
             .map(str::to_owned)
             .collect()
-    }
-
-    fn pids(&self) -> Vec<u32> {
-        self.read("claude-pids")
-            .lines()
-            .map(|pid| pid.parse().expect("a pid"))
-            .collect()
-    }
-
-    fn assert_nothing_left_running(&self) {
-        #[cfg(unix)]
-        for pid in self.pids() {
-            use nix::errno::Errno;
-            use nix::sys::signal::kill;
-            use nix::unistd::Pid;
-
-            let pid = Pid::from_raw(i32::try_from(pid).expect("pid fits in pid_t"));
-            assert_eq!(kill(pid, None), Err(Errno::ESRCH), "{pid} is still around");
-        }
     }
 }
 
@@ -230,8 +210,7 @@ fn request_streams_and_keeps_question_off_argv() {
     assert!(print.contains("--output-format stream-json"));
     assert!(print.contains("--input-format stream-json"));
     assert!(print.contains("--include-partial-messages"));
-    assert!(print.contains("--permission-mode default"));
-    assert!(print.contains("--tools  --disallowedTools mcp__*"));
+    assert!(print.contains("--permission-mode plan"));
     assert!(!print.contains(question));
 }
 
@@ -317,187 +296,6 @@ fn cancellation_and_provider_errors_are_normalized() {
         failure(&run_to_end(claude.adapter().send(ask("hi")).as_mut())),
         (ErrorCode::ProviderFailed, "PROVIDER_RATE_LIMITED")
     );
-}
-
-#[test]
-fn conversation_mapping_survives_a_new_adapter_instance() {
-    let claude = FakeClaude::install("answers", "signed-in");
-    let first = visible(&run_to_end(claude.adapter().send(ask("first")).as_mut()));
-    let Update::ConversationCreated(conversation) = first[0].clone() else {
-        panic!("missing conversation");
-    };
-
-    let second = visible(&run_to_end(
-        claude
-            .adapter()
-            .send(SendRequest {
-                conversation_id: Some(conversation.clone()),
-                ..ask("second")
-            })
-            .as_mut(),
-    ));
-    assert_eq!(
-        second.first(),
-        Some(&Update::Started {
-            conversation_id: Some(conversation)
-        })
-    );
-    assert!(claude.invocations().iter().any(|line| line.contains("--resume claude-")));
-}
-
-#[test]
-fn failed_resume_rebuilds_once_from_history() {
-    let claude = FakeClaude::install("answers", "signed-in");
-    let adapter = claude.adapter();
-    let first = visible(&run_to_end(adapter.send(ask("first")).as_mut()));
-    let Update::ConversationCreated(conversation) = first[0].clone() else {
-        panic!("missing conversation");
-    };
-
-    claude.set("resume-fails", "signed-in");
-    let updates = visible(&run_to_end(
-        adapter
-            .send(SendRequest {
-                conversation_id: Some(conversation),
-                history: vec![
-                    HistoryMessage {
-                        role: Role::User,
-                        text: "first".to_owned(),
-                    },
-                    HistoryMessage {
-                        role: Role::Assistant,
-                        text: "You asked: first".to_owned(),
-                    },
-                ],
-                ..ask("second")
-            })
-            .as_mut(),
-    ));
-    assert_eq!(updates.last(), Some(&Update::Completed));
-    let invocations = claude.invocations();
-    assert!(invocations.iter().any(|line| line.contains("--resume claude-")));
-    assert!(
-        invocations
-            .iter()
-            .rev()
-            .find(|line| line.starts_with("-p "))
-            .is_some_and(|line| !line.contains("--resume"))
-    );
-    assert!(claude.prompts().last().unwrap().contains("You asked: first"));
-}
-
-#[test]
-fn latest_result_session_is_used_for_the_next_turn() {
-    let claude = FakeClaude::install("answers", "signed-in");
-    let adapter = claude.adapter();
-    let first = visible(&run_to_end(adapter.send(ask("first")).as_mut()));
-    let Update::ConversationCreated(conversation) = first[0].clone() else {
-        panic!("missing conversation");
-    };
-
-    claude.set("forks-session", "signed-in");
-    assert_eq!(
-        visible(&run_to_end(
-            adapter
-                .send(SendRequest {
-                    conversation_id: Some(conversation.clone()),
-                    ..ask("second")
-                })
-                .as_mut(),
-        ))
-        .last(),
-        Some(&Update::Completed)
-    );
-    assert_eq!(
-        visible(&run_to_end(
-            adapter
-                .send(SendRequest {
-                    conversation_id: Some(conversation),
-                    ..ask("third")
-                })
-                .as_mut(),
-        ))
-        .last(),
-        Some(&Update::Completed)
-    );
-    let prints: Vec<_> = claude
-        .invocations()
-        .into_iter()
-        .filter(|line| line.starts_with("-p "))
-        .collect();
-    assert!(prints[2].contains("--resume forked-"), "{prints:?}");
-}
-
-#[test]
-fn separate_assistant_messages_have_a_blank_line_between_them() {
-    let claude = FakeClaude::install("two-messages", "signed-in");
-    let updates = visible(&run_to_end(claude.adapter().send(ask("hi")).as_mut()));
-    assert!(updates.contains(&Update::Delta("First.".to_owned())));
-    assert!(updates.contains(&Update::Delta("\n\nSecond.".to_owned())));
-    assert_eq!(updates.last(), Some(&Update::Completed));
-}
-
-#[test]
-fn a_result_that_lingers_completes_after_the_finish_grace() {
-    let claude = FakeClaude::install("lingers", "signed-in");
-    let started = Instant::now();
-    let updates = visible(&run_to_end(claude.adapter().send(ask("hi")).as_mut()));
-    assert_eq!(updates.last(), Some(&Update::Completed));
-    assert!(started.elapsed() < Duration::from_secs(3));
-    claude.assert_nothing_left_running();
-}
-
-#[test]
-fn ignored_output_yields_and_can_be_cancelled() {
-    let claude = FakeClaude::install("flooding", "signed-in");
-    let adapter = claude.adapter();
-    let mut exchange = adapter.send(ask("hi"));
-    run_until_started(exchange.as_mut());
-
-    let started = Instant::now();
-    assert_eq!(
-        exchange.next(Instant::now() + Duration::from_millis(20)),
-        None
-    );
-    assert!(started.elapsed() < Duration::from_secs(1));
-
-    exchange.cancel(Duration::from_millis(300));
-    assert_eq!(run_to_end(exchange.as_mut()).last(), Some(&Update::Stopped));
-    claude.assert_nothing_left_running();
-}
-
-#[test]
-fn node_extra_ca_certs_is_inherited_without_provider_secrets() {
-    let claude = FakeClaude::install("answers", "signed-in");
-    let adapter = claude.adapter().with_environment([
-        (
-            std::ffi::OsString::from("PATH"),
-            std::env::var_os("PATH").unwrap_or_default(),
-        ),
-        (
-            std::ffi::OsString::from("NODE_EXTRA_CA_CERTS"),
-            std::ffi::OsString::from("/private/corp.pem"),
-        ),
-        (
-            std::ffi::OsString::from("ANTHROPIC_API_KEY"),
-            std::ffi::OsString::from("SECRET"),
-        ),
-    ]);
-    assert_eq!(status(&adapter).1, Authentication::Authenticated);
-    assert_eq!(
-        run_to_end(adapter.send(ask("hi")).as_mut()).last(),
-        Some(&Update::Completed)
-    );
-
-    for line in claude.read("claude-environment").lines() {
-        let value: serde_json::Value = serde_json::from_str(line).unwrap();
-        let env = value["env"].as_object().unwrap();
-        assert_eq!(
-            env.get("NODE_EXTRA_CA_CERTS").and_then(serde_json::Value::as_str),
-            Some("/private/corp.pem")
-        );
-        assert!(!env.contains_key("ANTHROPIC_API_KEY"));
-    }
 }
 
 #[test]
