@@ -268,18 +268,16 @@ impl Provider for Claude {
         }
 
         let mut conversation_id = request.conversation_id;
-        let mut fallback_prompt =
-            (!request.history.is_empty()).then(|| provider_prompt(&request.history, None, &request.text));
+        let mut fallback_prompt = (!request.history.is_empty())
+            .then(|| provider_prompt(&request.history, None, &request.text));
         let mut prompt = request.text;
         let resume = match &conversation_id {
             None => None,
-            Some(id) => match self
-                .conversations
-                .borrow()
-                .get(id)
-                .cloned()
-                .or_else(|| self.session_dir.as_deref().and_then(|dir| read_session(dir, id)))
-            {
+            Some(id) => match self.conversations.borrow().get(id).cloned().or_else(|| {
+                self.session_dir
+                    .as_deref()
+                    .and_then(|dir| read_session(dir, id))
+            }) {
                 Some(session) => Some(session),
                 None if !request.history.is_empty() => None,
                 None => return Box::new(Scripted::failed(UNKNOWN_CONVERSATION)),
@@ -399,7 +397,10 @@ fn read_session(dir: &Path, id: &str) -> Option<String> {
 
 fn save_session(dir: &Path, id: &str, session: &str) -> io::Result<()> {
     if !session_name(id) || !output::is_session_id(session) {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid session mapping"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid session mapping",
+        ));
     }
     #[cfg(unix)]
     {
@@ -582,11 +583,10 @@ impl Turn {
                         {
                             return self.end(Update::Failed(SESSION_STORE_FAILED));
                         }
-                        self.conversations
-                            .borrow_mut()
-                            .insert(id.clone(), session);
+                        self.conversations.borrow_mut().insert(id.clone(), session);
                         self.conversation_id = Some(id.clone());
-                        self.queue.push_back(Update::ConversationCreated(id.clone()));
+                        self.queue
+                            .push_back(Update::ConversationCreated(id.clone()));
                         id
                     }
                 };
@@ -612,9 +612,7 @@ impl Turn {
                         self.messages = 1;
                     }
                     if self.break_before_text && self.saw_delta {
-                        text.insert_str(0, "
-
-");
+                        text.insert_str(0, "\n\n");
                     }
                     self.break_before_text = false;
                     self.saw_delta = true;
@@ -665,7 +663,10 @@ impl Turn {
         self.saw_delta = false;
         self.messages = 0;
         self.break_before_text = false;
-        self.prompt = self.fallback_prompt.take().expect("checked before fallback");
+        self.prompt = self
+            .fallback_prompt
+            .take()
+            .expect("checked before fallback");
         self.start();
     }
 
