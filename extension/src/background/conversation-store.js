@@ -195,8 +195,8 @@ export function createConversationStore(storage, newId = () => crypto.randomUUID
       });
     },
     /** Roll back a pending turn that was cancelled before native work started. */
-    /** @param {string} id @param {string} assistantId */
-    discardPending(id, assistantId) {
+    /** @param {string} id @param {string} assistantId @param {boolean} [preservePair] */
+    discardPending(id, assistantId, preservePair = false) {
       return serialized(async (index) => {
         const conversation = await readRecord(index, id);
         const assistantIndex = conversation.messages.findIndex(
@@ -212,7 +212,15 @@ export function createConversationStore(storage, newId = () => crypto.randomUUID
         ) {
           throw new Error("Pending turn not found.");
         }
-        conversation.messages.splice(assistantIndex - 1, 2);
+        if (preservePair) {
+          assistant.status = "failed";
+          assistant.text = "";
+          assistant.provider_metadata = {
+            error: { code: "REQUEST_CANCELLED", reason: "USER_CANCELLED" }
+          };
+        } else {
+          conversation.messages.splice(assistantIndex - 1, 2);
+        }
         conversation.updated_at = now();
         await save(index, conversation);
       });
