@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use crate::conversation::{BrowserContext, HistoryMessage};
 use crate::protocol::events::Capabilities;
-pub use crate::stream::BUSY_LIMIT;
+pub use pervue_core::stream::BUSY_LIMIT;
 
 pub mod claude;
 pub mod codex;

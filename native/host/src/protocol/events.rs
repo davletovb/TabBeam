@@ -9,7 +9,7 @@ use serde::Serialize;
 use super::PROTOCOL_VERSION;
 use super::request::{FailureKind, RequestFailure, RequestId};
 use crate::HOST_VERSION;
-use crate::framing::{self, FrameError};
+use pervue_core::framing::{self, FrameError};
 
 /// v1 event names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

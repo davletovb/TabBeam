@@ -20,6 +20,7 @@ nix = { version = "0.31", default-features = false, features = ["resource", "sig
 [dev-dependencies]
 # The process manager (NAT-04) is tested here, against this crate's binary.
 pervue-host = { path = "../host" }
+pervue-core = { path = "../core" }
 
 [target.'cfg(unix)'.dev-dependencies]
 nix = { version = "0.31", default-features = false, features = ["process", "signal"] }

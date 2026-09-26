@@ -1,4 +1,6 @@
 //! Bounded-deadline provider exchange events, shared by Codex and Claude.
+//! Update names follow Pervue protocol v1; changing their meaning requires
+//! reviewing both the Rust consumers and the browser wire contract.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};

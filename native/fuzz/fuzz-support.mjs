@@ -11,6 +11,17 @@ import {
 const PREFIX_SIZE = 4;
 const CONTRACT = path.join(ROOT, "docs", "protocol", "native-messaging-v1.json");
 const GOLDEN = path.join(ROOT, "docs", "protocol", "fixtures", "v1-golden.json");
+const STREAM_TARGET = path.join(ROOT, "native", "fuzz", "fuzz_targets", "stream_lines.rs");
+
+function streamConfig() {
+  const source = fs.readFileSync(STREAM_TARGET, "utf8");
+  const line = Number(source.match(/const MAX_LINE_BYTES: usize = (\d+);/)?.[1]);
+  const schedule = Number(source.match(/const SCHEDULE_BYTES: usize = (\d+);/)?.[1]);
+  if (!Number.isSafeInteger(line) || line <= 0 || !Number.isSafeInteger(schedule) || schedule <= 0) {
+    throw new Error("stream_lines fuzz limits must be positive integer constants");
+  }
+  return { line, schedule };
+}
 
 function maxFrameBytes() {
   const value = loadJson(CONTRACT).max_frame_bytes;
@@ -93,10 +104,27 @@ function createProtocolCorpus(output) {
   console.log(`Wrote ${index + extras.size} protocol fuzz seeds.`);
 }
 
+function createStreamCorpus(output) {
+  fs.mkdirSync(output, { recursive: true });
+  const { line, schedule } = streamConfig();
+  const control = Buffer.alloc(schedule, 1);
+  const seeds = new Map([
+    ["at-limit.bin", Buffer.from("a".repeat(line) + "\r\n")],
+    ["over-limit.bin", Buffer.from("a".repeat(line + 1) + "\n")],
+    ["utf8-crlf.bin", Buffer.from("é\r\nmore\r\nlast\r")],
+    ["invalid-utf8.bin", Buffer.from([0xff, 0x0a])],
+    ["empty-lines.bin", Buffer.from("\n\r\n\r")],
+  ]);
+  for (const [name, payload] of seeds) {
+    fs.writeFileSync(path.join(output, name), Buffer.concat([control, payload]));
+  }
+  console.log(`Wrote ${seeds.size} bounded stream fuzz seeds.`);
+}
+
 function usage() {
   console.error(
     "usage: fuzz-support.mjs frame-corpus <output> | protocol-corpus <output> | " +
-      "max-len <frame_reader|protocol>",
+      "stream-corpus <output> | max-len <frame_reader|protocol|stream_lines>",
   );
   process.exit(64);
 }
@@ -111,9 +139,16 @@ switch (command) {
   case "protocol-corpus":
     createProtocolCorpus(path.resolve(argument));
     break;
+  case "stream-corpus":
+    createStreamCorpus(path.resolve(argument));
+    break;
   case "max-len":
     if (argument === "frame_reader") console.log(maxFrameBytes() + PREFIX_SIZE);
     else if (argument === "protocol") console.log(maxFrameBytes());
+    else if (argument === "stream_lines") {
+      const { line, schedule } = streamConfig();
+      console.log(2 * (line + 2) + schedule);
+    }
     else usage();
     break;
   default:

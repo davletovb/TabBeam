@@ -8,13 +8,16 @@ host, extension, browser APIs, provider CLI formats, or a running companion.
 |---|---|---|
 | `process` | Absolute-path spawn, isolated child environment, piped I/O, bounded output queue, termination and reap | Choice of executable, args, environment allowlist, timeout values, provider parsing |
 | `framing` | Native Messaging byte framing and a fixed 1 MiB payload limit | Request JSON validation and event serialization |
-| `stream` | Bounded UTF-8 lines, stderr tail, text chunks, final/error/stopped output | Interpretation of provider lines and messages |
-| `protocol` | Normalized error, capability, and status value types | Browser wire envelope, request IDs, product-specific validation |
-| `exchange` | `Update`, deadline-driven `Exchange`, `Timeouts`, `Scripted` | `SendRequest`, provider registry and `Provider` trait, conversation and session policy |
+| `stream` | Public `LineSplitter` for bounded UTF-8 lines, `LineStream` for process output and final/error/stopped states, stderr tail, text chunks | Interpretation of provider lines and messages |
+| `protocol` | Normalized protocol-v1 error, capability, and status value types | Browser wire envelope, request IDs, product-specific validation |
+| `exchange` | Protocol-v1 `Update`, deadline-driven `Exchange`, `Timeouts`, `Scripted` | `SendRequest`, provider registry and `Provider` trait, conversation and session policy |
 | `discovery` | Absolute directory search and platform executable detection | The `PERVUE_PROVIDER_PATH` override name and any provider-specific path choices |
 
-Only those modules are public. Process-tree control, buffered I/O internals,
-platform detection, and stream state machines remain private within them.
+Only those modules are public. `LineSplitter` and its `push`, `finish`, and
+`pending_len` operations are part of the Rust source API: CRLF is removed,
+lone CR remains data, invalid UTF-8 and over-limit lines fail, and unfinished
+lines stay bounded across chunk boundaries. Process-tree control, buffered I/O
+internals, and platform detection remain private within the modules.
 Pervue's diagnostics records, request ID rules, credential allowlist, browser
 context handling, and provider session maps stay in the host: those are product
 policy, rather than a reusable logging or configuration API. `discovery` uses
@@ -56,12 +59,17 @@ destructors, and a cross-version dynamic-link test before advertising one.
 The extraction rule is to add a public primitive only after two real
 consumers or two real providers demonstrate identical semantics. Codex and
 Claude establish the process, stream, and status/exchange contracts here.
-The framing code has an independent consumer in the host and its standalone
-fuzz target. Browser-specific data structures and provider-specific session
-details remain opaque to the core.
+Native Messaging framing is an explicit product boundary shared with the host;
+its single production consumer is the host, and its standalone fuzz target
+checks the same wire format. `Update` and normalized errors intentionally use
+Pervue's protocol-v1 vocabulary, so a change to those event or error meanings
+is a Rust core API change as well as a browser protocol change. Browser request
+data structures and provider-specific session details remain in the host.
 
 Run the library independently with `cargo test -p pervue-core` (including
 `tests/public_api.rs`). The fuzz workspace targets `frame_reader` and
-`stream_lines` directly against this crate. The host still reexports prior
-module paths for existing workspace consumers; these paths do not transfer
-ownership of the primitives back to the host.
+`stream_lines` directly against this crate. Workspace consumers import the
+shared modules directly from `pervue-core`; the unpublished host crate does
+not promise source compatibility for its former glob reexport paths. The host
+does retain an explicit `limits::MAX_FRAME_SIZE` binding at its browser trust
+boundary and reexports the normalized event vocabulary it writes on the wire.

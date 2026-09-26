@@ -7,7 +7,8 @@
 
 use std::io::{self, Read, Write};
 
-/// Maximum bytes in one Native Messaging payload (Chrome's outbound limit).
+/// Maximum bytes in one Native Messaging payload. Chrome caps host-to-browser
+/// frames at 1 MiB; Pervue applies that bound to reads as well.
 pub const MAX_FRAME_SIZE: usize = 1024 * 1024;
 
 /// Size of the length prefix that precedes every payload.
@@ -109,6 +110,15 @@ fn write_all<W: Write + ?Sized>(output: &mut W, mut buffer: &[u8]) -> Result<(),
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn frame_limit_matches_the_shared_protocol_contract() {
+        let contract: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../docs/protocol/native-messaging-v1.json"
+        ))
+        .expect("the shared contract is JSON");
+        assert_eq!(contract["max_frame_bytes"], MAX_FRAME_SIZE);
+    }
 
     /// Serves `data` in chunks of at most `chunk` bytes and counts read calls.
     struct ChunkedReader<'a> {

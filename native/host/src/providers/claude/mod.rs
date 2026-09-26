@@ -15,16 +15,17 @@ use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime};
 
 use super::codex::workspace;
-use super::discovery::SearchPath;
+use super::discovery;
 use super::environment;
 use super::forget;
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
 use crate::conversation::provider_prompt;
-use crate::process::{Event, Exit, Process, ProcessSpec};
 use crate::protocol::events::{
     Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ProviderState,
 };
-use crate::stream::{BUSY_LIMIT, LineStream, Output};
+use pervue_core::discovery::SearchPath;
+use pervue_core::process::{Event, Exit, Process, ProcessSpec};
+use pervue_core::stream::{BUSY_LIMIT, LineStream, Output};
 
 pub mod output;
 
@@ -193,7 +194,7 @@ impl Claude {
     pub fn installed() -> Self {
         let host: Vec<_> = std::env::vars_os().collect();
         let mut claude = Self::new(
-            SearchPath::from_env(crate::providers::discovery::SEARCH_PATH_VARIABLE),
+            discovery::installed(),
             workspace::default_for(&host, "claude"),
         );
         claude.session_dir = installed_session_dir();

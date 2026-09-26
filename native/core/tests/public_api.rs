@@ -123,6 +123,17 @@ fn exchange_and_platform_types_do_not_depend_on_host() {
     ));
     assert!(exchange.next(Instant::now()).unwrap().is_terminal());
     exchange.cancel(Duration::ZERO);
+    assert!(exchange.next(Instant::now()).is_none());
+
+    let mut pending = Scripted::new([
+        Update::Started {
+            conversation_id: None,
+        },
+        Update::Completed,
+    ]);
+    pending.cancel(Duration::ZERO);
+    assert_eq!(pending.next(Instant::now()), Some(Update::Stopped));
+    assert_eq!(pending.next(Instant::now()), None);
 
     assert!(SearchPath::new(["relative".into()]).dirs().is_empty());
     assert!(Process::spawn(&ProcessSpec::new("relative-program")).is_err());

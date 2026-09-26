@@ -13,16 +13,13 @@ The host serves the Chrome extension over Native Messaging. It validates each pr
 ```text
 native/
 ├── Cargo.toml       Cargo workspace: shared version, Rust 1.85+, `unsafe` forbidden
-├── core/            pervue-core: standalone reusable process, framing, stream, protocol primitives
+├── core/            pervue-core: reusable process, framing, stream, protocol, discovery
 ├── host/            pervue-host: the Native Messaging host (binary + library)
 │   ├── src/
 │   │   ├── diagnostics.rs  structured lifecycle diagnostics (JSON lines on stderr)
-│   │   ├── framing.rs   bounded length-prefixed frame reader/writer
-│   │   ├── limits.rs    every bound on browser input (frame size, nesting, request IDs)
+│   │   ├── limits.rs    browser input bounds; reexports the core frame limit
 │   │   ├── manifest.rs  caller-origin checks and the Native Messaging manifest
-│   │   ├── process.rs   provider process manager: start, stream, stop, clean up
-│   │   ├── stream.rs    stream manager: provider output as bounded lines
-│   │   ├── providers/   adapter contract, executable discovery, the fake and Codex adapters
+│   │   ├── providers/   adapter contract, host discovery policy, fake, Codex, Claude
 │   │   ├── protocol/    strict request validation and event emission
 │   │   ├── host.rs      request loop: requests side by side, cancellation, timeouts
 │   │   └── main.rs      command-line entry point
@@ -45,7 +42,7 @@ cargo test --workspace
 
 `cargo build` builds only the host (`target/debug/pervue-host`); the fake provider is a test fixture, so `cargo test --workspace` builds and tests it.
 
-All project crates forbid `unsafe` code. The host crate's `clippy.toml` also bans `std::process::Command::new`, so only the provider process manager (`host/src/process.rs`, NAT-04) starts processes, through one explicitly allowed call (see `docs/security/trust-boundaries.md`). CI treats compiler and Clippy warnings as errors and checks formatting:
+All project crates forbid `unsafe` code. The shared `clippy.toml` bans `std::process::Command::new` in both crates; only the provider process manager (`core/src/process.rs`, NAT-04) starts processes, through one explicitly allowed call (see `docs/security/trust-boundaries.md`). CI treats compiler and Clippy warnings as errors and checks formatting:
 
 ```bash
 cargo fmt --all --check
@@ -59,7 +56,7 @@ Pervue uses Chrome Native Messaging framing:
 - 4-byte unsigned payload length in the platform's native byte order;
 - followed by exactly that many payload bytes;
 - zero-length payloads are valid;
-- inbound and outbound frames are capped at `MAX_FRAME_SIZE` (1 MiB) from `host/src/limits.rs`, which tests keep equal to `docs/protocol/native-messaging-v1.json`, the copy the extension is tested against;
+- inbound and outbound frames are capped at `MAX_FRAME_SIZE` (1 MiB) defined in `core/src/framing.rs` and reexported by `host/src/limits.rs`, which tests keep equal to `docs/protocol/native-messaging-v1.json`, the copy the extension is tested against;
 - oversized lengths are rejected before allocation;
 - EOF before any prefix byte is clean end-of-stream;
 - partial prefix/payload EOF is a truncated-frame error;
@@ -174,7 +171,7 @@ Provider support is four layers, each with its own tests: the normalized adapter
 
 `host/src/providers/codex/` is the Codex CLI adapter. It was written against Codex CLI 0.156.1 and verified against that release.
 
-- **Discovery.** The adapter looks for an executable named `codex` in the host's `PATH` and then in the usual install locations that Chrome's minimal `PATH` can leave out: `/opt/homebrew/bin` (macOS), `/usr/local/bin`, `~/.local/bin`, `~/.npm-global/bin`, `~/.volta/bin`, `~/.bun/bin`, `~/bin`, and the `bin` directory of each Node version nvm installed, newest first. On Windows it looks for `codex.exe`, then `codex.cmd`, in `PATH` and `%APPDATA%\npm`. `PERVUE_PROVIDER_PATH`, a list of directories in `PATH` form, replaces all of these, for unusual installs and hermetic tests. Relative directories are skipped, and nothing in a request affects the lookup (`host/src/providers/discovery.rs`).
+- **Discovery.** The adapter looks for an executable named `codex` in the host's `PATH` and then in the usual install locations that Chrome's minimal `PATH` can leave out: `/opt/homebrew/bin` (macOS), `/usr/local/bin`, `~/.local/bin`, `~/.npm-global/bin`, `~/.volta/bin`, `~/.bun/bin`, `~/bin`, and the `bin` directory of each Node version nvm installed, newest first. On Windows it looks for `codex.exe`, then `codex.cmd`, in `PATH` and `%APPDATA%\npm`. `PERVUE_PROVIDER_PATH`, a list of directories in `PATH` form, replaces all of these, for unusual installs and hermetic tests. Relative directories are skipped, and nothing in a request affects the lookup (`core/src/discovery.rs`; the host override is applied in `host/src/providers/discovery.rs`).
 - **Status.** `provider.status` runs `codex login status` and reads only its exit status: 0 is `authenticated` and 1 `unauthenticated`. Any other status, or no answer within 10 seconds, is `unknown`. The command's output names the account and a masked key, so it is never read. If no executable is found, the availability is `not_found`; if it can't be started, `unavailable`.
 - **Requests.** A signed-out `codex exec` keeps retrying instead of failing, so each `conversation.send` first checks the sign-in the same way and fails at once if Codex is signed out. Then it runs:
 
@@ -246,7 +243,7 @@ Set `PERVUE_LIVE_CLAUDE=required` when Claude is expected to be installed and au
 
 ### Stream manager
 
-`host/src/stream.rs` is the stream manager (NAT-05). `LineStream` reads a provider process's stdout as lines. `next(deadline)` returns one complete line at a time, and then exactly one terminal state, which later calls repeat:
+`core/src/stream.rs` is the stream manager (NAT-05). `LineStream` reads a provider process's stdout as lines. `next(deadline)` returns one complete line at a time, and then exactly one terminal state, which later calls repeat:
 
 - `Final(exit)` when stdout ended and the process exited. A last line without a line ending is still delivered.
 - `Error` when a line grew past the stream's limit or wasn't UTF-8. The process is killed at once.
@@ -258,11 +255,11 @@ Output that arrives without completing a line, such as stderr, the start of a lo
 
 `split_text` cuts outgoing text into pieces of bounded size, never inside a character; the host uses it for `response.delta`.
 
-The unit tests in `stream.rs` pin the line splitting: characters cut between chunks, CRLF endings, a last line without an ending, the limit, and invalid UTF-8. `test_provider/tests/stream_manager.rs` runs the stream manager on real processes: 2,000 lines full of multi-byte characters, stderr, a line over the limit, a 2 MiB line read slowly, a crash, and cancelling between lines, mid-line, and against a provider that ignores SIGTERM.
+The unit tests in `core/src/stream.rs` pin the line splitting: characters cut between chunks, CRLF endings, a last line without an ending, the limit, and invalid UTF-8. `test_provider/tests/stream_manager.rs` runs the stream manager on real processes: 2,000 lines full of multi-byte characters, stderr, a line over the limit, a 2 MiB line read slowly, a crash, and cancelling between lines, mid-line, and against a provider that ignores SIGTERM.
 
 ### Provider processes
 
-`host/src/process.rs` is the provider process manager (NAT-04). It is the only code in the host that starts a process; the Codex adapter reaches it through the stream manager.
+`core/src/process.rs` is the provider process manager (NAT-04). It is the only code in the native workspace that starts a provider process; the Codex adapter reaches it through the stream manager.
 
 ```rust
 let mut process = Process::spawn(&ProcessSpec::new(executable).args(["exec", "--json"]))?;

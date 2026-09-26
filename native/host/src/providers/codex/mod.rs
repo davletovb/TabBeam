@@ -26,16 +26,17 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime};
 
-use super::discovery::SearchPath;
+use super::discovery;
 use super::environment;
 use super::forget;
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
 use crate::conversation::provider_prompt;
-use crate::process::{Event, Exit, Process, ProcessSpec};
 use crate::protocol::events::{
     Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ProviderState,
 };
-use crate::stream::{BUSY_LIMIT, LineStream, Output};
+use pervue_core::discovery::SearchPath;
+use pervue_core::process::{Event, Exit, Process, ProcessSpec};
+use pervue_core::stream::{BUSY_LIMIT, LineStream, Output};
 
 pub mod output;
 pub(crate) mod workspace;
@@ -213,10 +214,7 @@ impl Codex {
     /// in the user's data directory.
     pub fn installed() -> Self {
         let host: Vec<_> = std::env::vars_os().collect();
-        let mut codex = Self::new(
-            SearchPath::from_env(crate::providers::discovery::SEARCH_PATH_VARIABLE),
-            workspace::default(&host),
-        );
+        let mut codex = Self::new(discovery::installed(), workspace::default(&host));
         codex.session_dir = installed_session_dir();
         codex
     }

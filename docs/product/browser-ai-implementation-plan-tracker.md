@@ -1428,7 +1428,7 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 **Status:** IMPLEMENTED — VERIFY
 
 **Implementation evidence**
-- `native/core/tests/public_api.rs` exercises the independent public crate; existing framing/process/stream/discovery unit tests now run in the core. The frame and stream fuzz targets compile directly against core and run in CI; provider and host integration tests remain in the workspace.
+- `native/core/tests/public_api.rs` exercises the independent public crate, including exchange cancellation; existing framing/process/stream/discovery unit tests now run in the core. The frame and stream fuzz targets compile directly against core and run in CI. The stream target compares different chunk boundaries to one-shot parsing and a line-ending oracle, with generated seeds at and beyond its configured line limit; provider and host integration tests remain in the workspace.
 
 ---
 
