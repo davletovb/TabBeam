@@ -490,15 +490,21 @@ struct Turn {
     stage: Stage,
     executable: PathBuf,
     launch: Rc<Launch>,
+    session_dir: Option<PathBuf>,
     prompt: String,
+    fallback_prompt: Option<String>,
     resume: Option<String>,
     conversation_id: Option<String>,
     conversations: Conversations,
+    finish_grace: Duration,
     queue: VecDeque<Update>,
     cancelled: bool,
     started: bool,
     saw_delta: bool,
     result_seen: bool,
+    messages: usize,
+    pending_separator: bool,
+    finish_by: Option<Instant>,
 }
 
 enum Stage {
@@ -521,7 +527,11 @@ impl Turn {
             "--verbose",
             "--include-partial-messages",
             "--permission-mode",
-            "plan",
+            "default",
+            "--tools",
+            "",
+            "--disallowedTools",
+            "mcp__*",
         ]
         .map(OsString::from)
         .into();
