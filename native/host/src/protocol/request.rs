@@ -4,8 +4,11 @@ use std::borrow::Cow;
 
 use super::PROTOCOL_VERSION;
 use super::json::{JsonError, JsonStr, Reader};
-use crate::conversation::HistoryMessage;
-use crate::limits::{MAX_HISTORY_BYTES, MAX_HISTORY_MESSAGES, MAX_REQUEST_ID_LENGTH};
+use crate::conversation::{BrowserContext, BrowserContextMode, BrowserPageContext, HistoryMessage};
+use crate::limits::{
+    MAX_CONTEXT_TITLE_BYTES, MAX_CONTEXT_URL_BYTES, MAX_HISTORY_BYTES, MAX_HISTORY_MESSAGES,
+    MAX_PAGE_BYTES, MAX_REQUEST_ID_LENGTH, MAX_SELECTION_BYTES,
+};
 
 /// A validated request ID, kept as the raw bytes of its JSON string token so
 /// events echo it byte-for-byte (v1 §4).
@@ -50,8 +53,8 @@ pub enum Method<'a> {
         text: JsonStr<'a>,
         /// Parsed and validated once at the protocol boundary.
         history: Vec<HistoryMessage>,
-        /// Whether the request attaches browser context (`context`).
-        has_context: bool,
+        /// Validated browser context attached to this turn.
+        context: Option<BrowserContext>,
     },
     ProviderStatus {
         provider_id: Option<JsonStr<'a>>,
@@ -307,7 +310,7 @@ fn parse_conversation_payload(payload: &[u8]) -> Result<Method<'_>, FailureKind>
     let mut provider_id = None;
     let mut conversation_id = None;
     let mut input_data = None;
-    let mut has_context = false;
+    let mut context = None;
     let mut invalid = false;
 
     let has_members = walk_payload_object(payload, |key, reader| {
@@ -321,8 +324,9 @@ fn parse_conversation_payload(payload: &[u8]) -> Result<Method<'_>, FailureKind>
             conversation_id = read_nonempty_string(reader)?;
             invalid |= conversation_id.is_none();
         } else if key.equals_ascii("context") {
-            has_context = true;
-            invalid |= read_object(reader)?.is_none();
+            context = read_object(reader)?
+                .and_then(|value| parse_browser_context(value).ok());
+            invalid |= context.is_none();
         } else {
             reader.skip_value().map_err(payload_error)?;
         }
@@ -336,7 +340,7 @@ fn parse_conversation_payload(payload: &[u8]) -> Result<Method<'_>, FailureKind>
                 conversation_id,
                 text,
                 history,
-                has_context,
+                context,
             })
         }
         _ => Err(FailureKind::InvalidPayload),
@@ -372,6 +376,75 @@ fn parse_input(input: &[u8]) -> Result<(JsonStr<'_>, Vec<HistoryMessage>), Failu
         Some(text) if has_members && !invalid => Ok((text, history.unwrap_or_default())),
         _ => Err(FailureKind::InvalidPayload),
     }
+}
+
+fn parse_browser_context(context: &[u8]) -> Result<BrowserContext, FailureKind> {
+    let parsed: serde_json::Value =
+        serde_json::from_slice(context).map_err(|_| FailureKind::InvalidPayload)?;
+    let object = parsed.as_object().ok_or(FailureKind::InvalidPayload)?;
+
+    let mode = match object.get("mode").and_then(serde_json::Value::as_str) {
+        Some("selection") => BrowserContextMode::Selection,
+        Some("page") => BrowserContextMode::Page,
+        _ => return Err(FailureKind::InvalidPayload),
+    };
+    let text = object
+        .get("text")
+        .and_then(serde_json::Value::as_str)
+        .filter(|text| !text.trim().is_empty())
+        .ok_or(FailureKind::InvalidPayload)?
+        .to_owned();
+    let truncated = object
+        .get("truncated")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or(FailureKind::InvalidPayload)?;
+
+    let page = object
+        .get("page")
+        .and_then(serde_json::Value::as_object)
+        .ok_or(FailureKind::InvalidPayload)?;
+    let title = page
+        .get("title")
+        .and_then(serde_json::Value::as_str)
+        .ok_or(FailureKind::InvalidPayload)?
+        .to_owned();
+    let url = page
+        .get("url")
+        .and_then(serde_json::Value::as_str)
+        .filter(|url| valid_context_url(url))
+        .ok_or(FailureKind::InvalidPayload)?
+        .to_owned();
+
+    let text_limit = match mode {
+        BrowserContextMode::Selection => MAX_SELECTION_BYTES,
+        BrowserContextMode::Page => MAX_PAGE_BYTES,
+    };
+    if text.len() > text_limit
+        || title.len() > MAX_CONTEXT_TITLE_BYTES
+        || url.len() > MAX_CONTEXT_URL_BYTES
+    {
+        return Err(FailureKind::InvalidPayload);
+    }
+
+    Ok(BrowserContext {
+        mode,
+        text,
+        truncated,
+        page: BrowserPageContext { title, url },
+    })
+}
+
+fn valid_context_url(url: &str) -> bool {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return false;
+    };
+    if !matches!(scheme, "http" | "https") || rest.is_empty() {
+        return false;
+    }
+    // The extension strips credentials, query, and fragment before sending.
+    // Recheck those invariants at the native boundary without trying to
+    // reinterpret arbitrary URL syntax.
+    !rest.contains('@') && !rest.contains('?') && !rest.contains('#')
 }
 
 fn parse_status_payload(payload: &[u8]) -> Result<Method<'_>, FailureKind> {
@@ -545,7 +618,7 @@ mod tests {
             conversation_id,
             text,
             history,
-            has_context,
+            context,
         } = request.method
         else {
             panic!("unexpected method");
@@ -554,7 +627,7 @@ mod tests {
         assert_eq!(conversation_id, None);
         assert_eq!(text.decode(), "Hello");
         assert!(history.is_empty());
-        assert!(!has_context);
+        assert!(context.is_none());
     }
 
     #[test]
@@ -873,7 +946,7 @@ mod tests {
             conversation_id,
             text,
             history,
-            has_context,
+            context,
         } = request.method
         else {
             panic!("unexpected method");
@@ -881,7 +954,7 @@ mod tests {
         assert!(provider_id.equals_ascii("codex"));
         assert_eq!(text.decode(), "Hi");
         assert!(history.is_empty());
-        assert!(has_context);
+        assert!(context.is_some());
         assert_eq!(conversation_id.map(JsonStr::raw), Some(&b"conv_1"[..]));
     }
 
