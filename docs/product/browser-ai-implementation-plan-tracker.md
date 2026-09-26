@@ -384,7 +384,7 @@ Reached after **Milestone H**:
 - Extension lint config: `extension/eslint.config.js`
 - Extension JS type checking: `extension/jsconfig.json` + `extension/types/chrome.d.ts`
 - Deterministic unpacked build: `extension/scripts/build.mjs`
-- Protocol schema/fixture validation: `scripts/validate_protocol.py`
+- Protocol schema/fixture validation: `scripts/validate-protocol.mjs`
 - Native CI runs `cargo fmt`, `cargo clippy`, and `cargo test --workspace` on Linux, macOS, and Windows with stable Rust, plus a Rust 1.85 minimum-version job and a cargo-fuzz smoke job.
 - Warnings fail CI through `RUSTFLAGS=-D warnings` and `cargo clippy -- -D warnings`.
 - Moves to VERIFIED once the Rust port merges.
@@ -420,7 +420,7 @@ Reached after **Milestone H**:
 - Host framing integration and deterministic exit statuses: `native/host/src/host.rs`
 - Unit coverage for normal, empty, maximum-size, oversized, truncated, EOF, I/O-error, interrupted-read, literal native-byte-order, and forced short-read/short-write cases: `native/host/src/framing.rs`
 - Host-level oversized/truncated framing checks: `native/host/src/host.rs` + `native/host/tests/cli.rs`
-- cargo-fuzz harness and structured corpus generator: `native/fuzz/fuzz_targets/frame_reader.rs` + `native/fuzz/create_corpus.py`
+- cargo-fuzz harness and structured corpus generator: `native/fuzz/fuzz_targets/frame_reader.rs` + `native/fuzz/fuzz-support.mjs`
 - Project frame cap: 1 MiB, enforced before payload allocation and before writes.
 - Ported from C to Rust (ADR-0001). Before the C sources were removed, the Rust host matched the C host byte-for-byte, including exit statuses, on about 2.3 million differential inputs. Moves to VERIFIED once the port merges.
 
@@ -449,8 +449,8 @@ Reached after **Milestone H**:
 - Protocol event/error emission with the typed DOC-02 error and capability vocabulary: `native/host/src/protocol/events.rs`
 - Host emits exactly one `host.ready`, keeps running after malformed requests, and routes the local fake conversation provider: `native/host/src/host.rs`
 - Parser/router/integration tests cover malformed JSON, duplicate/missing/extra/wrong fields, 128/129-character request-ID boundaries, escaped identifiers, unsupported versions, unknown methods, depth limits, recovered-ID malformed failures, invalid method payloads, and fake conversation dispatch: `native/host/src/protocol/` + `native/host/src/host.rs`
-- Protocol fuzz target runs each input through the whole host and asserts every emitted frame is a JSON object; golden-derived corpus: `native/fuzz/fuzz_targets/protocol.rs` + `native/fuzz/create_protocol_corpus.py`
-- Built-host contract harness validates emitted frames against the frozen event/error/provider-status schemas and golden event sequences: `scripts/validate_host_protocol.py`
+- Protocol fuzz target runs each input through the whole host and asserts every emitted frame is a JSON object; golden-derived corpus: `native/fuzz/fuzz_targets/protocol.rs` + `native/fuzz/fuzz-support.mjs`
+- Built-host contract harness validates emitted frames against the frozen event/error/provider-status schemas and golden event sequences: `scripts/validate-host-protocol.mjs`
 - Ported from C to Rust (ADR-0001). Before the C sources were removed, the Rust host matched the C host byte-for-byte, including exit statuses, on about 2.3 million differential inputs. Moves to VERIFIED once the port merges.
 
 ### TST-02 — Build deterministic fake streaming provider
@@ -576,7 +576,7 @@ Reached after **Milestone H**:
 - The host records `host.started`, `request.completed`, `request.failed`, `request.aborted`, `request.rejected`, and `host.stopped`, with one `request.*` record for every request it reads. The request loop records each request's outcome, and any conversation it created: `native/host/src/host.rs` (the router it used at first became the provider adapter contract in PRO-01)
 - Records never copy prompt text, page context, other payload members, raw frames, or error messages. Identifiers are cut to 128 characters and JSON-escaped: `diagnostics_never_copy_request_content` and the `diagnostics.rs` unit tests
 - Diagnostics go only to stderr, and a failing stderr is ignored: `diagnostics_go_to_stderr_and_never_into_the_frames` and `the_logged_exit_code_matches_the_process` in `native/host/tests/cli.rs`, and `diagnostics_do_not_change_the_frames` in `native/host/src/host.rs`
-- The protocol fuzz target checks that every input yields three well-formed records (`native/fuzz/fuzz_targets/protocol.rs`), and `scripts/validate_host_protocol.py` checks the built host's stderr on the golden requests
+- The protocol fuzz target checks that every input yields three well-formed records (`native/fuzz/fuzz_targets/protocol.rs`), and `scripts/validate-host-protocol.mjs` checks the built host's stderr on the golden requests
 - Format and fields documented in `native/README.md` (Diagnostics)
 - Moves to VERIFIED once merged.
 

@@ -1,0 +1,16 @@
+{
+  "name": "@pervue/protocol-tools",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "validate": "node validate-protocol.mjs",
+    "validate:host": "node validate-host-protocol.mjs"
+  },
+  "devDependencies": {
+    "ajv": "8.17.1"
+  }
+}
