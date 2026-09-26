@@ -141,7 +141,6 @@ impl Drop for FakeCodex {
     }
 }
 
-
 /// Short Claude adapter limits for integration tests.
 pub const CLAUDE_TEST_LIMITS: ClaudeLimits = ClaudeLimits {
     timeouts: Timeouts {
@@ -178,7 +177,11 @@ impl FakeClaude {
     }
 
     pub fn file_name() -> &'static str {
-        if cfg!(windows) { "claude.exe" } else { "claude" }
+        if cfg!(windows) {
+            "claude.exe"
+        } else {
+            "claude"
+        }
     }
 
     pub fn set(&self, print: &str, auth: &str) {
@@ -190,8 +193,11 @@ impl FakeClaude {
     }
 
     pub fn adapter(&self) -> Claude {
-        Claude::new(SearchPath::new([self.dir.clone()]), self.dir.join("claude-work"))
-            .with_limits(CLAUDE_TEST_LIMITS)
+        Claude::new(
+            SearchPath::new([self.dir.clone()]),
+            self.dir.join("claude-work"),
+        )
+        .with_limits(CLAUDE_TEST_LIMITS)
     }
 
     pub fn read(&self, file: &str) -> String {
