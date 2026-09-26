@@ -402,7 +402,7 @@ function settle() {
   assert.equal(providerView(DOC_02.provider_statuses[0], "Codex").message, "Codex is ready.");
   assert.equal(
     providerView(DOC_02.provider_statuses[1], "Codex").message,
-    "claude isn't installed. Install it, then try again."
+    "Claude isn't installed. Install it, then try again."
   );
 }
 
