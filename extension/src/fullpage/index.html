@@ -5,42 +5,109 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Pervue — Full view</title>
     <script src="../shared/theme-bootstrap.js"></script>
+    <link rel="stylesheet" href="../shared/ui.css">
     <link rel="stylesheet" href="./fullpage.css">
   </head>
   <body>
-    <main class="page-shell">
-      <header class="topbar">
-        <div>
-          <p class="eyebrow">Pervue</p>
-          <h1>Conversation</h1>
+    <div class="app">
+      <aside id="sidebar" class="sidebar" aria-label="Pervue">
+        <div class="sidebar-head">
+          <a class="brand" href="./index.html">
+            <span class="brand-mark" aria-hidden="true"><svg class="icon"><use href="../shared/icons.svg#mark"/></svg></span>
+            <span class="brand-name">Pervue</span>
+          </a>
+          <button id="sidebar-close" class="icon-button sidebar-close" type="button" aria-label="Close sidebar">
+            <svg class="icon" aria-hidden="true"><use href="../shared/icons.svg#close"/></svg>
+          </button>
         </div>
-        <label class="theme-control" for="theme-select">
-          <span>Theme</span>
-          <select id="theme-select" aria-label="Theme">
-            <option value="system">System</option>
-            <option value="light">Light</option>
-            <option value="dark">Dark</option>
-          </select>
-        </label>
-      </header>
-      <nav class="conversation-nav" aria-label="Conversations">
-        <label for="recent-conversations">Recent conversations</label>
-        <select id="recent-conversations"><option value="">No recent conversations</option></select>
-        <button id="new-conversation" type="button">New conversation</button>
-      </nav>
-      <section id="conversation-history" class="conversation-history" aria-label="Conversation history" aria-live="polite"></section>
-      <section id="answer" class="answer" aria-label="Answer in progress" aria-busy="false" hidden></section>
-      <form id="ask-form" class="composer">
-        <label for="ask-input">Ask a follow-up</label>
-        <textarea id="ask-input" rows="4" placeholder="Ask anything…"></textarea>
-        <div class="request-actions">
-          <button id="ask-submit" type="submit" aria-disabled="false">Ask</button>
-          <button id="ask-cancel" class="secondary" type="button" hidden>Stop</button>
-          <button id="ask-retry" class="secondary" type="button" hidden>Retry</button>
+
+        <button id="new-conversation" class="button button-primary new-conversation" type="button">
+          <svg class="icon icon-sm" aria-hidden="true"><use href="../shared/icons.svg#plus"/></svg>
+          New conversation
+        </button>
+
+        <nav class="conversation-nav" aria-labelledby="recent-heading">
+          <h2 id="recent-heading" class="sidebar-label">Recent</h2>
+          <label class="sr-only" for="recent-conversations">Recent conversations</label>
+          <select id="recent-conversations" hidden><option value="">No recent conversations</option></select>
+          <ul id="conversation-list" class="conversation-list"></ul>
+          <p id="conversation-list-empty" class="conversation-list-empty">Your conversations will appear here.</p>
+        </nav>
+
+        <div class="sidebar-foot">
+          <div class="provider">
+            <p id="provider-state" class="provider-state" role="status" aria-live="polite" hidden></p>
+            <a id="companion-setup" class="setup-link" href="../setup/index.html" target="_blank" hidden>Set up companion<svg class="icon icon-xs" aria-hidden="true"><use href="../shared/icons.svg#arrow-right"/></svg></a>
+          </div>
+          <div class="sidebar-settings">
+            <span class="sidebar-label" id="theme-label">Theme</span>
+            <div class="theme-toggle" id="theme-toggle" role="group" aria-labelledby="theme-label">
+              <select id="theme-select" aria-label="Theme" hidden>
+                <option value="system">System</option>
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+              </select>
+              <button type="button" data-theme-option="system" aria-label="System theme" title="System"><svg class="icon" aria-hidden="true"><use href="../shared/icons.svg#monitor"/></svg></button>
+              <button type="button" data-theme-option="light" aria-label="Light theme" title="Light"><svg class="icon" aria-hidden="true"><use href="../shared/icons.svg#sun"/></svg></button>
+              <button type="button" data-theme-option="dark" aria-label="Dark theme" title="Dark"><svg class="icon" aria-hidden="true"><use href="../shared/icons.svg#moon"/></svg></button>
+            </div>
+          </div>
         </div>
-      </form>
-      <p id="status" class="status" role="status" aria-live="polite" aria-atomic="true"></p>
-    </main>
+      </aside>
+      <div class="scrim" id="scrim" hidden></div>
+
+      <main class="main">
+        <header class="main-header">
+          <button id="sidebar-open" class="icon-button sidebar-open" type="button" aria-label="Open sidebar" aria-controls="sidebar" aria-expanded="false">
+            <svg class="icon" aria-hidden="true"><use href="../shared/icons.svg#menu"/></svg>
+          </button>
+          <h1 id="conversation-title" class="conversation-title">New conversation</h1>
+        </header>
+
+        <div id="thread-scroll" class="thread-scroll">
+          <div id="thread" class="thread">
+            <section class="empty-state" aria-labelledby="empty-title">
+              <span class="empty-mark" aria-hidden="true"><svg class="icon"><use href="../shared/icons.svg#mark"/></svg></span>
+              <h2 id="empty-title">How can Pervue help?</h2>
+              <p>Ask a question to start a conversation. It's saved on this device, and you can pick it up again from the popup or here.</p>
+              <ul class="tips">
+                <li><kbd>Enter</kbd> to ask</li>
+                <li><kbd>Shift</kbd> <kbd>Enter</kbd> for a new line</li>
+                <li><kbd>/</kbd> to jump to the composer</li>
+              </ul>
+            </section>
+
+            <section id="conversation-history" class="conversation-history" aria-label="Conversation history" aria-live="polite"></section>
+            <section id="answer" class="answer" aria-label="Answer in progress" aria-busy="false" hidden></section>
+            <div class="typing" aria-hidden="true">Thinking<span><i></i><i></i><i></i></span></div>
+          </div>
+        </div>
+
+        <footer class="dock">
+          <div class="dock-inner">
+            <div class="request-actions">
+              <button id="ask-cancel" class="button button-outline button-sm pill" type="button" hidden>
+                <svg class="icon icon-xs" aria-hidden="true"><use href="../shared/icons.svg#stop"/></svg>
+                Stop
+              </button>
+              <button id="ask-retry" class="button button-outline button-sm pill" type="button" hidden>
+                <svg class="icon icon-xs" aria-hidden="true"><use href="../shared/icons.svg#retry"/></svg>
+                Retry
+              </button>
+            </div>
+
+            <form id="ask-form" class="composer">
+              <label class="sr-only" for="ask-input">Ask a follow-up</label>
+              <textarea id="ask-input" rows="1" placeholder="Ask anything…"></textarea>
+              <button id="ask-submit" class="send" type="submit" aria-disabled="false" aria-label="Ask" title="Ask (Enter)">
+                <svg class="icon" aria-hidden="true"><use href="../shared/icons.svg#arrow-up"/></svg>
+              </button>
+            </form>
+            <p id="status" class="status" role="status" aria-live="polite" aria-atomic="true"></p>
+          </div>
+        </footer>
+      </main>
+    </div>
     <script type="module" src="./fullpage.js"></script>
   </body>
 </html>

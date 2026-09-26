@@ -1,7 +1,28 @@
-import { bindThemeSurface } from "../shared/theme.js";
+import { bindThemeSelect } from "../shared/theme.js";
+import { bindThemeToggle } from "../shared/theme-toggle.js";
 
-void bindThemeSurface(
-  chrome.storage.local,
-  document.documentElement,
-  chrome.storage.onChanged
-);
+const select = document.querySelector("#theme-select");
+const toggle = document.querySelector("#theme-toggle");
+if (select instanceof HTMLSelectElement && toggle instanceof HTMLElement) {
+  void bindThemeSelect(select, chrome.storage.local, document.documentElement, chrome.storage.onChanged);
+  bindThemeToggle(toggle, select, document.documentElement);
+}
+
+for (const button of Array.from(document.querySelectorAll(".copy-command"))) {
+  button.addEventListener("click", async () => {
+    const command = button.parentElement?.querySelector("code")?.textContent ?? "";
+    try {
+      const clipboard = globalThis.navigator?.clipboard;
+      if (!clipboard) throw new Error("clipboard unavailable");
+      await clipboard.writeText(command);
+      button.setAttribute("data-copied", "true");
+      button.setAttribute("aria-label", "Copied");
+      setTimeout(() => {
+        button.removeAttribute("data-copied");
+        button.setAttribute("aria-label", "Copy command");
+      }, 1500);
+    } catch {
+      // Copying is a convenience; the command stays selectable.
+    }
+  });
+}

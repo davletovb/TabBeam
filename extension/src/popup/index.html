@@ -5,71 +5,149 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Pervue</title>
     <script src="../shared/theme-bootstrap.js"></script>
+    <link rel="stylesheet" href="../shared/ui.css">
     <link rel="stylesheet" href="./popup.css">
   </head>
   <body>
-    <main class="popup-shell">
-      <header class="topbar">
-        <div>
-          <p class="eyebrow">Pervue</p>
-          <h1>Ask from the browser.</h1>
+    <main class="popup">
+      <header class="popup-header">
+        <span class="brand-mark" aria-hidden="true"><svg class="icon"><use href="../shared/icons.svg#mark"/></svg></span>
+        <span class="brand-name">Pervue</span>
+        <div class="provider">
+          <p id="provider-state" class="provider-state" role="status" aria-live="polite" hidden></p>
+          <a id="companion-setup" class="setup-link" href="../setup/index.html" target="_blank" hidden>Set up companion<svg class="icon icon-xs" aria-hidden="true"><use href="../shared/icons.svg#arrow-right"/></svg></a>
         </div>
-        <label class="theme-control" for="theme-select">
-          <span>Theme</span>
-          <select id="theme-select" aria-label="Theme">
-            <option value="system">System</option>
-            <option value="light">Light</option>
-            <option value="dark">Dark</option>
-          </select>
-        </label>
+
+        <div class="header-actions">
+          <button id="new-conversation" class="icon-button" type="button" aria-label="New conversation" title="New conversation">
+            <svg class="icon" aria-hidden="true"><use href="../shared/icons.svg#compose"/></svg>
+          </button>
+          <button id="open-full-page" class="icon-button" type="button" aria-label="Continue in full view" title="Continue in full view" disabled>
+            <svg class="icon" aria-hidden="true"><use href="../shared/icons.svg#expand"/></svg>
+          </button>
+          <details id="settings" class="menu">
+            <summary class="icon-button" aria-label="Settings" title="Settings">
+              <svg class="icon" aria-hidden="true"><use href="../shared/icons.svg#more"/></svg>
+            </summary>
+            <div class="menu-panel">
+              <div class="menu-row">
+                <span class="menu-label" id="theme-label">Appearance</span>
+                <div class="theme-toggle" id="theme-toggle" role="group" aria-labelledby="theme-label">
+                  <select id="theme-select" aria-label="Theme" hidden>
+                    <option value="system">System</option>
+                    <option value="light">Light</option>
+                    <option value="dark">Dark</option>
+                  </select>
+                  <button type="button" data-theme-option="system" aria-label="System theme" title="System"><svg class="icon" aria-hidden="true"><use href="../shared/icons.svg#monitor"/></svg></button>
+                  <button type="button" data-theme-option="light" aria-label="Light theme" title="Light"><svg class="icon" aria-hidden="true"><use href="../shared/icons.svg#sun"/></svg></button>
+                  <button type="button" data-theme-option="dark" aria-label="Dark theme" title="Dark"><svg class="icon" aria-hidden="true"><use href="../shared/icons.svg#moon"/></svg></button>
+                </div>
+              </div>
+
+              <a class="menu-link" href="../setup/index.html" target="_blank">
+                <svg class="icon icon-sm" aria-hidden="true"><use href="../shared/icons.svg#puzzle"/></svg>
+                Companion setup
+              </a>
+
+              <details id="diagnostics" class="diagnostics">
+                <summary>
+                  <svg class="icon icon-sm" aria-hidden="true"><use href="../shared/icons.svg#pulse"/></svg>
+                  Diagnostics
+                </summary>
+                <dl>
+                  <div><dt>Host</dt><dd id="diag-host">Not checked</dd></div>
+                  <div><dt>Protocol</dt><dd id="diag-protocol">Not checked</dd></div>
+                  <div><dt>Provider</dt><dd id="diag-provider">Not checked</dd></div>
+                  <div><dt>Recent failure</dt><dd id="diag-failure">None</dd></div>
+                </dl>
+                <button id="diag-refresh" class="button button-outline button-sm" type="button">
+                  <svg class="icon icon-xs" aria-hidden="true"><use href="../shared/icons.svg#refresh"/></svg>
+                  Refresh diagnostics
+                </button>
+                <p class="diagnostic-note">Diagnostics exclude prompts, page text, selections, credentials, and provider output.</p>
+              </details>
+            </div>
+          </details>
+        </div>
       </header>
 
-      <p id="provider-state" class="provider-state" role="status" aria-live="polite" hidden></p>
-      <a id="companion-setup" class="setup-link" href="../setup/index.html" target="_blank" hidden>Companion setup</a>
-
       <nav class="conversation-nav" aria-label="Conversations">
-        <label for="recent-conversations">Recent conversations</label>
-        <select id="recent-conversations"><option value="">No recent conversations</option></select>
-        <button id="new-conversation" class="secondary" type="button">New conversation</button>
+        <label class="sr-only" for="recent-conversations">Recent conversations</label>
+        <div class="select">
+          <svg class="icon icon-sm" aria-hidden="true"><use href="../shared/icons.svg#history"/></svg>
+          <select id="recent-conversations"><option value="">No recent conversations</option></select>
+          <svg class="icon icon-sm" aria-hidden="true"><use href="../shared/icons.svg#chevron-down"/></svg>
+        </div>
       </nav>
 
-      <section id="conversation-history" class="conversation-history" aria-label="Conversation history" aria-live="polite"></section>
+      <div id="thread-scroll" class="thread-scroll">
+        <div id="thread" class="thread">
+          <section class="empty-state" aria-labelledby="empty-title">
+            <span class="empty-mark" aria-hidden="true"><svg class="icon"><use href="../shared/icons.svg#mark"/></svg></span>
+            <h1 id="empty-title">What do you want to know?</h1>
+            <p>Ask anything. Pervue only sees a page when you share it.</p>
+            <div class="suggestions">
+              <button class="suggestion" type="button" data-context="page" data-prompt="Summarize this page in a few key points.">
+                <svg class="icon icon-sm" aria-hidden="true"><use href="../shared/icons.svg#page"/></svg>
+                <span><strong>Summarize this page</strong><small>Key points from the current tab</small></span>
+              </button>
+              <button class="suggestion" type="button" data-context="selection" data-prompt="Explain this in simple terms.">
+                <svg class="icon icon-sm" aria-hidden="true"><use href="../shared/icons.svg#selection"/></svg>
+                <span><strong>Explain my selection</strong><small>Plain-language breakdown of highlighted text</small></span>
+              </button>
+            </div>
+          </section>
 
-      <form id="ask-form" class="composer">
-        <label class="sr-only" for="ask-input">Ask anything</label>
-        <textarea id="ask-input" rows="3" placeholder="Ask anything…"></textarea>
-        <fieldset class="context-choices">
-          <legend>Context for this question</legend>
-          <button id="context-none" class="secondary" type="button">No context</button>
-          <button id="context-selection" class="secondary" type="button">Use selection</button>
-          <button id="context-page" class="secondary" type="button">Use this page</button>
-        </fieldset>
-        <p id="context-status" class="status" role="status" aria-live="polite"></p>
-        <section id="context-preview" class="context-preview" aria-label="Context preview" hidden></section>
-        <div class="request-actions">
-          <button id="ask-submit" type="submit" aria-disabled="false">Ask</button>
-          <button id="ask-cancel" class="secondary" type="button" hidden>Stop</button>
-          <button id="ask-retry" class="secondary" type="button" hidden>Retry</button>
+          <section id="conversation-history" class="conversation-history" aria-label="Conversation history" aria-live="polite"></section>
+          <section id="answer" class="answer" aria-label="Answer" aria-busy="false" hidden></section>
+          <div class="typing" aria-hidden="true">Thinking<span><i></i><i></i><i></i></span></div>
         </div>
-      </form>
+      </div>
 
-      <p id="status" class="status" role="status" aria-live="polite" aria-atomic="true"></p>
+      <footer class="dock">
+        <div class="request-actions">
+          <button id="ask-cancel" class="button button-outline button-sm pill" type="button" hidden>
+            <svg class="icon icon-xs" aria-hidden="true"><use href="../shared/icons.svg#stop"/></svg>
+            Stop
+          </button>
+          <button id="ask-retry" class="button button-outline button-sm pill" type="button" hidden>
+            <svg class="icon icon-xs" aria-hidden="true"><use href="../shared/icons.svg#retry"/></svg>
+            Retry
+          </button>
+        </div>
 
-      <section id="answer" class="answer" aria-label="Answer" aria-busy="false" hidden></section>
+        <form id="ask-form" class="composer">
+          <section id="context-preview" class="context-preview" aria-label="Context preview" hidden></section>
 
-      <button id="open-full-page" class="secondary" type="button" disabled>Continue in full view</button>
+          <label class="sr-only" for="ask-input">Ask anything</label>
+          <textarea id="ask-input" rows="1" placeholder="Ask anything…"></textarea>
 
-      <details id="diagnostics" class="diagnostics">
-        <summary>Diagnostics</summary>
-        <dl>
-          <div><dt>Host</dt><dd id="diag-host">Not checked</dd></div>
-          <div><dt>Protocol</dt><dd id="diag-protocol">Not checked</dd></div>
-          <div><dt>Provider</dt><dd id="diag-provider">Not checked</dd></div>
-          <div><dt>Recent failure</dt><dd id="diag-failure">None</dd></div>
-        </dl>
-        <button id="diag-refresh" class="secondary" type="button">Refresh diagnostics</button>
-        <p class="diagnostic-note">Diagnostics exclude prompts, page text, selections, credentials, and provider output.</p>
-      </details>
+          <div class="composer-bar">
+            <fieldset class="context-choices">
+              <legend class="sr-only">Context for this question</legend>
+              <button id="context-none" class="chip" type="button" title="Don't share anything from the page">
+                <svg class="icon icon-xs" aria-hidden="true"><use href="../shared/icons.svg#none"/></svg>
+                <span>No context</span>
+              </button>
+              <button id="context-selection" class="chip" type="button" title="Share the text you've highlighted">
+                <svg class="icon icon-xs" aria-hidden="true"><use href="../shared/icons.svg#selection"/></svg>
+                <span>Selection</span>
+              </button>
+              <button id="context-page" class="chip" type="button" title="Share this page's readable text">
+                <svg class="icon icon-xs" aria-hidden="true"><use href="../shared/icons.svg#page"/></svg>
+                <span>This page</span>
+              </button>
+            </fieldset>
+
+            <button id="ask-submit" class="send" type="submit" aria-disabled="false" aria-label="Ask" title="Ask (Enter)">
+              <svg class="icon" aria-hidden="true"><use href="../shared/icons.svg#arrow-up"/></svg>
+            </button>
+          </div>
+          <p id="context-status" class="context-status" role="status" aria-live="polite"></p>
+        </form>
+
+        <p id="status" class="status" role="status" aria-live="polite" aria-atomic="true"></p>
+      </footer>
     </main>
 
     <script type="module" src="./popup.js"></script>

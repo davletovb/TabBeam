@@ -32,7 +32,7 @@ export function bindContextControls(elements, runtime) {
     preview.hidden = true;
     preview.textContent = "";
     setChoice("none");
-    status.textContent = "No context attached. Choose a source to grant access for this question.";
+    status.textContent = "Page context is off. Choose a source to share it.";
   }
 
   /** Clear only the capture sent with a completed turn. A later capture wins. */

@@ -208,9 +208,7 @@ class FakeElement {
   const popup = fs.readFileSync(path.join(root, "src/popup/index.html"), "utf8");
   const fullpage = fs.readFileSync(path.join(root, "src/fullpage/index.html"), "utf8");
   const setup = fs.readFileSync(path.join(root, "src/setup/index.html"), "utf8");
-  const popupCss = fs.readFileSync(path.join(root, "src/popup/popup.css"), "utf8");
-  const fullpageCss = fs.readFileSync(path.join(root, "src/fullpage/fullpage.css"), "utf8");
-  const setupCss = fs.readFileSync(path.join(root, "src/setup/setup.css"), "utf8");
+  const sharedCss = fs.readFileSync(path.join(root, "src/shared/ui.css"), "utf8");
 
   for (const markup of [popup, fullpage]) {
     assert.ok(markup.includes('id="theme-select"'));
@@ -227,17 +225,18 @@ class FakeElement {
   assert.ok(popup.includes("../setup/index.html"));
   for (const markup of [popup, fullpage, setup]) {
     assert.ok(markup.includes("../shared/theme-bootstrap.js"));
+    // Every surface draws with the shared design system, which owns the
+    // theme tokens, focus rings, and reduced motion.
+    assert.ok(markup.includes('href="../shared/ui.css"'));
+    assert.ok(markup.includes('id="theme-toggle"'));
   }
   assert.ok(setup.includes("./setup.js"));
 
-  for (const css of [popupCss, fullpageCss, setupCss]) {
-    assert.ok(css.includes(':root[data-theme="light"]'));
-    assert.ok(css.includes(':root[data-theme="dark"]'));
-    assert.ok(css.includes(":focus-visible"));
-  }
-  for (const css of [popupCss, fullpageCss]) {
-    assert.ok(css.includes("prefers-reduced-motion"));
-  }
+  assert.ok(sharedCss.includes(':root[data-theme="light"]'));
+  assert.ok(sharedCss.includes(':root[data-theme="dark"]'));
+  assert.ok(sharedCss.includes("light-dark("));
+  assert.ok(sharedCss.includes(":focus-visible"));
+  assert.ok(sharedCss.includes("prefers-reduced-motion"));
 }
 
 console.log("EXT-11/EXT-13/OBS-02/EXT-14 MVP closure tests passed");

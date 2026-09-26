@@ -23,6 +23,17 @@ The current foundation provides:
 - popup provider state and failure states (EXT-04);
 - dependency-free smoke/lifecycle validation.
 
+## Interface
+
+The popup, full view, and setup page share one design system in `src/shared/`:
+
+- `ui.css` holds the color, type, and spacing tokens. Every color is written with `light-dark()`, so the theme follows `color-scheme`: the system preference by default, or the choice stored under `pervue.theme` and applied as `<html data-theme>` by `theme.js` (and before first paint by `theme-bootstrap.js`).
+- `icons.svg` is the icon sprite; pages reference it with `<use href="../shared/icons.svg#name">`.
+- `theme-toggle.js` draws the System / Light / Dark switch in front of the theme `<select>` that `theme.js` binds, so the select stays the single source of truth.
+- `thread-view.js` grows the composer with its text and keeps a streaming answer in view while the reader is at the bottom of the thread.
+
+The popup is a 400 × 580 command surface: a header with the provider status and actions (new conversation, continue in full view, and a settings menu holding the theme switch, companion setup, and diagnostics), the recent-conversation picker, the thread, and a docked composer with context chips. The full view adds a sidebar of recent conversations, which becomes a drawer in narrow windows; press <kbd>/</kbd> to jump to its composer. Finished answers offer **Copy**.
+
 ## Native Messaging connection lifecycle
 
 `src/background/native-connection.js` owns the browser-side native port lifecycle.
@@ -58,7 +69,7 @@ The popup and full-page view ask the native host one question at a time and stre
 
 ## Provider state and failures
 
-When the popup opens, a line under its title shows the state of the companion app and of Codex (EXT-04). The popup sends `{type: "pervue.provider-status"}` to the service worker (contract: `src/shared/provider-status.js`), which asks the host for `provider.status` (`src/background/status-bridge.js`) and passes on only its normalized fields. The line reads "Checking Codex…", then one of:
+When the popup opens, a line under the Pervue name shows the state of the companion app and of Codex (EXT-04). The popup sends `{type: "pervue.provider-status"}` to the service worker (contract: `src/shared/provider-status.js`), which asks the host for `provider.status` (`src/background/status-bridge.js`) and passes on only its normalized fields. The line reads "Checking Codex…", then one of:
 
 | State | Line |
 |---|---|
@@ -91,7 +102,7 @@ An error without a message gets its kind's own, which says what to do next witho
 
 ## Browser context (CTX-01 through CTX-04)
 
-The popup starts with **No context**. To attach context, click **Use selection** after selecting text on the page, or **Use this page** to extract readable text. The popup shows the page title, sanitized URL, a text preview, and whether capture was truncated. Press **Ask** to send the question and the chosen context together; **No context** clears it. A fresh popup starts without context. An attached capture applies to that question only. Saved conversations retain only page title, sanitized URL, mode, and truncation metadata, never the raw captured text. No capture happens on popup open or a normal Ask.
+The popup starts with **No context**. To attach context, click the **Selection** chip after selecting text on the page, or **This page** to extract readable text. The empty popup's starter suggestions (**Summarize this page**, **Explain my selection**) use the same capture and only fill in the question; nothing is sent until you ask. The popup shows the page title, sanitized URL, a text preview, and whether capture was truncated. Press **Ask** to send the question and the chosen context together; **No context** clears it. A fresh popup starts without context. An attached capture applies to that question only. Saved conversations retain only page title, sanitized URL, mode, and truncation metadata, never the raw captured text. No capture happens on popup open or a normal Ask.
 
 Right-click selected text and choose **Ask Pervue about selection**, or right-click a page and choose **Ask Pervue about this page**. The menu opens the popup with that context previewed; it does not ask automatically. Chrome's menu selection includes text selected within frames. The handoff belongs to the clicked tab, expires after 30 seconds, and can be claimed once. If Chrome cannot open the action popup, the same composer opens in a tab with only an opaque handoff token in its URL. **Alt+Shift+P** (or **Command+Shift+P** on macOS) invokes the popup directly and focuses the input; Chrome users can change the shortcut under `chrome://extensions/shortcuts`.
 

@@ -1,344 +1,451 @@
-:root {
-  color-scheme: light dark;
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-}
+/*
+ * The popup: a small command surface. Tokens, the theme (light, dark, or the
+ * system's), focus rings, and reduced motion come from ../shared/ui.css.
+ */
 
-:root[data-theme="light"] { color-scheme: light; }
-:root[data-theme="dark"] { color-scheme: dark; }
-
-* {
-  box-sizing: border-box;
+html,
+body {
+  width: 400px;
+  height: 580px;
+  overflow: hidden;
 }
 
 body {
-  margin: 0;
-  min-width: 360px;
-  background: Canvas;
-  color: CanvasText;
+  background: var(--surface);
 }
 
-.popup-shell {
-  display: grid;
-  gap: 16px;
-  padding: 18px;
-}
-
-header,
-p {
-  margin: 0;
-}
-
-.topbar {
+.popup {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
+  flex-direction: column;
+  height: 100%;
 }
 
-.theme-control {
+/* ---------- Header ---------- */
+
+.popup-header {
+  position: relative;
+  z-index: 2;
   display: grid;
-  gap: 4px;
-  min-width: 92px;
-  font-size: 12px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "mark name actions"
+    "mark status actions";
+  column-gap: 10px;
+  align-items: center;
+  padding: 12px 10px 10px 14px;
 }
 
-.theme-control select {
-  width: 100%;
-  padding: 6px 8px;
-  border: 1px solid color-mix(in srgb, CanvasText 24%, transparent);
-  border-radius: 8px;
-  background: Canvas;
-  color: CanvasText;
-  font: inherit;
+.popup-header .brand-mark { grid-area: mark; }
+
+.popup-header .brand-name {
+  grid-area: name;
+  align-self: end;
+  line-height: 1.2;
 }
 
-.eyebrow {
-  margin-bottom: 4px;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  opacity: 0.65;
+.popup-header .provider {
+  grid-area: status;
+  align-self: start;
+  min-width: 0;
 }
 
-h1 {
-  margin: 0;
-  font-size: 20px;
-  line-height: 1.25;
+.popup-header .provider-state {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
-.composer {
-  display: grid;
-  gap: 8px;
+/* When the companion or provider needs attention, the line becomes a callout. */
+.popup-header:has(.provider-state[data-state="attention"]) {
+  grid-template-areas:
+    "mark name actions"
+    "banner banner banner";
+  row-gap: 10px;
 }
 
-.conversation-nav {
-  display: grid;
-  gap: 6px;
+.popup-header:has(.provider-state[data-state="attention"]) .brand-name { align-self: center; }
+
+.popup-header .provider:has(.provider-state[data-state="attention"]) {
+  grid-area: banner;
+  margin-right: 4px;
 }
 
-.conversation-nav label {
-  font-size: 12px;
-  font-weight: 650;
+.popup-header .provider:has(.provider-state[data-state="attention"]) .provider-state {
+  white-space: normal;
 }
 
-.conversation-nav select {
-  width: 100%;
-  padding: 8px;
-  border: 1px solid color-mix(in srgb, CanvasText 24%, transparent);
-  border-radius: 8px;
-  background: Canvas;
-  color: CanvasText;
-}
-
-.conversation-history {
-  display: grid;
-  gap: 10px;
-  max-height: 240px;
-  overflow: auto;
-}
-
-.message {
-  padding: 10px;
-  border: 1px solid color-mix(in srgb, CanvasText 16%, transparent);
-  border-radius: 10px;
-  overflow-wrap: anywhere;
-}
-
-.message-user { margin-left: 20px; }
-.message-assistant { margin-right: 20px; }
-.message strong { font-size: 12px; }
-.message p { margin-top: 4px; white-space: pre-wrap; font-size: 14px; }
-.message[data-state="failed"] { border-color: light-dark(#b3261e, #f2b8b5); }
-
-.context-choices {
+.header-actions {
+  grid-area: actions;
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: 0;
-  padding: 0;
-  border: 0;
+  align-items: center;
+  gap: 2px;
 }
 
-.context-choices legend {
-  margin-bottom: 6px;
-  font-size: 12px;
+/* ---------- Settings menu ---------- */
+
+.menu {
+  position: relative;
 }
 
-.context-choices button {
-  min-height: 32px;
-  padding: 0 8px;
-  font-size: 12px;
-}
-
-.context-choices button[aria-pressed="true"] {
-  background: CanvasText;
-  color: Canvas;
-}
-
-.context-preview {
-  max-height: 96px;
-  overflow: auto;
-  padding: 8px;
-  border: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
-  border-radius: 8px;
-  font-size: 12px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-textarea {
-  width: 100%;
-  resize: none;
-  border: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
-  border-radius: 12px;
-  padding: 12px;
-  background: Canvas;
-  color: CanvasText;
-  font: inherit;
-}
-
-.status {
-  font-size: 13px;
-  opacity: 0.72;
-}
-
-.status[data-state="failed"] {
-  color: light-dark(#b3261e, #f2b8b5);
-  opacity: 1;
-}
-
-/* Setup the user can do (install, sign in) rather than something broken. */
-.status[data-state="failed"]:is(
-    [data-kind="host-missing"],
-    [data-kind="provider-missing"],
-    [data-kind="provider-signed-out"]
-  ) {
-  color: light-dark(#7a4a00, #fdd663);
-}
-
-/* A cancellation is not a failure. */
-.status[data-state="cancelled"] {
-  opacity: 0.72;
-}
-
-.provider-state {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  font-size: 13px;
-  line-height: 1.4;
-}
-
-.provider-state[hidden] {
-  display: none;
-}
-
-.provider-state::before {
-  content: "";
-  flex: none;
-  width: 8px;
-  height: 8px;
-  margin-top: 5px;
-  border-radius: 50%;
-  background: color-mix(in srgb, CanvasText 40%, transparent);
-}
-
-.provider-state[data-state="ready"]::before {
-  background: light-dark(#1e7d32, #81c995);
-}
-
-.provider-state[data-state="attention"] {
-  color: light-dark(#7a4a00, #fdd663);
-}
-
-.provider-state[data-state="attention"]::before {
-  background: currentColor;
-}
-
-.provider-state[data-state="attention"][data-kind="host-unavailable"],
-.provider-state[data-state="attention"][data-kind="provider-failed"] {
-  color: light-dark(#b3261e, #f2b8b5);
-}
-
-.provider-state[data-state="checking"]::before {
-  animation: provider-checking 1.2s ease-in-out infinite;
-}
-
-@keyframes provider-checking {
-  50% {
-    opacity: 0.3;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .provider-state[data-state="checking"]::before {
-    animation: none;
-  }
-}
-
-.answer {
-  font-size: 14px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-button {
-  min-height: 40px;
-  border: 1px solid color-mix(in srgb, CanvasText 24%, transparent);
-  border-radius: 10px;
-  background: CanvasText;
-  color: Canvas;
-  font: inherit;
-  font-weight: 650;
+.menu > summary {
+  list-style: none;
   cursor: pointer;
 }
 
-button[aria-disabled="true"] {
-  opacity: 0.5;
-  cursor: not-allowed;
+.menu > summary::-webkit-details-marker { display: none; }
+
+.menu[open] > summary {
+  background: var(--surface-2);
+  color: var(--text);
 }
 
-button.secondary {
-  background: transparent;
-  color: CanvasText;
+.menu-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  display: grid;
+  gap: 4px;
+  width: 300px;
+  max-height: 440px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  animation: pop-in var(--normal) var(--ease);
 }
 
-.request-actions {
+.menu-row {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 6px 6px 8px;
 }
 
-.request-actions > * {
-  flex: 1 1 96px;
-}
-
-.setup-link {
-  width: fit-content;
-  color: LinkText;
+.menu-label {
+  color: var(--text-2);
   font-size: 13px;
-  font-weight: 650;
+  font-weight: 600;
+}
+
+.menu-link,
+.diagnostics > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 550;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.menu-link .icon,
+.diagnostics > summary .icon {
+  color: var(--text-3);
+}
+
+.menu-link:hover,
+.diagnostics > summary:hover {
+  background: var(--surface-2);
 }
 
 .diagnostics {
-  border-top: 1px solid color-mix(in srgb, CanvasText 16%, transparent);
-  padding-top: 12px;
-  font-size: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 4px;
+  margin-top: 2px;
 }
 
-.diagnostics summary {
-  cursor: pointer;
-  font-weight: 650;
+.diagnostics > summary {
+  list-style: none;
+}
+
+.diagnostics > summary::-webkit-details-marker { display: none; }
+
+.diagnostics > summary::after {
+  content: "";
+  width: 7px;
+  height: 7px;
+  margin-left: auto;
+  margin-right: 4px;
+  border-right: 1.6px solid var(--text-3);
+  border-bottom: 1.6px solid var(--text-3);
+  transform: rotate(-45deg);
+  transition: transform var(--fast) var(--ease);
+}
+
+.diagnostics[open] > summary::after {
+  transform: rotate(45deg);
 }
 
 .diagnostics dl {
   display: grid;
   gap: 8px;
-  margin: 10px 0;
+  margin: 6px 8px 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: 12px;
 }
 
 .diagnostics dl > div {
   display: grid;
-  grid-template-columns: minmax(92px, auto) 1fr;
+  grid-template-columns: 96px 1fr;
   gap: 8px;
 }
 
 .diagnostics dt {
-  font-weight: 650;
+  color: var(--text-3);
+  font-weight: 550;
 }
 
 .diagnostics dd {
   margin: 0;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
   overflow-wrap: anywhere;
 }
 
+.diagnostics .button {
+  margin: 0 8px;
+}
+
 .diagnostic-note {
-  margin-top: 8px;
+  margin: 10px 8px 6px;
+  color: var(--text-3);
+  font-size: 11.5px;
   line-height: 1.45;
-  opacity: 0.7;
 }
 
-button:disabled { opacity: 0.5; cursor: default; }
+/* ---------- Conversation picker ---------- */
 
-button:focus-visible,
-textarea:focus-visible,
-select:focus-visible,
-a:focus-visible,
-summary:focus-visible {
-  outline: 2px solid Highlight;
-  outline-offset: 2px;
+.conversation-nav {
+  padding: 0 14px 10px;
+  border-bottom: 1px solid var(--border);
 }
 
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
+.conversation-nav select {
+  min-height: 32px;
+  background: var(--surface-2);
+  border-color: transparent;
+}
+
+.conversation-nav select:hover {
+  border-color: var(--border);
+}
+
+/* ---------- Thread ---------- */
+
+.thread-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 16px 16px 8px;
+}
+
+.thread {
+  min-height: 100%;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.empty-state {
+  padding: 4px 4px 8px;
+}
+
+.empty-mark {
+  width: 44px;
+  height: 44px;
+  margin-bottom: 12px;
+  border-radius: 14px;
+}
+
+.empty-mark .icon {
+  width: 26px;
+  height: 26px;
+}
+
+.empty-state h1 {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+
+.empty-state > p {
+  max-width: 300px;
+  margin-top: 6px;
+  font-size: 13px;
+}
+
+.suggestions {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  margin-top: 16px;
+}
+
+.suggestion {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  text-align: left;
+  transition: border-color var(--fast) var(--ease), background var(--fast) var(--ease), transform var(--fast) var(--ease);
+}
+
+.suggestion:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: var(--accent-soft);
+}
+
+.suggestion > .icon {
+  display: block;
+  padding: 7px;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.suggestion > span {
+  display: grid;
+  gap: 1px;
+}
+
+.suggestion strong {
+  font-size: 13px;
+  font-weight: 620;
+}
+
+.suggestion small {
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+/* ---------- Dock: request actions, composer, status ---------- */
+
+.dock {
+  display: grid;
+  gap: 8px;
+  padding: 0 12px 12px;
+}
+
+.composer {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border-radius: var(--radius-lg);
+}
+
+.composer textarea {
+  display: block;
+  width: 100%;
+  min-height: 40px;
+  max-height: 160px;
+  padding: 6px 6px 2px;
+  font-size: 14px;
+}
+
+.composer-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.context-choices {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+  margin: 0;
   padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
   border: 0;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 560;
+  white-space: nowrap;
+  transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease), color var(--fast) var(--ease);
+}
+
+.chip:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.chip[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+/* "No context" is the resting state: pressed, but quiet. */
+#context-none[aria-pressed="true"] {
+  border-color: var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+
+.chip:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
+
+.send {
+  width: 34px;
+  height: 34px;
+}
+
+.context-status {
+  padding: 0 6px 2px;
+  color: var(--text-3);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.context-status:empty { display: none; }
+
+.context-preview {
+  max-height: 66px;
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border));
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.context-preview::first-line {
+  color: var(--text);
+  font-weight: 620;
+}
+
+.dock > .status:not([data-state="failed"]) {
+  padding: 0 4px;
 }
