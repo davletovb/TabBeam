@@ -1,8 +1,8 @@
 # Browser AI Extension — Implementation Plan & Tracker
 
-**Status:** Active implementation tracker  
+**Status:** Active implementation tracker — MVP verified on 2026-09-26  
 **Derived from:** `browser-ai-extension-framework.md` (Framework v0.2)  
-**Tracker version:** v0.2  
+**Tracker version:** v0.3  
 **Scope rule:** This tracker converts the framework into implementation sequence. It intentionally does not add cloud accounts, browser-cookie scraping, autonomous browser automation, or other capabilities outside the framework.
 
 ---
@@ -138,52 +138,52 @@ Reached after **Milestone H**:
 
 | ID | Title | Milestone | Area | Dependencies | Status |
 |---|---|---|---|---|---|
-| DOC-01 | Freeze protocol v1 envelope and event contract | Foundation | Documentation / Protocol | — | IMPLEMENTED — VERIFY |
-| DOC-02 | Freeze normalized error taxonomy and capability vocabulary | Foundation | Documentation / Protocol | DOC-01 | IMPLEMENTED — VERIFY |
-| EXT-01 | Scaffold Manifest V3 extension surfaces | Foundation | Extension | — | IMPLEMENTED — VERIFY |
-| NAT-01 | Scaffold native host and build system | Foundation | Native | — | IMPLEMENTED — VERIFY |
-| TST-01 | Establish CI/build/test baseline | Foundation | Testing | EXT-01, NAT-01 | IMPLEMENTED — VERIFY |
-| NAT-02 | Implement bounded Native Messaging frame reader/writer | A | Native | NAT-01, DOC-01 | IMPLEMENTED — VERIFY |
-| NAT-03 | Implement JSON validation and request router | A | Native | NAT-02, DOC-01, DOC-02 | IMPLEMENTED — VERIFY |
-| TST-02 | Build deterministic fake streaming provider | A | Testing | NAT-01 | IMPLEMENTED — VERIFY |
-| EXT-02 | Implement service-worker Native Messaging connection manager | A | Extension | EXT-01, DOC-01 | IMPLEMENTED — VERIFY |
-| EXT-03 | Implement minimal popup ask/stream UI | A | Extension | EXT-01, EXT-02 | IMPLEMENTED — VERIFY |
-| SEC-01 | Enforce browser/native trust-boundary limits | A | Security | NAT-02, NAT-03 | IMPLEMENTED — VERIFY |
-| OBS-01 | Add structured native lifecycle diagnostics | A | Observability | NAT-03, DOC-02 | IMPLEMENTED — VERIFY |
-| TST-03 | Add extension ↔ host streamed round-trip integration test | A | Testing | TST-02, EXT-02, EXT-03, NAT-03 | IMPLEMENTED — VERIFY |
-| NAT-04 | Implement provider process manager | B | Native | NAT-03 | IMPLEMENTED — VERIFY |
-| NAT-05 | Implement native stream manager | B | Native | NAT-04 | IMPLEMENTED — VERIFY |
-| PRO-01 | Implement provisional provider adapter contract | B | Provider | DOC-02, NAT-04, NAT-05 | IMPLEMENTED — VERIFY |
-| PRO-02 | Implement Codex/OpenAI discovery and authentication status | B | Provider | PRO-01 | IMPLEMENTED — VERIFY |
-| PRO-03 | Implement Codex/OpenAI request + streaming adapter | B | Provider | PRO-02 | IMPLEMENTED — VERIFY |
-| PRO-04 | Implement provider cancellation, timeout, and crash mapping | B | Provider | PRO-03, NAT-04, NAT-05 | IMPLEMENTED — VERIFY |
-| EXT-04 | Surface host/provider state and normalized failures | B | Extension | EXT-03, PRO-02, DOC-02 | IMPLEMENTED — VERIFY |
-| SEC-02 | Harden provider process invocation and log redaction | B | Security | NAT-04, PRO-03, OBS-01 | IMPLEMENTED — VERIFY |
-| TST-04 | Add hostile fake-process integration matrix | B | Testing | NAT-04, NAT-05, PRO-04 | IMPLEMENTED — VERIFY |
-| TST-05 | Add opt-in real Codex/OpenAI smoke test | B | Testing | PRO-03, PRO-04 | IMPLEMENTED — VERIFY |
-| CON-01 | Define provider-neutral conversation/message/source model | C | Conversation | DOC-01, PRO-03 | IMPLEMENTED — VERIFY |
-| CON-02 | Implement conversation persistence and recent index | C | Conversation | CON-01 | IMPLEMENTED — VERIFY |
-| CON-03 | Implement native provider-session bridge | C | Conversation | CON-01, PRO-03 | IMPLEMENTED — VERIFY |
-| EXT-05 | Implement popup follow-up flow | C | Extension | CON-02, CON-03 | IMPLEMENTED — VERIFY |
-| EXT-06 | Implement full-page conversation UI | C | Extension | CON-01, CON-02 | IMPLEMENTED — VERIFY |
-| EXT-07 | Implement popup → full-page continuation handoff | C | Extension | EXT-05, EXT-06 | IMPLEMENTED — VERIFY |
-| TST-06 | Add conversation continuity end-to-end tests | C | Testing | EXT-07, CON-03 | IMPLEMENTED — VERIFY |
-| CTX-01 | Capture selected text safely | D | Context | EXT-01 | IMPLEMENTED — VERIFY |
-| CTX-02 | Capture current-tab title/URL metadata | D | Context | EXT-01 | IMPLEMENTED — VERIFY |
-| CTX-03 | Implement bounded readable-page extraction | D | Context | CTX-02 | IMPLEMENTED — VERIFY |
-| CTX-04 | Implement explicit page-context permission/intent policy | D | Context / Security | CTX-01, CTX-03 | IMPLEMENTED — VERIFY |
-| EXT-08 | Add context mode/control to popup request flow | D | Extension | CTX-01, CTX-03, CTX-04, EXT-05 | IMPLEMENTED — VERIFY |
-| EXT-09 | Add selection/current-page context-menu actions | D | Extension | CTX-01, CTX-03 | IMPLEMENTED — VERIFY |
-| EXT-10 | Add keyboard command entry path | D | Extension | EXT-03 | IMPLEMENTED — VERIFY |
-| SEC-03 | Add context size limits, minimization, and safe UI/log handling | D | Security | CTX-03, CTX-04 | IMPLEMENTED — VERIFY |
-| TST-07 | Add browser-context extraction and permission tests | D | Testing | CTX-01, CTX-03, CTX-04 | IMPLEMENTED — VERIFY |
-| EXT-11 | Add light/dark/system theme support | MVP closure | Extension | EXT-03, EXT-06 | IMPLEMENTED — VERIFY |
-| EXT-12 | Add response cancellation and retry UX | MVP closure | Extension | PRO-04, EXT-05 | IMPLEMENTED — VERIFY |
-| EXT-13 | Add companion health/install state UX | MVP closure | Extension | EXT-04 | IMPLEMENTED — VERIFY |
-| OBS-02 | Add sanitized diagnostics summary | MVP closure | Observability | OBS-01, EXT-13 | IMPLEMENTED — VERIFY |
-| EXT-14 | Complete keyboard/accessibility baseline | MVP closure | Extension | EXT-03, EXT-06, EXT-11 | IMPLEMENTED — VERIFY |
-| TST-08 | Add MVP critical-journey E2E suite | MVP closure | Testing | TST-06, TST-07, EXT-09, EXT-10, EXT-13 | IMPLEMENTED — VERIFY |
-| TST-09 | Add startup/first-chunk performance budgets | MVP closure | Testing / Performance | TST-08 | IMPLEMENTED — VERIFY |
+| DOC-01 | Freeze protocol v1 envelope and event contract | Foundation | Documentation / Protocol | — | VERIFIED |
+| DOC-02 | Freeze normalized error taxonomy and capability vocabulary | Foundation | Documentation / Protocol | DOC-01 | VERIFIED |
+| EXT-01 | Scaffold Manifest V3 extension surfaces | Foundation | Extension | — | VERIFIED |
+| NAT-01 | Scaffold native host and build system | Foundation | Native | — | VERIFIED |
+| TST-01 | Establish CI/build/test baseline | Foundation | Testing | EXT-01, NAT-01 | VERIFIED |
+| NAT-02 | Implement bounded Native Messaging frame reader/writer | A | Native | NAT-01, DOC-01 | VERIFIED |
+| NAT-03 | Implement JSON validation and request router | A | Native | NAT-02, DOC-01, DOC-02 | VERIFIED |
+| TST-02 | Build deterministic fake streaming provider | A | Testing | NAT-01 | VERIFIED |
+| EXT-02 | Implement service-worker Native Messaging connection manager | A | Extension | EXT-01, DOC-01 | VERIFIED |
+| EXT-03 | Implement minimal popup ask/stream UI | A | Extension | EXT-01, EXT-02 | VERIFIED |
+| SEC-01 | Enforce browser/native trust-boundary limits | A | Security | NAT-02, NAT-03 | VERIFIED |
+| OBS-01 | Add structured native lifecycle diagnostics | A | Observability | NAT-03, DOC-02 | VERIFIED |
+| TST-03 | Add extension ↔ host streamed round-trip integration test | A | Testing | TST-02, EXT-02, EXT-03, NAT-03 | VERIFIED |
+| NAT-04 | Implement provider process manager | B | Native | NAT-03 | VERIFIED |
+| NAT-05 | Implement native stream manager | B | Native | NAT-04 | VERIFIED |
+| PRO-01 | Implement provisional provider adapter contract | B | Provider | DOC-02, NAT-04, NAT-05 | VERIFIED |
+| PRO-02 | Implement Codex/OpenAI discovery and authentication status | B | Provider | PRO-01 | VERIFIED |
+| PRO-03 | Implement Codex/OpenAI request + streaming adapter | B | Provider | PRO-02 | VERIFIED |
+| PRO-04 | Implement provider cancellation, timeout, and crash mapping | B | Provider | PRO-03, NAT-04, NAT-05 | VERIFIED |
+| EXT-04 | Surface host/provider state and normalized failures | B | Extension | EXT-03, PRO-02, DOC-02 | VERIFIED |
+| SEC-02 | Harden provider process invocation and log redaction | B | Security | NAT-04, PRO-03, OBS-01 | VERIFIED |
+| TST-04 | Add hostile fake-process integration matrix | B | Testing | NAT-04, NAT-05, PRO-04 | VERIFIED |
+| TST-05 | Add opt-in real Codex/OpenAI smoke test | B | Testing | PRO-03, PRO-04 | VERIFIED |
+| CON-01 | Define provider-neutral conversation/message/source model | C | Conversation | DOC-01, PRO-03 | VERIFIED |
+| CON-02 | Implement conversation persistence and recent index | C | Conversation | CON-01 | VERIFIED |
+| CON-03 | Implement native provider-session bridge | C | Conversation | CON-01, PRO-03 | VERIFIED |
+| EXT-05 | Implement popup follow-up flow | C | Extension | CON-02, CON-03 | VERIFIED |
+| EXT-06 | Implement full-page conversation UI | C | Extension | CON-01, CON-02 | VERIFIED |
+| EXT-07 | Implement popup → full-page continuation handoff | C | Extension | EXT-05, EXT-06 | VERIFIED |
+| TST-06 | Add conversation continuity end-to-end tests | C | Testing | EXT-07, CON-03 | VERIFIED |
+| CTX-01 | Capture selected text safely | D | Context | EXT-01 | VERIFIED |
+| CTX-02 | Capture current-tab title/URL metadata | D | Context | EXT-01 | VERIFIED |
+| CTX-03 | Implement bounded readable-page extraction | D | Context | CTX-02 | VERIFIED |
+| CTX-04 | Implement explicit page-context permission/intent policy | D | Context / Security | CTX-01, CTX-03 | VERIFIED |
+| EXT-08 | Add context mode/control to popup request flow | D | Extension | CTX-01, CTX-03, CTX-04, EXT-05 | VERIFIED |
+| EXT-09 | Add selection/current-page context-menu actions | D | Extension | CTX-01, CTX-03 | VERIFIED |
+| EXT-10 | Add keyboard command entry path | D | Extension | EXT-03 | VERIFIED |
+| SEC-03 | Add context size limits, minimization, and safe UI/log handling | D | Security | CTX-03, CTX-04 | VERIFIED |
+| TST-07 | Add browser-context extraction and permission tests | D | Testing | CTX-01, CTX-03, CTX-04 | VERIFIED |
+| EXT-11 | Add light/dark/system theme support | MVP closure | Extension | EXT-03, EXT-06 | VERIFIED |
+| EXT-12 | Add response cancellation and retry UX | MVP closure | Extension | PRO-04, EXT-05 | VERIFIED |
+| EXT-13 | Add companion health/install state UX | MVP closure | Extension | EXT-04 | VERIFIED |
+| OBS-02 | Add sanitized diagnostics summary | MVP closure | Observability | OBS-01, EXT-13 | VERIFIED |
+| EXT-14 | Complete keyboard/accessibility baseline | MVP closure | Extension | EXT-03, EXT-06, EXT-11 | VERIFIED |
+| TST-08 | Add MVP critical-journey E2E suite | MVP closure | Testing | TST-06, TST-07, EXT-09, EXT-10, EXT-13 | VERIFIED |
+| TST-09 | Add startup/first-chunk performance budgets | MVP closure | Testing / Performance | TST-08 | VERIFIED |
 | PRO-05 | Implement Claude discovery and authentication status | E | Provider | PRO-01, PRO-02 | BACKLOG |
 | PRO-06 | Implement Claude request + streaming adapter | E | Provider | PRO-05, NAT-04, NAT-05 | BACKLOG |
 | PRO-07 | Reconcile provider contract from Codex + Claude evidence | E | Provider | PRO-03, PRO-06 | BACKLOG |
@@ -257,7 +257,7 @@ Reached after **Milestone H**:
 - Protocol fixture validation tests.
 - Golden request/event examples.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - Normative contract: `docs/protocol/v1.md`
@@ -295,7 +295,7 @@ Reached after **Milestone H**:
 - Error mapping fixture tests.
 - Capability serialization tests.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - Normative taxonomy: `docs/protocol/errors-and-capabilities-v1.md`
@@ -322,7 +322,7 @@ Reached after **Milestone H**:
 - Manifest validation.
 - Minimal extension smoke test.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - MV3 manifest: `extension/manifest.json`
@@ -353,7 +353,7 @@ Reached after **Milestone H**:
 - Build matrix smoke test.
 - Host startup test.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - Cargo workspace (Rust 1.85+, `unsafe_code = "forbid"`): `native/Cargo.toml` + `native/host/Cargo.toml`
@@ -376,7 +376,7 @@ Reached after **Milestone H**:
 - Native parsers are fuzzed in CI under AddressSanitizer.
 - Project fails CI on compiler or Clippy warnings in project code.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - Repository CI workflow: `.github/workflows/ci.yml`
@@ -413,7 +413,7 @@ Reached after **Milestone H**:
 - Unit tests for normal/empty/max/oversized/truncated frames.
 - Fuzz target for frame parser when practical.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - Bounded Native Messaging reader/writer: `native/host/src/framing.rs`
@@ -439,7 +439,7 @@ Reached after **Milestone H**:
 - Missing/extra/unknown field cases.
 - Unsupported version/method cases.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - Strict bounded JSON syntax reader: `native/host/src/protocol/json.rs`
@@ -470,7 +470,7 @@ Reached after **Milestone H**:
   - emit malformed output;
   - emit large output.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - Standalone fake provider executable: `native/test_provider/src/main.rs`
@@ -498,7 +498,7 @@ Reached after **Milestone H**:
 - Disconnect/reconnect tests.
 - Request multiplexing tests.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - Lazy Native Messaging port manager: `extension/src/background/native-connection.js`
@@ -525,7 +525,7 @@ Reached after **Milestone H**:
 - Incremental rendering test.
 - Duplicate-submit guard.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - Popup ask form with streaming render, completion/failure states, and duplicate-submit guard: `extension/src/popup/ask-form.js`, `extension/src/popup/index.html`
@@ -548,7 +548,7 @@ Reached after **Milestone H**:
 - Untrusted values are never used as executable paths or shell command strings.
 - Invalid payloads fail before provider/process work begins.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - The host generates its Native Messaging manifest for exact extension IDs only (32 characters `a`–`p`; wildcards, patterns, and full origins are refused) and starts only with an exact `chrome-extension://<id>/` caller origin, never without one: `native/host/src/manifest.rs` + `native/host/src/main.rs`, tested in `native/host/src/manifest.rs` + `native/host/tests/cli.rs`
@@ -569,7 +569,7 @@ Reached after **Milestone H**:
 - Full prompts, page content, credentials, and provider auth files are excluded by default.
 - stderr diagnostics do not corrupt stdout Native Messaging frames.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - JSON-lines diagnostics with timestamp, lifecycle event, request ID, method, provider ID, conversation ID, duration, exit code, and normalized error (code and reason): `native/host/src/diagnostics.rs`
@@ -591,7 +591,7 @@ Reached after **Milestone H**:
 **Notes**
 - Also pin SEC-01's size boundary end to end with the built host: a request whose frame is exactly 1 MiB reaches the host and is answered, and one byte more is refused by the extension without reaching it (suggested in the SEC-01 review).
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - `extension/tests/native-roundtrip.mjs` launches the built host with a Chrome origin and sends real Native Messaging frames through the extension connection manager, ask bridge, and popup renderer.
@@ -621,7 +621,7 @@ Reached after **Milestone H**:
 - Process lifecycle tests using fake executables.
 - Repeated spawn/cancel stress test.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - `native/host/src/process.rs`: `Process::spawn` starts an absolute executable path with an argument array, with no shell and no `PATH` search, on three separate pipes. `write` queues input for a helper thread, `next_event(deadline)` returns bounded stdout/stderr chunks and then the exit, `terminate(grace)` escalates from a stop request to a kill, `kill` kills at once, and dropping a `Process` kills and reaps it. It is the host's only process spawn (`native/host/clippy.toml`), and the Codex adapter (PRO-03) is its first caller, through the stream manager (NAT-05), which added `request_stop()`: a stop request that doesn't wait.
@@ -648,7 +648,7 @@ Reached after **Milestone H**:
 - Large-output/backpressure tests.
 - Cancellation mid-chunk.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - `native/host/src/stream.rs`: `LineStream` delivers a provider's stdout as complete lines, then exactly one terminal state: `Final` after a clean end, `Error` when a line passes the limit or isn't UTF-8 (the process is killed), or `Stopped` after `cancel`. stderr is counted and discarded. `split_text` cuts outgoing text between characters.
@@ -670,7 +670,7 @@ Reached after **Milestone H**:
 - Adapter can start a request, stream events, cancel, and close.
 - Provider-specific protocol details do not leak into popup code.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - `native/host/src/providers/mod.rs`: a `Provider` reports its status (availability, authentication, capabilities) and starts each request as an `Exchange`, a state machine the host loop drives with deadlines. `cancel(grace)` stops an exchange, and dropping one closes it and kills its processes. Updates are in protocol terms (`ConversationCreated`, `Started`, `Delta`, `Status`, `Activity`, then `Completed`, `Failed`, or `Stopped`), so command lines, output formats, and provider session IDs stay inside the adapter.
@@ -695,7 +695,7 @@ Reached after **Milestone H**:
 - Present but unauthenticated.
 - Authenticated status fixture.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - Platform-controlled lookup (`native/host/src/providers/discovery.rs`): the host's `PATH`, then the usual install locations Chrome's minimal `PATH` can miss (Homebrew, `/usr/local/bin`, user bin directories, npm, Volta, Bun, and nvm's Node versions, newest first; `%APPDATA%\npm` on Windows), or `PERVUE_PROVIDER_PATH` instead. Relative directories are skipped, and nothing in a request affects the lookup.
@@ -721,7 +721,7 @@ Reached after **Milestone H**:
 - Parser fixtures from representative provider outputs.
 - Opt-in live smoke test.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - `native/host/src/providers/codex/mod.rs` runs `codex exec --json --skip-git-repo-check --sandbox read-only -C <empty dir> [resume <thread id>] -` with the question on stdin, never in an argument. `output.rs` turns Codex's JSON events into protocol events: `turn.started` becomes `conversation.created` and `response.started`, each agent message a `response.delta`, and `turn.completed` `response.completed`.
@@ -746,7 +746,7 @@ Reached after **Milestone H**:
 - Cancellation produces `REQUEST_CANCELLED`.
 - Cleanup remains deterministic even if child process ignores graceful cancellation.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - User cancellation: `request.cancel` sends SIGTERM to Codex's process group and SIGKILL after 2 seconds. The request ends with `REQUEST_CANCELLED` / `USER_CANCELLED`, then the cancellation with `request.cancelled` (`a_cancel_request_stops_codex_mid_turn`, `cancelling_mid_turn_stops_codex_promptly`). Cancelling during the sign-in check never starts `codex exec` (`cancelling_during_the_sign_in_check_runs_nothing`).
@@ -771,7 +771,7 @@ Reached after **Milestone H**:
   - cancellation.
 - UI instructions describe the user action, not internal architecture.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - Provider state on open: the popup's first line asks the service worker (`pervue.provider-status`, `extension/src/shared/provider-status.js`), which sends the host `provider.status` for Codex and passes on only the DOC-02 fields (`extension/src/background/status-bridge.js`). It shows "Codex is ready.", Codex not installed, not signed in, or unable to start, the companion app missing or unreachable, or an out-of-date companion app whose status or error doesn't follow DOC-02, such as an error code outside DOC-02's vocabulary (`HOST_UNAVAILABLE` / `HOST_PROTOCOL_MISMATCH`). The service worker answers within 15 seconds: a host that never ends the request gets `REQUEST_TIMEOUT` / `REQUEST_DEADLINE_EXCEEDED`, and the worker stops routing it. The popup never waits more than 20 seconds, and each question's outcome keeps it current (`extension/src/popup/provider-state.js`).
@@ -792,7 +792,7 @@ Reached after **Milestone H**:
 - Environment forwarding is minimal and documented.
 - Secrets/tokens are redacted from logs.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - No shell command concatenation: the process manager passes an absolute program and an argument array, the only process spawn in the host (`native/host/clippy.toml`). `each_argument_reaches_the_process_whole` shows spaces, quotes, `$(id)`, `;`, `|`, `%PATH%`, newlines, and empty arguments arriving as separate, unchanged argv elements; questions go on stdin.
@@ -812,7 +812,7 @@ Reached after **Milestone H**:
 - CI covers slow stream, stderr flood, non-zero exit, hang, ignored cancellation, malformed output, and large output.
 - All cases finish with bounded resources and normalized outcomes.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - `native/test_provider/tests/hostile_matrix.rs` runs the whole host against a fake `codex` in 19 cases: a byte-at-a-time stream, 128 MiB of stderr while answering, endless stderr, 100,000 progress events, endless progress cancelled, endless unknown events, a nonzero exit, a crash, hangs before and during the turn, ignored cancellation (quiet and while flooding), non-JSON and non-UTF-8 output, a 330 KB answer, a 9 MiB line, an endless line, a sign-in check that floods, and four hostile requests at once next to a plain question and a cancel. It runs in every native CI job (Linux, macOS, Windows, MSRV, release).
@@ -832,7 +832,7 @@ Reached after **Milestone H**:
 - When enabled, it proves discovery → send → stream → completion.
 - It does not expose credentials in CI logs.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - `native/host/tests/live_codex.rs`: through the built host, `provider.status` must find Codex available and signed in (discovery), then one question must produce `conversation.created`, `response.started` from `codex`, at least one `response.delta`, and `response.completed`, with the answer "pong" (send → stream → completion). The host's diagnostics must hold neither the question nor the answer.
@@ -856,7 +856,7 @@ Reached after **Milestone H**:
 - Message supports ID, role, text, timestamp, status, optional provider metadata, optional sources.
 - Provider session IDs are implementation metadata, not user-facing primary IDs.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - `extension/src/shared/conversation-model.js` defines versioned conversation IDs, titles, page-context metadata, bounded normalized dialogue, and a public view without native provider session metadata. `extension/src/background/conversation-store.js` records timestamps, provider ID, messages with roles/status/IDs, sources, and optional provider metadata.
@@ -874,7 +874,7 @@ Reached after **Milestone H**:
 - Recent index can open a stored conversation.
 - Schema versioning exists for persisted data.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - `extension/src/background/conversation-store.js` serializes writes to versioned per-conversation `chrome.storage.local` records with a small recent index, bounded content, and quota eviction. Both views load history through service-worker messages; `extension/tests/conversation-continuity.mjs` reopens a thread after simulating a worker restart, and `extension/tests/conversation-store-quota.mjs` exercises quota recovery.
@@ -888,7 +888,7 @@ Reached after **Milestone H**:
 - Providers without native continuation can still receive normalized conversation context.
 - Native session metadata is recoverable enough for the chosen persistence model.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - `native/host/src/providers/codex/mod.rs` persists private Codex thread mappings across host processes, resumes known threads, and rebuilds from bounded dialogue if a mapping is lost. `native/host/src/protocol/request.rs` accepts validated `input.history`; `native/host/src/conversation.rs` supplies normalized dialogue to providers without a usable native session. Fake-Codex adapter tests exercise recovery and fallback.
@@ -902,7 +902,7 @@ Reached after **Milestone H**:
 - Prior messages render correctly.
 - New response streams into the existing thread.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - `extension/src/popup/ask-form.js` renders saved turns, reuses the stable conversation ID, and streams the next answer into that thread. The service-worker bridge prevents simultaneous turns in one conversation and persists the answer even after the popup closes.
@@ -916,7 +916,7 @@ Reached after **Milestone H**:
 - Displays complete history and longer responses.
 - Uses the same request protocol/native host as popup.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - `extension/src/fullpage/` opens a stored ID from its URL, displays its history, offers recent conversations and follow-ups, and shares the popup's ask controller and worker request protocol.
@@ -930,7 +930,7 @@ Reached after **Milestone H**:
 - No prompt or answer duplication occurs.
 - A follow-up from full view continues the same conversation.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - The popup's **Continue in full view** opens the full-page route with its existing stable ID. `extension/tests/conversation-continuity.mjs` checks one copy of each prompt and answer after the handoff.
@@ -943,7 +943,7 @@ Reached after **Milestone H**:
 - Ask in popup → follow up → open full page → follow up again.
 - Conversation ID and message ordering remain stable throughout.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - `extension/tests/conversation-continuity.mjs` exercises popup Ask, popup follow-up, worker restart, full-page load and follow-up, stable ID, ordered messages, pending handoff refresh, bounded dialogue, native continuation metadata, concurrent-turn refusal, and schema mismatch. `extension/tests/conversation-bridge-failures.mjs` covers the production bridge's invalid context, disconnect, size refusal, and storage failure lock; quota tests cover eviction. Native adapter tests cover persisted thread recovery and dialogue fallback. Extension `npm test`, lint, typecheck, and build pass; native test execution requires CI in this workspace.
@@ -961,7 +961,7 @@ Reached after **Milestone H**:
 - Selection length is bounded.
 - Empty/unavailable selection has a deterministic outcome.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - The popup's explicit **Use selection** action requests capture only on click, shows a preview, and attaches it only on a later Ask; **No context** clears it: `extension/src/popup/context-controls.js`, `extension/src/popup/ask-form.js`.
@@ -977,7 +977,7 @@ Reached after **Milestone H**:
 - Current tab title/URL are available to request construction where permissions allow.
 - Unsupported/internal pages fail as `CONTEXT_UNAVAILABLE`, not as generic internal errors.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - Active-tab metadata is read only after a popup capture action, under the temporary `activeTab` grant; HTTP/HTTPS titles and URLs are bounded, credentials/query/fragment removed, and unsupported or inaccessible tabs return `CONTEXT_UNAVAILABLE`: `extension/src/background/selection-capture.js`, `extension/manifest.json`.
@@ -997,7 +997,7 @@ Reached after **Milestone H**:
 - Extracted text respects a configured size ceiling.
 - Extraction failure does not break normal Ask mode.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - The content script lazily walks readable page text, prefers `main`/`article`, skips hidden/navigation/form/editable content, caps output at 64 KiB and traversal at 5,000 text nodes, and reports truncation: `extension/src/content/content-script.js`.
@@ -1012,7 +1012,7 @@ Reached after **Milestone H**:
 - Permission state is explicit and persists only where appropriate.
 - Context is never silently attached simply because a content script is present.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - The popup begins with No context, shows explicit selection/page choices, permission outcome and preview, permits clearing while capture is pending, and keeps context only in popup memory: `extension/src/popup/context-controls.js`.
@@ -1027,7 +1027,7 @@ Reached after **Milestone H**:
 - Popup can initiate Ask, Selection, and This Page behavior without cluttering the command surface.
 - Attached context is visible enough that the user understands what will be sent.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - CTX-01–04 provide the popup's No context, Use selection, and Use this page controls, capture preview, and structured context. The shared follow-up form sends the user's explicit choice with that turn, then clears it; saved conversations retain page metadata but no raw captured page text. Codex now consumes that explicit context for the current turn and advertises `page_context: true`.
@@ -1041,7 +1041,7 @@ Reached after **Milestone H**:
 - Current-page action preloads/starts a This Page interaction.
 - No accidental duplicate popup/full-page conversations are created.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - Dedicated selection/page menu items prepare bounded context from the clicked tab, open the popup, and hand off the result once. The selection uses Chrome's click-event text, including frame selections; the page action requests top-frame readable text. No question is sent on a menu click: `extension/src/background/entry-actions.js`, `extension/src/background/selection-capture.js`, `extension/src/popup/menu-preload.js`.
@@ -1056,7 +1056,7 @@ Reached after **Milestone H**:
 - Focus lands in the input.
 - Workflow is usable without mouse.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - The MV3 `_execute_action` shortcut opens the working popup instead of the placeholder full-page route; the ask form focuses the input on load. `extension/manifest.json`, `extension/src/popup/ask-form.js`, and `extension/tests/manifest-smoke.mjs` / `extension/tests/browser-context-journey.mjs` cover registration and keyboard-ready focus. Browser shortcut assignment remains user-configurable.
@@ -1071,7 +1071,7 @@ Reached after **Milestone H**:
 - UI rendering escapes untrusted page/provider text safely.
 - URL/title/text are treated as untrusted data end to end.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - `extension/src/shared/limits.js` owns extension context limits (16 KiB selection, 64 KiB page, 5,000 text nodes, 512 Ki UTF-16 units scanned). The classic content script mirrors those values because it cannot import an ES module; the background and ask bridge enforce the byte limits again. Menu selections are bounded and repaired before handoff.
@@ -1088,7 +1088,7 @@ Reached after **Milestone H**:
 - Oversized content truncates safely.
 - Ask mode does not send page text when context is off.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - `extension/tests/selection-capture.mjs` covers lazy selection/page extraction, byte/node/scan bounds, Unicode, unsupported pages, permission denials, and clearing a stale capture.
@@ -1107,7 +1107,7 @@ Reached after **Milestone H**:
 - Explicit light/dark preference persists.
 - Popup and full-page remain visually consistent.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - `extension/src/shared/theme.js` owns the `system` / `light` / `dark` preference and persists it under `pervue.theme` in extension-local storage.
@@ -1123,7 +1123,7 @@ Reached after **Milestone H**:
 - Cancel updates UI immediately and native work terminates.
 - Retry creates a clear new request without duplicating persisted assistant messages.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - Popup and full-page composers expose Stop while a request is active and Retry only after a retryable terminal failure.
@@ -1140,7 +1140,7 @@ Reached after **Milestone H**:
 - Development builds can point to setup instructions without pretending packaging already exists.
 - Normal errors avoid exposing Native Messaging jargon unless diagnostics are expanded.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - Existing normalized provider/host status remains the source of truth; the popup distinguishes companion missing/unavailable from provider missing, signed out, or failed.
@@ -1155,7 +1155,7 @@ Reached after **Milestone H**:
 - User can inspect host version, protocol version, provider availability, and recent normalized failure.
 - No full prompt/page content or secrets are included.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - `extension/src/background/diagnostics.js` keeps an in-memory sanitized snapshot of extension version, host version/protocols, provider availability/authentication, and the latest normalized failure.
@@ -1173,7 +1173,7 @@ Reached after **Milestone H**:
 - Scalable text remains usable.
 - Reduced-motion preference is respected where motion exists.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - Popup/full-page controls are semantic buttons/forms/selects, status regions use polite live announcements with atomic terminal text, and focus-visible styling covers buttons, textareas, selects, links, and disclosure controls.
@@ -1198,7 +1198,7 @@ Automated or reproducible tests cover:
 10. host crash/restart;
 11. user cancellation.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - `npm --prefix extension run test:mvp` is the dedicated critical-journey suite.
@@ -1218,14 +1218,28 @@ Measure product-level responsiveness, not microbenchmarks.
 - Time-to-first-response-chunk is measured separately from provider total latency.
 - Regressions are visible in CI or a repeatable benchmark report.
 
-**Status:** IMPLEMENTED — VERIFY
+**Status:** VERIFIED
 
 **Implementation evidence**
 - `extension/src/shared/performance.js` defines local product budgets and Performance API measure names: popup input-ready 100 ms, native readiness 250 ms, and first response chunk 1,500 ms.
 - Production instrumentation measures popup readiness from the navigation time origin in `popup.js`, native readiness when the first host message arrives in `native-connection.js`, and first response delta separately from total provider completion in `ask-form.js`.
 - `extension/tests/performance-budgets.mjs` verifies that the production instrumentation fires at the correct lifecycle points and that budget boundary logic is enforced. The built-host round-trip test launches the real native host and fails CI if native readiness or first-chunk latency exceeds its budget; popup readiness remains a real browser PerformanceEntry for browser profiling rather than a mock-latency assertion.
 
+
 ---
+
+## MVP Verification Record — 2026-09-26
+
+Foundation through MVP closure is **VERIFIED**.
+
+Verification evidence:
+- Real Chrome unpacked extension connected through Native Messaging to the rebuilt Rust host and an authenticated local Codex CLI.
+- Manual critical journey passed end to end: basic ask, streamed response, follow-up continuity, popup persistence, popup → full-page handoff, selected-text context, whole-page context, right-click context entry, contextual follow-up, cancel/retry, `⌘⇧P`, multiple/recent conversations, and normal-question recovery after contextual turns.
+- Browser-context defects found during verification were fixed in PRs #21 and #22, including actual Codex context delivery, prompt/tool isolation, plugin-cache false-positive handling, and Codex 0.144-compatible multi-agent feature overrides.
+- Final post-fix CI was green across Ubuntu, macOS, Windows, Rust 1.85, extension checks, protocol fixtures, extension → built-host round trip, and native fuzz smoke.
+- Development installation still uses manual Native Messaging host registration; that is intentionally deferred to Milestone G and does not block the framework's MVP feature-complete cut.
+
+This verification promotes every Foundation, A, B, C, D, and MVP-closure item from `IMPLEMENTED — VERIFY` to `VERIFIED`.
 
 ## Milestone E — Second Provider
 
@@ -1698,18 +1712,18 @@ Update this section whenever item statuses change.
 
 | Stage | Total | Verified | Implemented — Verify | In Progress | Ready | Backlog | Blocked | Deferred |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Foundation | 5 | 0 | 5 | 0 | 0 | 0 | 0 | 0 |
-| A — Native round trip | 8 | 0 | 8 | 0 | 0 | 0 | 0 | 0 |
-| B — First provider | 10 | 0 | 10 | 0 | 0 | 0 | 0 | 0 |
-| C — Conversation continuity | 7 | 0 | 7 | 0 | 0 | 0 | 0 | 0 |
-| D — Browser context | 9 | 0 | 9 | 0 | 0 | 0 | 0 | 0 |
-| MVP closure | 7 | 0 | 7 | 0 | 0 | 0 | 0 | 0 |
+| Foundation | 5 | 5 | 0 | 0 | 0 | 0 | 0 | 0 |
+| A — Native round trip | 8 | 8 | 0 | 0 | 0 | 0 | 0 | 0 |
+| B — First provider | 10 | 10 | 0 | 0 | 0 | 0 | 0 | 0 |
+| C — Conversation continuity | 7 | 7 | 0 | 0 | 0 | 0 | 0 | 0 |
+| D — Browser context | 9 | 9 | 0 | 0 | 0 | 0 | 0 | 0 |
+| MVP closure | 7 | 7 | 0 | 0 | 0 | 0 | 0 | 0 |
 | E — Second provider | 5 | 0 | 0 | 0 | 0 | 5 | 0 | 0 |
 | F — Reusable native core | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
 | G — Installable product | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 |
 | H — Search/citations | 8 | 0 | 0 | 0 | 0 | 8 | 0 | 0 |
 | Post-milestone | 6 | 0 | 0 | 0 | 0 | 4 | 0 | 2 |
-| **Total** | **81** | **0** | **46** | **0** | **0** | **33** | **0** | **2** |
+| **Total** | **81** | **46** | **0** | **0** | **0** | **33** | **0** | **2** |
 
 ### Milestone completion rule
 
