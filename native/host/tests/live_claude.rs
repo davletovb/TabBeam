@@ -190,7 +190,11 @@ fn assert_no_credentials(what: &str, text: &str) {
 
 /// Why the test can't run here, when Claude isn't ready.
 fn skip_or_fail(mode: Mode, reason: &str) {
-    assert_ne!(mode, Mode::Required, "PERVUE_LIVE_CLAUDE=required: {reason}");
+    assert_ne!(
+        mode,
+        Mode::Required,
+        "PERVUE_LIVE_CLAUDE=required: {reason}"
+    );
     eprintln!("skipped: {reason}");
 }
 
