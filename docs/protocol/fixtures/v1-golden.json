@@ -35,6 +35,56 @@
       "sequence": "existing conversation success"
     },
     {
+      "name": "selection context",
+      "value": {
+        "version": 1,
+        "type": "request",
+        "request_id": "req_context_selection",
+        "method": "conversation.send",
+        "payload": {
+          "provider_id": "fake",
+          "input": {
+            "text": "Explain this selection"
+          },
+          "context": {
+            "mode": "selection",
+            "text": "Selected reference text",
+            "truncated": false,
+            "page": {
+              "title": "Example article",
+              "url": "https://example.com/article"
+            }
+          }
+        }
+      },
+      "sequence": "new conversation success"
+    },
+    {
+      "name": "page context",
+      "value": {
+        "version": 1,
+        "type": "request",
+        "request_id": "req_context_page",
+        "method": "conversation.send",
+        "payload": {
+          "provider_id": "fake",
+          "input": {
+            "text": "Summarize this page"
+          },
+          "context": {
+            "mode": "page",
+            "text": "Readable page content for the fuzz corpus.",
+            "truncated": true,
+            "page": {
+              "title": "Example page",
+              "url": "https://example.com/page"
+            }
+          }
+        }
+      },
+      "sequence": "new conversation success"
+    },
+    {
       "name": "provider status all",
       "value": {
         "version": 1,
