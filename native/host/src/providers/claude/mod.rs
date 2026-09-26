@@ -669,16 +669,6 @@ impl Turn {
         self.start();
     }
 
-    fn should_fallback(&self, exit: &Exit) -> bool {
-        if self.cancelled || self.resume.is_none() || self.fallback_prompt.is_none() {
-            return false;
-        }
-        matches!(
-            self.outcome,
-            Some(Err(error)) if error.reason == "UNKNOWN_CONVERSATION"
-        ) || (!self.started && exit.status.is_some_and(|status| !status.success()))
-    }
-
     fn exited(&mut self, exit: &Exit) -> Update {
         match self.outcome.take() {
             Some(Ok(())) => Update::Completed,
@@ -726,18 +716,25 @@ impl Exchange for Turn {
                         .map_or(deadline, |finish_by| deadline.min(finish_by));
                     match stream.next(wait) {
                         Some(Output::Line(line)) => self.on_line(&line),
-                        Some(Output::Final(exit) | Output::Stopped(exit))
-                            if self.should_fallback(&exit) =>
-                        {
-                            self.reset_for_history_fallback();
-                        }
                         Some(Output::Final(exit) | Output::Stopped(exit)) => {
-                            let update = if self.cancelled {
-                                Update::Stopped
+                            let fallback = !self.cancelled
+                                && self.resume.is_some()
+                                && self.fallback_prompt.is_some()
+                                && (matches!(
+                                    self.outcome,
+                                    Some(Err(error)) if error.reason == "UNKNOWN_CONVERSATION"
+                                ) || (!self.started
+                                    && exit.status.is_some_and(|status| !status.success())));
+                            if fallback {
+                                self.reset_for_history_fallback();
                             } else {
-                                self.exited(&exit)
-                            };
-                            self.end(update);
+                                let update = if self.cancelled {
+                                    Update::Stopped
+                                } else {
+                                    self.exited(&exit)
+                                };
+                                self.end(update);
+                            }
                         }
                         Some(Output::Error(_)) => {
                             let update = if self.cancelled {
