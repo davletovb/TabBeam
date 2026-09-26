@@ -83,10 +83,7 @@ fn auth_status(behavior: &str) -> ExitCode {
         "broken" => ExitCode::from(3),
         "hangs" => hang(),
         _ => {
-            let _ = writeln!(
-                io::stdout(),
-                r#"{{"loggedIn":true,"email":"{SECRET}"}}"#
-            );
+            let _ = writeln!(io::stdout(), r#"{{"loggedIn":true,"email":"{SECRET}"}}"#);
             ExitCode::SUCCESS
         }
     }
@@ -175,10 +172,7 @@ fn print_mode(dir: &Path, args: &[String], behavior: &str) -> io::Result<ExitCod
         "flooding" => {
             let give_up = Instant::now() + ENDLESS;
             while Instant::now() < give_up {
-                emit(
-                    &mut out,
-                    &json!({"type":"future.event","detail":"ignored"}),
-                )?;
+                emit(&mut out, &json!({"type":"future.event","detail":"ignored"}))?;
             }
             return Ok(ExitCode::SUCCESS);
         }
