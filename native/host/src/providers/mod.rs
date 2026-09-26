@@ -14,7 +14,7 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use crate::conversation::HistoryMessage;
+use crate::conversation::{BrowserContext, HistoryMessage};
 use crate::protocol::events::{ErrorBody, ProviderState};
 pub use crate::stream::BUSY_LIMIT;
 
@@ -32,10 +32,9 @@ pub struct SendRequest {
     pub history: Vec<HistoryMessage>,
     /// The conversation to continue, or `None` to start one.
     pub conversation_id: Option<String>,
-    /// Whether the request attaches browser context (`payload.context`). An
-    /// adapter whose provider can't use it fails the request rather than
-    /// answer without it (DOC-02 §6).
-    pub has_context: bool,
+    /// Browser context explicitly attached to this turn, after validation
+    /// at the native trust boundary.
+    pub context: Option<BrowserContext>,
 }
 
 /// What an exchange reports, in protocol order. After a terminal update
