@@ -19,6 +19,7 @@ const TEST_LIMITS: Limits = Limits {
         stop_grace: Duration::from_millis(300),
     },
     probe: Duration::from_secs(5),
+    finish: Duration::from_millis(300),
 };
 
 struct FakeClaude {
