@@ -1,52 +1,71 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import {
+  jsonValueWireBytes,
+  loadJson,
+  nativeLengthPrefix,
+  NATIVE_ENDIAN_NAME,
+  ROOT,
+} from "../../scripts/protocol-support.mjs";
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.resolve(HERE, "..", "..");
 const PREFIX_SIZE = 4;
+const CONTRACT = path.join(ROOT, "docs", "protocol", "native-messaging-v1.json");
+const GOLDEN = path.join(ROOT, "docs", "protocol", "fixtures", "v1-golden.json");
 
-const loadJson = (filePath) => JSON.parse(fs.readFileSync(filePath, "utf8"));
-const maxFrameBytes = () => loadJson(path.join(ROOT, "docs", "protocol", "native-messaging-v1.json")).max_frame_bytes;
-
-function prefix(length) {
-  const buffer = Buffer.alloc(PREFIX_SIZE);
-  if (os.endianness() === "LE") buffer.writeUInt32LE(length);
-  else buffer.writeUInt32BE(length);
-  return buffer;
+function maxFrameBytes() {
+  const value = loadJson(CONTRACT).max_frame_bytes;
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error("max_frame_bytes must be a positive safe integer");
+  }
+  return value;
 }
 
 function createFrameCorpus(output) {
   fs.mkdirSync(output, { recursive: true });
   const maxFrame = maxFrameBytes();
   const seeds = new Map([
-    ["empty-frame.bin", prefix(0)],
-    ["small-binary.bin", Buffer.concat([prefix(6), Buffer.from([0, 1, 10, 26, 127, 255])])],
-    ["max-frame.bin", Buffer.concat([prefix(maxFrame), Buffer.alloc(maxFrame, 0xa5)])],
-    ["oversized-prefix.bin", prefix(maxFrame + 1)],
-    ["truncated-prefix.bin", prefix(5).subarray(0, 2)],
-    ["truncated-payload.bin", Buffer.concat([prefix(5), Buffer.from("abc")])],
+    ["empty-frame.bin", nativeLengthPrefix(0)],
+    [
+      "small-binary.bin",
+      Buffer.concat([nativeLengthPrefix(6), Buffer.from([0, 1, 10, 26, 127, 255])]),
+    ],
+    [
+      "max-frame.bin",
+      Buffer.concat([nativeLengthPrefix(maxFrame), Buffer.alloc(maxFrame, 0xa5)]),
+    ],
+    ["oversized-prefix.bin", nativeLengthPrefix(maxFrame + 1)],
+    ["truncated-prefix.bin", nativeLengthPrefix(5).subarray(0, 2)],
+    ["truncated-payload.bin", Buffer.concat([nativeLengthPrefix(5), Buffer.from("abc")])],
   ]);
+
   for (const [name, data] of seeds) fs.writeFileSync(path.join(output, name), data);
-  console.log(`Wrote ${seeds.size} Native Messaging fuzz seeds using ${os.endianness().toLowerCase()}-endian native prefixes.`);
+  console.log(
+    `Wrote ${seeds.size} Native Messaging fuzz seeds using ${NATIVE_ENDIAN_NAME}-endian native prefixes.`,
+  );
 }
 
 function createProtocolCorpus(output) {
   fs.mkdirSync(output, { recursive: true });
-  const golden = loadJson(path.join(ROOT, "docs", "protocol", "fixtures", "v1-golden.json"));
+  const golden = loadJson(GOLDEN);
   let index = 0;
   const safeName = (name) => name.replaceAll(" ", "-");
-  for (const fixture of golden.valid_requests) {
+
+  for (const [fixtureIndex, fixture] of golden.valid_requests.entries()) {
     fs.writeFileSync(
       path.join(output, `${String(index++).padStart(2, "0")}-valid-${safeName(fixture.name)}.json`),
-      Buffer.from(JSON.stringify(fixture.value), "utf8"),
+      jsonValueWireBytes(GOLDEN, ["valid_requests", fixtureIndex, "value"]),
     );
   }
-  for (const fixture of golden.invalid_cases) {
-    const data = Object.hasOwn(fixture, "value")
-      ? Buffer.from(JSON.stringify(fixture.value), "utf8")
-      : Buffer.from(fixture.raw, "utf8");
+
+  for (const [fixtureIndex, fixture] of golden.invalid_cases.entries()) {
+    let data;
+    if (Object.hasOwn(fixture, "value")) {
+      data = jsonValueWireBytes(GOLDEN, ["invalid_cases", fixtureIndex, "value"]);
+    } else if (typeof fixture.raw === "string") {
+      data = Buffer.from(fixture.raw, "utf8");
+    } else {
+      throw new Error(`invalid fixture must contain either value or raw: ${fixture.name}`);
+    }
     fs.writeFileSync(
       path.join(output, `${String(index++).padStart(2, "0")}-invalid-${safeName(fixture.name)}.bin`),
       data,
@@ -54,17 +73,31 @@ function createProtocolCorpus(output) {
   }
 
   const extras = new Map([
-    ["duplicate-version.json", Buffer.from('{"version":1,"version":1,"type":"request","request_id":"req_dup","method":"provider.status","payload":{}}')],
+    [
+      "duplicate-version.json",
+      Buffer.from(
+        '{"version":1,"version":1,"type":"request","request_id":"req_dup","method":"provider.status","payload":{}}',
+      ),
+    ],
     ["empty-object-trailing.bin", Buffer.from("{}x")],
     ["zero-byte.bin", Buffer.alloc(0)],
-    ["escaped-method.json", Buffer.from('{"version":1,"type":"request","request_id":"req_escape","method":"conversation.sen\\u0064","payload":{"provider_id":"fak\\u0065","input":{"text":"Hello"}}}')],
+    [
+      "escaped-method.json",
+      Buffer.from(
+        '{"version":1,"type":"request","request_id":"req_escape","method":"conversation.sen\\u0064","payload":{"provider_id":"fak\\u0065","input":{"text":"Hello"}}}',
+      ),
+    ],
   ]);
+
   for (const [name, data] of extras) fs.writeFileSync(path.join(output, name), data);
   console.log(`Wrote ${index + extras.size} protocol fuzz seeds.`);
 }
 
 function usage() {
-  console.error("usage: fuzz-support.mjs frame-corpus <output> | protocol-corpus <output> | max-len <frame_reader|protocol>");
+  console.error(
+    "usage: fuzz-support.mjs frame-corpus <output> | protocol-corpus <output> | " +
+      "max-len <frame_reader|protocol>",
+  );
   process.exit(64);
 }
 
