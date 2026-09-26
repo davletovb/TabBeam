@@ -30,7 +30,7 @@
       <section class="hero">
         <span class="badge">
           <svg class="icon icon-xs" aria-hidden="true"><use href="../shared/icons.svg#terminal"/></svg>
-          Developer preview
+          macOS companion
         </span>
         <h1>Provider &amp; setup</h1>
         <p class="lede">Choose which AI Pervue asks, and connect the small companion app it talks to on this computer.</p>
@@ -56,58 +56,38 @@
       </section>
 
       <h2 class="section-title">Connect the companion</h2>
-      <p class="section-lede">Packaging isn't finished yet, so development builds register the companion by hand. It takes about five minutes.</p>
+      <p class="section-lede">Pervue checks the companion and each provider above. Install the package paired with this extension, then follow the provider's own sign-in flow.</p>
 
       <ol class="steps">
         <li class="step">
           <div class="step-body">
-            <h2>Build the companion</h2>
-            <p>From a checkout of the repository, build the native host.</p>
-            <div class="command">
-              <code>cargo build --manifest-path native/Cargo.toml</code>
-              <button class="copy-command" type="button" aria-label="Copy command" title="Copy">
-                <svg class="icon icon-sm" aria-hidden="true"><use href="../shared/icons.svg#copy"/></svg>
-                <svg class="icon icon-sm icon-copied" aria-hidden="true"><use href="../shared/icons.svg#check"/></svg>
-              </button>
-            </div>
+            <h2>Install the macOS companion</h2>
+            <p>Download the Pervue companion package from the <a href="https://github.com/davletovb/pervue/releases" target="_blank" rel="noopener noreferrer">Pervue releases</a> and open it in Finder. The installer registers the host with Chrome automatically. If the popup says the companion needs an update, install the matching newer package.</p>
           </div>
         </li>
         <li class="step">
           <div class="step-body">
-            <h2>Find this extension's ID</h2>
-            <p>Open <code>chrome://extensions</code>, turn on <strong>Developer mode</strong>, and copy the ID shown on the Pervue card.</p>
+            <h2>Choose a provider</h2>
+            <p>Choose Codex or Claude above. The status beside each provider tells you whether its tool is found and signed in.</p>
           </div>
         </li>
         <li class="step">
           <div class="step-body">
-            <h2>Register the companion with Chrome</h2>
-            <p>Print the Native Messaging manifest for your extension ID, then save it in Chrome's Native Messaging host location for your operating system.</p>
-            <div class="command">
-              <code>pervue-host --print-manifest &lt;extension-id&gt;</code>
-              <button class="copy-command" type="button" aria-label="Copy command" title="Copy">
-                <svg class="icon icon-sm" aria-hidden="true"><use href="../shared/icons.svg#copy"/></svg>
-                <svg class="icon icon-sm icon-copied" aria-hidden="true"><use href="../shared/icons.svg#check"/></svg>
-              </button>
-            </div>
-          </div>
-        </li>
-        <li class="step">
-          <div class="step-body">
-            <h2>Install and sign in to Codex</h2>
-            <p>Install Codex and sign in with its supported authentication flow. Pervue never sees your credentials.</p>
+            <h2>Install and sign in to your provider</h2>
+            <p>If its tool is missing, follow the <a href="https://developers.openai.com/codex/quickstart" target="_blank" rel="noopener noreferrer">Codex CLI guide</a> or <a href="https://code.claude.com/docs/en/quickstart" target="_blank" rel="noopener noreferrer">Claude Code guide</a>. Sign in through that tool. Pervue does not collect provider credentials.</p>
           </div>
         </li>
         <li class="step">
           <div class="step-body">
             <h2>Reopen Pervue</h2>
-            <p>Open the popup again. The status under the Pervue name turns green and reads <strong>Codex is ready</strong> once everything is connected.</p>
+            <p>Open the popup again. The selected provider should read <strong>ready</strong>. If it does not, use the status above to fix the remaining setup step.</p>
           </div>
         </li>
       </ol>
 
       <aside class="note">
         <svg class="icon" aria-hidden="true"><use href="../shared/icons.svg#shield"/></svg>
-        <p>These steps are for development only. Milestone G replaces them with an installable companion package.</p>
+        <p>To remove the companion on macOS, open <strong>Applications → Pervue → Uninstall Pervue</strong>. Remove the extension separately in Chrome. Provider credentials stay with the provider tool.</p>
       </aside>
     </main>
     <script type="module" src="./setup.js"></script>

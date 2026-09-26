@@ -89,7 +89,7 @@ When the popup opens, a line under the Pervue name shows the state of the compan
 | Companion app not answering within 15 seconds | Pervue's companion app didn't answer in time. Try again. |
 | No answer from the service worker within 20 seconds, or an unknown state | Pervue couldn't check Codex. |
 
-A status or error that doesn't follow DOC-02, such as a status missing a capability or an error whose `code` isn't one of DOC-02's, means the companion app speaks another version of the protocol: "Pervue's companion app needs an update. Update it, then try again." (`HOST_UNAVAILABLE` / `HOST_PROTOCOL_MISMATCH`). The service worker waits 15 seconds for the host's answer (`PROVIDER_STATUS_TIMEOUT_MS`); the host gives up on a stuck sign-in check after 10, so only a host that has stopped answering takes that long. Then the worker answers `REQUEST_TIMEOUT` / `REQUEST_DEADLINE_EXCEEDED` and stops listening for that request, so nothing stays pending in the worker. Asking stays possible whatever the line says, and each question keeps the line current: an answer shows Codex ready, and a missing app or provider, or a sign-in, shows what the question found.
+Before any request is sent, the native connection waits for `host.ready` and its supported protocol versions. If protocol 1 is absent, queued requests fail with `HOST_UNAVAILABLE` / `HOST_PROTOCOL_MISMATCH` and the setup action offers a matching companion package; a host that never becomes ready fails after five seconds. A status or error that doesn't follow DOC-02 is also treated as an incompatible host. The service worker waits 15 seconds for a provider status answer (`PROVIDER_STATUS_TIMEOUT_MS`); the host gives up on a stuck sign-in check after 10 seconds. Asking stays possible after a failed check because the state may change after installing or signing in.
 
 A failed question's status line shows the error's message and its kind, decided by the DOC-02 `code` alone (`src/shared/outcomes.js`), never by the message:
 
@@ -118,7 +118,9 @@ The content script responds only to explicit capture messages. Selection support
 
 ### Trying it against the local host
 
-Until packaging registers the host (Milestone G), register a development build by hand:
+For a user-facing macOS install, use the companion package paired with the extension's published ID. The setup page links to the package and provider guidance. Packaging and the clean-machine verification checklist live in `packaging/macos/README.md`.
+
+For local development before installing a paired package, register a development build by hand:
 
 1. Build the host: `cargo build -p pervue-host` in `native/`.
 2. Load this directory unpacked and copy the extension ID from `chrome://extensions`.

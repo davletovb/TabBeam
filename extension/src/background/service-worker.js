@@ -29,6 +29,7 @@ const entryActions = createEntryActions({
 
 const nativeConnectionManager = createNativeConnectionManager({
   connectNative: (hostName) => chrome.runtime.connectNative(hostName),
+  requireHandshake: true,
   getLastError: () => chrome.runtime.lastError?.message ?? null
 });
 const conversations = createConversationStore(chrome.storage.local);

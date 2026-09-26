@@ -196,11 +196,11 @@ Reached after **Milestone H**:
 | LIB-05 | Extract reusable platform/diagnostics primitives where justified | F | Native Library | OBS-01, PRO-05 | IMPLEMENTED — VERIFY |
 | DOC-03 | Document reusable library ownership/API boundaries | F | Documentation | LIB-01, LIB-02, LIB-03, LIB-04 | IMPLEMENTED — VERIFY |
 | TST-11 | Add standalone native-library unit/ABI tests | F | Testing | LIB-01, LIB-02, LIB-03, LIB-04 | IMPLEMENTED — VERIFY |
-| PKG-01 | Build macOS companion package and host registration | G | Packaging | TST-08, EXT-13, LIB-02, LIB-05 | BACKLOG |
-| PKG-02 | Add macOS provider discovery/setup guidance | G | Packaging | PKG-01, PRO-07 | BACKLOG |
-| PKG-03 | Add extension/host protocol compatibility check | G | Packaging / Protocol | DOC-01, PKG-01 | BACKLOG |
-| PKG-04 | Add signing/notarization-ready macOS release pipeline | G | Packaging | PKG-01 | BACKLOG |
-| TST-12 | Verify macOS clean-machine install/use/uninstall journey | G | Testing | PKG-01, PKG-02, PKG-03 | BACKLOG |
+| PKG-01 | Build macOS companion package and host registration | G | Packaging | TST-08, EXT-13, LIB-02, LIB-05 | IMPLEMENTED — VERIFY |
+| PKG-02 | Add macOS provider discovery/setup guidance | G | Packaging | PKG-01, PRO-07 | IMPLEMENTED — VERIFY |
+| PKG-03 | Add extension/host protocol compatibility check | G | Packaging / Protocol | DOC-01, PKG-01 | IMPLEMENTED — VERIFY |
+| PKG-04 | Add signing/notarization-ready macOS release pipeline | G | Packaging | PKG-01 | IMPLEMENTED — VERIFY |
+| TST-12 | Verify macOS clean-machine install/use/uninstall journey | G | Testing | PKG-01, PKG-02, PKG-03 | BLOCKED |
 | PKG-05 | Implement Windows native host registration/build | G | Packaging | LIB-02, LIB-05 | BACKLOG |
 | PKG-06 | Build Windows companion installer | G | Packaging | PKG-05, PRO-07 | BACKLOG |
 | TST-13 | Verify Windows clean-machine install/use/uninstall journey | G | Testing | PKG-06, PKG-03 | BACKLOG |
@@ -1446,7 +1446,10 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 - Uninstall removes owned files/registration cleanly.
 - Normal user does not edit JSON paths manually.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `packaging/macos/build.sh` builds a release host and `.pkg` with a system Chrome manifest limited to the supplied extension ID, a stable binary path, build provenance, and a Finder uninstaller. `packaging/macos/verify.py` and the macOS CI job verify installed registration and clean removal.
 
 ### PKG-02 — Add macOS provider discovery/setup guidance
 **Area:** Packaging  
@@ -1457,7 +1460,10 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 - Missing/unauthenticated providers produce actionable setup guidance.
 - Credentials remain owned by provider tooling.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- The setup page links to the paired companion package and official Codex/Claude setup guides and shows each provider's native availability/authentication status. Provider credentials remain with the provider CLI.
 
 ### PKG-03 — Add extension/host protocol compatibility check
 **Area:** Packaging / Protocol  
@@ -1467,7 +1473,10 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 - Extension detects incompatible host protocol versions before starting a request.
 - User receives an update/setup action instead of undefined behavior.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- The production Native Messaging manager queues all outgoing requests until `host.ready` advertises protocol 1. An incompatible or silent host fails those requests with setup guidance, without sending a protocol request to it. Connection tests exercise mismatch and a compatible reconnection.
 
 ### PKG-04 — Add signing/notarization-ready macOS release pipeline
 **Area:** Packaging  
@@ -1478,7 +1487,10 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 - Build provenance/version is embedded.
 - No secrets are bundled in release artifacts.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- The manual macOS release workflow imports Developer ID identities from CI secrets, signs the host and package, submits with `notarytool`, staples the ticket, and uploads the artifact. The package embeds version, architecture and commit provenance; no provider credentials are bundled. A signed candidate still requires an actual run with configured signing credentials.
 
 ### TST-12 — Verify macOS clean-machine install/use/uninstall journey
 **Area:** Testing  
@@ -1494,7 +1506,10 @@ A non-development macOS environment can:
 6. uninstall cleanly;
 without terminal commands during the user journey.
 
-**Status:** BACKLOG
+**Status:** BLOCKED
+
+**Implementation evidence / remaining gate**
+- The macOS CI package job verifies real install, manifest registration, host status round trip, and uninstall; `packaging/macos/README.md` records the manual browser/provider/no-terminal verification steps and required evidence. The full gate requires a published matching extension, signed/notarized candidate, and an actual clean Mac with a signed-in provider. None is available from this Linux workspace; do not mark this verified from an automated package smoke test alone.
 
 ### PKG-05 — Implement Windows native host registration/build
 **Area:** Packaging  

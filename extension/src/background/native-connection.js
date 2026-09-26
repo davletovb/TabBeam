@@ -2,6 +2,18 @@ import { MAX_NATIVE_MESSAGE_BYTES, utf8ByteLength } from "../shared/limits.js";
 import { recordDuration } from "../shared/performance.js";
 
 export const NATIVE_HOST_NAME = "com.pervue.host";
+export const PROTOCOL_VERSION = 1;
+export const HOST_READY_TIMEOUT_MS = 5_000;
+export const HOST_PROTOCOL_MISMATCH = Object.freeze({
+  code: "HOST_UNAVAILABLE", reason: "HOST_PROTOCOL_MISMATCH",
+  message: "Pervue's companion app needs an update. Open setup to install the matching version.",
+  retryable: false
+});
+export const HOST_READY_TIMEOUT = Object.freeze({
+  code: "HOST_UNAVAILABLE", reason: "HOST_READY_TIMEOUT",
+  message: "Pervue's companion app did not start. Open setup and reinstall it.",
+  retryable: true
+});
 
 // Protocol v1 request-ID grammar (docs/protocol/v1.md §2). The host rejects any
 // other ID without being able to echo it back, so its route could never finish.
@@ -52,6 +64,7 @@ const TERMINAL_EVENTS = new Set([
  *   connectNative: (hostName: string) => NativePort,
  *   hostName?: string,
  *   getLastError?: () => string | null,
+ *   requireHandshake?: boolean,
  *   reportError?: (context: string, error: unknown) => void
  * }} NativeConnectionOptions
  */
@@ -73,6 +86,12 @@ export class NativeConnectionManager {
     this.connectNative = options.connectNative;
     this.hostName = options.hostName ?? NATIVE_HOST_NAME;
     this.getLastError = options.getLastError ?? (() => null);
+    this.requireHandshake = options.requireHandshake ?? false;
+    this.ready = !this.requireHandshake;
+    /** @type {Map<string, any>} */
+    this.queued = new Map();
+    /** @type {any} */
+    this.readyTimer = null;
     this.reportError =
       options.reportError ??
       ((_context, _error) => {
@@ -143,6 +162,10 @@ export class NativeConnectionManager {
     port.onMessage.addListener(onMessage);
     port.onDisconnect.addListener(onDisconnect);
     this.port = port;
+    this.ready = !this.requireHandshake;
+    if (this.requireHandshake) {
+      this.readyTimer = setTimeout(() => this.failHandshake(port, HOST_READY_TIMEOUT), HOST_READY_TIMEOUT_MS);
+    }
     return port;
   }
 
@@ -180,6 +203,10 @@ export class NativeConnectionManager {
 
     const port = this.ensurePort();
     this.routes.set(requestId, owner);
+    if (!this.ready) {
+      this.queued.set(requestId, message);
+      return;
+    }
 
     try {
       port.postMessage(message);
@@ -207,6 +234,7 @@ export class NativeConnectionManager {
    * @returns {boolean} whether the request was in flight
    */
   forget(requestId) {
+    this.queued.delete(requestId);
     return this.routes.delete(requestId);
   }
 
@@ -256,6 +284,29 @@ export class NativeConnectionManager {
     const requestId = event?.request_id;
 
     if (requestId === null) {
+      if (this.requireHandshake && !this.ready && event?.event === "host.ready") {
+        if (Array.isArray(event.payload?.protocol_versions) &&
+            event.payload.protocol_versions.includes(PROTOCOL_VERSION)) {
+          this.ready = true;
+          clearTimeout(this.readyTimer);
+          this.readyTimer = null;
+          // Use send's existing error handling for a port that closes while
+          // the pending messages are flushed.
+          for (const [id, message] of this.queued) {
+            if (!this.routes.has(id) || !this.port) break;
+            this.queued.delete(id);
+            try {
+              this.port.postMessage(message);
+            } catch {
+              this.handleDisconnect(null);
+              break;
+            }
+          }
+        } else {
+          this.failHandshake(this.port);
+          return;
+        }
+      }
       for (const listener of this.lifecycleListeners) {
         this.invokeCallback("lifecycle listener", () => listener(event));
       }
@@ -275,12 +326,17 @@ export class NativeConnectionManager {
     // the ID or disconnect without the request still counting as in flight.
     if (TERMINAL_EVENTS.has(event?.event)) {
       this.routes.delete(requestId);
+      this.queued.delete(requestId);
     }
     this.invokeCallback("request event handler", () => owner.onEvent?.(event));
   }
 
   /** @param {string | null} message */
   handleDisconnect(message) {
+    clearTimeout(this.readyTimer);
+    this.readyTimer = null;
+    this.ready = !this.requireHandshake;
+    this.queued.clear();
     const requestIds = [...this.routes.keys()];
     const owners = [...this.routes.entries()];
 
@@ -296,6 +352,22 @@ export class NativeConnectionManager {
     const details = { message, requestIds };
     for (const listener of this.disconnectListeners) {
       this.invokeCallback("disconnect listener", () => listener(details));
+    }
+  }
+
+  /** Reject every queued request before any incompatible host sees it. */
+  /** @param {NativePort | null} port @param {typeof HOST_PROTOCOL_MISMATCH | typeof HOST_READY_TIMEOUT} [error] */
+  failHandshake(port, error = HOST_PROTOCOL_MISMATCH) {
+    if (!port || this.port !== port || this.ready) return;
+    const pending = [...this.routes];
+    this.routes.clear();
+    this.queued.clear();
+    this.disconnect();
+    for (const [requestId, owner] of pending) {
+      this.invokeCallback("incompatible host", () => owner.onEvent?.({
+        version: PROTOCOL_VERSION, type: "event", request_id: requestId,
+        event: "response.failed", payload: { error }
+      }));
     }
   }
 

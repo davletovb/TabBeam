@@ -51,6 +51,31 @@ jobs:
       - name: Exercise Native Messaging through popup
         run: npm --prefix extension run test:roundtrip
 
+  macos-package:
+    name: macOS package install and removal (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-15-intel]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build unsigned test package
+        run: packaging/macos/build.sh abcdefghijklmnopabcdefghijklmnop
+      - name: Install and verify Chrome registration
+        shell: bash
+        run: |
+          sudo installer -pkg out/macos/*.pkg -target /
+          python3 packaging/macos/verify.py abcdefghijklmnopabcdefghijklmnop
+      - name: Remove and verify owned files
+        shell: bash
+        run: |
+          sudo '/Library/Application Support/Pervue/uninstall.sh'
+          test ! -e '/Library/Application Support/Pervue/pervue-host'
+          test ! -e '/Library/Google/Chrome/NativeMessagingHosts/com.pervue.host.json'
+          test ! -e '/Applications/Pervue/Uninstall Pervue.app'
+
   protocol:
     name: Protocol fixtures
     runs-on: ubuntu-latest

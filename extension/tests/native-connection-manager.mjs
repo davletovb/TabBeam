@@ -139,6 +139,35 @@ function request(id, method = "provider.status") {
   };
 }
 
+// An installed host must advertise a compatible protocol before it receives
+// even a provider status request. The gate resets on each new native port.
+{
+  /** @type {MockPort[]} */
+  const ports = [];
+  /** @type {any[]} */
+  const failures = [];
+  const manager = createNativeConnectionManager({
+    requireHandshake: true,
+    connectNative() {
+      const port = new MockPort("handshake");
+      ports.push(port);
+      return port;
+    }
+  });
+  manager.send(request("queued"), { onEvent: (event) => failures.push(event) });
+  assert.equal(ports[0].messages.length, 0);
+  ports[0].emitMessage({ version: 2, type: "event", request_id: null,
+    event: "host.ready", payload: { host_version: "2", protocol_versions: [2] } });
+  assert.equal(ports[0].messages.length, 0);
+  assert.equal(failures[0].payload.error.reason, "HOST_PROTOCOL_MISMATCH");
+  assert.equal(manager.pendingRequestCount, 0);
+  manager.send(request("compatible"));
+  assert.equal(ports[1].messages.length, 0);
+  ports[1].emitMessage({ version: 1, type: "event", request_id: null,
+    event: "host.ready", payload: { host_version: "1", protocol_versions: [1, 2] } });
+  assert.deepEqual(ports[1].messages, [request("compatible")]);
+}
+
 {
   const { manager, ports, hostNames } = makeHarness();
 
