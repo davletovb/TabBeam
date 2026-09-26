@@ -393,6 +393,7 @@ function hostEvent(event, payload = {}) {
 {
   // Retry re-reads the user's current context choice and consumes that exact
   // one-shot grant after success; revoked context is not resurrected.
+  /** @type {any} */
   let currentContext = {
     mode: "page", text: "old page", truncated: false,
     page: { title: "Old", url: "https://example.com/" }
