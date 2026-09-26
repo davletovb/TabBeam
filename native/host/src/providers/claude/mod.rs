@@ -567,7 +567,7 @@ impl Turn {
     }
 
     fn on_line(&mut self, line: &str) {
-        if self.cancelled {
+        if self.cancelled || self.result_seen {
             return;
         }
         match output::parse(line) {
@@ -581,7 +581,16 @@ impl Turn {
                     Some(id) => id.clone(),
                     None => {
                         let id = new_conversation_id(&self.conversations.borrow());
-                        self.conversations.borrow_mut().insert(id.clone(), session);
+                        if self
+                            .session_dir
+                            .as_deref()
+                            .is_none_or(|dir| write_session(dir, &id, &session, true).is_err())
+                        {
+                            return self.end(Update::Failed(SESSION_STORE_FAILED));
+                        }
+                        self.conversations
+                            .borrow_mut()
+                            .insert(id.clone(), session);
                         self.conversation_id = Some(id.clone());
                         self.queue.push_back(Update::ConversationCreated(id.clone()));
                         id
@@ -591,11 +600,27 @@ impl Turn {
                     conversation_id: Some(conversation),
                 });
             }
+            Ok(Line::MessageStart) => {
+                if !self.started {
+                    return self.end(Update::Failed(MALFORMED_OUTPUT));
+                }
+                self.pending_separator = self.messages > 0;
+                self.messages += 1;
+            }
             Ok(Line::TextDelta(text)) => {
-                if !self.started || self.result_seen {
+                if !self.started {
                     return self.end(Update::Failed(MALFORMED_OUTPUT));
                 }
                 if !text.is_empty() {
+                    let text = if self.pending_separator {
+                        self.pending_separator = false;
+                        format!("\n\n{text}")
+                    } else {
+                        text
+                    };
+                    if self.messages == 0 {
+                        self.messages = 1;
+                    }
                     self.saw_delta = true;
                     self.queue.push_back(Update::Delta(text));
                 }
@@ -605,24 +630,49 @@ impl Turn {
                 if !self.started {
                     return self.end(Update::Failed(MALFORMED_OUTPUT));
                 }
-                // On resume, Claude may report an invocation-local init ID.
-                // The session originally supplied to --resume remains canonical.
-                if self.resume.is_none() {
-                    if let (Some(id), Some(conversation)) =
-                        (session_id, self.conversation_id.as_ref())
+                if let (Some(session), Some(conversation)) =
+                    (session_id, self.conversation_id.as_ref())
+                {
+                    if self
+                        .session_dir
+                        .as_deref()
+                        .is_none_or(|dir| write_session(dir, conversation, &session, false).is_err())
                     {
-                        self.conversations.borrow_mut().insert(conversation.clone(), id);
+                        return self.end(Update::Failed(SESSION_STORE_FAILED));
                     }
+                    self.conversations
+                        .borrow_mut()
+                        .insert(conversation.clone(), session);
                 }
                 if !self.saw_delta && !text.is_empty() {
                     self.saw_delta = true;
                     self.queue.push_back(Update::Delta(text));
                 }
                 self.result_seen = true;
+                self.finish_by = Some(after(self.finish_grace));
             }
+            Ok(Line::ResultFailed(error))
+                if error.reason == "PROVIDER_UNAVAILABLE" && self.restart_with_fallback() => {}
             Ok(Line::ResultFailed(error)) => self.end(Update::Failed(error)),
             Ok(Line::Ignored) => {}
         }
+    }
+
+    fn restart_with_fallback(&mut self) -> bool {
+        let Some(prompt) = self.fallback_prompt.take() else {
+            return false;
+        };
+        self.resume = None;
+        self.conversation_id = None;
+        self.prompt = prompt;
+        self.started = false;
+        self.saw_delta = false;
+        self.result_seen = false;
+        self.messages = 0;
+        self.pending_separator = false;
+        self.finish_by = None;
+        self.start();
+        true
     }
 
     fn final_update(result_seen: bool, exit: &Exit) -> Update {
@@ -666,15 +716,45 @@ impl Exchange for Turn {
                         self.start();
                     }
                 }
-                Stage::Running(stream) => match stream.next(deadline)? {
-                    Output::Line(line) => self.on_line(&line),
-                    Output::Final(exit) => {
-                        let update = Self::final_update(self.result_seen, &exit);
-                        self.end(update);
+                Stage::Running(stream) => {
+                    let wait = self
+                        .finish_by
+                        .map_or(deadline, |finish_by| deadline.min(finish_by));
+                    match stream.next(wait) {
+                        Some(Output::Line(line)) => self.on_line(&line),
+                        Some(Output::Final(_))
+                            if !self.cancelled
+                                && !self.started
+                                && self.resume.is_some()
+                                && self.fallback_prompt.is_some() =>
+                        {
+                            self.restart_with_fallback();
+                        }
+                        Some(Output::Final(exit) | Output::Stopped(exit)) => {
+                            let update = if self.cancelled {
+                                Update::Stopped
+                            } else {
+                                Self::final_update(self.result_seen, &exit)
+                            };
+                            self.end(update);
+                        }
+                        Some(Output::Error(_)) => {
+                            let update = if self.result_seen {
+                                Update::Completed
+                            } else {
+                                Update::Failed(MALFORMED_OUTPUT)
+                            };
+                            self.end(update);
+                        }
+                        None => match self.finish_by {
+                            Some(finish_by) if Instant::now() >= finish_by => {
+                                self.finish_by = None;
+                                stream.cancel(Duration::ZERO);
+                            }
+                            _ => return None,
+                        },
                     }
-                    Output::Error(_) => self.end(Update::Failed(MALFORMED_OUTPUT)),
-                    Output::Stopped(_) => self.end(Update::Stopped),
-                },
+                }
             }
         }
     }
