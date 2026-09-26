@@ -108,7 +108,7 @@ const NOT_SIGNED_IN: ErrorBody<'static> = ErrorBody {
 const CONTEXT_TOOLS_ENABLED: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::InvalidRequest,
     reason: "PAGE_CONTEXT_TOOLS_ENABLED",
-    message: "Pervue won't send browser context to Codex while MCP servers or plugins are configured. Disable them or choose No context.",
+    message: "Pervue won't send browser context to Codex while external tools, plugins, or hooks are configured. Disable them or choose No context.",
     retryable: false,
 };
 
@@ -391,14 +391,17 @@ fn context_configuration_is_safe(launch: &Launch) -> bool {
         return true;
     };
 
-    // Installed plugins can contribute MCP servers even when the main config
-    // is otherwise empty. Fail closed for browser-context turns.
-    if home.join("plugins").exists() {
+    // Installed plugins and hooks can contribute executable/external tools
+    // even when the main config is otherwise empty.
+    if home.join("plugins").exists() || home.join("hooks.json").exists() {
         return false;
     }
 
     let mut configs = vec![home.join("config.toml")];
-    if let Ok(entries) = std::fs::read_dir(&home) {
+    if home.exists() {
+        let Ok(entries) = std::fs::read_dir(&home) else {
+            return false;
+        };
         configs.extend(entries.filter_map(Result::ok).map(|entry| entry.path()).filter(|path| {
             path.file_name()
                 .and_then(OsStr::to_str)
