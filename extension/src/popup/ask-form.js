@@ -65,7 +65,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
   let submittedText = "";
   /** @type {any} */
   let submittedContext = null;
-  /** @type {{text: string, context: any} | null} */
+  /** @type {{text: string, conversationId: string | null} | null} */
   let lastAttempt = null;
   let requestStartedAt = 0;
   let firstChunkRecorded = false;
@@ -73,6 +73,19 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
   // The port of the question in flight, or null when idle.
   /** @type {AskPort | null} */
   let active = null;
+
+  /** @param {HTMLButtonElement | undefined} control */
+  function hideControl(control) {
+    if (!control) return;
+    if (control.ownerDocument?.activeElement === control) input.focus();
+    control.hidden = true;
+    control.removeAttribute("aria-disabled");
+  }
+
+  function clearRetry() {
+    lastAttempt = null;
+    hideControl(retry);
+  }
 
   /** @param {string} id */
   async function loadConversation(id, preserveStatus = false) {
@@ -83,7 +96,9 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
       const result = await runtime.sendMessage?.({ type: "pervue.conversations.get", conversation_id: id });
       if (generation !== viewGeneration || active) return false;
       if (result?.ok !== true || !result.value) throw new Error("unavailable");
-      conversationId = result.value.id;
+      const nextConversationId = result.value.id;
+      if (conversationId !== nextConversationId) clearRetry();
+      conversationId = nextConversationId;
       renderHistory(result.value.messages);
       answer.textContent = "";
       answer.hidden = true;
@@ -129,13 +144,14 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
     ++viewGeneration;
     loadPending = false;
     conversationId = null;
+    clearRetry();
     history?.replaceChildren();
     answer.textContent = "";
     answer.hidden = true;
     options.onConversationId?.(null);
     setStatus(READY_STATUS, "idle");
-    if (cancel) cancel.hidden = true;
-    if (retry) retry.hidden = true;
+    hideControl(cancel);
+    hideControl(retry);
     input.focus();
     return true;
   }
@@ -146,10 +162,10 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
   });
 
   cancel?.addEventListener("click", () => {
-    if (!active) return;
+    if (!active || cancel.getAttribute("aria-disabled") === "true") return;
     try {
       active.postMessage({ type: "cancel" });
-      cancel.disabled = true;
+      cancel.setAttribute("aria-disabled", "true");
       setStatus("Stopping…", "cancelled", "cancelled");
     } catch {
       finish(active, WORKER_LOST, "failed", "internal-error", true, true);
@@ -158,6 +174,10 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
 
   retry?.addEventListener("click", () => {
     if (!lastAttempt || active || loadPending) return;
+    if (lastAttempt.conversationId !== conversationId) {
+      clearRetry();
+      return;
+    }
     ask(lastAttempt);
   });
 
@@ -177,11 +197,11 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
   });
 
   setStatus(READY_STATUS, "idle");
-  if (cancel) cancel.hidden = true;
-  if (retry) retry.hidden = true;
+  hideControl(cancel);
+  hideControl(retry);
   input.focus();
 
-  /** @param {{text: string, context: any} | null} [attempt] */
+  /** @param {{text: string, conversationId: string | null} | null} [attempt] */
   function ask(attempt = null) {
     // Duplicate-submit guard: a question in flight blocks every other submit
     // path (Enter, the button, requestSubmit), not just the button.
@@ -217,11 +237,8 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
     active = port;
     ++viewGeneration;
     submittedText = text;
-    submittedContext = attempt ? attempt.context : contextControls?.getContext();
-    lastAttempt = {
-      text,
-      context: submittedContext === undefined ? null : structuredClone(submittedContext)
-    };
+    submittedContext = contextControls?.getContext();
+    lastAttempt = { text, conversationId };
     requestStartedAt = globalThis.performance?.now?.() ?? 0;
     firstChunkRecorded = false;
     options.onRequestStarted?.();
@@ -231,9 +248,9 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
     setBusy(true);
     if (cancel) {
       cancel.hidden = false;
-      cancel.disabled = false;
+      cancel.removeAttribute("aria-disabled");
     }
-    if (retry) retry.hidden = true;
+    hideControl(retry);
     setStatus("Sending…", "pending");
 
     port.onMessage.addListener((/** @type {any} */ event) => {
@@ -251,6 +268,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
       port.postMessage({
         type: "ask", text,
         ...(history && conversationId ? { conversation_id: conversationId } : {}),
+        ...(attempt && conversationId ? { retry: true } : {}),
         ...(context ? { context } : {})
       });
     } catch {
@@ -269,6 +287,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
       case "conversation.created":
         if (history && typeof event.payload?.conversation_id === "string") {
           conversationId = event.payload.conversation_id;
+          if (lastAttempt) lastAttempt.conversationId = conversationId;
           options.onConversationId?.(conversationId);
         }
         break;
@@ -292,6 +311,10 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
         if (history && input.value === submittedText) input.value = "";
         contextControls?.consume?.(submittedContext);
         onOutcome?.({ kind: "completed" });
+        break;
+      case "cancel.failed":
+        if (cancel) cancel.removeAttribute("aria-disabled");
+        setStatus("Couldn't stop. The answer is still running.", "pending");
         break;
       case "response.failed": {
         const { kind, message, reference } = describeFailure(event.payload?.error);
@@ -331,11 +354,16 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
     active = null;
     port.disconnect();
     setBusy(false);
-    if (cancel) {
-      cancel.hidden = true;
-      cancel.disabled = false;
+    hideControl(cancel);
+    if (retry) {
+      if (retryable) {
+        retry.hidden = false;
+        retry.removeAttribute("aria-disabled");
+      } else {
+        hideControl(retry);
+        lastAttempt = null;
+      }
     }
-    if (retry) retry.hidden = !retryable;
     setStatus(message, state, kind);
     // A question that ended without an answer, failed or stopped, before its
     // conversation existed leaves nothing saved: drop its provisional bubble.
