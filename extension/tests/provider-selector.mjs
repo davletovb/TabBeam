@@ -257,7 +257,7 @@ async function tick() {
   await selector.ready;
   assert.equal(selector.getProviderId(), "codex");
   const claudeOption = select.options.find((option) => option.value === "claude");
-  assert.ok(claudeOption);
+  if (!claudeOption) throw new Error("Claude option is missing");
   assert.equal(claudeOption.disabled, true);
 }
 
