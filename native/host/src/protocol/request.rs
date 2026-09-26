@@ -724,8 +724,9 @@ mod tests {
             // Members the host does not interpret, at every level.
             r#"{"provider_id":"fake","input":{"text":"Hi"},"future":1,"future":2}"#,
             r#"{"provider_id":"fake","input":{"text":"Hi","future":1,"future":2}}"#,
-            r#"{"provider_id":"fake","input":{"text":"Hi"},"context":{"page":1,"page":2}}"#,
-            r#"{"provider_id":"fake","input":{"text":"Hi"},"context":{"page":{"url":"a","url":"b"}}}"#,
+            r#"{"provider_id":"fake","input":{"text":"Hi"},"context":{"mode":"selection","text":"benign","text":"evil","truncated":false,"page":{"title":"T","url":"https://example.com/"}}}"#,
+            r#"{"provider_id":"fake","input":{"text":"Hi"},"context":{"mode":"selection","mode":"page","text":"x","truncated":false,"page":{"title":"T","url":"https://example.com/"}}}"#,
+            r#"{"provider_id":"fake","input":{"text":"Hi"},"context":{"mode":"selection","text":"x","truncated":false,"page":{"title":"T","url":"https://example.com/","url":"https://evil.example/"}}}"#,
             r#"{"provider_id":"fake","input":{"text":"Hi"},"future":[{"k":1},{"k":1,"k":2}]}"#,
             // Names are compared after decoding escapes.
             r#"{"provider_id":"fake","input":{"text":"Hi"},"future":1,"futur\u0065":2}"#,
@@ -953,6 +954,22 @@ mod tests {
         assert!(context.truncated);
         assert_eq!(context.page.title, "Article");
         assert_eq!(context.page.url, "https://example.com/path");
+
+        // Match JavaScript String.prototype.trim(): U+0085 is content,
+        // while U+FEFF is trimmed and therefore cannot be the whole context.
+        let nel = envelope(
+            "req_nel",
+            "conversation.send",
+            r#"{"provider_id":"codex","input":{"text":"Explain"},"context":{"mode":"selection","text":"\u0085","truncated":false,"page":{"title":"T","url":"https://example.com/"}}}"#,
+        );
+        assert!(parse_request(nel.as_bytes()).is_ok());
+
+        let bom = envelope(
+            "req_bom",
+            "conversation.send",
+            r#"{"provider_id":"codex","input":{"text":"Explain"},"context":{"mode":"selection","text":"\ufeff","truncated":false,"page":{"title":"T","url":"https://example.com/"}}}"#,
+        );
+        expect_failure(&bom, FailureKind::InvalidPayload, Some("req_bom"));
 
         for context in [
             r#"{}"#.to_owned(),
