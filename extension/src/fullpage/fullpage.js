@@ -28,11 +28,15 @@ const providerState = bindProviderState(
   {},
   { setupLink: requireElement("#companion-setup", HTMLElement), checkOnOpen: false }
 );
+// The provider is chosen on the setup page; this view follows that choice.
 const providerSelector = bindProviderSelector(
-  requireElement("#provider-select", HTMLSelectElement),
+  null,
   chrome.runtime,
   chrome.storage.local,
-  { onChange: (selection) => providerState.follow(selection) }
+  {
+    storageChanges: chrome.storage.onChanged,
+    onChange: (selection) => providerState.follow(selection)
+  }
 );
 const view = bindAskForm({
   form: requireElement("#ask-form", HTMLFormElement),

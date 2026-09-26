@@ -75,7 +75,8 @@ const referencedFiles = [
   "src/fullpage/fullpage.css",
   "src/setup/index.html",
   "src/setup/setup.css",
-  "src/setup/setup.js"
+  "src/setup/setup.js",
+  "src/setup/provider-settings.js"
 ];
 
 for (const file of referencedFiles) {

@@ -58,11 +58,13 @@ const providerState = bindProviderState(
   {},
   { setupLink: requireElement("#companion-setup", HTMLElement), checkOnOpen: false }
 );
+// The provider is chosen on the setup page; the popup follows that choice.
 const providerSelector = bindProviderSelector(
-  requireElement("#provider-select", HTMLSelectElement),
+  null,
   chrome.runtime,
   chrome.storage.local,
   {
+    storageChanges: chrome.storage.onChanged,
     onChange(selection) {
       providerState.follow(selection);
       const { label, status, providerChanged } = selection;
