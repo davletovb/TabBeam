@@ -32,11 +32,15 @@ use output::Line;
 pub const ID: &str = "claude";
 const EXECUTABLE: &str = "claude";
 
-/// Non-secret Claude configuration needed to find the user's normal CLI state.
+/// Non-secret Claude/Node configuration needed to reproduce a working CLI
+/// launch from Chrome's much smaller environment.
 pub const CLAUDE_VARIABLES: &[&str] = &[
     "CLAUDE_CONFIG_DIR",
     "CLAUDE_CODE_GIT_BASH_PATH",
     "NODE_EXTRA_CA_CERTS",
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "NO_PROXY",
 ];
 
 pub const MAX_LINE_BYTES: usize = 8 * 1024 * 1024;
@@ -45,6 +49,7 @@ pub const MAX_LINE_BYTES: usize = 8 * 1024 * 1024;
 pub struct Limits {
     pub timeouts: Timeouts,
     pub probe: Duration,
+    /// How long Claude may linger after its terminal `result` event.
     pub finish: Duration,
 }
 
@@ -157,7 +162,6 @@ impl Launch {
         ProcessSpec::new(executable)
             .args(args)
             .envs(self.inherited.iter().cloned())
-            // Do not update itself while Pervue owns the lifecycle.
             .env("DISABLE_AUTOUPDATER", "1")
             .env("PATH", search_path_for(executable, self.path.as_deref()))
             .current_dir(workspace)
@@ -264,8 +268,8 @@ impl Provider for Claude {
         }
 
         let mut conversation_id = request.conversation_id;
-        let mut fallback_prompt = (!request.history.is_empty())
-            .then(|| provider_prompt(&request.history, None, &request.text));
+        let mut fallback_prompt =
+            (!request.history.is_empty()).then(|| provider_prompt(&request.history, None, &request.text));
         let mut prompt = request.text;
         let resume = match &conversation_id {
             None => None,
@@ -274,11 +278,8 @@ impl Provider for Claude {
                 .borrow()
                 .get(id)
                 .cloned()
-                .or_else(|| {
-                    self.session_dir
-                        .as_deref()
-                        .and_then(|dir| read_session(dir, id))
-                }) {
+                .or_else(|| self.session_dir.as_deref().and_then(|dir| read_session(dir, id)))
+            {
                 Some(session) => Some(session),
                 None if !request.history.is_empty() => None,
                 None => return Box::new(Scripted::failed(UNKNOWN_CONVERSATION)),
@@ -304,9 +305,9 @@ impl Provider for Claude {
             cancelled: false,
             started: false,
             saw_delta: false,
-            result_seen: false,
             messages: 0,
-            pending_separator: false,
+            break_before_text: false,
+            outcome: None,
             finish_by: None,
         };
         match probe(&turn.launch, &turn.executable) {
@@ -333,7 +334,6 @@ fn status_update(availability: Availability, authentication: Authentication) -> 
     }
 }
 
-/// Current Claude Code exposes a machine-readable authentication probe.
 fn probe(launch: &Launch, executable: &Path) -> std::io::Result<Process> {
     let workspace = launch.workspace()?;
     let mut process = Process::spawn(&launch.command(&workspace, executable, ["auth", "status"]))?;
@@ -397,14 +397,10 @@ fn read_session(dir: &Path, id: &str) -> Option<String> {
     output::is_session_id(&content).then_some(content)
 }
 
-fn write_session(dir: &Path, id: &str, session: &str, create_new: bool) -> io::Result<()> {
+fn save_session(dir: &Path, id: &str, session: &str) -> io::Result<()> {
     if !session_name(id) || !output::is_session_id(session) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "invalid conversation or Claude session id",
-        ));
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid session mapping"));
     }
-
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;
@@ -416,18 +412,13 @@ fn write_session(dir: &Path, id: &str, session: &str, create_new: bool) -> io::R
 
     let path = dir.join(id);
     let mut options = std::fs::OpenOptions::new();
-    options.write(true);
-    if create_new {
-        options.create_new(true);
-    } else {
-        options.create(true).truncate(true);
-    }
+    options.write(true).create(true).truncate(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    let mut file = options.open(&path)?;
+    let mut file = options.open(path)?;
     file.write_all(session.as_bytes())?;
     file.sync_all()
 }
@@ -462,7 +453,6 @@ impl Exchange for StatusCheck {
                 Self::Probing { process, give_up } => {
                     match process.next_event(deadline.min(*give_up)) {
                         Some(Event::Exited(exit)) => signed_in(&exit),
-                        // auth status can contain account details; discard it.
                         Some(Event::Stdout(_) | Event::Stderr(_)) => {
                             if Instant::now() >= busy_until {
                                 return None;
@@ -492,6 +482,7 @@ struct Turn {
     launch: Rc<Launch>,
     session_dir: Option<PathBuf>,
     prompt: String,
+    /// Used once when a mapped Claude session is stale.
     fallback_prompt: Option<String>,
     resume: Option<String>,
     conversation_id: Option<String>,
@@ -501,9 +492,9 @@ struct Turn {
     cancelled: bool,
     started: bool,
     saw_delta: bool,
-    result_seen: bool,
     messages: usize,
-    pending_separator: bool,
+    break_before_text: bool,
+    outcome: Option<Result<(), ErrorBody<'static>>>,
     finish_by: Option<Instant>,
 }
 
@@ -528,6 +519,8 @@ impl Turn {
             "--include-partial-messages",
             "--permission-mode",
             "default",
+            // Pervue's Claude adapter is a conversational provider, not an
+            // agent. Disable built-in tools and deny MCP tools explicitly.
             "--tools",
             "",
             "--disallowedTools",
@@ -546,7 +539,8 @@ impl Turn {
             }
         })
         .to_string()
-            + "\n";
+            + "
+";
         match Process::spawn(&self.launch.command(&workspace, &self.executable, args)) {
             Ok(mut process) => {
                 let _ = process.write(input.as_bytes());
@@ -567,7 +561,7 @@ impl Turn {
     }
 
     fn on_line(&mut self, line: &str) {
-        if self.cancelled || self.result_seen {
+        if self.cancelled || self.outcome.is_some() {
             return;
         }
         match output::parse(line) {
@@ -584,7 +578,7 @@ impl Turn {
                         if self
                             .session_dir
                             .as_deref()
-                            .is_none_or(|dir| write_session(dir, &id, &session, true).is_err())
+                            .is_none_or(|dir| save_session(dir, &id, &session).is_err())
                         {
                             return self.end(Update::Failed(SESSION_STORE_FAILED));
                         }
@@ -604,23 +598,25 @@ impl Turn {
                 if !self.started {
                     return self.end(Update::Failed(MALFORMED_OUTPUT));
                 }
-                self.pending_separator = self.messages > 0;
+                if self.messages > 0 {
+                    self.break_before_text = true;
+                }
                 self.messages += 1;
             }
-            Ok(Line::TextDelta(text)) => {
+            Ok(Line::TextDelta(mut text)) => {
                 if !self.started {
                     return self.end(Update::Failed(MALFORMED_OUTPUT));
                 }
                 if !text.is_empty() {
-                    let text = if self.pending_separator {
-                        self.pending_separator = false;
-                        format!("\n\n{text}")
-                    } else {
-                        text
-                    };
                     if self.messages == 0 {
                         self.messages = 1;
                     }
+                    if self.break_before_text && self.saw_delta {
+                        text.insert_str(0, "
+
+");
+                    }
+                    self.break_before_text = false;
                     self.saw_delta = true;
                     self.queue.push_back(Update::Delta(text));
                 }
@@ -636,7 +632,7 @@ impl Turn {
                     if self
                         .session_dir
                         .as_deref()
-                        .is_none_or(|dir| write_session(dir, conversation, &session, false).is_err())
+                        .is_none_or(|dir| save_session(dir, conversation, &session).is_err())
                     {
                         return self.end(Update::Failed(SESSION_STORE_FAILED));
                     }
@@ -648,40 +644,49 @@ impl Turn {
                     self.saw_delta = true;
                     self.queue.push_back(Update::Delta(text));
                 }
-                self.result_seen = true;
-                self.finish_by = Some(after(self.finish_grace));
+                self.turn_ended(Ok(()));
             }
-            Ok(Line::ResultFailed(error))
-                if error.reason == "PROVIDER_UNAVAILABLE" && self.restart_with_fallback() => {}
-            Ok(Line::ResultFailed(error)) => self.end(Update::Failed(error)),
+            Ok(Line::ResultFailed(error)) => self.turn_ended(Err(error)),
             Ok(Line::Ignored) => {}
         }
     }
 
-    fn restart_with_fallback(&mut self) -> bool {
-        let Some(prompt) = self.fallback_prompt.take() else {
-            return false;
-        };
-        self.resume = None;
-        self.conversation_id = None;
-        self.prompt = prompt;
-        self.started = false;
-        self.saw_delta = false;
-        self.result_seen = false;
-        self.messages = 0;
-        self.pending_separator = false;
-        self.finish_by = None;
-        self.start();
-        true
+    fn turn_ended(&mut self, outcome: Result<(), ErrorBody<'static>>) {
+        self.outcome = Some(outcome);
+        self.finish_by = Some(after(self.finish_grace));
     }
 
-    fn final_update(result_seen: bool, exit: &Exit) -> Update {
-        if result_seen {
-            Update::Completed
-        } else if exit.status.is_some_and(|status| status.success()) {
-            Update::Failed(MALFORMED_OUTPUT)
-        } else {
-            Update::Failed(PROCESS_EXITED)
+    fn reset_for_history_fallback(&mut self) {
+        self.resume = None;
+        self.conversation_id = None;
+        self.outcome = None;
+        self.finish_by = None;
+        self.started = false;
+        self.saw_delta = false;
+        self.messages = 0;
+        self.break_before_text = false;
+        self.prompt = self.fallback_prompt.take().expect("checked before fallback");
+        self.start();
+    }
+
+    fn should_fallback(&self, exit: &Exit) -> bool {
+        if self.cancelled || self.resume.is_none() || self.fallback_prompt.is_none() {
+            return false;
+        }
+        matches!(
+            self.outcome,
+            Some(Err(error)) if error.reason == "UNKNOWN_CONVERSATION"
+        ) || (!self.started && exit.status.is_some_and(|status| !status.success()))
+    }
+
+    fn exited(&mut self, exit: &Exit) -> Update {
+        match self.outcome.take() {
+            Some(Ok(())) => Update::Completed,
+            Some(Err(error)) => Update::Failed(error),
+            None if exit.status.is_some_and(|status| status.success()) => {
+                Update::Failed(MALFORMED_OUTPUT)
+            }
+            None => Update::Failed(PROCESS_EXITED),
         }
     }
 }
@@ -698,22 +703,21 @@ impl Exchange for Turn {
             }
             match &mut self.stage {
                 Stage::Done => return None,
+                Stage::Probing { process, give_up } if Instant::now() >= *give_up => {
+                    process.kill();
+                    self.start();
+                }
                 Stage::Probing { process, give_up } => {
-                    let authentication = if Instant::now() >= *give_up {
-                        process.kill();
-                        Authentication::Unknown
-                    } else {
-                        match process.next_event(deadline.min(*give_up)) {
-                            Some(Event::Exited(exit)) => signed_in(&exit),
-                            Some(Event::Stdout(_) | Event::Stderr(_)) => continue,
-                            None if Instant::now() >= *give_up => continue,
-                            None => return None,
-                        }
-                    };
-                    if authentication == Authentication::Unauthenticated {
-                        self.end(Update::Failed(NOT_SIGNED_IN));
-                    } else {
-                        self.start();
+                    match process.next_event(deadline.min(*give_up)) {
+                        Some(Event::Exited(exit)) => match signed_in(&exit) {
+                            Authentication::Unauthenticated => {
+                                self.end(Update::Failed(NOT_SIGNED_IN));
+                            }
+                            _ => self.start(),
+                        },
+                        Some(Event::Stdout(_) | Event::Stderr(_)) => {}
+                        None if Instant::now() >= *give_up => {}
+                        None => return None,
                     }
                 }
                 Stage::Running(stream) => {
@@ -722,25 +726,22 @@ impl Exchange for Turn {
                         .map_or(deadline, |finish_by| deadline.min(finish_by));
                     match stream.next(wait) {
                         Some(Output::Line(line)) => self.on_line(&line),
-                        Some(Output::Final(_))
-                            if !self.cancelled
-                                && !self.started
-                                && self.resume.is_some()
-                                && self.fallback_prompt.is_some() =>
+                        Some(Output::Final(exit) | Output::Stopped(exit))
+                            if self.should_fallback(&exit) =>
                         {
-                            self.restart_with_fallback();
+                            self.reset_for_history_fallback();
                         }
                         Some(Output::Final(exit) | Output::Stopped(exit)) => {
                             let update = if self.cancelled {
                                 Update::Stopped
                             } else {
-                                Self::final_update(self.result_seen, &exit)
+                                self.exited(&exit)
                             };
                             self.end(update);
                         }
                         Some(Output::Error(_)) => {
-                            let update = if self.result_seen {
-                                Update::Completed
+                            let update = if self.cancelled {
+                                Update::Stopped
                             } else {
                                 Update::Failed(MALFORMED_OUTPUT)
                             };
@@ -760,14 +761,16 @@ impl Exchange for Turn {
     }
 
     fn cancel(&mut self, grace: Duration) {
-        if matches!(self.stage, Stage::Done) {
+        if self.cancelled {
             return;
         }
         self.cancelled = true;
+        let finished = self.queue.iter().any(Update::is_terminal);
         self.queue.clear();
         match &mut self.stage {
-            Stage::Probing { .. } => self.end(Update::Stopped),
             Stage::Running(stream) => stream.cancel(grace),
+            Stage::Probing { .. } => self.end(Update::Stopped),
+            Stage::Done if finished => self.queue.push_back(Update::Stopped),
             Stage::Done => {}
         }
     }
