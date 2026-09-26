@@ -17,6 +17,7 @@ import {
   PERFORMANCE_MARKS,
   withinPerformanceBudget
 } from "../src/shared/performance.js";
+import { NATIVE_LITTLE_ENDIAN, frameNativeMessage } from "../../scripts/protocol-support.mjs";
 import { MockEvent } from "./support/mock-port.mjs";
 
 // This test uses the built pervue-host, not a mock of its JSON router or
@@ -24,20 +25,12 @@ import { MockEvent } from "./support/mock-port.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const hostPath = process.argv[2] ?? path.join(root, "native/target/debug/pervue-host");
 const origin = "chrome-extension://abcdefghijklmnopabcdefghijklmnop/";
-const littleEndian = new Uint8Array(new Uint32Array([1]).buffer)[0] === 1;
+const littleEndian = NATIVE_LITTLE_ENDIAN;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
 // An empty provider search path: whatever this machine has installed, the
 // host finds no Codex.
 const noProviders = fs.mkdtempSync(path.join(os.tmpdir(), "pervue-roundtrip-"));
-
-/** @param {Uint8Array} bytes */
-function frame(bytes) {
-  const result = new Uint8Array(4 + bytes.length);
-  new DataView(result.buffer).setUint32(0, bytes.length, littleEndian);
-  result.set(bytes, 4);
-  return result;
-}
 
 /** A Chrome-like Native Messaging port connected to the actual host process. */
 class HostPort {
@@ -106,7 +99,7 @@ class HostPort {
       throw this.error ?? new Error("native host disconnected");
     }
     this.messagesSent += 1;
-    this.child.stdin.write(frame(encoder.encode(JSON.stringify(message))));
+    this.child.stdin.write(frameNativeMessage(encoder.encode(JSON.stringify(message))));
   }
 
   close() {
