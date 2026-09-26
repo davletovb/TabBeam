@@ -276,6 +276,9 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
     requestStartedAt = globalThis.performance?.now?.() ?? 0;
     firstChunkRecorded = false;
     options.onRequestStarted?.();
+    // An answer still typing out when the next question is asked would
+    // vanish with the live answer: keep it in the thread as a finished turn.
+    if (history && revealing && answerText) history.append(bubble("assistant", answerText, "complete"));
     if (history && !attempt) history.append(bubble("user", text, "pending"));
     clearAnswer();
     setBusy(true);

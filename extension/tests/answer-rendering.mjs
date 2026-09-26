@@ -107,6 +107,51 @@ assert.deepEqual(parseMarkdown("#tag costs 1.5 each").map((block) => block.type)
 // Ordered lists keep their start.
 assert.equal(/** @type {any} */ (parseMarkdown("3. three\n4. four")[0]).start, 3);
 
+// A closing run longer than its opener closes nested emphasis too.
+assert.deepEqual(parseInline("**bold and *italic***"), [
+  { type: "strong", children: [t("bold and "), { type: "em", children: [t("italic")] }] }
+]);
+assert.deepEqual(parseInline("*italic and **bold***"), [
+  { type: "em", children: [t("italic and "), { type: "strong", children: [t("bold")] }] }
+]);
+assert.deepEqual(parseInline("**a *b* c**"), [
+  { type: "strong", children: [t("a "), { type: "em", children: [t("b")] }, t(" c")] }
+]);
+assert.deepEqual(parseInline("*a**"), [{ type: "em", children: [t("a")] }, t("*")]);
+
+// ---------- Resource bounds on hostile answers ----------
+
+/** Milliseconds `run` takes. @param {() => void} run */
+function timed(run) {
+  const start = globalThis.performance.now();
+  run();
+  return globalThis.performance.now() - start;
+}
+
+// Nesting deep enough to exhaust the stack stays text past the depth limit.
+{
+  const blocks = parseMarkdown(`${">".repeat(50_000)} deep`);
+  let depth = 0;
+  /** @type {any} */
+  let block = blocks[0];
+  while (block?.type === "quote") {
+    depth += 1;
+    block = block.children[0];
+  }
+  assert.ok(depth <= 12, `quotes nest ${depth} deep`);
+  assert.equal(block.type, "paragraph");
+  // These threw RangeError before the limit; now they parse.
+  parseMarkdown(`${"- ".repeat(50_000)}x`);
+  parseMarkdown(`${"1. ".repeat(50_000)}x`);
+}
+
+// Unmatched openers cost linear time, not quadratic: at this size a
+// quadratic scan takes many seconds.
+for (const hostile of ["[".repeat(80_000), "`a".repeat(40_000), "*.js ".repeat(20_000), "h ".repeat(40_000), "<http://x ".repeat(8_000)]) {
+  const ms = timed(() => parseMarkdown(hostile));
+  assert.ok(ms < 1500, `${JSON.stringify(hostile.slice(0, 12))}… parsed in ${ms.toFixed(0)}ms`);
+}
+
 // ---------- Rendering ----------
 
 class Node {
@@ -195,6 +240,34 @@ const fakeDocument = {
   assert.deepEqual(wrap.all().map((node) => node.tag), ["table", "thead", "tr", "th", "tbody", "tr", "td"]);
 }
 
+// An answer too costly to format renders as plain text, quickly.
+{
+  const container = new Node("div");
+  const hostile = `${"*a **b ".repeat(4_000)}${"c** d*".repeat(4_000)}`;
+  const ms = timed(() => renderMarkdown(/** @type {any} */ (container), hostile));
+  assert.ok(ms < 1500, `rendered in ${ms.toFixed(0)}ms`);
+  const [plain] = /** @type {Node[]} */ (container.children);
+  assert.equal(container.children.length, 1);
+  assert.equal(plain.tag, "p");
+  assert.equal(plain.className, "markdown-plain");
+  assert.equal(plain.textContent, hostile);
+}
+
+// While an answer types out, links and copy buttons can't take focus: each
+// frame rebuilds them.
+{
+  const container = new Node("div");
+  renderMarkdown(/** @type {any} */ (container), "[docs](https://example.com)\n\n```sh\nls\n```", { interactive: false });
+  const nodes = container.all();
+  assert.ok(!nodes.some((node) => node.tag === "a"));
+  const link = nodes.find((node) => node.className === "link");
+  assert.equal(link?.tag, "span");
+  assert.equal(link?.textContent, "docs");
+  const copy = nodes.find((node) => node.className.includes("code-copy"));
+  assert.equal(copy?.getAttribute("disabled"), "");
+  assert.equal(copy?.listeners.size, 0);
+}
+
 // ---------- Reveal ----------
 
 {
@@ -252,6 +325,23 @@ const fakeDocument = {
   void reveal(element, "😀".repeat(400));
   while (frames.length && guard++ < 2000) flush();
   assert.ok(rendered.every((text) => !/[\uD800-\uDBFF]$/.test(text)));
+}
+
+{
+  // A render that throws ends the reveal instead of leaving it pending.
+  /** @type {((now: number) => void)[]} */
+  const frames = [];
+  const reveal = createStreamReveal({
+    render: () => { throw new Error("render failed"); },
+    schedule: (callback) => { frames.push(callback); return frames.length; },
+    cancel: () => {}
+  });
+  let settled = false;
+  void reveal(/** @type {any} */ ({}), "Some answer text").then(() => { settled = true; });
+  /** @type {(now: number) => void} */ (frames.shift())(16);
+  await Promise.resolve();
+  assert.equal(settled, true);
+  assert.equal(frames.length, 0);
 }
 
 {
@@ -374,6 +464,31 @@ const fakeDocument = {
   const [question] = elements.history.children;
   assert.equal(question.children[1].className, "message-body");
   assert.equal(question.children[1].textContent, "Question");
+
+  // A follow-up asked while the answer is still typing out: that answer
+  // stays in the thread, ahead of the new question.
+  elements.input.value = "Second";
+  elements.form.fire("submit");
+  ports[1].emitMessage({ event: "response.delta", payload: { text: "Second answer" } });
+  ports[1].emitMessage({ event: "response.completed", payload: {} });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const typingOut = /** @type {{text: string, resolve: () => void}} */ (reveals.at(-1));
+  assert.equal(typingOut.text, "Second answer");
+
+  elements.input.value = "Third";
+  elements.form.fire("submit");
+  const thread = elements.history.children.slice(-3);
+  assert.deepEqual(thread.map((/** @type {any} */ item) => item.className),
+    ["message message-user", "message message-assistant", "message message-user"]);
+  assert.equal(thread[1].getAttribute("data-state"), "complete");
+  assert.equal(markdownBodies.at(-1), "message-body markdown:Second answer");
+  assert.equal(thread[2].children[1].textContent, "Third");
+
+  // The superseded reveal settles without reloading over the new question.
+  typingOut.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(loads, 1);
+  assert.equal(elements.history.children.length, 5);
 }
 
 console.log("Markdown rendering and streaming reveal tests passed");

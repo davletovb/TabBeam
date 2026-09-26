@@ -39,6 +39,16 @@ export function createStreamReveal({
   /** @type {(() => void)[]} */
   let waiting = [];
 
+  /** @param {HTMLElement} target @param {string} text @returns {boolean} whether it rendered */
+  function draw(target, text) {
+    try {
+      render(target, text);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   function settle() {
     const done = waiting;
     waiting = [];
@@ -64,7 +74,8 @@ export function createStreamReveal({
     // Never split a surrogate pair.
     if (/[\uD800-\uDBFF]/.test(target[next - 1] ?? "")) next += 1;
     shown = Math.min(next, target.length);
-    render(element, target.slice(0, shown));
+    // A render that throws ends the reveal rather than leaving it pending.
+    if (!draw(element, target.slice(0, shown))) shown = target.length;
     if (shown < target.length) frame = schedule(tick);
     else settle();
   }
@@ -81,7 +92,7 @@ export function createStreamReveal({
     if (text === "" || !animate() || hidden) {
       stop();
       shown = text.length;
-      render(nextElement, text);
+      draw(nextElement, text);
       settle();
     } else if (shown >= text.length) {
       settle();

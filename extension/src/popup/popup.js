@@ -67,7 +67,7 @@ const view = bindAskForm(
     onRequestStarted() { interacted = true; },
     renderMessage: renderMarkdown,
     renderAnswer: createStreamReveal({
-      render: renderMarkdown,
+      render: (element, text) => renderMarkdown(element, text, { interactive: false }),
       animate: () => !window.matchMedia("(prefers-reduced-motion: reduce)").matches
     }),
     storageChanges: chrome.storage.onChanged

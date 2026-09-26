@@ -542,6 +542,19 @@ button {
 
 .markdown a:hover { text-decoration-color: currentColor; }
 
+/* A link in an answer still typing out: it becomes a real link once done. */
+.markdown span.link {
+  color: var(--accent-text);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent-text) 40%, transparent);
+  text-decoration-thickness: 1px;
+}
+
+/* An answer too costly to format shows as it was written. */
+.markdown .markdown-plain {
+  white-space: pre-wrap;
+}
+
 .markdown :is(ul, ol) {
   margin: 0 0 0.7em;
   padding-left: 1.35em;
@@ -606,6 +619,16 @@ button {
 .code-copy {
   height: 24px;
   font-family: var(--font-sans);
+}
+
+.code-copy:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.code-copy:disabled:hover {
+  background: transparent;
+  color: var(--text-3);
 }
 
 .code-block pre {
