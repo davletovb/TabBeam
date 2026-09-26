@@ -57,11 +57,12 @@ PY
 
 arch="$(uname -m)"
 pkg="$output/Pervue-${version}-macos-${arch}.pkg"
-sign_args=()
 if [[ -n "${PERVUE_INSTALLER_SIGN_IDENTITY:-}" ]]; then
-  sign_args=(--sign "$PERVUE_INSTALLER_SIGN_IDENTITY")
+  pkgbuild --root "$stage" --identifier com.pervue.companion \
+    --version "$version" --install-location / --ownership recommended \
+    --sign "$PERVUE_INSTALLER_SIGN_IDENTITY" "$pkg"
+else
+  pkgbuild --root "$stage" --identifier com.pervue.companion \
+    --version "$version" --install-location / --ownership recommended "$pkg"
 fi
-pkgbuild --root "$stage" --identifier com.pervue.companion \
-  --version "$version" --install-location / --ownership recommended \
-  "${sign_args[@]}" "$pkg"
 echo "$pkg"
