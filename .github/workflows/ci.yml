@@ -61,7 +61,7 @@ jobs:
         with:
           node-version: "22"
       - name: Install protocol validator
-        run: npm --prefix scripts install --ignore-scripts --no-audit --no-fund
+        run: npm --prefix scripts ci --ignore-scripts --no-audit --no-fund
       - name: Validate schemas and fixtures
         run: npm --prefix scripts run validate
       - name: Build native host for contract conformance
