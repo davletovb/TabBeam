@@ -2,9 +2,9 @@
  * Contract between a UI page and the service worker for the provider's status
  * (EXT-04).
  *
- * The page sends `{type: PROVIDER_STATUS_MESSAGE}` with
+ * The page sends `{type: PROVIDER_STATUS_MESSAGE, provider_id}` with
  * `chrome.runtime.sendMessage`. The worker asks the native host for the
- * default provider's `provider.status` and answers with one of:
+ * requested provider's `provider.status` and answers with one of:
  *
  * - `{provider_id, status}`: the provider's status in the DOC-02 vocabulary,
  *   `{availability, authentication, capabilities}`;
