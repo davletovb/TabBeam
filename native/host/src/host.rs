@@ -2301,7 +2301,7 @@ mod tests {
         const MARKER: &str = "SECRET-PROMPT-7f3a";
         let input = framed(&[
             &format!(
-                r#"{{"version":1,"type":"request","request_id":"req_1","method":"conversation.send","payload":{{"provider_id":"fake","input":{{"text":"{MARKER}"}},"context":{{"page":"{MARKER}"}},"extra":"{MARKER}"}}}}"#
+                r#"{{"version":1,"type":"request","request_id":"req_1","method":"conversation.send","payload":{{"provider_id":"fake","input":{{"text":"{MARKER}"}},"context":{{"mode":"page","text":"{MARKER}","truncated":false,"page":{{"title":"{MARKER}","url":"https://example.com/"}}}},"extra":"{MARKER}"}}}}"#
             ),
             &format!(
                 r#"{{"version":1,"type":"request","request_id":"req_2","method":"conversation.send","payload":{{"provider_id":"none","input":{{"text":"{MARKER}"}}}}}}"#
