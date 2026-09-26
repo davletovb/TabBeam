@@ -4,7 +4,9 @@ use std::borrow::Cow;
 
 use super::PROTOCOL_VERSION;
 use super::json::{JsonError, JsonStr, Reader};
-use crate::conversation::{BrowserContext, BrowserContextMode, HistoryMessage, is_javascript_trim_char};
+use crate::conversation::{
+    BrowserContext, BrowserContextMode, HistoryMessage, is_javascript_trim_char,
+};
 use crate::limits::{
     MAX_CONTEXT_TITLE_BYTES, MAX_CONTEXT_URL_BYTES, MAX_HISTORY_BYTES, MAX_HISTORY_MESSAGES,
     MAX_PAGE_BYTES, MAX_REQUEST_ID_LENGTH, MAX_SELECTION_BYTES,
