@@ -7,6 +7,7 @@ use crate::protocol::events::{ErrorBody, ErrorCode};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Line {
     Init(String),
+    MessageStart,
     TextDelta(String),
     Progress,
     ResultSuccess { session_id: Option<String>, text: String },
@@ -45,17 +46,26 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
         "stream_event" => {
             let nested = event.get("event").filter(|value| value.is_object()).ok_or(Malformed)?;
             let nested_type = nested.get("type").and_then(Value::as_str).unwrap_or_default();
-            if nested_type == "content_block_delta" {
-                let delta = nested.get("delta").filter(|value| value.is_object()).ok_or(Malformed)?;
-                if delta.get("type").and_then(Value::as_str) == Some("text_delta") {
-                    Line::TextDelta(
-                        delta.get("text").and_then(Value::as_str).ok_or(Malformed)?.to_owned(),
-                    )
-                } else {
-                    Line::Progress
+            match nested_type {
+                "message_start" => Line::MessageStart,
+                "content_block_delta" => {
+                    let delta = nested
+                        .get("delta")
+                        .filter(|value| value.is_object())
+                        .ok_or(Malformed)?;
+                    if delta.get("type").and_then(Value::as_str) == Some("text_delta") {
+                        Line::TextDelta(
+                            delta
+                                .get("text")
+                                .and_then(Value::as_str)
+                                .ok_or(Malformed)?
+                                .to_owned(),
+                        )
+                    } else {
+                        Line::Progress
+                    }
                 }
-            } else {
-                Line::Progress
+                _ => Line::Progress,
             }
         }
         "assistant" | "user" => Line::Progress,
@@ -108,9 +118,32 @@ const UNAVAILABLE: ErrorBody<'static> = ErrorBody {
 
 pub fn result_failure(message: &str) -> ErrorBody<'static> {
     let lower = message.to_ascii_lowercase();
-    if lower.contains("auth") || lower.contains("login") || lower.contains("oauth") || lower.contains("401") {
+    let auth_rejected = [
+        "401 unauthorized",
+        "authentication failed",
+        "authentication error",
+        "not authenticated",
+        "not logged in",
+        "please log in",
+        "please login",
+        "oauth token",
+    ]
+    .iter()
+    .any(|phrase| lower.contains(phrase));
+    let rate_limited = [
+        "429 too many requests",
+        "rate limit",
+        "usage limit",
+        "usage quota",
+        "quota exceeded",
+        "billing limit",
+    ]
+    .iter()
+    .any(|phrase| lower.contains(phrase));
+
+    if auth_rejected {
         AUTH_REJECTED
-    } else if lower.contains("rate") || lower.contains("limit") || lower.contains("429") || lower.contains("billing") {
+    } else if rate_limited {
         RATE_LIMITED
     } else {
         UNAVAILABLE
@@ -134,6 +167,26 @@ mod tests {
         assert_eq!(
             parse(r#"{"type":"result","subtype":"success","is_error":false,"result":"done","session_id":"abc-123"}"#),
             Ok(Line::ResultSuccess { session_id: Some("abc-123".to_owned()), text: "done".to_owned() })
+        );
+    }
+
+    #[test]
+    fn error_classification_matches_phrases_not_substrings() {
+        assert_eq!(
+            result_failure("authentication failed"),
+            AUTH_REJECTED
+        );
+        assert_eq!(
+            result_failure("429 Too Many Requests: rate limit exceeded"),
+            RATE_LIMITED
+        );
+        assert_eq!(
+            result_failure("Failed to generate a response from the author"),
+            UNAVAILABLE
+        );
+        assert_eq!(
+            result_failure("Prompt exceeds context limit"),
+            UNAVAILABLE
         );
     }
 
