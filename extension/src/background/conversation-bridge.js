@@ -72,7 +72,7 @@ export function serveConversationAskPort(port, options) {
 
   /** @param {string} targetRequestId */
   function sendCancel(targetRequestId) {
-    if (cancelSent || stopped || finished) return;
+    if (cancelSent || finished) return;
     cancelSent = true;
     try {
       manager.send({
