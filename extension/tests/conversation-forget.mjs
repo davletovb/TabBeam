@@ -100,7 +100,9 @@ const createRequestId = () => `req_forget_${++nextId}`;
   let n = 0;
   const store = createConversationStore(storage, () => `00000000-0000-4000-8000-${String(++n).padStart(12, "0")}`);
   const manager = fakeManager();
-  const forgetter = createSessionForgetter({ manager, storage, createRequestId });
+  const forgetter = createSessionForgetter({
+    manager, storage, createRequestId, conversationExists: (id) => store.has(id)
+  });
   const claude = await store.create({ providerId: "claude", providerSessionId: "conv_host_claude", text: "Hi" });
   const kept = await store.create({ providerId: "codex", providerSessionId: "conv_host_codex", text: "Keep" });
 
@@ -116,7 +118,7 @@ const createRequestId = () => `req_forget_${++nextId}`;
   assert.deepEqual((await store.list()).map((item) => item.id), [kept.id]);
   // Recorded before the host is asked, so a lost answer is retried later.
   assert.deepEqual(storage.saved[PENDING_FORGETS_KEY], [
-    { provider_id: "claude", conversation_id: "conv_host_claude" }
+    { provider_id: "claude", conversation_id: "conv_host_claude", pervue_id: claude.id }
   ]);
   await settle();
   assert.equal(manager.sent.length, 1);
@@ -196,6 +198,61 @@ const createRequestId = () => `req_forget_${++nextId}`;
   }
   await retry;
   assert.deepEqual(storage.saved[PENDING_FORGETS_KEY], [{ provider_id: "codex", conversation_id: "conv_0" }]);
+}
+
+// ---------- Deleting survives failure at every step ----------
+{
+  const storage = memoryStorage();
+  let n = 100;
+  const store = createConversationStore(storage, () => `00000000-0000-4000-8000-${String(++n).padStart(12, "0")}`);
+  // The pending-forget record lives in its own storage here, so its writes can fail alone.
+  const pendingStorage = memoryStorage();
+  let pendingWritesFail = false;
+  const flakyPending = {
+    get: pendingStorage.get,
+    /** @param {any} values */
+    async set(values) {
+      if (pendingWritesFail) throw new Error("QUOTA_BYTES quota exceeded");
+      await pendingStorage.set(values);
+    }
+  };
+  const manager = fakeManager();
+  const forgetter = createSessionForgetter({
+    manager, storage: flakyPending, createRequestId, conversationExists: (id) => store.has(id)
+  });
+  const conversation = await store.create({ providerId: "claude", providerSessionId: "conv_host_1", text: "Hi" });
+
+  // 1. The tombstone can't be stored: nothing is deleted, the session stays reachable.
+  pendingWritesFail = true;
+  const refused = await answerConversationMessage(
+    { type: CONVERSATIONS_DELETE_MESSAGE, conversation_id: conversation.id }, store, new Set(), forgetter);
+  assert.equal(refused.ok, false);
+  assert.equal(await store.has(conversation.id), true);
+  assert.equal((await store.getPrivate(conversation.id)).provider_session_id, "conv_host_1");
+  await settle();
+  assert.equal(manager.sent.length, 0);
+  pendingWritesFail = false;
+
+  // 2. The tombstone is stored but the removal fails: the conversation stays,
+  //    and its provider session is not forgotten underneath it.
+  const failingStore = { ...store, async remove() { throw new Error("storage unavailable"); } };
+  const notRemoved = await answerConversationMessage(
+    { type: CONVERSATIONS_DELETE_MESSAGE, conversation_id: conversation.id }, failingStore, new Set(), forgetter);
+  assert.equal(notRemoved.ok, false);
+  await forgetter.flush();
+  await settle();
+  assert.equal(manager.sent.length, 0, "a live conversation's session is never forgotten");
+  assert.equal(pendingStorage.saved[PENDING_FORGETS_KEY].length, 1, "the tombstone waits");
+
+  // 3. Removed, then the worker stops before asking the host: the next flush finishes it.
+  await store.remove(conversation.id);
+  const finishing = forgetter.flush();
+  await settle();
+  assert.equal(manager.sent.length, 1);
+  assert.deepEqual(manager.sent[0].request.payload, { provider_id: "claude", conversation_id: "conv_host_1" });
+  manager.answer(0, "response.completed");
+  await finishing;
+  assert.deepEqual(pendingStorage.saved[PENDING_FORGETS_KEY], []);
 }
 
 console.log("Conversation forget tests passed");

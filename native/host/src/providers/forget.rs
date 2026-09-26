@@ -26,9 +26,12 @@ pub const SESSION_FORGET_FAILED: ErrorBody<'static> = ErrorBody {
 /// Runs `work`, the file-system part of forgetting, on a thread of its own,
 /// so a large or slow provider directory never holds up the host loop, and
 /// reports how it ended: `Completed`, or `Failed` with
-/// [`SESSION_FORGET_FAILED`].
+/// [`SESSION_FORGET_FAILED`]. `completed` runs on the caller's thread once
+/// `work` succeeded, and never otherwise: what it drops, such as an
+/// in-memory mapping, stays for a retry after a failure.
 pub(crate) fn in_background(
     work: impl FnOnce() -> io::Result<()> + Send + 'static,
+    completed: impl FnOnce() + 'static,
 ) -> Box<dyn Exchange> {
     let (done, outcome) = mpsc::channel();
     let spawned = thread::Builder::new()
@@ -37,14 +40,14 @@ pub(crate) fn in_background(
             let _ = done.send(work());
         });
     match spawned {
-        Ok(_) => Box::new(Background::Waiting(outcome)),
+        Ok(_) => Box::new(Background::Waiting(outcome, Box::new(completed))),
         Err(_) => Box::new(Scripted::failed(SESSION_FORGET_FAILED)),
     }
 }
 
 /// Background work in progress, as an exchange.
 enum Background {
-    Waiting(Receiver<io::Result<()>>),
+    Waiting(Receiver<io::Result<()>>, Box<dyn FnOnce()>),
     /// Cancelled: the work may still finish, but its outcome is dropped.
     Stopping,
     Done,
@@ -55,7 +58,7 @@ impl Exchange for Background {
         let update = match self {
             Self::Done => return None,
             Self::Stopping => Update::Stopped,
-            Self::Waiting(outcome) => {
+            Self::Waiting(outcome, _) => {
                 match outcome.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
                     Ok(Ok(())) => Update::Completed,
                     Ok(Err(_)) | Err(RecvTimeoutError::Disconnected) => {
@@ -65,12 +68,16 @@ impl Exchange for Background {
                 }
             }
         };
-        *self = Self::Done;
+        if let Self::Waiting(_, completed) = std::mem::replace(self, Self::Done) {
+            if update == Update::Completed {
+                completed();
+            }
+        }
         Some(update)
     }
 
     fn cancel(&mut self, _grace: Duration) {
-        if matches!(self, Self::Waiting(_)) {
+        if matches!(self, Self::Waiting(..)) {
             *self = Self::Stopping;
         }
     }
@@ -180,28 +187,45 @@ mod tests {
     #[test]
     fn background_work_reports_how_it_ended_without_blocking() {
         let (release, released) = mpsc::channel::<()>();
-        let mut slow = in_background(move || {
-            let _ = released.recv();
-            Ok(())
-        });
+        let finished = std::rc::Rc::new(std::cell::Cell::new(0));
+        let counted = std::rc::Rc::clone(&finished);
+        let mut slow = in_background(
+            move || {
+                let _ = released.recv();
+                Ok(())
+            },
+            move || counted.set(counted.get() + 1),
+        );
         // Still working: the caller gets its turn back at its deadline.
         let asked = Instant::now();
         assert_eq!(slow.next(asked + Duration::from_millis(20)), None);
         assert!(asked.elapsed() < Duration::from_secs(2));
+        assert_eq!(finished.get(), 0);
         release.send(()).unwrap();
         assert_eq!(run_to_end(slow.as_mut()), [Update::Completed]);
 
-        let mut failing = in_background(|| Err(io::Error::other("denied")));
+        assert_eq!(finished.get(), 1, "runs once, after the work succeeded");
+
+        let kept = std::rc::Rc::new(std::cell::Cell::new(true));
+        let dropped = std::rc::Rc::clone(&kept);
+        let mut failing = in_background(
+            || Err(io::Error::other("denied")),
+            move || dropped.set(false),
+        );
         assert_eq!(
             run_to_end(failing.as_mut()),
             [Update::Failed(SESSION_FORGET_FAILED)]
         );
+        assert!(kept.get(), "a failure keeps what `completed` would drop");
 
         let (_keep, never) = mpsc::channel::<()>();
-        let mut cancelled = in_background(move || {
-            let _ = never.recv_timeout(Duration::from_secs(5));
-            Ok(())
-        });
+        let mut cancelled = in_background(
+            move || {
+                let _ = never.recv_timeout(Duration::from_secs(5));
+                Ok(())
+            },
+            || {},
+        );
         cancelled.cancel(Duration::ZERO);
         assert_eq!(run_to_end(cancelled.as_mut()), [Update::Stopped]);
     }

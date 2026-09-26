@@ -37,7 +37,8 @@ const inFlightConversations = new Set();
 // retried when the worker starts until it confirms.
 const sessionForgetter = createSessionForgetter({
   manager: nativeConnectionManager,
-  storage: chrome.storage.local
+  storage: chrome.storage.local,
+  conversationExists: (id) => conversations.has(id)
 });
 void sessionForgetter.flush();
 const diagnostics = createDiagnosticsState(

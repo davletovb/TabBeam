@@ -26,7 +26,7 @@ export function isConversationMessage(message) {
  *   remove(id: string): Promise<void>
  * }} store
  * @param {Set<string>} inFlight conversation IDs with a question running
- * @param {{queue(providerId: string, conversationId: string): Promise<void>, flush(): Promise<void>}} [forgetter]
+ * @param {{queue(providerId: string, conversationId: string, pervueId?: string): Promise<void>, flush(): Promise<void>}} [forgetter]
  * @returns {Promise<{ok: true, value?: any} | {ok: false, error: string}>}
  */
 export async function answerConversationMessage(message, store, inFlight, forgetter) {
@@ -56,25 +56,31 @@ export async function answerConversationMessage(message, store, inFlight, forget
 }
 
 /**
- * Removes a conversation, then records its provider session with
- * `forgetter` and has it forgotten in the background. The conversation goes
- * first: a removal that fails must not cost a conversation that is still
- * there its provider session.
+ * Removes a conversation and has the companion app forget its provider
+ * session, in an order that survives failure at any step:
+ *
+ * 1. the session is recorded with `forgetter` as a tombstone for this
+ *    conversation; if that can't be stored, nothing is deleted;
+ * 2. the conversation is removed; if that fails, the tombstone waits, because
+ *    `forgetter` only acts on tombstones whose conversation is gone;
+ * 3. the session is forgotten in the background, and retried until the host
+ *    confirms.
  *
  * @param {string} id
  * @param {{getPrivate(id: string): Promise<any>, remove(id: string): Promise<void>}} store
- * @param {{queue(providerId: string, conversationId: string): Promise<void>, flush(): Promise<void>}} [forgetter]
+ * @param {{queue(providerId: string, conversationId: string, pervueId?: string): Promise<void>, flush(): Promise<void>}} [forgetter]
  */
 async function deleteConversation(id, store, forgetter) {
-  const record = forgetter ? await store.getPrivate(id).catch(() => null) : null;
-  await store.remove(id);
-  const providerId = record?.provider_id;
-  const sessionId = record?.provider_session_id;
-  if (!forgetter || typeof providerId !== "string" || typeof sessionId !== "string" ||
-      providerId === "" || sessionId === "") {
+  if (!forgetter) {
+    await store.remove(id);
     return;
   }
-  // Deleted either way: a session that can't be recorded is left behind.
-  await forgetter.queue(providerId, sessionId).catch(() => {});
-  void forgetter.flush();
+  const record = await store.getPrivate(id);
+  const providerId = record?.provider_id;
+  const sessionId = record?.provider_session_id;
+  const hasSession = typeof providerId === "string" && typeof sessionId === "string" &&
+    providerId !== "" && sessionId !== "";
+  if (hasSession) await forgetter.queue(providerId, sessionId, id);
+  await store.remove(id);
+  if (hasSession) void forgetter.flush();
 }

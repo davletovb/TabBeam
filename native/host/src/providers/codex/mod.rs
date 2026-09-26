@@ -308,19 +308,26 @@ impl Provider for Codex {
                     .as_deref()
                     .and_then(|dir| read_thread(dir, conversation_id))
             });
-        self.conversations.borrow_mut().remove(conversation_id);
         let home = codex_home(&self.launch);
         let workspace = self.launch.work_dir.clone();
         let session_dir = self.session_dir.clone();
-        let conversation_id = conversation_id.to_owned();
-        // The files go on their own thread. The mapping goes last: if Codex's
-        // files can't all be removed, a retry can still find them.
-        forget::in_background(move || {
-            if let (Some(home), Some(thread)) = (home, thread) {
-                forget_rollouts(&home, &workspace, &thread)?;
-            }
-            session_dir.map_or(Ok(()), |dir| forget_thread(&dir, &conversation_id))
-        })
+        let conversation = conversation_id.to_owned();
+        let conversations = Rc::clone(&self.conversations);
+        let forgotten = conversation_id.to_owned();
+        // The files go on their own thread. The mappings go last, the one in
+        // memory only once everything else is gone: if Codex's files can't
+        // all be removed, a retry can still find them.
+        forget::in_background(
+            move || {
+                if let (Some(home), Some(thread)) = (home, thread) {
+                    forget_rollouts(&home, &workspace, &thread)?;
+                }
+                session_dir.map_or(Ok(()), |dir| forget_thread(&dir, &conversation))
+            },
+            move || {
+                conversations.borrow_mut().remove(&forgotten);
+            },
+        )
     }
 
     fn send(&self, request: SendRequest) -> Box<dyn Exchange> {

@@ -606,3 +606,48 @@ fn forget_removes_the_mapping_and_only_pervues_claude_files() {
         [Update::Completed]
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn a_failed_forget_keeps_an_in_memory_session_for_the_retry() {
+    let claude = FakeClaude::install("answers", "signed-in");
+    let config = claude.dir.join("claude-config");
+    let adapter = claude.adapter().without_session_dir().with_environment([(
+        OsString::from("CLAUDE_CONFIG_DIR"),
+        config.clone().into_os_string(),
+    )]);
+    let conversation = first_conversation(&adapter);
+    let session = format!("claude-{}", claude.pids()[0]);
+    let workspace = std::fs::canonicalize(claude.dir.join("claude-work")).unwrap();
+    let saved = config
+        .join("projects/-pervue-claude-workspace")
+        .join(format!("{session}.jsonl"));
+    transcript(&saved, &session, &workspace);
+    // A file where Claude keeps its session-env directories: removing the
+    // session's entry below it fails, even for root.
+    std::fs::write(config.join("session-env"), "not a directory").unwrap();
+
+    assert_eq!(
+        failure(&run_to_end(adapter.forget(&conversation).as_mut())),
+        (ErrorCode::InternalError, "SESSION_FORGET_FAILED")
+    );
+    assert!(
+        saved.exists(),
+        "the transcript, the proof it's Pervue's, stays for the retry"
+    );
+
+    // The retry still knows the session, which lives only in memory: it
+    // finishes the job rather than completing with the transcript left behind.
+    std::fs::remove_file(config.join("session-env")).unwrap();
+    assert_eq!(
+        run_to_end(adapter.forget(&conversation).as_mut()),
+        [Update::Completed]
+    );
+    assert!(!saved.exists());
+    assert_eq!(
+        failure(&run_to_end(
+            adapter.send(follow_up(&conversation, Vec::new())).as_mut()
+        )),
+        (ErrorCode::InvalidRequest, "UNKNOWN_CONVERSATION")
+    );
+}
