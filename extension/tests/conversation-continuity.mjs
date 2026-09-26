@@ -76,7 +76,8 @@ const manager = {
 };
 
 /** The popup and full page use the same controller and worker request path. */
-function openView() {
+/** @param {string} [providerId] */
+function openView(providerId = "codex") {
   const elements = {
     form: new Element(), input: new Element(), submit: new Element(),
     status: new Element(), answer: new Element(), history: new Element(),
@@ -110,6 +111,7 @@ function openView() {
     }
   };
   const view = bindAskForm(/** @type {any} */ (elements), runtime, undefined, {
+    getProviderId: () => providerId,
     storageChanges: { addListener(listener) { storageListeners.push(listener); } }
   });
   return {
@@ -119,15 +121,15 @@ function openView() {
   };
 }
 
-/** @param {number} index @param {string} answer @param {string} [session] */
-function answerRequest(index, answer, session) {
+/** @param {number} index @param {string} answer @param {string} [session] @param {string} [provider] */
+function answerRequest(index, answer, session, provider = "codex") {
   const { request, owner } = native[index];
   /** @param {string} name @param {any} payload */
   const event = (name, payload) => owner.onEvent({
     version: 1, type: "event", request_id: request.request_id, event: name, payload
   });
   if (session) event("conversation.created", { conversation_id: session });
-  event("response.started", { provider_id: "codex", conversation_id: session ?? request.payload.conversation_id });
+  event("response.started", { provider_id: provider, conversation_id: session ?? request.payload.conversation_id });
   event("response.delta", { text: answer.slice(0, 5) });
   event("response.delta", { text: answer.slice(5) });
   event("response.completed", {});
@@ -141,6 +143,7 @@ async function settle() {
 const popup = openView();
 popup.ask("First question");
 assert.equal(native.length, 1);
+assert.equal(native[0].request.payload.provider_id, "codex");
 assert.deepEqual(native[0].request.payload.input, { text: "First question" });
 answerRequest(0, "First answer", "host_session_1");
 await settle();
@@ -341,4 +344,16 @@ longConversation.messages.push({ role: "user", text: "pending" },
   { role: "assistant", text: "incomplete", status: "pending" });
 assert.deepEqual(dialogueHistory(longConversation), boundedHistory);
 
-console.log("CON-01/02/03, EXT-05/06/07, TST-06 conversation continuity passed");
+// A new conversation carries the capability-selected provider into native
+// request routing and persists that provider with the conversation.
+const claudeView = openView("claude");
+claudeView.ask("Claude question");
+await settle();
+const claudeIndex = native.length - 1;
+assert.equal(native[claudeIndex].request.payload.provider_id, "claude");
+answerRequest(claudeIndex, "Claude answer", "claude_session_1", "claude");
+await settle();
+const claudeId = /** @type {string} */ (claudeView.view.getConversationId());
+assert.equal((await store.getPrivate(claudeId)).provider_id, "claude");
+
+console.log("Conversation continuity tests passed");
