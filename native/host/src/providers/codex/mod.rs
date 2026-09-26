@@ -37,7 +37,7 @@ use crate::protocol::events::{
 use crate::stream::{BUSY_LIMIT, LineStream, Output};
 
 pub mod output;
-mod workspace;
+pub(crate) mod workspace;
 
 use output::Line;
 
