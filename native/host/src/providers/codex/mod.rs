@@ -108,7 +108,7 @@ const NOT_SIGNED_IN: ErrorBody<'static> = ErrorBody {
 const CONTEXT_TOOLS_ENABLED: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::InvalidRequest,
     reason: "PAGE_CONTEXT_TOOLS_ENABLED",
-    message: "Pervue won't send browser context to Codex while external tools, plugins, or hooks are configured. Disable them or choose No context.",
+    message: "Pervue won't send browser context to Codex while user-configured MCP servers are enabled. Disable them or choose No context.",
     retryable: false,
 };
 
@@ -390,12 +390,11 @@ fn context_configuration_is_safe(launch: &Launch) -> bool {
         return true;
     };
 
-    // Installed plugins and hooks can contribute executable/external tools
-    // even when the main config is otherwise empty.
-    if home.join("plugins").exists() || home.join("hooks.json").exists() {
-        return false;
-    }
-
+    // Plugin caches/install directories and hook files are safe to leave in
+    // place because context turns explicitly disable those Codex features at
+    // invocation time. User-configured MCP servers are different: Codex
+    // exposes them independently of the plugin/apps feature gates, so fail
+    // closed until Pervue can disable each effective server deterministically.
     let mut configs = vec![home.join("config.toml")];
     if home.exists() {
         let Ok(entries) = std::fs::read_dir(&home) else {
@@ -419,10 +418,7 @@ fn context_configuration_is_safe(launch: &Launch) -> bool {
         let Ok(config) = std::fs::read_to_string(path) else {
             return false;
         };
-        let config = config.to_ascii_lowercase();
-        !["mcp_servers", "[plugins.", "[marketplaces.", "[hooks"]
-            .iter()
-            .any(|marker| config.contains(marker))
+        !config.to_ascii_lowercase().contains("mcp_servers")
     })
 }
 
@@ -647,18 +643,23 @@ impl Turn {
         .into();
         if self.restrict_tools {
             // Page text is attacker-controlled. A context turn is deliberately
-            // answer-only: no local shell/file-image tools, apps/web search,
-            // or subagents. User-configured MCP/plugin tooling is refused
-            // before this point by context_configuration_is_safe().
+            // answer-only: no local shell/image tools, apps/plugins/hooks,
+            // web search, orchestrator MCP, or subagents. User-configured MCP
+            // servers are refused before this point because they are not all
+            // controlled by those feature gates.
             for setting in [
                 "features.shell_tool=false",
+                "features.view_image=false",
                 "features.apps=false",
-                "features.multi_agent=false",
+                "features.plugins=false",
                 "features.hooks=false",
-                "features.remote_plugin=false",
-                "tools.web_search=false",
-                "tools.view_image=false",
-                "agents.enabled=false",
+                "features.multi_agent=false",
+                "features.multi_agent_v2=false",
+                "features.web_search_request=false",
+                "features.web_search_cached=false",
+                "features.standalone_web_search=false",
+                "web_search=\"disabled\"",
+                "orchestrator.mcp.enabled=false",
             ] {
                 args.extend(["-c".into(), setting.into()]);
             }
