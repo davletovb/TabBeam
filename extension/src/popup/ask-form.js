@@ -87,8 +87,8 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
     hideControl(retry);
   }
 
-  /** @param {string} id */
-  async function loadConversation(id, preserveStatus = false) {
+  /** @param {string} id @param {boolean} [preserveStatus] @param {boolean} [preserveRetry] */
+  async function loadConversation(id, preserveStatus = false, preserveRetry = false) {
     if (!history || typeof runtime.sendMessage !== "function" || active) return false;
     const generation = ++viewGeneration;
     loadPending = true;
@@ -97,7 +97,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
       if (generation !== viewGeneration || active) return false;
       if (result?.ok !== true || !result.value) throw new Error("unavailable");
       const nextConversationId = result.value.id;
-      if (conversationId !== nextConversationId) clearRetry();
+      if (!preserveRetry || conversationId !== nextConversationId) clearRetry();
       conversationId = nextConversationId;
       renderHistory(result.value.messages);
       answer.textContent = "";
@@ -369,7 +369,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
     // conversation existed leaves nothing saved: drop its provisional bubble.
     if (history && !conversationId && state !== "done") history.replaceChildren();
     if (history && conversationId && reload) {
-      void loadConversation(conversationId, state !== "done").then((loaded) => {
+      void loadConversation(conversationId, state !== "done", retryable).then((loaded) => {
         if (loaded) options.onSaved?.();
       });
     }
