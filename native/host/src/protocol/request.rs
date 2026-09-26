@@ -4,7 +4,7 @@ use std::borrow::Cow;
 
 use super::PROTOCOL_VERSION;
 use super::json::{JsonError, JsonStr, Reader};
-use crate::conversation::{BrowserContext, BrowserContextMode, BrowserPageContext, HistoryMessage};
+use crate::conversation::{BrowserContext, BrowserContextMode, HistoryMessage, is_javascript_trim_char};
 use crate::limits::{
     MAX_CONTEXT_TITLE_BYTES, MAX_CONTEXT_URL_BYTES, MAX_HISTORY_BYTES, MAX_HISTORY_MESSAGES,
     MAX_PAGE_BYTES, MAX_REQUEST_ID_LENGTH, MAX_SELECTION_BYTES,
@@ -378,59 +378,32 @@ fn parse_input(input: &[u8]) -> Result<(JsonStr<'_>, Vec<HistoryMessage>), Failu
 }
 
 fn parse_browser_context(context: &[u8]) -> Result<BrowserContext, FailureKind> {
-    let parsed: serde_json::Value =
+    // Duplicate members were already rejected by the strict payload pass.
+    // Typed deserialization skips forward-compatible unknown fields without
+    // allocating an arbitrary serde_json::Value tree.
+    let context: BrowserContext =
         serde_json::from_slice(context).map_err(|_| FailureKind::InvalidPayload)?;
-    let object = parsed.as_object().ok_or(FailureKind::InvalidPayload)?;
 
-    let mode = match object.get("mode").and_then(serde_json::Value::as_str) {
-        Some("selection") => BrowserContextMode::Selection,
-        Some("page") => BrowserContextMode::Page,
-        _ => return Err(FailureKind::InvalidPayload),
-    };
-    let text = object
-        .get("text")
-        .and_then(serde_json::Value::as_str)
-        .filter(|text| !text.trim().is_empty())
-        .ok_or(FailureKind::InvalidPayload)?
-        .to_owned();
-    let truncated = object
-        .get("truncated")
-        .and_then(serde_json::Value::as_bool)
-        .ok_or(FailureKind::InvalidPayload)?;
-
-    let page = object
-        .get("page")
-        .and_then(serde_json::Value::as_object)
-        .ok_or(FailureKind::InvalidPayload)?;
-    let title = page
-        .get("title")
-        .and_then(serde_json::Value::as_str)
-        .ok_or(FailureKind::InvalidPayload)?
-        .to_owned();
-    let url = page
-        .get("url")
-        .and_then(serde_json::Value::as_str)
-        .filter(|url| valid_context_url(url))
-        .ok_or(FailureKind::InvalidPayload)?
-        .to_owned();
-
-    let text_limit = match mode {
+    if context
+        .text
+        .trim_matches(is_javascript_trim_char)
+        .is_empty()
+    {
+        return Err(FailureKind::InvalidPayload);
+    }
+    let text_limit = match context.mode {
         BrowserContextMode::Selection => MAX_SELECTION_BYTES,
         BrowserContextMode::Page => MAX_PAGE_BYTES,
     };
-    if text.len() > text_limit
-        || title.len() > MAX_CONTEXT_TITLE_BYTES
-        || url.len() > MAX_CONTEXT_URL_BYTES
+    if context.text.len() > text_limit
+        || context.page.title.len() > MAX_CONTEXT_TITLE_BYTES
+        || context.page.url.len() > MAX_CONTEXT_URL_BYTES
+        || !valid_context_url(&context.page.url)
     {
         return Err(FailureKind::InvalidPayload);
     }
 
-    Ok(BrowserContext {
-        mode,
-        text,
-        truncated,
-        page: BrowserPageContext { title, url },
-    })
+    Ok(context)
 }
 
 fn valid_context_url(url: &str) -> bool {
