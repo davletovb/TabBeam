@@ -402,11 +402,16 @@ fn context_configuration_is_safe(launch: &Launch) -> bool {
         let Ok(entries) = std::fs::read_dir(&home) else {
             return false;
         };
-        configs.extend(entries.filter_map(Result::ok).map(|entry| entry.path()).filter(|path| {
-            path.file_name()
-                .and_then(OsStr::to_str)
-                .is_some_and(|name| name.ends_with(".config.toml"))
-        }));
+        configs.extend(
+            entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .filter(|path| {
+                    path.file_name()
+                        .and_then(OsStr::to_str)
+                        .is_some_and(|name| name.ends_with(".config.toml"))
+                }),
+        );
     }
     configs.into_iter().all(|path| {
         if !path.exists() {
