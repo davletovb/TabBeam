@@ -28,7 +28,7 @@
 
   /* Brand: an indigo-violet with a cyan counterpoint in the mark. */
   --accent: light-dark(#5b4cf0, #6d5cf6);
-  --accent-hover: light-dark(#4b3cdd, #7a6afc);
+  --accent-hover: light-dark(#4b3cdd, #6a58f0);
   --accent-fg: #ffffff;
   --accent-soft: light-dark(#efedfe, #221e3d);
   --accent-soft-hover: light-dark(#e4e0fd, #2b2650);

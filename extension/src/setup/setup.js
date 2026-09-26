@@ -12,7 +12,9 @@ for (const button of Array.from(document.querySelectorAll(".copy-command"))) {
   button.addEventListener("click", async () => {
     const command = button.parentElement?.querySelector("code")?.textContent ?? "";
     try {
-      await globalThis.navigator?.clipboard?.writeText(command);
+      const clipboard = globalThis.navigator?.clipboard;
+      if (!clipboard) throw new Error("clipboard unavailable");
+      await clipboard.writeText(command);
       button.setAttribute("data-copied", "true");
       button.setAttribute("aria-label", "Copied");
       setTimeout(() => {

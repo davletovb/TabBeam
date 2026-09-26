@@ -299,6 +299,7 @@ body {
 /* ---------- Narrow windows: the sidebar becomes a drawer ---------- */
 
 .scrim {
+  display: none;
   position: fixed;
   inset: 0;
   z-index: 9;
@@ -311,6 +312,10 @@ body {
 }
 
 @media (max-width: 860px) {
+  .scrim:not([hidden]) {
+    display: block;
+  }
+
   .app {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -322,13 +327,16 @@ body {
     width: min(300px, 86vw);
     box-shadow: var(--shadow-lg);
     transform: translateX(-102%);
-    transition: transform var(--normal) var(--ease), visibility var(--normal);
+    /* Hide only once it has slid out... */
+    transition: transform var(--normal) var(--ease), visibility 0s linear var(--normal);
     visibility: hidden;
   }
 
   .app[data-sidebar="open"] .sidebar {
     transform: none;
     visibility: visible;
+    /* ...but show at once, so focus can move into it as it opens. */
+    transition: transform var(--normal) var(--ease), visibility 0s;
   }
 
   .sidebar-close,

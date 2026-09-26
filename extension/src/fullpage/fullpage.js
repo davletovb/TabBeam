@@ -1,4 +1,5 @@
 import { bindAskForm } from "../popup/ask-form.js";
+import { bindDrawer } from "./drawer.js";
 import { bindProviderState } from "../popup/provider-state.js";
 import { bindRecentConversations } from "../shared/recent-conversations.js";
 import { bindThemeSelect } from "../shared/theme.js";
@@ -88,7 +89,7 @@ function renderList() {
         recent.value = option.value;
         recent.dispatchEvent(new Event("change"));
       }
-      setSidebar(false);
+      drawer.close(input);
     });
     item.append(button);
     return item;
@@ -112,23 +113,17 @@ function icon(name) {
 
 new MutationObserver(renderList).observe(recent, { childList: true });
 
-/** @param {boolean} open */
-function setSidebar(open) {
-  if (open) app.setAttribute("data-sidebar", "open");
-  else app.removeAttribute("data-sidebar");
-  requireElement("#scrim", HTMLElement).hidden = !open;
-  requireElement("#sidebar-open", HTMLButtonElement).setAttribute("aria-expanded", String(open));
-}
-
-requireElement("#sidebar-open", HTMLButtonElement).addEventListener("click", () => setSidebar(true));
-requireElement("#sidebar-close", HTMLButtonElement).addEventListener("click", () => setSidebar(false));
-requireElement("#scrim", HTMLElement).addEventListener("click", () => setSidebar(false));
+const drawer = bindDrawer({
+  app,
+  main: requireElement(".main", HTMLElement),
+  scrim: requireElement("#scrim", HTMLElement),
+  openButton: requireElement("#sidebar-open", HTMLButtonElement),
+  closeButton: requireElement("#sidebar-close", HTMLButtonElement),
+  narrow: window.matchMedia("(max-width: 860px)")
+}, document);
 
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && app.hasAttribute("data-sidebar")) {
-    setSidebar(false);
-    return;
-  }
+  if (event.defaultPrevented) return;
   // "/" jumps to the composer from anywhere that isn't already a text field.
   const target = event.target;
   const typing = target instanceof HTMLElement &&
@@ -144,7 +139,7 @@ requireElement("#new-conversation", HTMLButtonElement).addEventListener("click",
     interacted = true;
     recent.value = "";
     renderList();
-    setSidebar(false);
+    drawer.close(input);
   }
 });
 recent.addEventListener("change", () => {

@@ -2,6 +2,7 @@ import { bindAskForm } from "./ask-form.js";
 import { bindContextControls } from "./context-controls.js";
 import { preloadMenuContext } from "./menu-preload.js";
 import { bindProviderState } from "./provider-state.js";
+import { bindSuggestions } from "./suggestions.js";
 import { bindRecentConversations } from "../shared/recent-conversations.js";
 import { bindThemeSelect } from "../shared/theme.js";
 import { bindThemeToggle } from "../shared/theme-toggle.js";
@@ -98,20 +99,18 @@ settings.addEventListener("keydown", (event) => {
   }
 });
 
-// Starter suggestions: attach their context the same way the chips do, and
-// leave the question in the composer for the person to send or edit.
-for (const suggestion of Array.from(document.querySelectorAll(".suggestion"))) {
-  suggestion.addEventListener("click", () => {
-    const source = suggestion.getAttribute("data-context");
-    if (source === "page" || source === "selection") {
-      requireElement(`#context-${source}`, HTMLButtonElement).click();
-    }
-    input.value = suggestion.getAttribute("data-prompt") ?? "";
-    thread.fitInput();
-    input.focus();
-    input.setSelectionRange(input.value.length, input.value.length);
-  });
-}
+bindSuggestions(
+  Array.from(document.querySelectorAll(".suggestion")).filter((node) => node instanceof HTMLElement),
+  {
+    input,
+    chips: {
+      page: requireElement("#context-page", HTMLButtonElement),
+      selection: requireElement("#context-selection", HTMLButtonElement)
+    },
+    contextControls,
+    onFill: () => thread.fitInput()
+  }
+);
 
 bindDiagnostics(
   {

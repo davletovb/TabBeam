@@ -18,6 +18,8 @@ const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
 
 assert.equal(manifest.manifest_version, 3);
 assert.equal(manifest.action.default_popup, "src/popup/index.html");
+// The design system's theme tokens use light-dark(), which Chrome 123 added.
+assert.ok(Number(manifest.minimum_chrome_version) >= 123);
 assert.equal(manifest.background.service_worker, "src/background/service-worker.js");
 assert.equal(manifest.background.type, "module");
 assert.ok(manifest.permissions.includes("contextMenus"));
@@ -57,6 +59,8 @@ const referencedFiles = [
   "src/popup/diagnostics.js",
   "src/popup/context-controls.js",
   "src/popup/menu-preload.js",
+  "src/popup/suggestions.js",
+  "src/fullpage/drawer.js",
   "src/popup/ask-form.js",
   "src/fullpage/index.html",
   "src/popup/popup.js",

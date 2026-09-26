@@ -150,7 +150,9 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
     copy.textContent = "Copy";
     copy.addEventListener("click", async () => {
       try {
-        await globalThis.navigator?.clipboard?.writeText(text);
+        const clipboard = globalThis.navigator?.clipboard;
+        if (!clipboard) throw new Error("clipboard unavailable");
+        await clipboard.writeText(text);
         copy.textContent = "Copied";
         copy.setAttribute("data-copied", "true");
         setTimeout(() => {
@@ -159,6 +161,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
         }, 1500);
       } catch {
         copy.textContent = "Couldn't copy";
+        copy.removeAttribute("data-copied");
       }
     });
     actions.append(copy);
