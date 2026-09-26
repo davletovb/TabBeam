@@ -46,6 +46,7 @@ const referencedFiles = [
   "src/shared/ask-port.js",
   "src/shared/limits.js",
   "src/shared/theme.js",
+  "src/shared/theme-bootstrap.js",
   "src/shared/diagnostics.js",
   "src/shared/performance.js",
   "src/background/diagnostics.js",
@@ -59,7 +60,8 @@ const referencedFiles = [
   "src/fullpage/fullpage.js",
   "src/fullpage/fullpage.css",
   "src/setup/index.html",
-  "src/setup/setup.css"
+  "src/setup/setup.css",
+  "src/setup/setup.js"
 ];
 
 for (const file of referencedFiles) {
