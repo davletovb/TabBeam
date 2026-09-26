@@ -1,13 +1,14 @@
 //! Pervue native host.
 //!
-//! The host speaks Chrome Native Messaging on stdin/stdout: [`framing`] reads
+//! The host speaks Chrome Native Messaging on stdin/stdout: core [`framing`] reads
 //! and writes bounded length-prefixed frames, [`protocol`] validates protocol-v1
 //! requests and emits events, and [`host`] runs the request loop, recording its
 //! lifecycle through [`diagnostics`]. [`limits`]
 //! holds every bound on browser input, and [`manifest`] the caller-identity
-//! checks and the Native Messaging registration. [`process`] starts and
-//! supervises provider processes, and [`stream`] turns their output into
-//! lines.
+//! checks and the Native Messaging registration. Core [`process`] starts and
+//! supervises provider processes, and core [`stream`] turns their output into
+//! lines. Shared primitives belong to `pervue-core`; this crate reexports
+//! their prior module paths for consumers.
 
 pub mod conversation;
 pub mod diagnostics;

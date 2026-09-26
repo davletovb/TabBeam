@@ -144,6 +144,10 @@ jobs:
         run: |
           max_len=$(node fuzz/fuzz-support.mjs max-len frame_reader)
           cargo +nightly fuzz run frame_reader fuzz/corpus/frame_reader -- -runs=1000 -max_len="$max_len"
+      - name: Smoke-run standalone stream fuzz target
+        run: |
+          mkdir -p fuzz/corpus/stream_lines
+          cargo +nightly fuzz run stream_lines fuzz/corpus/stream_lines -- -runs=1000 -max_len=16384
       - name: Smoke-run protocol fuzz target
         run: |
           max_len=$(node fuzz/fuzz-support.mjs max-len protocol)

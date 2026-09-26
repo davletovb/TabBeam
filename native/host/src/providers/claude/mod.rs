@@ -193,7 +193,7 @@ impl Claude {
     pub fn installed() -> Self {
         let host: Vec<_> = std::env::vars_os().collect();
         let mut claude = Self::new(
-            SearchPath::from_env(),
+            SearchPath::from_env(crate::providers::discovery::SEARCH_PATH_VARIABLE),
             workspace::default_for(&host, "claude"),
         );
         claude.session_dir = installed_session_dir();

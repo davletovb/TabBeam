@@ -189,13 +189,13 @@ Reached after **Milestone H**:
 | PRO-07 | Reconcile provider contract from Codex + Claude evidence | E | Provider | PRO-03, PRO-06 | IMPLEMENTED — VERIFY |
 | EXT-15 | Add capability-aware provider selector | E | Extension | PRO-07, EXT-04 | IMPLEMENTED — VERIFY |
 | TST-10 | Add cross-provider contract test suite | E | Testing | PRO-07 | IMPLEMENTED — VERIFY |
-| LIB-01 | Extract reusable process primitives | F | Native Library | PRO-07, TST-10 | BACKLOG |
-| LIB-02 | Extract reusable Native Messaging primitives | F | Native Library | NAT-02, TST-03 | BACKLOG |
-| LIB-03 | Extract reusable stream primitives | F | Native Library | NAT-05, TST-10 | BACKLOG |
-| LIB-04 | Extract reusable provider/protocol primitives | F | Native Library | PRO-07, LIB-01, LIB-03 | BACKLOG |
-| LIB-05 | Extract reusable platform/diagnostics primitives where justified | F | Native Library | OBS-01, PRO-05 | BACKLOG |
-| DOC-03 | Document reusable library ownership/API boundaries | F | Documentation | LIB-01, LIB-02, LIB-03, LIB-04 | BACKLOG |
-| TST-11 | Add standalone native-library unit/ABI tests | F | Testing | LIB-01, LIB-02, LIB-03, LIB-04 | BACKLOG |
+| LIB-01 | Extract reusable process primitives | F | Native Library | PRO-07, TST-10 | IMPLEMENTED — VERIFY |
+| LIB-02 | Extract reusable Native Messaging primitives | F | Native Library | NAT-02, TST-03 | IMPLEMENTED — VERIFY |
+| LIB-03 | Extract reusable stream primitives | F | Native Library | NAT-05, TST-10 | IMPLEMENTED — VERIFY |
+| LIB-04 | Extract reusable provider/protocol primitives | F | Native Library | PRO-07, LIB-01, LIB-03 | IMPLEMENTED — VERIFY |
+| LIB-05 | Extract reusable platform/diagnostics primitives where justified | F | Native Library | OBS-01, PRO-05 | IMPLEMENTED — VERIFY |
+| DOC-03 | Document reusable library ownership/API boundaries | F | Documentation | LIB-01, LIB-02, LIB-03, LIB-04 | IMPLEMENTED — VERIFY |
+| TST-11 | Add standalone native-library unit/ABI tests | F | Testing | LIB-01, LIB-02, LIB-03, LIB-04 | IMPLEMENTED — VERIFY |
 | PKG-01 | Build macOS companion package and host registration | G | Packaging | TST-08, EXT-13, LIB-02, LIB-05 | BACKLOG |
 | PKG-02 | Add macOS provider discovery/setup guidance | G | Packaging | PKG-01, PRO-07 | BACKLOG |
 | PKG-03 | Add extension/host protocol compatibility check | G | Packaging / Protocol | DOC-01, PKG-01 | BACKLOG |
@@ -1343,7 +1343,10 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 - Host-specific policy remains outside the library.
 - Existing tests pass through the extracted API.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `native/core/src/process.rs` now owns child spawn, isolated environment, piped I/O, bounded output queue, cancellation, termination, and reaping. Codex and Claude call it through the same `pervue-core` API; their launch policies remain in their adapters.
 
 ### LIB-02 — Extract reusable Native Messaging primitives
 **Area:** Native Library  
@@ -1353,7 +1356,10 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 - Frame read/write/validation has a documented bounded API.
 - No extension-product UI assumptions exist in the module.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `native/core/src/framing.rs` owns bounded 1 MiB Native Messaging framing, with original wire tests moved into the standalone crate and the frame fuzz target using its public API.
 
 ### LIB-03 — Extract reusable stream primitives
 **Area:** Native Library  
@@ -1362,7 +1368,10 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 **Acceptance criteria**
 - Bounded buffering, UTF-8 handling, chunk delivery, final/error states are reusable outside one provider.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `native/core/src/stream.rs` owns bounded UTF-8 lines, stderr-tail policy, outgoing Unicode chunks, terminal states, and deadlines. Both adapters consume the extracted stream.
 
 ### LIB-04 — Extract reusable provider/protocol primitives
 **Area:** Native Library  
@@ -1373,7 +1382,10 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 - Capability and normalized event/error types are documented.
 - Provider-specific session details remain opaque.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `native/core/src/protocol.rs` and `exchange.rs` define normalized capabilities/errors/status and provider exchange updates, including cancellation and timeouts; request routing and provider sessions stay in the host.
 
 ### LIB-05 — Extract reusable platform/diagnostics primitives where justified
 **Area:** Native Library  
@@ -1384,7 +1396,10 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 - Executable discovery/config-path/diagnostic helpers remain separable from provider adapters.
 - Windows implementation points are represented without forcing POSIX-only public semantics.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `native/core/src/discovery.rs` provides portable executable lookup; the host owns `PERVUE_PROVIDER_PATH`, credentials/environment policy, configuration paths, and sanitized diagnostics. Platform-specific internals stay behind the search API.
 
 ### DOC-03 — Document reusable library ownership/API boundaries
 **Area:** Documentation  
@@ -1396,7 +1411,10 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 - Public vs internal items are separated.
 - Extraction rule from the framework is documented beside the library.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `native/core/README.md` documents the public/private boundary, ownership and cleanup, error handling, extraction rule, and Rust API versus binary protocol compatibility policy.
 
 ### TST-11 — Add standalone native-library unit/ABI tests
 **Area:** Testing  
@@ -1407,7 +1425,10 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 - Library fuzz targets are green.
 - API/ABI compatibility policy is documented for packaged host releases.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `native/core/tests/public_api.rs` exercises the independent public crate; existing framing/process/stream/discovery unit tests now run in the core. The frame and stream fuzz targets compile directly against core and run in CI; provider and host integration tests remain in the workspace.
 
 ---
 
@@ -1749,11 +1770,11 @@ Update this section whenever item statuses change.
 | D — Browser context | 9 | 9 | 0 | 0 | 0 | 0 | 0 | 0 |
 | MVP closure | 7 | 7 | 0 | 0 | 0 | 0 | 0 | 0 |
 | E — Second provider | 5 | 0 | 5 | 0 | 0 | 0 | 0 | 0 |
-| F — Reusable native core | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
+| F — Reusable native core | 7 | 0 | 7 | 0 | 0 | 0 | 0 | 0 |
 | G — Installable product | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 |
 | H — Search/citations | 8 | 0 | 0 | 0 | 0 | 8 | 0 | 0 |
 | Post-milestone | 6 | 0 | 0 | 0 | 0 | 4 | 0 | 2 |
-| **Total** | **81** | **46** | **5** | **0** | **0** | **28** | **0** | **2** |
+| **Total** | **81** | **46** | **12** | **0** | **0** | **21** | **0** | **2** |
 
 ### Milestone completion rule
 

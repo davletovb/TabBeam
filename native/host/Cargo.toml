@@ -15,17 +15,13 @@ name = "pervue-host"
 path = "src/main.rs"
 
 [dependencies]
+pervue-core = { path = "../core" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
-# Signals the process groups of provider processes (NAT-04), and tells whose
-# directory Codex's workspace is (SEC-02).
+# Determines the owner of Codex's workspace (SEC-02).
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.31", default-features = false, features = ["signal", "user"] }
-
-# kqueue, to see a provider exit before reaping it.
-[target.'cfg(target_vendor = "apple")'.dependencies]
-nix = { version = "0.31", default-features = false, features = ["event", "signal"] }
+nix = { version = "0.31", default-features = false, features = ["user"] }
 
 [lints]
 workspace = true

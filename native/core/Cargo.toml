@@ -1,0 +1,19 @@
+[package]
+name = "pervue-core"
+description = "Reusable native process, framing, stream, and provider primitives"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.31", default-features = false, features = ["signal"] }
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+nix = { version = "0.31", default-features = false, features = ["event", "signal"] }
+
+[lints]
+workspace = true

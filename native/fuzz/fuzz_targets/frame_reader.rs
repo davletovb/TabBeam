@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use pervue_host::framing::{self, PREFIX_SIZE};
+use pervue_core::framing::{self, PREFIX_SIZE};
 
 fuzz_target!(|data: &[u8]| {
     let mut input = data;

@@ -1,14 +1,19 @@
 # Pervue Native Host
 
+Reusable primitives and their API/compatibility policy live in
+[`core/README.md`](core/README.md). The host owns browser policy and provider
+adapters; `pervue-core` can be tested independently of the host.
+
 This directory contains the native Rust companion/host.
 
-The host serves the Chrome extension over Native Messaging. It validates each protocol-v1 request strictly, runs it through a provider adapter, and streams the answer back as protocol events. Codex CLI is the first real provider.
+The host serves the Chrome extension over Native Messaging. It validates each protocol-v1 request strictly, runs it through a provider adapter, and streams the answer back as protocol events. Codex and Claude are the first real providers.
 
 ## Layout
 
 ```text
 native/
 ├── Cargo.toml       Cargo workspace: shared version, Rust 1.85+, `unsafe` forbidden
+├── core/            pervue-core: standalone reusable process, framing, stream, protocol primitives
 ├── host/            pervue-host: the Native Messaging host (binary + library)
 │   ├── src/
 │   │   ├── diagnostics.rs  structured lifecycle diagnostics (JSON lines on stderr)

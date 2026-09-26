@@ -213,7 +213,10 @@ impl Codex {
     /// in the user's data directory.
     pub fn installed() -> Self {
         let host: Vec<_> = std::env::vars_os().collect();
-        let mut codex = Self::new(SearchPath::from_env(), workspace::default(&host));
+        let mut codex = Self::new(
+            SearchPath::from_env(crate::providers::discovery::SEARCH_PATH_VARIABLE),
+            workspace::default(&host),
+        );
         codex.session_dir = installed_session_dir();
         codex
     }
