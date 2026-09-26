@@ -15,14 +15,21 @@ export function isConversationMessage(message) {
 /**
  * Answers the extension pages' conversation requests. A conversation with a
  * question still running can't be deleted: its answer would have nowhere to
- * go.
+ * go. Deleting one also has the companion app forget its provider session
+ * and the provider's own transcript (see {@link deleteConversation}).
  *
  * @param {any} message
- * @param {{list(): Promise<any[]>, get(id: string): Promise<any>, remove(id: string): Promise<void>}} store
+ * @param {{
+ *   list(): Promise<any[]>,
+ *   get(id: string): Promise<any>,
+ *   getPrivate(id: string): Promise<any>,
+ *   remove(id: string): Promise<void>
+ * }} store
  * @param {Set<string>} inFlight conversation IDs with a question running
+ * @param {{queue(providerId: string, conversationId: string): Promise<void>, flush(): Promise<void>}} [forgetter]
  * @returns {Promise<{ok: true, value?: any} | {ok: false, error: string}>}
  */
-export async function answerConversationMessage(message, store, inFlight) {
+export async function answerConversationMessage(message, store, inFlight, forgetter) {
   try {
     switch (message.type) {
       case CONVERSATIONS_LIST_MESSAGE:
@@ -33,7 +40,7 @@ export async function answerConversationMessage(message, store, inFlight) {
         if (inFlight.has(message.conversation_id)) {
           return { ok: false, error: "Stop or finish the answer in progress, then delete the conversation." };
         }
-        await store.remove(message.conversation_id);
+        await deleteConversation(message.conversation_id, store, forgetter);
         return { ok: true };
       default:
         return { ok: false, error: "Unknown request." };
@@ -46,4 +53,28 @@ export async function answerConversationMessage(message, store, inFlight) {
         : "Conversation history unavailable."
     };
   }
+}
+
+/**
+ * Removes a conversation, then records its provider session with
+ * `forgetter` and has it forgotten in the background. The conversation goes
+ * first: a removal that fails must not cost a conversation that is still
+ * there its provider session.
+ *
+ * @param {string} id
+ * @param {{getPrivate(id: string): Promise<any>, remove(id: string): Promise<void>}} store
+ * @param {{queue(providerId: string, conversationId: string): Promise<void>, flush(): Promise<void>}} [forgetter]
+ */
+async function deleteConversation(id, store, forgetter) {
+  const record = forgetter ? await store.getPrivate(id).catch(() => null) : null;
+  await store.remove(id);
+  const providerId = record?.provider_id;
+  const sessionId = record?.provider_session_id;
+  if (!forgetter || typeof providerId !== "string" || typeof sessionId !== "string" ||
+      providerId === "" || sessionId === "") {
+    return;
+  }
+  // Deleted either way: a session that can't be recorded is left behind.
+  await forgetter.queue(providerId, sessionId).catch(() => {});
+  void forgetter.flush();
 }

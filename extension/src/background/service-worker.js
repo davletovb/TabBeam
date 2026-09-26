@@ -6,6 +6,7 @@ import { isExtensionPage } from "./ask-bridge.js";
 import { serveConversationAskPort } from "./conversation-bridge.js";
 import { answerConversationMessage, isConversationMessage } from "./conversation-messages.js";
 import { createConversationStore } from "./conversation-store.js";
+import { createSessionForgetter } from "./forget-bridge.js";
 import { checkProviderStatus } from "./status-bridge.js";
 import { createDiagnosticsState } from "./diagnostics.js";
 import {
@@ -32,6 +33,13 @@ const nativeConnectionManager = createNativeConnectionManager({
 });
 const conversations = createConversationStore(chrome.storage.local);
 const inFlightConversations = new Set();
+// Deleted conversations' provider sessions: forgotten by the companion app,
+// retried when the worker starts until it confirms.
+const sessionForgetter = createSessionForgetter({
+  manager: nativeConnectionManager,
+  storage: chrome.storage.local
+});
+void sessionForgetter.flush();
 const diagnostics = createDiagnosticsState(
   chrome.runtime.getManifest().version,
   chrome.storage.session
@@ -112,7 +120,8 @@ chrome.runtime.onMessage.addListener(
         sendResponse({ ok: false, error: "Access denied." });
         return;
       }
-      answerConversationMessage(message, conversations, inFlightConversations).then(sendResponse);
+      answerConversationMessage(message, conversations, inFlightConversations, sessionForgetter)
+        .then(sendResponse);
       return true;
     }
     return handleContextCapture(
