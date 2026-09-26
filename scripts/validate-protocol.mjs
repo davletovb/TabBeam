@@ -1,30 +1,19 @@
-import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import Ajv2020 from "ajv/dist/2020.js";
+import { loadJson, sameSet } from "./protocol-support.mjs";
+import {
+  SCHEMA_DIR,
+  compileSchema,
+  createAjv,
+  formatSchemaErrors,
+} from "./schema-support.mjs";
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.resolve(HERE, "..");
-const SCHEMA_DIR = path.join(ROOT, "docs", "protocol", "schemas");
-const FIXTURE_DIR = path.join(ROOT, "docs", "protocol", "fixtures");
-
-function loadJson(filePath) {
-  return JSON.parse(fs.readFileSync(filePath, "utf8"));
-}
-
-function compileSchema(ajv, name) {
-  return ajv.compile(loadJson(path.join(SCHEMA_DIR, name)));
-}
-
-function formatErrors(validate) {
-  return (validate.errors ?? [])
-    .map((error) => `- ${error.instancePath || "/"}: ${error.message}`)
-    .join("\n");
-}
+const FIXTURE_DIR = path.join(path.dirname(SCHEMA_DIR), "fixtures");
 
 function expectValid(value, validate, label) {
   if (!validate(value)) {
-    throw new Error(`${label} unexpectedly failed schema validation:\n${formatErrors(validate)}`);
+    throw new Error(
+      `${label} unexpectedly failed schema validation:\n${formatSchemaErrors(validate, "- ")}`,
+    );
   }
 }
 
@@ -34,7 +23,7 @@ function expectInvalid(value, validate, label) {
   }
 }
 
-const ajv = new Ajv2020({ allErrors: true, strict: false });
+const ajv = createAjv();
 const requestValidator = compileSchema(ajv, "request-envelope.schema.json");
 const eventValidator = compileSchema(ajv, "event-envelope.schema.json");
 const errorValidator = compileSchema(ajv, "error.schema.json");
@@ -66,16 +55,17 @@ for (const fixture of golden.invalid_cases) {
     continue;
   }
 
-  let parsed = false;
+  if (typeof fixture.raw !== "string") {
+    throw new Error(`invalid fixture must contain either value or raw: ${fixture.name}`);
+  }
+
   try {
     JSON.parse(fixture.raw);
-    parsed = true;
-  } catch {
-    // Expected malformed JSON.
+  } catch (error) {
+    if (error instanceof SyntaxError) continue;
+    throw error;
   }
-  if (parsed) {
-    throw new Error(`malformed JSON fixture unexpectedly parsed: ${fixture.name}`);
-  }
+  throw new Error(`malformed JSON fixture unexpectedly parsed: ${fixture.name}`);
 }
 
 for (const [index, error] of errorsCapabilities.valid_errors.entries()) {
@@ -88,10 +78,7 @@ for (const [index, status] of errorsCapabilities.provider_statuses.entries()) {
 
 const schemaCodes = new Set(errorValidator.schema.properties.code.enum);
 const fixtureCodes = new Set(errorsCapabilities.error_codes);
-if (
-  schemaCodes.size !== fixtureCodes.size ||
-  [...schemaCodes].some((code) => !fixtureCodes.has(code))
-) {
+if (!sameSet(schemaCodes, fixtureCodes)) {
   throw new Error(
     `error-code fixture/schema drift: fixture=${JSON.stringify([...fixtureCodes].sort())} ` +
       `schema=${JSON.stringify([...schemaCodes].sort())}`,
@@ -102,10 +89,7 @@ const requiredCapabilities = new Set(
   providerStatusValidator.schema.properties.status.properties.capabilities.required,
 );
 const fixtureCapabilities = new Set(errorsCapabilities.capability_keys);
-if (
-  requiredCapabilities.size !== fixtureCapabilities.size ||
-  [...requiredCapabilities].some((key) => !fixtureCapabilities.has(key))
-) {
+if (!sameSet(requiredCapabilities, fixtureCapabilities)) {
   throw new Error(
     `capability fixture/schema drift: fixture=${JSON.stringify([...fixtureCapabilities].sort())} ` +
       `schema=${JSON.stringify([...requiredCapabilities].sort())}`,
