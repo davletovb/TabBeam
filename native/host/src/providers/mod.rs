@@ -15,7 +15,7 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use crate::conversation::{BrowserContext, HistoryMessage};
-use crate::protocol::events::{ErrorBody, ProviderState};
+use crate::protocol::events::{Capabilities, ErrorBody, ProviderState};
 pub use crate::stream::BUSY_LIMIT;
 
 pub mod codex;
@@ -101,6 +101,10 @@ pub trait Provider {
     fn id(&self) -> &str;
 
     fn timeouts(&self) -> Timeouts;
+
+    /// Capabilities that are stable for this adapter implementation. The host
+    /// uses these to reject requests that would otherwise be silently degraded.
+    fn capabilities(&self) -> Capabilities;
 
     /// Starts checking availability, authentication, and capabilities. The
     /// exchange reports one `Status` and then `Completed`.
