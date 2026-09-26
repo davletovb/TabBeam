@@ -324,8 +324,7 @@ fn parse_conversation_payload(payload: &[u8]) -> Result<Method<'_>, FailureKind>
             conversation_id = read_nonempty_string(reader)?;
             invalid |= conversation_id.is_none();
         } else if key.equals_ascii("context") {
-            context = read_object(reader)?
-                .and_then(|value| parse_browser_context(value).ok());
+            context = read_object(reader)?.and_then(|value| parse_browser_context(value).ok());
             invalid |= context.is_none();
         } else {
             reader.skip_value().map_err(payload_error)?;
