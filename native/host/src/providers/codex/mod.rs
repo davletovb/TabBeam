@@ -653,13 +653,13 @@ impl Turn {
                 "features.apps=false",
                 "features.plugins=false",
                 "features.hooks=false",
+                "features.multi_agent=false",
                 "features.multi_agent_v2=false",
                 "features.web_search_request=false",
                 "features.web_search_cached=false",
                 "features.standalone_web_search=false",
                 "web_search=\"disabled\"",
                 "orchestrator.mcp.enabled=false",
-                "agents.enabled=false",
             ] {
                 args.extend(["-c".into(), setting.into()]);
             }
