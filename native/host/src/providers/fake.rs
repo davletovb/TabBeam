@@ -38,6 +38,10 @@ impl Provider for Fake {
         ID
     }
 
+    fn capabilities(&self) -> Capabilities {
+        STATUS.capabilities
+    }
+
     fn timeouts(&self) -> Timeouts {
         Timeouts {
             start: Duration::from_secs(5),
