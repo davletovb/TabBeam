@@ -133,14 +133,29 @@ try {
   fs.rmSync(noProviders, { recursive: true, force: true });
 }
 
-if (proc.status !== 0 || proc.signal !== null) {
-  const outcome = proc.signal !== null ? `signal ${proc.signal}` : `status ${proc.status}`;
-  throw new Error(`host exited with ${outcome}: ${stderrForFailure(proc.stderr)}`);
+if (proc.error && ["ENOENT", "EACCES"].includes(proc.error.code)) {
+  throw new Error(
+    `failed to spawn host (${proc.error.code}): ${proc.error.message}`,
+  );
+}
+if (proc.signal !== null) {
+  throw new Error(
+    `host exited by signal ${proc.signal}: ${stderrForFailure(proc.stderr ?? Buffer.alloc(0))}`,
+  );
+}
+if (typeof proc.status === "number" && proc.status !== 0) {
+  throw new Error(
+    `host exited with status ${proc.status}: ${stderrForFailure(proc.stderr ?? Buffer.alloc(0))}`,
+  );
 }
 if (proc.error) {
   throw new Error(
-    `failed to run host${proc.error.code ? ` (${proc.error.code})` : ""}: ${proc.error.message}`,
+    `host I/O failed${proc.error.code ? ` (${proc.error.code})` : ""}: ${proc.error.message}; ` +
+      `stderr: ${stderrForFailure(proc.stderr ?? Buffer.alloc(0))}`,
   );
+}
+if (proc.status !== 0) {
+  throw new Error(`host ended without an exit status: ${stderrForFailure(proc.stderr ?? Buffer.alloc(0))}`);
 }
 
 const diagnostics = validateDiagnostics(proc.stderr, driven.length);
