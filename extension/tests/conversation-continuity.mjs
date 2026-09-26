@@ -265,7 +265,7 @@ await settle();
 const retriedRecord = await store.getPrivate(id);
 assert.equal(retriedRecord.messages.length, failedLength);
 assert.equal(
-  retriedRecord.messages.filter((message) => message.role === "user" && message.text === "Retry this turn").length,
+  retriedRecord.messages.filter((/** @type {any} */ message) => message.role === "user" && message.text === "Retry this turn").length,
   1
 );
 assert.equal(retriedRecord.messages.at(-1).text, "Retried answer");
