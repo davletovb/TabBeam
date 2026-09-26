@@ -295,10 +295,10 @@ With nightly Rust and [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz) (`ca
 
 ```bash
 cd native
-python3 fuzz/create_corpus.py fuzz/corpus/frame_reader
-python3 fuzz/create_protocol_corpus.py fuzz/corpus/protocol --fixtures ../docs/protocol/fixtures/v1-golden.json
-cargo +nightly fuzz run frame_reader fuzz/corpus/frame_reader -- -runs=1000 -max_len="$(python3 fuzz/max_len.py frame_reader)"
-cargo +nightly fuzz run protocol fuzz/corpus/protocol -- -runs=2000 -max_len="$(python3 fuzz/max_len.py protocol)"
+node fuzz/fuzz-support.mjs frame-corpus fuzz/corpus/frame_reader
+node fuzz/fuzz-support.mjs protocol-corpus fuzz/corpus/protocol
+cargo +nightly fuzz run frame_reader fuzz/corpus/frame_reader -- -runs=1000 -max_len="$(node fuzz/fuzz-support.mjs max-len frame_reader)"
+cargo +nightly fuzz run protocol fuzz/corpus/protocol -- -runs=2000 -max_len="$(node fuzz/fuzz-support.mjs max-len protocol)"
 ```
 
 cargo-fuzz builds the targets with AddressSanitizer. `frame_reader` reads frames from memory until the first non-frame result. `protocol` runs each input through the whole host as one request frame and fails if any emitted frame is not a JSON object.
