@@ -1164,7 +1164,11 @@ mod tests {
         }
 
         fn send(&self, request: SendRequest) -> Box<dyn Exchange> {
-            let context = if request.context.is_some() { "+context" } else { "" };
+            let context = if request.context.is_some() {
+                "+context"
+            } else {
+                ""
+            };
             self.calls
                 .borrow_mut()
                 .push(format!("send:{}{context}", request.text));
