@@ -270,6 +270,34 @@ assert.equal(
 );
 assert.equal(retriedRecord.messages.at(-1).text, "Retried answer");
 
+// Retry state belongs to one conversation only. Switching threads clears the
+// old failed question so it cannot be posted into the newly selected thread.
+retryView.ask("Do not cross threads");
+await settle();
+const crossThreadIndex = native.length - 1;
+native[crossThreadIndex].owner.onEvent({
+  version: 1, type: "event",
+  request_id: native[crossThreadIndex].request.request_id,
+  event: "response.failed",
+  payload: { error: {
+    code: "PROVIDER_FAILED", reason: "PROCESS_EXITED",
+    message: "Provider stopped.", retryable: true
+  } }
+});
+await settle();
+assert.equal(retryView.elements.retry.hidden, false);
+const other = await store.create({
+  providerId: "codex",
+  providerSessionId: "other_session",
+  text: "Other thread"
+});
+assert.equal(await retryView.view.loadConversation(other.id), true);
+assert.equal(retryView.elements.retry.hidden, true);
+const beforeStaleRetry = native.length;
+retryView.elements.retry.fire("click");
+await settle();
+assert.equal(native.length, beforeStaleRetry);
+
 // Eviction between viewing and asking must preserve the actionable NOT_FOUND
 // failure instead of replacing it with a failed history reload.
 for (let index = 0; index < 32; index += 1) {
