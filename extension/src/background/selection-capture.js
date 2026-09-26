@@ -1,4 +1,10 @@
-import { MAX_CONTEXT_URL_BYTES, MAX_PAGE_BYTES, MAX_SELECTION_BYTES, boundedUtf8Text, utf8ByteLength } from "../shared/limits.js";
+import {
+  MAX_CONTEXT_URL_BYTES,
+  MAX_PAGE_BYTES,
+  MAX_SELECTION_BYTES,
+  boundedUtf8Text,
+  utf8ByteLength
+} from "../shared/limits.js";
 
 export const CONTEXT_CAPTURE_MESSAGE = "pervue.context.capture";
 const CONTENT_MESSAGES = Object.freeze({
