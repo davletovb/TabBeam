@@ -1,5 +1,6 @@
 //! Test-only fake provider. See README.md for the mode contract.
 
+mod claude;
 mod codex;
 
 use std::ffi::{OsStr, OsString};
@@ -79,6 +80,9 @@ fn main() -> ExitCode {
     let arguments: Vec<OsString> = args.collect();
     if codex::is_codex(&program) {
         return codex::main(arguments);
+    }
+    if claude::is_claude(&program) {
+        return claude::main(arguments);
     }
 
     let mode = match arguments.as_slice() {
