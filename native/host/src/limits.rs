@@ -16,6 +16,13 @@ pub const MAX_REQUEST_ID_LENGTH: usize = 128;
 pub const MAX_HISTORY_MESSAGES: usize = 32;
 pub const MAX_HISTORY_BYTES: usize = 128 * 1024;
 
+/// Browser-context limits mirrored from the extension's explicit capture
+/// policy. The host enforces them again because browser messages are untrusted.
+pub const MAX_SELECTION_BYTES: usize = 16 * 1024;
+pub const MAX_PAGE_BYTES: usize = 64 * 1024;
+pub const MAX_CONTEXT_TITLE_BYTES: usize = 1024;
+pub const MAX_CONTEXT_URL_BYTES: usize = 2048;
+
 #[cfg(test)]
 mod tests {
     use super::*;
