@@ -234,6 +234,8 @@ class FakeElement {
     assert.ok(css.includes(':root[data-theme="light"]'));
     assert.ok(css.includes(':root[data-theme="dark"]'));
     assert.ok(css.includes(":focus-visible"));
+  }
+  for (const css of [popupCss, fullpageCss]) {
     assert.ok(css.includes("prefers-reduced-motion"));
   }
 }
