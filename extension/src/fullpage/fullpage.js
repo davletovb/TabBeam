@@ -35,10 +35,7 @@ const providerSelector = bindProviderSelector(
   {
     onChange({ providerId, status, providerChanged }) {
       if (providerChanged) {
-        providerState.setProvider(
-          providerId,
-          status ? { provider_id: providerId, status } : undefined
-        );
+        providerState.setProvider(providerId);
       }
     }
   }
