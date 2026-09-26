@@ -1,4 +1,10 @@
-import { MAX_CONTEXT_TITLE_BYTES, MAX_CONTEXT_URL_BYTES, MAX_PAGE_BYTES, MAX_SELECTION_BYTES, utf8ByteLength } from "../shared/limits.js";
+import {
+  MAX_CONTEXT_TITLE_BYTES,
+  MAX_CONTEXT_URL_BYTES,
+  MAX_PAGE_BYTES,
+  MAX_SELECTION_BYTES,
+  utf8ByteLength
+} from "../shared/limits.js";
 
 /** @typedef {import("../shared/provider-status.js").ErrorBody} ErrorBody */
 
