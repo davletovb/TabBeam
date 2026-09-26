@@ -238,12 +238,16 @@ fn page_context_reaches_codex_as_untrusted_reference_data() {
         .expect("Codex exec ran");
     for setting in [
         "features.shell_tool=false",
+        "features.view_image=false",
         "features.apps=false",
-        "features.multi_agent=false",
+        "features.plugins=false",
         "features.hooks=false",
-        "features.remote_plugin=false",
-        "tools.web_search=false",
-        "tools.view_image=false",
+        "features.multi_agent_v2=false",
+        "features.web_search_request=false",
+        "features.web_search_cached=false",
+        "features.standalone_web_search=false",
+        "web_search=\"disabled\"",
+        "orchestrator.mcp.enabled=false",
         "agents.enabled=false",
     ] {
         assert!(command.contains(&format!("-c {setting}")), "{command}");
@@ -287,7 +291,47 @@ fn context_with_history_is_framed_before_one_current_question() {
 }
 
 #[test]
-fn context_fails_closed_when_user_codex_tools_are_configured() {
+fn inactive_plugin_artifacts_do_not_block_browser_context() {
+    let codex = FakeCodex::install("answers", "signed-in");
+    let home = codex.dir.join("ordinary-codex-home");
+    std::fs::create_dir_all(home.join("plugins/cache")).unwrap();
+    std::fs::create_dir_all(home.join("plugins/.remote-plugin-install-staging")).unwrap();
+    std::fs::create_dir_all(home.join("hooks")).unwrap();
+    std::fs::write(home.join("hooks/hooks.json"), "{}").unwrap();
+    std::fs::write(
+        home.join("config.toml"),
+        "[plugins.\"demo@openai-curated\"]\nenabled = true\n",
+    )
+    .unwrap();
+
+    let adapter = codex.adapter().with_environment([
+        (OsString::from("CODEX_HOME"), home.into_os_string()),
+        (
+            OsString::from("PATH"),
+            std::env::var_os("PATH").unwrap_or_default(),
+        ),
+    ]);
+    let updates = run_to_end(
+        adapter
+            .send(SendRequest {
+                context: Some(browser_context("selected text")),
+                ..ask("Explain")
+            })
+            .as_mut(),
+    );
+
+    assert_eq!(updates.last(), Some(&Update::Completed));
+    let invocation = codex
+        .invocations()
+        .into_iter()
+        .find(|line| line.starts_with("exec "))
+        .expect("Codex exec ran");
+    assert!(invocation.contains("-c features.plugins=false"));
+    assert!(invocation.contains("-c features.hooks=false"));
+}
+
+#[test]
+fn context_fails_closed_when_user_mcp_servers_are_configured() {
     let codex = FakeCodex::install("answers", "signed-in");
     let home = codex.dir.join("unsafe-codex-home");
     std::fs::create_dir_all(&home).unwrap();
