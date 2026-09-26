@@ -3,7 +3,9 @@ import { bindContextControls } from "./context-controls.js";
 import { preloadMenuContext } from "./menu-preload.js";
 import { bindProviderState } from "./provider-state.js";
 import { bindSuggestions } from "./suggestions.js";
+import { renderMarkdown } from "../shared/markdown.js";
 import { bindRecentConversations } from "../shared/recent-conversations.js";
+import { createStreamReveal } from "../shared/stream-reveal.js";
 import { bindThemeSelect } from "../shared/theme.js";
 import { bindThemeToggle } from "../shared/theme-toggle.js";
 import { bindThreadView } from "../shared/thread-view.js";
@@ -63,6 +65,11 @@ const view = bindAskForm(
     onConversationId(id) { fullView.disabled = !id; },
     onSaved() { void recentIndex.refresh(); },
     onRequestStarted() { interacted = true; },
+    renderMessage: renderMarkdown,
+    renderAnswer: createStreamReveal({
+      render: (element, text) => renderMarkdown(element, text, { interactive: false }),
+      animate: () => !window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    }),
     storageChanges: chrome.storage.onChanged
   }
 );

@@ -343,7 +343,7 @@ button {
   animation: message-in var(--normal) var(--ease) both;
 }
 
-.message > p {
+.message-body {
   white-space: pre-wrap;
 }
 
@@ -362,7 +362,7 @@ button {
   white-space: nowrap;
 }
 
-.message-user > p {
+.message-user > .message-body {
   padding: 9px 14px;
   border-radius: 18px 18px 6px 18px;
   background: var(--user-bubble);
@@ -398,11 +398,11 @@ button {
     var(--brand-gradient);
 }
 
-.message-assistant > p {
+.message-assistant > .message-body {
   color: var(--text);
 }
 
-.message[data-state="failed"] > p {
+.message[data-state="failed"] > .message-body {
   padding: 10px 12px;
   border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
   border-radius: var(--radius-md);
@@ -410,7 +410,7 @@ button {
   color: var(--danger);
 }
 
-.message-user[data-state="pending"] > p {
+.message-user[data-state="pending"] > .message-body {
   opacity: 0.92;
 }
 
@@ -489,7 +489,9 @@ button {
   white-space: nowrap;
 }
 
-.answer[aria-busy="true"]::after {
+.answer[aria-busy="true"] > :is(p, h3, h4, h5, h6):last-child::after,
+.answer[aria-busy="true"] > :is(ul, ol):last-child > li:last-child::after,
+.answer[aria-busy="true"]:not(.markdown)::after {
   content: "";
   display: inline-block;
   width: 7px;
@@ -500,6 +502,183 @@ button {
   vertical-align: -0.15em;
   animation: caret 1s steps(1) infinite;
 }
+
+/* ---------- Markdown ---------- */
+
+.markdown {
+  white-space: normal;
+}
+
+.markdown > :first-child { margin-top: 0; }
+.markdown > :last-child { margin-bottom: 0; }
+
+.markdown p {
+  margin: 0 0 0.7em;
+}
+
+.markdown :is(h3, h4, h5, h6) {
+  margin: 1.15em 0 0.45em;
+  color: var(--text);
+  font-weight: 680;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+}
+
+.markdown h3 { font-size: 1.18em; }
+.markdown h4 { font-size: 1.07em; }
+.markdown :is(h5, h6) { font-size: 1em; }
+.markdown h6 { color: var(--text-2); }
+
+.markdown strong { font-weight: 680; }
+.markdown del { color: var(--text-3); }
+
+.markdown a {
+  color: var(--accent-text);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent-text) 40%, transparent);
+  text-decoration-thickness: 1px;
+  transition: text-decoration-color var(--fast) var(--ease);
+}
+
+.markdown a:hover { text-decoration-color: currentColor; }
+
+/* A link in an answer still typing out: it becomes a real link once done. */
+.markdown span.link {
+  color: var(--accent-text);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent-text) 40%, transparent);
+  text-decoration-thickness: 1px;
+}
+
+/* An answer too costly to format shows as it was written. */
+.markdown .markdown-plain {
+  white-space: pre-wrap;
+}
+
+.markdown :is(ul, ol) {
+  margin: 0 0 0.7em;
+  padding-left: 1.35em;
+}
+
+.markdown li { margin: 0.25em 0; }
+.markdown li > :is(ul, ol, p, blockquote, .code-block, .table-wrap) { margin: 0.35em 0 0; }
+.markdown li::marker { color: var(--text-3); }
+.markdown ol > li::marker { font-variant-numeric: tabular-nums; }
+
+.markdown li.task {
+  list-style: none;
+  margin-left: -1.35em;
+}
+
+.markdown li.task > input {
+  width: 14px;
+  height: 14px;
+  margin: 0 0.5em 0 0;
+  vertical-align: -2px;
+  accent-color: var(--accent);
+}
+
+.markdown blockquote {
+  margin: 0 0 0.7em;
+  padding: 2px 0 2px 12px;
+  border-left: 3px solid var(--border-strong);
+  color: var(--text-2);
+}
+
+.markdown hr {
+  margin: 1.1em 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.markdown :not(pre) > code {
+  font-size: 0.86em;
+  overflow-wrap: anywhere;
+}
+
+.code-block {
+  margin: 0 0 0.8em;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+.code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 4px 3px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+.code-copy {
+  height: 24px;
+  font-family: var(--font-sans);
+}
+
+.code-copy:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.code-copy:disabled:hover {
+  background: transparent;
+  color: var(--text-3);
+}
+
+.code-block pre {
+  margin: 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  white-space: pre;
+  tab-size: 4;
+}
+
+.code-block pre code {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: inherit;
+}
+
+.table-wrap {
+  margin: 0 0 0.8em;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92em;
+  font-variant-numeric: tabular-nums;
+}
+
+.markdown :is(th, td) {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown th {
+  background: var(--surface-2);
+  font-weight: 640;
+  white-space: nowrap;
+}
+
+.markdown tbody tr:last-child td { border-bottom: 0; }
+.markdown [data-align="center"] { text-align: center; }
+.markdown [data-align="right"] { text-align: right; }
 
 /* Waiting for the first words. */
 .typing {

@@ -1,7 +1,9 @@
 import { bindAskForm } from "../popup/ask-form.js";
 import { bindDrawer } from "./drawer.js";
 import { bindProviderState } from "../popup/provider-state.js";
+import { renderMarkdown } from "../shared/markdown.js";
 import { bindRecentConversations } from "../shared/recent-conversations.js";
+import { createStreamReveal } from "../shared/stream-reveal.js";
 import { bindThemeSelect } from "../shared/theme.js";
 import { bindThemeToggle } from "../shared/theme-toggle.js";
 import { bindThreadView } from "../shared/thread-view.js";
@@ -47,6 +49,11 @@ const view = bindAskForm({
   },
   onSaved() { void recentIndex.refresh(); },
   onRequestStarted() { interacted = true; },
+  renderMessage: renderMarkdown,
+  renderAnswer: createStreamReveal({
+    render: (element, text) => renderMarkdown(element, text, { interactive: false }),
+    animate: () => !window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  }),
   storageChanges: chrome.storage.onChanged
 });
 const recentIndex = bindRecentConversations(recent, chrome.runtime, view);

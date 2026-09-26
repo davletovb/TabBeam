@@ -198,7 +198,7 @@ body {
   max-width: 78%;
 }
 
-.message-user > p {
+.message-user > .message-body {
   padding: 10px 16px;
   border-radius: 20px 20px 6px 20px;
 }
