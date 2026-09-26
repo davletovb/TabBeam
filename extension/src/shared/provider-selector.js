@@ -20,6 +20,7 @@ export function bindProviderSelector(select, runtime, storage, options = {}) {
   let preferred = DEFAULT_PROVIDER_ID;
   let locked = false;
   let touched = false;
+  let preferenceTouched = false;
 
   select.replaceChildren(...USER_PROVIDERS.map(({ id, label }) => {
     const option = select.ownerDocument.createElement("option");
@@ -61,6 +62,7 @@ export function bindProviderSelector(select, runtime, storage, options = {}) {
     current = id;
     select.value = id;
     if (persist && !locked) {
+      preferenceTouched = true;
       preferred = id;
       void storage.set({ [PROVIDER_STORAGE_KEY]: id }).catch(() => {});
     }
@@ -77,7 +79,7 @@ export function bindProviderSelector(select, runtime, storage, options = {}) {
   const ready = (async () => {
     try {
       const saved = await storage.get(PROVIDER_STORAGE_KEY);
-      if (!touched && typeof saved?.[PROVIDER_STORAGE_KEY] === "string") {
+      if (!preferenceTouched && typeof saved?.[PROVIDER_STORAGE_KEY] === "string") {
         preferred = saved[PROVIDER_STORAGE_KEY];
       }
     } catch {
