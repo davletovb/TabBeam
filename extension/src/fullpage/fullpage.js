@@ -1,8 +1,9 @@
 import { bindAskForm } from "../popup/ask-form.js";
+import { CONVERSATIONS_KEY } from "../background/conversation-store.js";
+import { bindConversationList } from "../shared/conversation-list.js";
 import { bindDrawer } from "./drawer.js";
 import { bindProviderState } from "../popup/provider-state.js";
 import { renderMarkdown } from "../shared/markdown.js";
-import { bindRecentConversations } from "../shared/recent-conversations.js";
 import { createStreamReveal } from "../shared/stream-reveal.js";
 import { bindThemeSelect } from "../shared/theme.js";
 import { bindThemeToggle } from "../shared/theme-toggle.js";
@@ -15,13 +16,10 @@ function requireElement(selector, type) {
   return node;
 }
 
-const SVG_NS = "http://www.w3.org/2000/svg";
 const app = requireElement(".app", HTMLElement);
-const recent = requireElement("#recent-conversations", HTMLSelectElement);
-const list = requireElement("#conversation-list", HTMLElement);
-const listEmpty = requireElement("#conversation-list-empty", HTMLElement);
 const title = requireElement("#conversation-title", HTMLElement);
 const input = requireElement("#ask-input", HTMLTextAreaElement);
+const historyStatus = requireElement("#history-status", HTMLElement);
 let interacted = false;
 const providerState = bindProviderState(
   requireElement("#provider-state", HTMLElement),
@@ -45,9 +43,10 @@ const view = bindAskForm({
     if (id) url.searchParams.set("conversation", id);
     else url.searchParams.delete("conversation");
     window.history.replaceState(null, "", url);
-    renderList();
+    conversations.render();
+    showTitle();
   },
-  onSaved() { void recentIndex.refresh(); },
+  onSaved() { void conversations.refresh(); },
   onRequestStarted() { interacted = true; },
   renderMessage: renderMarkdown,
   renderAnswer: createStreamReveal({
@@ -56,12 +55,57 @@ const view = bindAskForm({
   }),
   storageChanges: chrome.storage.onChanged
 });
-const recentIndex = bindRecentConversations(recent, chrome.runtime, view);
 const thread = bindThreadView({
   scroller: requireElement("#thread-scroll", HTMLElement),
   thread: requireElement("#thread", HTMLElement),
   input,
   maxInputHeight: 240
+});
+
+/** @param {string} message */
+function note(message) {
+  historyStatus.textContent = message;
+}
+
+const conversations = bindConversationList(
+  {
+    list: requireElement("#conversation-list", HTMLElement),
+    empty: requireElement("#conversation-list-empty", HTMLElement)
+  },
+  chrome.runtime,
+  view,
+  {
+    deletable: true,
+    onOpen() {
+      interacted = true;
+      note("");
+      thread.reveal();
+      drawer.close(input);
+    },
+    onBlocked: () => note("Stop or finish the current answer to switch conversations."),
+    onDeleted(_id, wasActive) {
+      note("");
+      if (wasActive) view.newConversation();
+    },
+    onError: note,
+    onChange: showTitle
+  }
+);
+
+function showTitle() {
+  const active = view.getConversationId();
+  const current = conversations.items().find((item) => item.id === active);
+  title.textContent = current?.title ?? "New conversation";
+  document.title = current ? `${current.title} — Pervue` : "Pervue — Full view";
+}
+
+// Another view saved or deleted a conversation: keep the list current.
+chrome.storage.onChanged.addListener((/** @type {Record<string, any>} */ changes, /** @type {string} */ area) => {
+  if (area === "local" && changes[CONVERSATIONS_KEY]) void conversations.refresh();
+});
+
+requireElement("#history-search", HTMLInputElement).addEventListener("input", (event) => {
+  if (event.target instanceof HTMLInputElement) conversations.setQuery(event.target.value);
 });
 
 const themeSelect = requireElement("#theme-select", HTMLSelectElement);
@@ -72,53 +116,6 @@ void bindThemeSelect(
   chrome.storage.onChanged
 );
 bindThemeToggle(requireElement("#theme-toggle", HTMLElement), themeSelect, document.documentElement);
-
-/**
- * The sidebar list is a view of the recent-conversations select, which
- * ../shared/recent-conversations.js keeps: choosing an item chooses its
- * option, so both share one loading path.
- */
-function renderList() {
-  const active = view.getConversationId();
-  const items = Array.from(recent.options).filter((option) => option.value !== "");
-  list.replaceChildren(...items.map((option) => {
-    const item = document.createElement("li");
-    const button = document.createElement("button");
-    button.type = "button";
-    button.title = option.text;
-    if (option.value === active) button.setAttribute("aria-current", "true");
-    const label = document.createElement("span");
-    // Titles come from what the person asked: text only, never markup.
-    label.textContent = option.text;
-    button.append(icon("chat"), label);
-    button.addEventListener("click", () => {
-      if (option.value !== view.getConversationId()) {
-        recent.value = option.value;
-        recent.dispatchEvent(new Event("change"));
-      }
-      drawer.close(input);
-    });
-    item.append(button);
-    return item;
-  }));
-  listEmpty.hidden = items.length > 0;
-  const current = items.find((option) => option.value === active);
-  title.textContent = current?.text ?? "New conversation";
-  document.title = current ? `${current.text} — Pervue` : "Pervue — Full view";
-}
-
-/** @param {string} name */
-function icon(name) {
-  const svg = document.createElementNS(SVG_NS, "svg");
-  svg.setAttribute("class", "icon icon-sm");
-  svg.setAttribute("aria-hidden", "true");
-  const use = document.createElementNS(SVG_NS, "use");
-  use.setAttribute("href", `../shared/icons.svg#${name}`);
-  svg.append(use);
-  return svg;
-}
-
-new MutationObserver(renderList).observe(recent, { childList: true });
 
 const drawer = bindDrawer({
   app,
@@ -144,24 +141,17 @@ document.addEventListener("keydown", (event) => {
 requireElement("#new-conversation", HTMLButtonElement).addEventListener("click", () => {
   if (view.newConversation()) {
     interacted = true;
-    recent.value = "";
-    renderList();
     drawer.close(input);
   }
 });
-recent.addEventListener("change", () => {
-  interacted = true;
-  thread.reveal();
-});
 
+// The full view opens the conversation it was asked for (from the popup, or
+// its own URL on reload), and otherwise starts a new one.
 void (async () => {
   const requested = new URLSearchParams(window.location.search).get("conversation");
-  const items = await recentIndex.refresh();
-  const id = requested ?? items[0]?.id;
-  if (id && !interacted) {
-    await view.loadConversation(id);
-    recent.value = view.getConversationId() ?? "";
-    renderList();
+  await conversations.refresh();
+  if (requested && !interacted) {
+    await view.loadConversation(requested);
     thread.reveal();
   }
 })();

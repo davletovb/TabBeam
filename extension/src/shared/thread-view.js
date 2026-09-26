@@ -3,9 +3,18 @@
  * its text, and the thread follows a streaming answer while the reader is at
  * the bottom, without pulling them back when they have scrolled up to read.
  *
- * @param {{scroller: HTMLElement, thread: HTMLElement, input: HTMLTextAreaElement, maxInputHeight?: number}} elements
+ * `follows` says whether there is a conversation to follow at all; an empty
+ * thread (its start screen) stays scrolled to the top.
+ *
+ * @param {{
+ *   scroller: HTMLElement,
+ *   thread: HTMLElement,
+ *   input: HTMLTextAreaElement,
+ *   maxInputHeight?: number,
+ *   follows?: () => boolean
+ * }} elements
  */
-export function bindThreadView({ scroller, thread, input, maxInputHeight = 200 }) {
+export function bindThreadView({ scroller, thread, input, maxInputHeight = 200, follows = () => true }) {
   let pinned = true;
 
   function fitInput() {
@@ -16,7 +25,7 @@ export function bindThreadView({ scroller, thread, input, maxInputHeight = 200 }
   }
 
   function toBottom() {
-    scroller.scrollTop = scroller.scrollHeight;
+    scroller.scrollTop = follows() ? scroller.scrollHeight : 0;
   }
 
   scroller.addEventListener("scroll", () => {

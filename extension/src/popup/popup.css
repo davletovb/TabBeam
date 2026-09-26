@@ -33,6 +33,7 @@ body {
   column-gap: 10px;
   align-items: center;
   padding: 12px 10px 10px 14px;
+  border-bottom: 1px solid var(--border);
 }
 
 .popup-header .brand-mark { grid-area: mark; }
@@ -225,19 +226,36 @@ body {
 
 /* ---------- Conversation picker ---------- */
 
-.conversation-nav {
-  padding: 0 14px 10px;
-  border-bottom: 1px solid var(--border);
+/* ---------- History ---------- */
+
+.history-view {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  padding: 10px 12px 12px;
+  animation: pop-in var(--normal) var(--ease);
 }
 
-.conversation-nav select {
-  min-height: 32px;
-  background: var(--surface-2);
-  border-color: transparent;
+.history-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
-.conversation-nav select:hover {
-  border-color: var(--border);
+.history-head h2 {
+  font-size: 15px;
+  font-weight: 680;
+}
+
+.history-view .conversation-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0 -4px;
+  padding: 0 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 /* ---------- Thread ---------- */
@@ -261,10 +279,10 @@ body {
 }
 
 .empty-mark {
-  width: 44px;
-  height: 44px;
-  margin-bottom: 12px;
-  border-radius: 14px;
+  width: 40px;
+  height: 40px;
+  margin-bottom: 10px;
+  border-radius: 13px;
 }
 
 .empty-mark .icon {
@@ -286,15 +304,17 @@ body {
 
 .suggestions {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   width: 100%;
-  margin-top: 16px;
+  margin-top: 14px;
 }
 
 .suggestion {
   display: flex;
-  align-items: center;
-  gap: 12px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
   padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -330,7 +350,29 @@ body {
 
 .suggestion small {
   color: var(--text-3);
-  font-size: 12px;
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.recent {
+  width: 100%;
+  margin-top: 14px;
+  text-align: left;
+}
+
+.recent-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0 4px 4px;
+}
+
+.recent-head h2 {
+  color: var(--text-3);
+  font-size: 11.5px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 /* ---------- Dock: request actions, composer, status ---------- */
@@ -448,4 +490,15 @@ body {
 
 .dock > .status:not([data-state="failed"]) {
   padding: 0 4px;
+}
+
+/* The idle hint and "Answer complete." are for screen readers: the thread
+   already shows both, and the answer needs the room. */
+.dock > .status:is([data-state="idle"], [data-state="done"]) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
 }

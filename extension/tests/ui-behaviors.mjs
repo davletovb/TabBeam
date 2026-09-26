@@ -148,6 +148,22 @@ class Element {
   assert.equal(scroller.scrollTop, 1500);
 }
 
+// An empty thread (the start screen) stays at the top instead of following.
+{
+  const scroller = Object.assign(new Element(), { scrollTop: 0, scrollHeight: 900, clientHeight: 400 });
+  const thread = new Element();
+  const input = Object.assign(new Element(), { scrollHeight: 40 });
+  let hasConversation = false;
+  const view = bindThreadView(/** @type {any} */ ({ scroller, thread, input, follows: () => hasConversation }));
+  mutate(thread);
+  assert.equal(scroller.scrollTop, 0);
+  view.reveal();
+  assert.equal(scroller.scrollTop, 0);
+  hasConversation = true;
+  mutate(thread);
+  assert.equal(scroller.scrollTop, 900, "once there is a conversation, it follows");
+}
+
 // ---------- Full-view drawer ----------
 {
   const app = new Element();

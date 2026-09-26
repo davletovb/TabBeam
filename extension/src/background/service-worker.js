@@ -3,6 +3,7 @@ import { PROVIDER_STATUS_MESSAGE } from "../shared/provider-status.js";
 import { DIAGNOSTICS_MESSAGE } from "../shared/diagnostics.js";
 import { isExtensionPage } from "./ask-bridge.js";
 import { serveConversationAskPort } from "./conversation-bridge.js";
+import { answerConversationMessage, isConversationMessage } from "./conversation-messages.js";
 import { createConversationStore } from "./conversation-store.js";
 import { checkProviderStatus } from "./status-bridge.js";
 import { createDiagnosticsState } from "./diagnostics.js";
@@ -102,17 +103,12 @@ chrome.runtime.onMessage.addListener(
       entryActions.consume(message, sender).then(sendResponse);
       return true;
     }
-    if (message?.type === "pervue.conversations.list" ||
-        message?.type === "pervue.conversations.get") {
+    if (isConversationMessage(message)) {
       if (!isExtensionPage(sender, chrome.runtime.getURL(""))) {
         sendResponse({ ok: false, error: "Access denied." });
         return;
       }
-      const result = message.type === "pervue.conversations.list"
-        ? conversations.list()
-        : conversations.get(message.conversation_id);
-      result.then((value) => sendResponse({ ok: true, value }),
-        () => sendResponse({ ok: false, error: "Conversation history unavailable." }));
+      answerConversationMessage(message, conversations, inFlightConversations).then(sendResponse);
       return true;
     }
     return handleContextCapture(

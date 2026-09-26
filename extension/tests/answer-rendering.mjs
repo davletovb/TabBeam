@@ -447,8 +447,11 @@ const fakeDocument = {
   assert.equal(elements.answer.children.length, 0, "no raw text is appended alongside the renderer");
 
   port.emitMessage({ event: "response.completed", payload: {} });
-  // The conversation is saved as the answer completes.
-  for (const listener of storageListeners) listener({ [`pervue.conversation.${conversation.id}`]: {} }, "local");
+  // The conversation is saved as the answer completes (Chrome reports a
+  // write with its newValue; only a removal has none).
+  for (const listener of storageListeners) {
+    listener({ [`pervue.conversation.${conversation.id}`]: { newValue: {} } }, "local");
+  }
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(loads, 0, "the saved copy waits for the answer to finish typing out");
   assert.equal(elements.answer.hidden, false);

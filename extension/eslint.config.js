@@ -20,6 +20,7 @@ export default [
         HTMLFormElement: "readonly",
         HTMLTextAreaElement: "readonly",
         HTMLSelectElement: "readonly",
+        HTMLInputElement: "readonly",
         HTMLDetailsElement: "readonly",
         Event: "readonly",
         MutationObserver: "readonly",

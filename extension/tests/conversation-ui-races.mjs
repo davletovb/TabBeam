@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { bindAskForm } from "../src/popup/ask-form.js";
 import { bindContextControls } from "../src/popup/context-controls.js";
-import { bindRecentConversations } from "../src/shared/recent-conversations.js";
 
 class Element {
   constructor() {
@@ -30,17 +29,7 @@ class Element {
   requestSubmit() { return this.fire("submit"); }
 }
 
-// A picker that cannot load B while A is answering must point back at A.
-const select = new Element();
 const currentId = "conv_00000000-0000-4000-8000-000000000001";
-bindRecentConversations(/** @type {any} */ (select), /** @type {any} */ ({}), {
-  getConversationId: () => currentId,
-  async loadConversation() { return false; }
-});
-select.value = "conv_00000000-0000-4000-8000-000000000002";
-select.fire("change");
-await new Promise((resolve) => setTimeout(resolve, 0));
-assert.equal(select.value, currentId);
 
 // An ask while history is loading must wait instead of going to the old ID.
 const elements = {

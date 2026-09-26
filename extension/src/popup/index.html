@@ -19,6 +19,9 @@
         </div>
 
         <div class="header-actions">
+          <button id="open-history" class="icon-button" type="button" aria-label="History" title="History" aria-expanded="false" aria-controls="history-view">
+            <svg class="icon" aria-hidden="true"><use href="../shared/icons.svg#history"/></svg>
+          </button>
           <button id="new-conversation" class="icon-button" type="button" aria-label="New conversation" title="New conversation">
             <svg class="icon" aria-hidden="true"><use href="../shared/icons.svg#compose"/></svg>
           </button>
@@ -71,31 +74,46 @@
         </div>
       </header>
 
-      <nav class="conversation-nav" aria-label="Conversations">
-        <label class="sr-only" for="recent-conversations">Recent conversations</label>
-        <div class="select">
-          <svg class="icon icon-sm" aria-hidden="true"><use href="../shared/icons.svg#history"/></svg>
-          <select id="recent-conversations"><option value="">No recent conversations</option></select>
-          <svg class="icon icon-sm" aria-hidden="true"><use href="../shared/icons.svg#chevron-down"/></svg>
+      <section id="history-view" class="history-view" aria-labelledby="history-title" hidden>
+        <div class="history-head">
+          <button id="close-history" class="icon-button" type="button" aria-label="Back to the conversation" title="Back">
+            <svg class="icon" aria-hidden="true"><use href="../shared/icons.svg#arrow-left"/></svg>
+          </button>
+          <h2 id="history-title">History</h2>
         </div>
-      </nav>
+        <label class="search">
+          <svg class="icon icon-sm" aria-hidden="true"><use href="../shared/icons.svg#search"/></svg>
+          <span class="sr-only">Search conversations</span>
+          <input id="history-search" type="search" placeholder="Search conversations" autocomplete="off" spellcheck="false">
+        </label>
+        <p id="history-status" class="history-status" role="status" aria-live="polite"></p>
+        <div id="history-list" class="conversation-list"></div>
+        <p id="history-empty" class="conversation-list-empty" hidden>No conversations yet.</p>
+      </section>
 
       <div id="thread-scroll" class="thread-scroll">
         <div id="thread" class="thread">
           <section class="empty-state" aria-labelledby="empty-title">
             <span class="empty-mark" aria-hidden="true"><svg class="icon"><use href="../shared/icons.svg#mark"/></svg></span>
             <h1 id="empty-title">What do you want to know?</h1>
-            <p>Ask anything. Pervue only sees a page when you share it.</p>
+            <p>Pervue only sees a page when you share it.</p>
             <div class="suggestions">
               <button class="suggestion" type="button" data-context="page" data-prompt="Summarize this page in a few key points.">
                 <svg class="icon icon-sm" aria-hidden="true"><use href="../shared/icons.svg#page"/></svg>
-                <span><strong>Summarize this page</strong><small>Key points from the current tab</small></span>
+                <span><strong>Summarize page</strong><small>Key points from this tab</small></span>
               </button>
               <button class="suggestion" type="button" data-context="selection" data-prompt="Explain this in simple terms.">
                 <svg class="icon icon-sm" aria-hidden="true"><use href="../shared/icons.svg#selection"/></svg>
-                <span><strong>Explain my selection</strong><small>Plain-language breakdown of highlighted text</small></span>
+                <span><strong>Explain selection</strong><small>What you highlighted, simply</small></span>
               </button>
             </div>
+            <section id="recent" class="recent" aria-labelledby="recent-title" hidden>
+              <div class="recent-head">
+                <h2 id="recent-title">Recent</h2>
+                <button id="recent-all" class="link-button" type="button">View all</button>
+              </div>
+              <div id="recent-list" class="conversation-list compact"></div>
+            </section>
           </section>
 
           <section id="conversation-history" class="conversation-history" aria-label="Conversation history" aria-live="polite"></section>

@@ -62,65 +62,15 @@ body {
   text-transform: uppercase;
 }
 
-.conversation-list {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  align-content: start;
-  gap: 1px;
+.conversation-nav .conversation-list {
   min-height: 0;
-  margin: 0;
-  padding: 0;
+  margin: 0 -4px;
+  padding: 0 4px;
   overflow-y: auto;
-  list-style: none;
 }
 
-.conversation-list button {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  min-height: 36px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-2);
-  font-size: 13px;
-  text-align: left;
-  transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
-}
-
-.conversation-list button > span {
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.conversation-list button .icon {
-  color: var(--text-3);
-}
-
-.conversation-list button:hover {
-  background: var(--surface-2);
-  color: var(--text);
-}
-
-.conversation-list button[aria-current="true"] {
-  background: var(--surface);
-  color: var(--text);
-  font-weight: 600;
-  box-shadow: var(--shadow-sm), 0 0 0 1px var(--border);
-}
-
-.conversation-list button[aria-current="true"] .icon {
-  color: var(--accent-text);
-}
-
-.conversation-list-empty {
-  padding: 4px 8px;
-  color: var(--text-3);
-  font-size: 12.5px;
+.conversation-nav .search {
+  margin-bottom: 4px;
 }
 
 .sidebar-foot {
