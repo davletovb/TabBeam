@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use pervue_host::diagnostics::Diagnostics;
 use pervue_host::framing;
 use pervue_host::host;
+use pervue_host::providers::claude::{Claude, Limits as ClaudeLimits};
 use pervue_host::providers::codex::{Codex, Limits};
 use pervue_host::providers::discovery::SearchPath;
 use pervue_host::providers::{Providers, Timeouts};
@@ -135,6 +136,69 @@ impl FakeCodex {
 }
 
 impl Drop for FakeCodex {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+
+/// Short Claude adapter limits for integration tests.
+pub const CLAUDE_TEST_LIMITS: ClaudeLimits = ClaudeLimits {
+    timeouts: Timeouts {
+        start: Duration::from_secs(10),
+        idle: Duration::from_secs(10),
+        stop_grace: Duration::from_millis(300),
+    },
+    probe: Duration::from_secs(5),
+};
+
+/// A directory holding a fake `claude` CLI and its scenario.
+pub struct FakeClaude {
+    pub dir: PathBuf,
+}
+
+impl FakeClaude {
+    pub fn install(print: &str, auth: &str) -> Self {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!(
+            "pervue-fake-claude-support-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create fake Claude directory");
+        let path = dir.join(Self::file_name());
+        if std::fs::hard_link(PROVIDER, &path).is_err() {
+            std::fs::copy(PROVIDER, &path).expect("install fake Claude");
+        }
+        let fake = Self { dir };
+        fake.set(print, auth);
+        fake
+    }
+
+    pub fn file_name() -> &'static str {
+        if cfg!(windows) { "claude.exe" } else { "claude" }
+    }
+
+    pub fn set(&self, print: &str, auth: &str) {
+        std::fs::write(
+            self.dir.join("claude-scenario"),
+            format!("print={print}\nauth={auth}\n"),
+        )
+        .expect("write Claude scenario");
+    }
+
+    pub fn adapter(&self) -> Claude {
+        Claude::new(SearchPath::new([self.dir.clone()]), self.dir.join("claude-work"))
+            .with_limits(CLAUDE_TEST_LIMITS)
+    }
+
+    pub fn read(&self, file: &str) -> String {
+        std::fs::read_to_string(self.dir.join(file)).unwrap_or_default()
+    }
+}
+
+impl Drop for FakeClaude {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.dir);
     }
