@@ -67,9 +67,12 @@ is a Rust core API change as well as a browser protocol change. Browser request
 data structures and provider-specific session details remain in the host.
 
 Run the library independently with `cargo test -p pervue-core` (including
-`tests/public_api.rs`). The fuzz workspace targets `frame_reader` and
-`stream_lines` directly against this crate. Workspace consumers import the
-shared modules directly from `pervue-core`; the unpublished host crate does
-not promise source compatibility for its former glob reexport paths. The host
-does retain an explicit `limits::MAX_FRAME_SIZE` binding at its browser trust
+`tests/public_api.rs`). Run the real-child process and stream integration
+tests with `cargo test -p pervue-fake-provider`; those suites import core
+directly and use the fake provider binary. The fuzz workspace targets
+`frame_reader` and `stream_lines` directly against this crate. Workspace
+consumers import the shared modules directly from `pervue-core`; the
+unpublished host crate does not promise source compatibility for its former
+glob reexport paths. The host does retain an explicit
+`limits::MAX_FRAME_SIZE` binding at its browser trust
 boundary and reexports the normalized event vocabulary it writes on the wire.
