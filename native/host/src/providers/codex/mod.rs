@@ -28,6 +28,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use super::discovery::SearchPath;
 use super::environment;
+use super::forget;
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
 use crate::conversation::provider_prompt;
 use crate::process::{Event, Exit, Process, ProcessSpec};
@@ -296,6 +297,35 @@ impl Provider for Codex {
         })
     }
 
+    fn forget(&self, conversation_id: &str) -> Box<dyn Exchange> {
+        let thread = self
+            .conversations
+            .borrow()
+            .get(conversation_id)
+            .cloned()
+            .or_else(|| {
+                self.session_dir
+                    .as_deref()
+                    .and_then(|dir| read_thread(dir, conversation_id))
+            });
+        // The mapping goes last: if Codex's files can't all be removed, a
+        // retry can still find them.
+        let removed = thread
+            .map_or(Ok(()), |thread| forget_rollouts(&self.launch, &thread))
+            .and_then(|()| {
+                self.session_dir
+                    .as_deref()
+                    .map_or(Ok(()), |dir| forget_thread(dir, conversation_id))
+            });
+        match removed {
+            Ok(()) => {
+                self.conversations.borrow_mut().remove(conversation_id);
+                Box::new(Scripted::new([Update::Completed]))
+            }
+            Err(_) => Box::new(Scripted::failed(forget::SESSION_FORGET_FAILED)),
+        }
+    }
+
     fn send(&self, request: SendRequest) -> Box<dyn Exchange> {
         let Some(executable) = self.executable() else {
             return Box::new(Scripted::failed(NOT_INSTALLED));
@@ -369,23 +399,15 @@ impl Provider for Codex {
     }
 }
 
-fn context_configuration_is_safe(launch: &Launch) -> bool {
-    let home = environment::lookup(&launch.inherited, "CODEX_HOME")
+/// Codex's own directory: `CODEX_HOME`, or `.codex` in the user's home.
+fn codex_home(launch: &Launch) -> Option<PathBuf> {
+    environment::lookup(&launch.inherited, "CODEX_HOME")
         .map(PathBuf::from)
-        .or_else(|| {
-            #[cfg(unix)]
-            {
-                environment::lookup(&launch.inherited, "HOME")
-                    .map(PathBuf::from)
-                    .map(|home| home.join(".codex"))
-            }
-            #[cfg(not(unix))]
-            {
-                environment::lookup(&launch.inherited, "USERPROFILE")
-                    .map(PathBuf::from)
-                    .map(|home| home.join(".codex"))
-            }
-        });
+        .or_else(|| environment::home_dir(&launch.inherited).map(|home| home.join(".codex")))
+}
+
+fn context_configuration_is_safe(launch: &Launch) -> bool {
+    let home = codex_home(launch);
     let Some(home) = home else {
         return true;
     };
@@ -498,6 +520,76 @@ fn read_thread(dir: &Path, id: &str) -> Option<String> {
         .read_to_string(&mut content)
         .ok()?;
     output::is_thread_id(&content).then_some(content)
+}
+
+/// Removes a conversation's thread mapping.
+fn forget_thread(dir: &Path, id: &str) -> io::Result<()> {
+    if session_name(id) {
+        forget::remove(&dir.join(id))
+    } else {
+        Ok(())
+    }
+}
+
+/// Removes Codex's saved sessions of `thread` that Codex wrote for Pervue:
+/// `sessions/YYYY/MM/DD/rollout-…-<thread>.jsonl` and
+/// `archived_sessions/rollout-…-<thread>.jsonl` files whose `session_meta`
+/// names the thread and records Pervue's workspace as where it ran. Codex's
+/// own state database is left alone.
+fn forget_rollouts(launch: &Launch, thread: &str) -> io::Result<()> {
+    let Some(home) = codex_home(launch) else {
+        return Ok(());
+    };
+    let suffix = format!("-{thread}.jsonl");
+    // Each directory with how many levels of directories may lie below it.
+    let mut pending = vec![
+        (home.join("sessions"), 3),
+        (home.join("archived_sessions"), 0),
+    ];
+    while let Some((dir, depth)) = pending.pop() {
+        let entries = match std::fs::read_dir(&dir) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            entries => entries?,
+        };
+        for entry in entries {
+            let entry = entry?;
+            let kind = entry.file_type()?;
+            let path = entry.path();
+            if kind.is_dir() {
+                if depth > 0 {
+                    pending.push((path, depth - 1));
+                }
+            } else if kind.is_file()
+                && entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.starts_with("rollout-") && name.ends_with(&suffix))
+                && rollout_written_for_pervue(&path, thread, &launch.work_dir)
+            {
+                forget::remove(&path)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn rollout_written_for_pervue(path: &Path, thread: &str, workspace: &Path) -> bool {
+    forget::head_lines(path).is_some_and(|lines| {
+        lines
+            .iter()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .find(|record| {
+                record.get("type").and_then(serde_json::Value::as_str) == Some("session_meta")
+            })
+            .and_then(|record| record.get("payload").cloned())
+            .is_some_and(|meta| {
+                meta.get("id").and_then(serde_json::Value::as_str) == Some(thread)
+                    && meta
+                        .get("cwd")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|cwd| forget::same_directory(cwd, workspace))
+            })
+    })
 }
 
 fn save_thread(dir: &Path, id: &str, thread: &str) -> io::Result<()> {
