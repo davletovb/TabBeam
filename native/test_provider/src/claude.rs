@@ -6,7 +6,7 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
@@ -100,8 +100,11 @@ fn print_mode(dir: &Path, args: &[String], behavior: &str) -> io::Result<ExitCod
     if !has_pair(args, "--output-format", "stream-json")
         || !has_pair(args, "--input-format", "stream-json")
         || !args.iter().any(|arg| arg == "--verbose")
+        || !has_pair(args, "--permission-mode", "default")
+        || !has_pair(args, "--tools", "")
+        || !has_pair(args, "--disallowedTools", "mcp__*")
     {
-        let _ = writeln!(io::stderr(), "fake claude: expected stream-json flags");
+        let _ = writeln!(io::stderr(), "fake claude: expected safe stream-json flags");
         return Ok(ExitCode::from(2));
     }
 
@@ -119,16 +122,27 @@ fn print_mode(dir: &Path, args: &[String], behavior: &str) -> io::Result<ExitCod
         .position(|arg| arg == "--resume")
         .and_then(|index| args.get(index + 1))
         .cloned();
+
+    if behavior == "resume-fails" && resumed.is_some() {
+        let _ = writeln!(io::stderr(), "fake claude: session no longer exists");
+        return Ok(ExitCode::from(1));
+    }
     if behavior == "ignores-cancel" {
         super::ignore_termination_signal()?;
     }
-    let session = resumed
+
+    let original_session = resumed
         .clone()
         .unwrap_or_else(|| format!("claude-{}", std::process::id()));
+    let result_session = if behavior == "forks-session" && resumed.is_some() {
+        format!("forked-{}", std::process::id())
+    } else {
+        original_session.clone()
+    };
     let init_session = resumed
         .as_ref()
         .map(|_| format!("invocation-{}", std::process::id()))
-        .unwrap_or_else(|| session.clone());
+        .unwrap_or_else(|| original_session.clone());
 
     let mut out = io::stdout().lock();
     emit(
@@ -146,48 +160,60 @@ fn print_mode(dir: &Path, args: &[String], behavior: &str) -> io::Result<ExitCod
         "fails-auth" => {
             emit(
                 &mut out,
-                &json!({"type":"result","subtype":"error_during_execution","is_error":true,"result":"authentication failed","session_id":session}),
+                &json!({"type":"result","subtype":"error_during_execution","is_error":true,"result":"authentication failed","session_id":result_session}),
             )?;
             return Ok(ExitCode::from(1));
         }
         "fails-rate" => {
             emit(
                 &mut out,
-                &json!({"type":"result","subtype":"error_during_execution","is_error":true,"result":"rate limit 429","session_id":session}),
+                &json!({"type":"result","subtype":"error_during_execution","is_error":true,"result":"rate limit exceeded (429 Too Many Requests)","session_id":result_session}),
             )?;
             return Ok(ExitCode::from(1));
         }
         "no-result" => return Ok(ExitCode::SUCCESS),
+        "flooding" => {
+            let give_up = Instant::now() + ENDLESS;
+            while Instant::now() < give_up {
+                emit(
+                    &mut out,
+                    &json!({"type":"future.event","detail":"ignored"}),
+                )?;
+            }
+            return Ok(ExitCode::SUCCESS);
+        }
         _ => {}
     }
 
     let answer = format!("You asked: {prompt}");
-    if behavior != "no-partial" {
+    if behavior == "two-messages" {
+        message_start(&mut out, &result_session)?;
+        text_delta(&mut out, &result_session, "First.")?;
+        message_start(&mut out, &result_session)?;
+        text_delta(&mut out, &result_session, "Second.")?;
+    } else if behavior != "no-partial" {
+        message_start(&mut out, &result_session)?;
         let pieces: Vec<&str> = if behavior == "two-deltas" {
             vec!["First.", " Second."]
         } else {
             vec!["You asked: ", prompt]
         };
         for text in pieces {
-            emit(
-                &mut out,
-                &json!({
-                    "type":"stream_event",
-                    "session_id":session,
-                    "event":{
-                        "type":"content_block_delta",
-                        "delta":{"type":"text_delta","text":text}
-                    }
-                }),
-            )?;
+            text_delta(&mut out, &result_session, text)?;
         }
     }
+
+    let result = match behavior {
+        "two-deltas" => "First. Second.".to_owned(),
+        "two-messages" => "First.\n\nSecond.".to_owned(),
+        _ => answer.clone(),
+    };
     emit(
         &mut out,
         &json!({
             "type":"assistant",
-            "session_id":session,
-            "message":{"role":"assistant","content":[{"type":"text","text":answer}]}
+            "session_id":result_session,
+            "message":{"role":"assistant","content":[{"type":"text","text":result}]}
         }),
     )?;
     emit(
@@ -196,11 +222,40 @@ fn print_mode(dir: &Path, args: &[String], behavior: &str) -> io::Result<ExitCod
             "type":"result",
             "subtype":"success",
             "is_error":false,
-            "result": if behavior == "two-deltas" { "First. Second." } else { answer.as_str() },
-            "session_id":session
+            "result":result,
+            "session_id":result_session
         }),
     )?;
+
+    if behavior == "lingers" {
+        hang();
+    }
     Ok(ExitCode::SUCCESS)
+}
+
+fn message_start(out: &mut impl Write, session: &str) -> io::Result<()> {
+    emit(
+        out,
+        &json!({
+            "type":"stream_event",
+            "session_id":session,
+            "event":{"type":"message_start","message":{"role":"assistant","content":[]}}
+        }),
+    )
+}
+
+fn text_delta(out: &mut impl Write, session: &str, text: &str) -> io::Result<()> {
+    emit(
+        out,
+        &json!({
+            "type":"stream_event",
+            "session_id":session,
+            "event":{
+                "type":"content_block_delta",
+                "delta":{"type":"text_delta","text":text}
+            }
+        }),
+    )
 }
 
 fn has_pair(args: &[String], key: &str, value: &str) -> bool {
