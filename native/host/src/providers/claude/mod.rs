@@ -264,17 +264,28 @@ impl Provider for Claude {
         }
 
         let mut conversation_id = request.conversation_id;
+        let mut fallback_prompt = (!request.history.is_empty())
+            .then(|| provider_prompt(&request.history, None, &request.text));
         let mut prompt = request.text;
         let resume = match &conversation_id {
             None => None,
-            Some(id) => match self.conversations.borrow().get(id).cloned() {
+            Some(id) => match self
+                .conversations
+                .borrow()
+                .get(id)
+                .cloned()
+                .or_else(|| {
+                    self.session_dir
+                        .as_deref()
+                        .and_then(|dir| read_session(dir, id))
+                }) {
                 Some(session) => Some(session),
                 None if !request.history.is_empty() => None,
                 None => return Box::new(Scripted::failed(UNKNOWN_CONVERSATION)),
             },
         };
         if resume.is_none() && !request.history.is_empty() {
-            prompt = provider_prompt(&request.history, None, &prompt);
+            prompt = fallback_prompt.take().expect("history is present");
             conversation_id = None;
         }
 
@@ -282,15 +293,21 @@ impl Provider for Claude {
             stage: Stage::Done,
             executable,
             launch: Rc::clone(&self.launch),
+            session_dir: self.session_dir.clone(),
             prompt,
+            fallback_prompt,
             resume,
             conversation_id,
             conversations: Rc::clone(&self.conversations),
+            finish_grace: self.limits.finish,
             queue: VecDeque::new(),
             cancelled: false,
             started: false,
             saw_delta: false,
             result_seen: false,
+            messages: 0,
+            pending_separator: false,
+            finish_by: None,
         };
         match probe(&turn.launch, &turn.executable) {
             Ok(process) => {
