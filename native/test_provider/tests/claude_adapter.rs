@@ -540,3 +540,114 @@ fn capabilities_express_claudes_observed_differences() {
     assert_eq!(capabilities.model_selection, Capability::Unsupported);
     assert_eq!(capabilities.cancellation, Capability::Supported);
 }
+
+/// Writes a Claude Code transcript whose records name `session` and `cwd`.
+fn transcript(path: &std::path::Path, session: &str, cwd: &std::path::Path) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let queued = serde_json::json!({"type": "queue-operation", "sessionId": session});
+    let user = serde_json::json!({
+        "type": "user",
+        "cwd": cwd.to_string_lossy(),
+        "sessionId": session,
+        "message": {"role": "user", "content": "first"}
+    });
+    std::fs::write(path, format!("{queued}\n{user}\n")).unwrap();
+}
+
+#[test]
+fn forget_removes_the_mapping_and_only_pervues_claude_files() {
+    let claude = FakeClaude::install("answers", "signed-in");
+    let config = claude.dir.join("claude-config");
+    let adapter = claude.adapter().with_environment([(
+        OsString::from("CLAUDE_CONFIG_DIR"),
+        config.clone().into_os_string(),
+    )]);
+    let conversation = first_conversation(&adapter);
+    let mapping = claude.dir.join("claude-work.sessions").join(&conversation);
+    let session = std::fs::read_to_string(&mapping).unwrap();
+    let workspace = std::fs::canonicalize(claude.dir.join("claude-work")).unwrap();
+
+    let ours = config.join("projects/-pervue-claude-workspace");
+    let theirs = config.join("projects/-home-someone-project");
+    transcript(&ours.join(format!("{session}.jsonl")), &session, &workspace);
+    std::fs::create_dir_all(ours.join(&session).join("subagents")).unwrap();
+    std::fs::create_dir_all(config.join("session-env").join(&session)).unwrap();
+    // The same session ID, but run somewhere else: not Pervue's to remove.
+    transcript(
+        &theirs.join(format!("{session}.jsonl")),
+        &session,
+        std::path::Path::new("/home/someone/project"),
+    );
+    transcript(
+        &ours.join("other-session.jsonl"),
+        "other-session",
+        &workspace,
+    );
+
+    assert_eq!(
+        run_to_end(adapter.forget(&conversation).as_mut()),
+        [Update::Completed]
+    );
+    assert!(!ours.join(format!("{session}.jsonl")).exists());
+    assert!(!ours.join(&session).exists());
+    assert!(!config.join("session-env").join(&session).exists());
+    assert!(theirs.join(format!("{session}.jsonl")).exists());
+    assert!(ours.join("other-session.jsonl").exists());
+    assert!(!mapping.exists());
+
+    // Forgotten: it can't be continued, and forgetting again is harmless.
+    let again = run_to_end(adapter.send(follow_up(&conversation, Vec::new())).as_mut());
+    assert_eq!(
+        failure(&again),
+        (ErrorCode::InvalidRequest, "UNKNOWN_CONVERSATION")
+    );
+    assert_eq!(
+        run_to_end(adapter.forget(&conversation).as_mut()),
+        [Update::Completed]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_failed_forget_keeps_an_in_memory_session_for_the_retry() {
+    let claude = FakeClaude::install("answers", "signed-in");
+    let config = claude.dir.join("claude-config");
+    let adapter = claude.adapter().without_session_dir().with_environment([(
+        OsString::from("CLAUDE_CONFIG_DIR"),
+        config.clone().into_os_string(),
+    )]);
+    let conversation = first_conversation(&adapter);
+    let session = format!("claude-{}", claude.pids()[0]);
+    let workspace = std::fs::canonicalize(claude.dir.join("claude-work")).unwrap();
+    let saved = config
+        .join("projects/-pervue-claude-workspace")
+        .join(format!("{session}.jsonl"));
+    transcript(&saved, &session, &workspace);
+    // A file where Claude keeps its session-env directories: removing the
+    // session's entry below it fails, even for root.
+    std::fs::write(config.join("session-env"), "not a directory").unwrap();
+
+    assert_eq!(
+        failure(&run_to_end(adapter.forget(&conversation).as_mut())),
+        (ErrorCode::InternalError, "SESSION_FORGET_FAILED")
+    );
+    assert!(
+        saved.exists(),
+        "the transcript, the proof it's Pervue's, stays for the retry"
+    );
+
+    // The retry still knows the session, which lives only in memory: it
+    // finishes the job rather than completing with the transcript left behind.
+    std::fs::remove_file(config.join("session-env")).unwrap();
+    assert_eq!(
+        run_to_end(adapter.forget(&conversation).as_mut()),
+        [Update::Completed]
+    );
+    assert!(!saved.exists());
+    assert_eq!(
+        failure(&run_to_end(
+            adapter.send(follow_up(&conversation, Vec::new())).as_mut()
+        )),
+        (ErrorCode::InvalidRequest, "UNKNOWN_CONVERSATION")
+    );
+}

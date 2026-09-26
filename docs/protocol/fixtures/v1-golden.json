@@ -96,6 +96,20 @@
       "sequence": "provider status success"
     },
     {
+      "name": "forget conversation",
+      "value": {
+        "version": 1,
+        "type": "request",
+        "request_id": "req_forget_1",
+        "method": "conversation.forget",
+        "payload": {
+          "provider_id": "fake",
+          "conversation_id": "conv_fake_1"
+        }
+      },
+      "sequence": "conversation forget success"
+    },
+    {
       "name": "cancel request",
       "value": {
         "version": 1,
@@ -288,6 +302,13 @@
       ],
       "repeatable": [
         "provider.status"
+      ]
+    },
+    {
+      "name": "conversation forget success",
+      "request_id": "req_forget_1",
+      "events": [
+        "response.completed"
       ]
     }
   ],

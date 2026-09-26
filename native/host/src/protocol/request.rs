@@ -61,6 +61,11 @@ pub enum Method<'a> {
     ProviderStatus {
         provider_id: Option<JsonStr<'a>>,
     },
+    /// Removes what the host and provider keep for a deleted conversation.
+    ConversationForget {
+        provider_id: JsonStr<'a>,
+        conversation_id: JsonStr<'a>,
+    },
     RequestCancel {
         target_request_id: RequestId<'a>,
     },
@@ -72,6 +77,7 @@ impl Method<'_> {
         match self {
             Self::ConversationSend { .. } => "conversation.send",
             Self::ProviderStatus { .. } => "provider.status",
+            Self::ConversationForget { .. } => "conversation.forget",
             Self::RequestCancel { .. } => "request.cancel",
         }
     }
@@ -113,6 +119,7 @@ pub struct RequestFailure<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MethodName {
     ConversationSend,
+    ConversationForget,
     ProviderStatus,
     RequestCancel,
 }
@@ -178,6 +185,7 @@ pub fn parse_request(data: &[u8]) -> Result<Request<'_>, RequestFailure<'_>> {
 
     let method = match method {
         MethodName::ConversationSend => parse_conversation_payload(payload),
+        MethodName::ConversationForget => parse_forget_payload(payload),
         MethodName::ProviderStatus => parse_status_payload(payload),
         MethodName::RequestCancel => parse_cancel_payload(payload),
     }
@@ -301,6 +309,7 @@ fn parse_envelope<'a>(data: &'a [u8], envelope: &mut Envelope<'a>) -> Result<(),
 fn method_name(value: JsonStr<'_>) -> Option<MethodName> {
     [
         ("conversation.send", MethodName::ConversationSend),
+        ("conversation.forget", MethodName::ConversationForget),
         ("provider.status", MethodName::ProviderStatus),
         ("request.cancel", MethodName::RequestCancel),
     ]
@@ -442,6 +451,33 @@ fn parse_status_payload(payload: &[u8]) -> Result<Method<'_>, FailureKind> {
         Err(FailureKind::InvalidPayload)
     } else {
         Ok(Method::ProviderStatus { provider_id })
+    }
+}
+
+fn parse_forget_payload(payload: &[u8]) -> Result<Method<'_>, FailureKind> {
+    let mut provider_id = None;
+    let mut conversation_id = None;
+    let mut invalid = false;
+
+    walk_payload_object(payload, |key, reader| {
+        if key.equals_ascii("provider_id") {
+            provider_id = read_nonempty_string(reader)?;
+            invalid |= provider_id.is_none();
+        } else if key.equals_ascii("conversation_id") {
+            conversation_id = read_nonempty_string(reader)?;
+            invalid |= conversation_id.is_none();
+        } else {
+            reader.skip_value().map_err(payload_error)?;
+        }
+        Ok(())
+    })?;
+
+    match (provider_id, conversation_id) {
+        (Some(provider_id), Some(conversation_id)) if !invalid => Ok(Method::ConversationForget {
+            provider_id,
+            conversation_id,
+        }),
+        _ => Err(FailureKind::InvalidPayload),
     }
 }
 
@@ -1061,6 +1097,42 @@ mod tests {
                 &envelope("req_c", "request.cancel", payload),
                 FailureKind::InvalidPayload,
                 Some("req_c"),
+            );
+        }
+    }
+
+    #[test]
+    fn validates_forget_payloads() {
+        let input = envelope(
+            "req_f",
+            "conversation.forget",
+            r#"{"provider_id":"claude","conversation_id":"conv_0123456789abcdef","future":[1]}"#,
+        );
+        let request = parse_request(input.as_bytes()).unwrap();
+        assert_eq!(request.method.name(), "conversation.forget");
+        let Method::ConversationForget {
+            provider_id,
+            conversation_id,
+        } = request.method
+        else {
+            panic!("unexpected method");
+        };
+        assert_eq!(provider_id.raw(), b"claude");
+        assert_eq!(conversation_id.raw(), b"conv_0123456789abcdef");
+
+        for payload in [
+            "{}",
+            r#"{"provider_id":"claude"}"#,
+            r#"{"conversation_id":"conv_1"}"#,
+            r#"{"provider_id":"","conversation_id":"conv_1"}"#,
+            r#"{"provider_id":"claude","conversation_id":""}"#,
+            r#"{"provider_id":"claude","conversation_id":1}"#,
+            r#"{"provider_id":"claude","conversation_id":"a","conversation_id":"b"}"#,
+        ] {
+            expect_failure(
+                &envelope("req_f", "conversation.forget", payload),
+                FailureKind::InvalidPayload,
+                Some("req_f"),
             );
         }
     }

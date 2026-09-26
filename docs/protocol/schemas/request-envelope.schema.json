@@ -22,6 +22,7 @@
       "type": "string",
       "enum": [
         "conversation.send",
+        "conversation.forget",
         "provider.status",
         "request.cancel"
       ]

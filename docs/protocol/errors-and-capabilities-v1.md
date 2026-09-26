@@ -158,6 +158,7 @@ Typical reasons:
 - `INTERNAL_STATE_ERROR`
 - `UNEXPECTED_FAILURE`
 - `SESSION_STORE_FAILED` — a provider session could not be recorded for later continuation.
+- `SESSION_FORGET_FAILED` — a forgotten conversation's session mapping or provider transcript could not be removed (retryable).
 
 Default retryability: **false** unless the implementation explicitly knows the condition is transient.
 

@@ -567,6 +567,26 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                     exchange,
                 )
             }
+            Method::ConversationForget {
+                provider_id,
+                conversation_id,
+            } => {
+                let provider_id = provider_id.decode().into_owned();
+                let conversation_id = conversation_id.decode().into_owned();
+                let provider = self.providers.get(&provider_id);
+                let exchange: Box<dyn Exchange> = match provider {
+                    Some(provider) => provider.forget(&conversation_id),
+                    None => Box::new(Scripted::failed(PROVIDER_NOT_INSTALLED)),
+                };
+                Running::new(
+                    id,
+                    "conversation.forget",
+                    Some((provider_id, provider.is_some())),
+                    Some(conversation_id),
+                    None,
+                    exchange,
+                )
+            }
             Method::RequestCancel { target_request_id } => {
                 return self.cancel(Canceller {
                     id,
@@ -1619,6 +1639,38 @@ mod tests {
         );
         assert_eq!(events[1]["payload"]["provider_id"], "fake");
         assert_eq!(events[2]["payload"]["provider_id"], "second");
+    }
+
+    #[test]
+    fn forget_completes_for_a_known_provider_and_fails_for_an_unknown_one() {
+        let session = run_session(
+            &with(TestProvider::new("second", Script::never_starts())),
+            framed(&[
+                &request(
+                    "req_forget",
+                    "conversation.forget",
+                    r#"{"provider_id":"fake","conversation_id":"conv_0123456789abcdef"}"#,
+                ),
+                &request(
+                    "req_unknown",
+                    "conversation.forget",
+                    r#"{"provider_id":"missing","conversation_id":"conv_0123456789abcdef"}"#,
+                ),
+            ])
+            .as_slice(),
+        );
+        assert_eq!(
+            session.sequence(),
+            pairs(&[
+                ("req_forget", "response.completed"),
+                ("req_unknown", "response.failed"),
+            ])
+        );
+        let events = session.events();
+        assert_eq!(
+            events[2]["payload"]["error"]["reason"],
+            "PROVIDER_NOT_INSTALLED"
+        );
     }
 
     #[test]

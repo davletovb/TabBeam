@@ -23,6 +23,7 @@ pub mod codex;
 pub mod discovery;
 pub mod environment;
 pub mod fake;
+pub mod forget;
 
 /// One `conversation.send`, in provider-neutral terms.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -113,6 +114,16 @@ pub trait Provider {
 
     /// Starts serving `request`.
     fn send(&self, request: SendRequest) -> Box<dyn Exchange>;
+
+    /// Removes what this adapter keeps for a deleted conversation
+    /// (`conversation.forget`): its native-session mapping and, where the
+    /// adapter can prove the provider wrote it for Pervue, the provider's own
+    /// transcript. A conversation it doesn't know completes: there is nothing
+    /// to remove. An adapter that keeps nothing uses this default.
+    fn forget(&self, conversation_id: &str) -> Box<dyn Exchange> {
+        let _ = conversation_id;
+        Box::new(Scripted::new([Update::Completed]))
+    }
 }
 
 /// The providers a host serves, in the order `provider.status` reports them.

@@ -1105,3 +1105,74 @@ fn the_default_limits_allow_a_slow_answer() {
     assert!(LIMITS.timeouts.start <= Duration::from_secs(60));
     assert!(LIMITS.timeouts.stop_grace <= Duration::from_secs(2));
 }
+
+/// Writes a Codex session file whose `session_meta` names `thread` and `cwd`.
+fn rollout(path: &std::path::Path, thread: &str, cwd: &std::path::Path) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let meta = serde_json::json!({
+        "timestamp": "2026-09-26T10:00:00.000Z",
+        "type": "session_meta",
+        "payload": {"id": thread, "cwd": cwd.to_string_lossy()}
+    });
+    std::fs::write(path, format!("{meta}\n{{\"type\":\"response_item\"}}\n")).unwrap();
+}
+
+#[test]
+fn forget_removes_the_mapping_and_only_pervues_codex_sessions() {
+    let codex = FakeCodex::install("answers", "signed-in");
+    let home = codex.dir.join("forget-codex-home");
+    let adapter = codex.adapter().with_environment([
+        (OsString::from("CODEX_HOME"), home.clone().into_os_string()),
+        (
+            OsString::from("PATH"),
+            std::env::var_os("PATH").unwrap_or_default(),
+        ),
+    ]);
+    let first = visible(&run_to_end(adapter.send(ask("first")).as_mut()));
+    let Update::ConversationCreated(conversation) = first[0].clone() else {
+        panic!("expected a new conversation: {first:?}");
+    };
+    let mapping = codex.dir.join("work.sessions").join(&conversation);
+    let thread = std::fs::read_to_string(&mapping).unwrap();
+
+    let day = home.join("sessions/2026/09/26");
+    let ours = day.join(format!("rollout-2026-09-26T10-00-00-{thread}.jsonl"));
+    let archived = home.join(format!(
+        "archived_sessions/rollout-2026-09-25T09-00-00-{thread}.jsonl"
+    ));
+    let elsewhere = day.join(format!("rollout-2026-09-26T11-00-00-{thread}.jsonl"));
+    let other = day.join("rollout-2026-09-26T12-00-00-thread-other.jsonl");
+    rollout(&ours, &thread, &workspace(&codex));
+    rollout(&archived, &thread, &workspace(&codex));
+    // The same thread ID, but run somewhere else: not Pervue's to remove.
+    rollout(&elsewhere, &thread, std::path::Path::new("/somewhere/else"));
+    rollout(&other, "thread-other", &workspace(&codex));
+
+    assert_eq!(
+        run_to_end(adapter.forget(&conversation).as_mut()),
+        [Update::Completed]
+    );
+    assert!(!ours.exists());
+    assert!(!archived.exists());
+    assert!(elsewhere.exists());
+    assert!(other.exists());
+    assert!(!mapping.exists());
+
+    // Forgotten: it can't be continued, and forgetting again is harmless.
+    let again = run_to_end(
+        adapter
+            .send(SendRequest {
+                conversation_id: Some(conversation.clone()),
+                ..ask("again")
+            })
+            .as_mut(),
+    );
+    assert_eq!(
+        failure(&again),
+        (ErrorCode::InvalidRequest, "UNKNOWN_CONVERSATION")
+    );
+    assert_eq!(
+        run_to_end(adapter.forget(&conversation).as_mut()),
+        [Update::Completed]
+    );
+}

@@ -135,6 +135,15 @@ export function createConversationStore(storage, newId = () => crypto.randomUUID
       await queue;
       return publicConversation(await readRecord(await readIndex(), id));
     },
+    /**
+     * Whether the conversation exists. Throws when the stored conversations
+     * can't be read, so an unreadable store is never taken for a deletion.
+     * @param {string} id
+     */
+    async has(id) {
+      await queue;
+      return Object.hasOwn((await readIndex()).items, id);
+    },
     /** @param {string} id */
     async getPrivate(id) {
       await queue;

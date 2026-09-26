@@ -101,6 +101,15 @@ where
 }
 
 /// The value of `name` in `host`, compared as [`inherit`] compares names.
+/// The user's home directory in `host`: `HOME`, or `USERPROFILE` on Windows.
+pub fn home_dir(host: &[(OsString, OsString)]) -> Option<std::path::PathBuf> {
+    #[cfg(unix)]
+    let name = "HOME";
+    #[cfg(not(unix))]
+    let name = "USERPROFILE";
+    lookup(host, name).map(std::path::PathBuf::from)
+}
+
 pub fn lookup<'a>(host: &'a [(OsString, OsString)], name: &str) -> Option<&'a OsStr> {
     host.iter()
         .find(|(candidate, _)| same_name(candidate, name))
