@@ -11,7 +11,7 @@ export const PROVIDER_STORAGE_KEY = "pervue.provider";
  * @param {HTMLSelectElement} select
  * @param {{sendMessage(message: any): Promise<any>}} runtime
  * @param {{get(key: string): Promise<any>, set(values: object): Promise<void>}} storage
- * @param {{onChange?(selection: {providerId: string, label: string, status: any | null, providerChanged: boolean}): void}} [options]
+ * @param {{onChange?(selection: {providerId: string, label: string, status: any | null, providerChanged: boolean, statusUpdated: boolean}): void}} [options]
  */
 export function bindProviderSelector(select, runtime, storage, options = {}) {
   /** @type {Map<string, any>} */
@@ -33,13 +33,14 @@ export function bindProviderSelector(select, runtime, storage, options = {}) {
     return Array.from(select.options).find((option) => option.value === id);
   }
 
-  /** @param {boolean} [providerChanged] */
-  function notify(providerChanged = false) {
+  /** @param {boolean} [providerChanged] @param {boolean} [statusUpdated] */
+  function notify(providerChanged = false, statusUpdated = false) {
     options.onChange?.({
       providerId: current,
       label: providerLabel(current),
       status: statuses.get(current)?.status ?? null,
-      providerChanged
+      providerChanged,
+      statusUpdated
     });
   }
 
@@ -84,7 +85,7 @@ export function bindProviderSelector(select, runtime, storage, options = {}) {
   const ready = (async () => {
     try {
       const saved = await storage.get(PROVIDER_STORAGE_KEY);
-      if (typeof saved?.[PROVIDER_STORAGE_KEY] === "string") {
+      if (!touched && typeof saved?.[PROVIDER_STORAGE_KEY] === "string") {
         preferred = saved[PROVIDER_STORAGE_KEY];
       }
     } catch {
@@ -117,7 +118,7 @@ export function bindProviderSelector(select, runtime, storage, options = {}) {
     }
     // Even if a newer choice/lock won while probes were pending, publish the
     // now-known capability status for that current provider without changing it.
-    notify(false);
+    notify(false, true);
     return current;
   })();
 
