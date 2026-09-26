@@ -11,7 +11,7 @@ export const PROVIDER_STORAGE_KEY = "pervue.provider";
  * @param {HTMLSelectElement} select
  * @param {{sendMessage(message: any): Promise<any>}} runtime
  * @param {{get(key: string): Promise<any>, set(values: object): Promise<void>}} storage
- * @param {{onChange?(selection: {providerId: string, label: string, status: any | null}): void}} [options]
+ * @param {{onChange?(selection: {providerId: string, label: string, status: any | null, providerChanged: boolean}): void}} [options]
  */
 export function bindProviderSelector(select, runtime, storage, options = {}) {
   /** @type {Map<string, any>} */
@@ -33,11 +33,13 @@ export function bindProviderSelector(select, runtime, storage, options = {}) {
     return Array.from(select.options).find((option) => option.value === id);
   }
 
-  function notify() {
+  /** @param {boolean} [providerChanged] */
+  function notify(providerChanged = false) {
     options.onChange?.({
       providerId: current,
       label: providerLabel(current),
-      status: statuses.get(current)?.status ?? null
+      status: statuses.get(current)?.status ?? null,
+      providerChanged
     });
   }
 
@@ -61,7 +63,7 @@ export function bindProviderSelector(select, runtime, storage, options = {}) {
       preferred = id;
       void storage.set({ [PROVIDER_STORAGE_KEY]: id }).catch(() => {});
     }
-    if (emit && changed) notify();
+    if (emit && changed) notify(true);
     return true;
   }
 
@@ -115,7 +117,7 @@ export function bindProviderSelector(select, runtime, storage, options = {}) {
     }
     // Even if a newer choice/lock won while probes were pending, publish the
     // now-known capability status for that current provider without changing it.
-    notify();
+    notify(false);
     return current;
   })();
 
@@ -138,7 +140,7 @@ export function bindProviderSelector(select, runtime, storage, options = {}) {
       select.disabled = true;
       // Re-loading the same conversation after a request must not erase a
       // fresh failure/status message. A real provider transition still emits.
-      if (changed || !wasLocked) notify();
+      if (changed || !wasLocked) notify(changed);
     },
     unlock() {
       const wasLocked = locked;
@@ -147,7 +149,7 @@ export function bindProviderSelector(select, runtime, storage, options = {}) {
       const next = firstEnabled(preferred);
       const changed = current !== next;
       choose(next, false, false);
-      if (changed || wasLocked) notify();
+      if (changed || wasLocked) notify(changed);
     }
   };
 }
