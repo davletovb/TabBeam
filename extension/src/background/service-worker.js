@@ -91,7 +91,7 @@ chrome.runtime.onMessage.addListener(
         ? message.provider_id
         : DEFAULT_PROVIDER_ID;
       checkProviderStatus({ manager: nativeConnectionManager, providerId }).then((response) => {
-        if (message.background !== true) diagnostics.noteProvider(response);
+        if (message.record_diagnostics !== false) diagnostics.noteProvider(response);
         sendResponse(response);
       });
       return true;
