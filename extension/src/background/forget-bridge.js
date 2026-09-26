@@ -6,15 +6,13 @@ export const PENDING_FORGETS_KEY = "pervue.pendingForgets";
 /** How long the host gets to forget one conversation. */
 export const FORGET_TIMEOUT_MS = 15_000;
 
-/** The most sessions kept waiting to be forgotten; the oldest go first. */
-const MAX_PENDING = 100;
-
 /**
  * @typedef {{
  *   send(request: any, owner?: import("./native-connection.js").RequestOwner): void,
  *   forget(requestId: string): void
  * }} ForgetManager
  * @typedef {{provider_id: string, conversation_id: string}} PendingForget
+ * @typedef {"forgotten" | "failed" | "unreachable"} ForgetOutcome
  * @typedef {{
  *   schedule?: (callback: () => void, ms: number) => any,
  *   cancel?: (timer: any) => void
@@ -24,8 +22,9 @@ const MAX_PENDING = 100;
 /**
  * Asks the native host to forget one conversation (`conversation.forget`):
  * its provider-session mapping and the provider's own transcript. Resolves
- * whether the host completed; a failure, a lost connection, or no answer
- * within {@link FORGET_TIMEOUT_MS} resolves false.
+ * `forgotten` when the host completed, `failed` when it answered with a
+ * failure, and `unreachable` when the connection was lost, couldn't be
+ * made, or no answer came within {@link FORGET_TIMEOUT_MS}.
  *
  * @param {{
  *   manager: ForgetManager,
@@ -34,7 +33,7 @@ const MAX_PENDING = 100;
  *   createRequestId?: () => string,
  *   timers?: Timers
  * }} options
- * @returns {Promise<boolean>}
+ * @returns {Promise<ForgetOutcome>}
  */
 export function forgetProviderSession(options) {
   const { manager, providerId, conversationId, timers = {} } = options;
@@ -45,12 +44,12 @@ export function forgetProviderSession(options) {
     let settled = false;
     /** @type {any} */
     let timer = null;
-    /** @param {boolean} forgotten */
-    const settle = (forgotten) => {
+    /** @param {ForgetOutcome} outcome */
+    const settle = (outcome) => {
       if (settled) return;
       settled = true;
       if (timer !== null) cancel(timer);
-      resolve(forgotten);
+      resolve(outcome);
     };
     try {
       manager.send(
@@ -63,20 +62,20 @@ export function forgetProviderSession(options) {
         },
         {
           onEvent(event) {
-            if (event?.event === "response.completed") settle(true);
-            else if (event?.event === "response.failed") settle(false);
+            if (event?.event === "response.completed") settle("forgotten");
+            else if (event?.event === "response.failed") settle("failed");
           },
-          onDisconnect: () => settle(false)
+          onDisconnect: () => settle("unreachable")
         }
       );
     } catch {
-      settle(false);
+      settle("unreachable");
     }
     if (!settled) {
       timer = schedule(() => {
         timer = null;
         manager.forget(requestId);
-        settle(false);
+        settle("unreachable");
       }, FORGET_TIMEOUT_MS);
     }
   });
@@ -97,8 +96,10 @@ function sameEntry(a, b) {
  * Forgets deleted conversations' provider sessions through a durable queue:
  * a session is recorded before the host is asked, and stays recorded until
  * the host confirms, so a deletion made while the companion app can't be
- * reached is finished by a later {@link flush}. Storage updates run one at a
- * time; asking the host runs outside them, so recording never waits on it.
+ * reached is finished by a later {@link flush}. Nothing is dropped until the
+ * host confirms it. Storage updates run one at a time; asking the host runs
+ * outside them, so recording never waits on it. A flush that can't reach the
+ * host stops there rather than trying every session in turn.
  *
  * @param {{
  *   manager: ForgetManager,
@@ -125,7 +126,7 @@ export function createSessionForgetter(options) {
   function update(change) {
     const next = updates.then(async () => {
       const pending = change(await load());
-      await storage.set({ [PENDING_FORGETS_KEY]: pending.slice(-MAX_PENDING) });
+      await storage.set({ [PENDING_FORGETS_KEY]: pending });
     });
     updates = next.catch(() => {});
     return next;
@@ -146,14 +147,19 @@ export function createSessionForgetter(options) {
         /** @type {PendingForget[]} */
         const forgotten = [];
         for (const entry of pending) {
-          const done = await forgetProviderSession({
+          const outcome = await forgetProviderSession({
             manager,
             providerId: entry.provider_id,
             conversationId: entry.conversation_id,
             createRequestId: options.createRequestId,
             timers: options.timers
           });
-          if (done) forgotten.push(entry);
+          if (outcome === "forgotten") forgotten.push(entry);
+          else if (outcome === "unreachable") {
+            // The rest can't reach it either; they wait for the next flush.
+            again = false;
+            break;
+          }
         }
         if (forgotten.length > 0) {
           await update((current) =>

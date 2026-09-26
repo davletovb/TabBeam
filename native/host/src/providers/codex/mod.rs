@@ -308,22 +308,19 @@ impl Provider for Codex {
                     .as_deref()
                     .and_then(|dir| read_thread(dir, conversation_id))
             });
-        // The mapping goes last: if Codex's files can't all be removed, a
-        // retry can still find them.
-        let removed = thread
-            .map_or(Ok(()), |thread| forget_rollouts(&self.launch, &thread))
-            .and_then(|()| {
-                self.session_dir
-                    .as_deref()
-                    .map_or(Ok(()), |dir| forget_thread(dir, conversation_id))
-            });
-        match removed {
-            Ok(()) => {
-                self.conversations.borrow_mut().remove(conversation_id);
-                Box::new(Scripted::new([Update::Completed]))
+        self.conversations.borrow_mut().remove(conversation_id);
+        let home = codex_home(&self.launch);
+        let workspace = self.launch.work_dir.clone();
+        let session_dir = self.session_dir.clone();
+        let conversation_id = conversation_id.to_owned();
+        // The files go on their own thread. The mapping goes last: if Codex's
+        // files can't all be removed, a retry can still find them.
+        forget::in_background(move || {
+            if let (Some(home), Some(thread)) = (home, thread) {
+                forget_rollouts(&home, &workspace, &thread)?;
             }
-            Err(_) => Box::new(Scripted::failed(forget::SESSION_FORGET_FAILED)),
-        }
+            session_dir.map_or(Ok(()), |dir| forget_thread(&dir, &conversation_id))
+        })
     }
 
     fn send(&self, request: SendRequest) -> Box<dyn Exchange> {
@@ -536,10 +533,7 @@ fn forget_thread(dir: &Path, id: &str) -> io::Result<()> {
 /// `archived_sessions/rollout-…-<thread>.jsonl` files whose `session_meta`
 /// names the thread and records Pervue's workspace as where it ran. Codex's
 /// own state database is left alone.
-fn forget_rollouts(launch: &Launch, thread: &str) -> io::Result<()> {
-    let Some(home) = codex_home(launch) else {
-        return Ok(());
-    };
+fn forget_rollouts(home: &Path, workspace: &Path, thread: &str) -> io::Result<()> {
     let suffix = format!("-{thread}.jsonl");
     // Each directory with how many levels of directories may lie below it.
     let mut pending = vec![
@@ -564,7 +558,7 @@ fn forget_rollouts(launch: &Launch, thread: &str) -> io::Result<()> {
                     .file_name()
                     .to_str()
                     .is_some_and(|name| name.starts_with("rollout-") && name.ends_with(&suffix))
-                && rollout_written_for_pervue(&path, thread, &launch.work_dir)
+                && rollout_written_for_pervue(&path, thread, workspace)
             {
                 forget::remove(&path)?;
             }

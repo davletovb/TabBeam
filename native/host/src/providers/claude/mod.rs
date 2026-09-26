@@ -290,22 +290,19 @@ impl Provider for Claude {
                     .as_deref()
                     .and_then(|dir| read_session(dir, conversation_id))
             });
-        // The mapping goes last: if Claude's files can't all be removed, a
-        // retry can still find them.
-        let removed = session
-            .map_or(Ok(()), |session| forget_transcript(&self.launch, &session))
-            .and_then(|()| {
-                self.session_dir
-                    .as_deref()
-                    .map_or(Ok(()), |dir| forget_session(dir, conversation_id))
-            });
-        match removed {
-            Ok(()) => {
-                self.conversations.borrow_mut().remove(conversation_id);
-                Box::new(Scripted::new([Update::Completed]))
+        self.conversations.borrow_mut().remove(conversation_id);
+        let config = claude_config_dir(&self.launch);
+        let workspace = self.launch.work_dir.clone();
+        let session_dir = self.session_dir.clone();
+        let conversation_id = conversation_id.to_owned();
+        // The files go on their own thread. The mapping goes last: if
+        // Claude's files can't all be removed, a retry can still find them.
+        forget::in_background(move || {
+            if let (Some(config), Some(session)) = (config, session) {
+                forget_transcript(&config, &workspace, &session)?;
             }
-            Err(_) => Box::new(Scripted::failed(forget::SESSION_FORGET_FAILED)),
-        }
+            session_dir.map_or(Ok(()), |dir| forget_session(&dir, &conversation_id))
+        })
     }
 
     fn send(&self, request: SendRequest) -> Box<dyn Exchange> {
@@ -498,10 +495,7 @@ fn claude_config_dir(launch: &Launch) -> Option<PathBuf> {
 /// session and record Pervue's workspace as where they ran, the directory
 /// beside each, and the session's own `session-env`, `tasks`, and
 /// `file-history` directories.
-fn forget_transcript(launch: &Launch, session: &str) -> io::Result<()> {
-    let Some(config) = claude_config_dir(launch) else {
-        return Ok(());
-    };
+fn forget_transcript(config: &Path, workspace: &Path, session: &str) -> io::Result<()> {
     let projects = match std::fs::read_dir(config.join("projects")) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
         projects => projects?,
@@ -513,7 +507,7 @@ fn forget_transcript(launch: &Launch, session: &str) -> io::Result<()> {
             continue;
         }
         let transcript = project.path().join(format!("{session}.jsonl"));
-        if transcript_written_for_pervue(&transcript, session, &launch.work_dir) {
+        if transcript_written_for_pervue(&transcript, session, workspace) {
             ours = true;
             forget::remove(&transcript)?;
             forget::remove(&project.path().join(session))?;

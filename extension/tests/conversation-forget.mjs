@@ -66,15 +66,15 @@ const createRequestId = () => `req_forget_${++nextId}`;
     payload: { provider_id: "claude", conversation_id: "conv_1" }
   });
   manager.answer(0, "response.completed");
-  assert.equal(await done, true);
+  assert.equal(await done, "forgotten");
 
   const failed = forgetProviderSession({ manager, providerId: "codex", conversationId: "conv_2", createRequestId });
   manager.answer(1, "response.failed", { error: { code: "INTERNAL_ERROR", reason: "SESSION_FORGET_FAILED" } });
-  assert.equal(await failed, false);
+  assert.equal(await failed, "failed");
 
   const lost = forgetProviderSession({ manager, providerId: "codex", conversationId: "conv_3", createRequestId });
   manager.sent[2].owner.onDisconnect({ message: null });
-  assert.equal(await lost, false);
+  assert.equal(await lost, "unreachable");
 
   /** @type {(() => void)[]} */
   const timers = [];
@@ -90,7 +90,7 @@ const createRequestId = () => `req_forget_${++nextId}`;
     }
   });
   timers[0]();
-  assert.equal(await silent, false);
+  assert.equal(await silent, "unreachable");
   assert.deepEqual(manager.forgotten, [manager.sent[3].request.request_id], "a timed-out route is dropped");
 }
 
@@ -166,6 +166,36 @@ const createRequestId = () => `req_forget_${++nextId}`;
   await flushing;
   await settle();
   assert.deepEqual(storage.saved[PENDING_FORGETS_KEY], []);
+}
+
+// ---------- Nothing unconfirmed is dropped; an unreachable host ends a flush ----------
+{
+  const storage = memoryStorage();
+  const manager = fakeManager();
+  const forgetter = createSessionForgetter({ manager, storage, createRequestId });
+  for (let i = 0; i < 150; i += 1) await forgetter.queue("codex", `conv_${i}`);
+  assert.equal(storage.saved[PENDING_FORGETS_KEY].length, 150, "no cap: every deletion is kept until confirmed");
+
+  const flushing = forgetter.flush();
+  await settle();
+  assert.equal(manager.sent.length, 1);
+  manager.sent[0].owner.onDisconnect({ message: "Specified native messaging host not found." });
+  await flushing;
+  assert.equal(manager.sent.length, 1, "the other 149 aren't tried against an unreachable host");
+  assert.equal(storage.saved[PENDING_FORGETS_KEY].length, 150);
+
+  // A host that refuses one session still gets asked about the rest.
+  const retry = forgetter.flush();
+  await settle();
+  manager.answer(1, "response.failed", { error: { code: "INTERNAL_ERROR", reason: "SESSION_FORGET_FAILED" } });
+  await settle();
+  assert.equal(manager.sent.length, 3);
+  for (let index = 2; index < 151; index += 1) {
+    manager.answer(index, "response.completed");
+    await settle();
+  }
+  await retry;
+  assert.deepEqual(storage.saved[PENDING_FORGETS_KEY], [{ provider_id: "codex", conversation_id: "conv_0" }]);
 }
 
 console.log("Conversation forget tests passed");

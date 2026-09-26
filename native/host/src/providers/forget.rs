@@ -9,7 +9,11 @@
 use std::fs;
 use std::io::{self, Read};
 use std::path::Path;
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::thread;
+use std::time::{Duration, Instant};
 
+use super::{Exchange, Scripted, Update};
 use crate::protocol::events::{ErrorBody, ErrorCode};
 
 pub const SESSION_FORGET_FAILED: ErrorBody<'static> = ErrorBody {
@@ -18,6 +22,59 @@ pub const SESSION_FORGET_FAILED: ErrorBody<'static> = ErrorBody {
     message: "Pervue couldn't remove everything this conversation left behind. Delete it again to retry.",
     retryable: true,
 };
+
+/// Runs `work`, the file-system part of forgetting, on a thread of its own,
+/// so a large or slow provider directory never holds up the host loop, and
+/// reports how it ended: `Completed`, or `Failed` with
+/// [`SESSION_FORGET_FAILED`].
+pub(crate) fn in_background(
+    work: impl FnOnce() -> io::Result<()> + Send + 'static,
+) -> Box<dyn Exchange> {
+    let (done, outcome) = mpsc::channel();
+    let spawned = thread::Builder::new()
+        .name("pervue-forget".to_owned())
+        .spawn(move || {
+            let _ = done.send(work());
+        });
+    match spawned {
+        Ok(_) => Box::new(Background::Waiting(outcome)),
+        Err(_) => Box::new(Scripted::failed(SESSION_FORGET_FAILED)),
+    }
+}
+
+/// Background work in progress, as an exchange.
+enum Background {
+    Waiting(Receiver<io::Result<()>>),
+    /// Cancelled: the work may still finish, but its outcome is dropped.
+    Stopping,
+    Done,
+}
+
+impl Exchange for Background {
+    fn next(&mut self, deadline: Instant) -> Option<Update> {
+        let update = match self {
+            Self::Done => return None,
+            Self::Stopping => Update::Stopped,
+            Self::Waiting(outcome) => {
+                match outcome.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+                    Ok(Ok(())) => Update::Completed,
+                    Ok(Err(_)) | Err(RecvTimeoutError::Disconnected) => {
+                        Update::Failed(SESSION_FORGET_FAILED)
+                    }
+                    Err(RecvTimeoutError::Timeout) => return None,
+                }
+            }
+        };
+        *self = Self::Done;
+        Some(update)
+    }
+
+    fn cancel(&mut self, _grace: Duration) {
+        if matches!(self, Self::Waiting(_)) {
+            *self = Self::Stopping;
+        }
+    }
+}
 
 /// How much of a transcript is read to find where it ran.
 const HEAD_BYTES: u64 = 1024 * 1024;
@@ -103,6 +160,50 @@ mod tests {
         assert!(dir.join("target/keep").exists());
         assert_eq!(head_lines(&dir.join("link")), None);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn run_to_end(exchange: &mut dyn Exchange) -> Vec<Update> {
+        let give_up = Instant::now() + Duration::from_secs(10);
+        let mut updates = Vec::new();
+        while Instant::now() < give_up {
+            if let Some(update) = exchange.next(Instant::now() + Duration::from_millis(50)) {
+                let terminal = update.is_terminal();
+                updates.push(update);
+                if terminal {
+                    return updates;
+                }
+            }
+        }
+        panic!("the background work never ended: {updates:?}");
+    }
+
+    #[test]
+    fn background_work_reports_how_it_ended_without_blocking() {
+        let (release, released) = mpsc::channel::<()>();
+        let mut slow = in_background(move || {
+            let _ = released.recv();
+            Ok(())
+        });
+        // Still working: the caller gets its turn back at its deadline.
+        let asked = Instant::now();
+        assert_eq!(slow.next(asked + Duration::from_millis(20)), None);
+        assert!(asked.elapsed() < Duration::from_secs(2));
+        release.send(()).unwrap();
+        assert_eq!(run_to_end(slow.as_mut()), [Update::Completed]);
+
+        let mut failing = in_background(|| Err(io::Error::other("denied")));
+        assert_eq!(
+            run_to_end(failing.as_mut()),
+            [Update::Failed(SESSION_FORGET_FAILED)]
+        );
+
+        let (_keep, never) = mpsc::channel::<()>();
+        let mut cancelled = in_background(move || {
+            let _ = never.recv_timeout(Duration::from_secs(5));
+            Ok(())
+        });
+        cancelled.cancel(Duration::ZERO);
+        assert_eq!(run_to_end(cancelled.as_mut()), [Update::Stopped]);
     }
 
     #[test]
