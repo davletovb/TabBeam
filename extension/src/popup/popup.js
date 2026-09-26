@@ -2,6 +2,7 @@ import { bindAskForm } from "./ask-form.js";
 import { bindContextControls } from "./context-controls.js";
 import { preloadMenuContext } from "./menu-preload.js";
 import { bindProviderState } from "./provider-state.js";
+import { bindProviderSelector } from "../shared/provider-selector.js";
 import { bindSuggestions } from "./suggestions.js";
 import { conversationToResume, rememberConversation } from "./session.js";
 import { CONVERSATIONS_KEY } from "../background/conversation-store.js";
@@ -57,6 +58,24 @@ const providerState = bindProviderState(
   {},
   { setupLink: requireElement("#companion-setup", HTMLElement) }
 );
+const providerSelector = bindProviderSelector(
+  requireElement("#provider-select", HTMLSelectElement),
+  chrome.runtime,
+  chrome.storage.local,
+  {
+    onChange({ providerId, label, status, providerChanged }) {
+      if (providerChanged) {
+        providerState.setProvider(
+          providerId,
+          status ? { provider_id: providerId, status } : undefined
+        );
+      }
+      const pageContext = status?.capabilities?.page_context;
+      if (pageContext === true) contextControls.setSupported(true, label);
+      else if (pageContext === false) contextControls.setSupported(false, label);
+    }
+  }
+);
 const view = bindAskForm(
   {
     form: requireElement("#ask-form", HTMLFormElement),
@@ -72,7 +91,13 @@ const view = bindAskForm(
   contextControls,
   {
     onOutcome: (outcome) => providerState.update(outcome),
+    getProviderId: () => providerSelector.getProviderId(),
+    onConversationLoaded(conversation) {
+      if (conversation?.provider_id) providerSelector.lock(conversation.provider_id);
+      else providerSelector.unlock();
+    },
     onConversationId(id) {
+      if (id) providerSelector.lock(providerSelector.getProviderId());
       fullView.disabled = !id;
       remember(id);
       historyList.render();
