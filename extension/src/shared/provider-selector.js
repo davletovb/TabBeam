@@ -127,7 +127,6 @@ export function bindProviderSelector(select, runtime, storage, options = {}) {
     /** @param {string} providerId */
     lock(providerId) {
       touched = true;
-      const wasLocked = locked;
       const changed = current !== providerId;
       locked = true;
       const option = optionFor(providerId);
@@ -138,16 +137,15 @@ export function bindProviderSelector(select, runtime, storage, options = {}) {
       select.disabled = true;
       // Re-loading the same conversation after a request must not erase a
       // fresh failure/status message. A real provider transition still emits.
-      if (changed || !wasLocked) notify(changed);
+      if (changed) notify(true);
     },
     unlock() {
-      const wasLocked = locked;
       locked = false;
       select.disabled = false;
       const next = firstEnabled(preferred);
       const changed = current !== next;
       choose(next, false, false);
-      if (changed || wasLocked) notify(changed);
+      if (changed) notify(true);
     }
   };
 }
