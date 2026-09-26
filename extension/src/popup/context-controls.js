@@ -155,11 +155,13 @@ export function bindContextControls(elements, runtime) {
         clear();
         return;
       }
-      selection.disabled = !supported;
-      page.disabled = !supported;
+      // A capture still running keeps its buttons disabled until it ends.
+      const capturing = pending && !handoffPending;
+      selection.disabled = !supported || capturing;
+      page.disabled = !supported || capturing;
       if (!supported && !context) {
         status.textContent = `${providerLabel} doesn't support browser context yet.`;
-      } else if (!wasSupported && supported && !context) {
+      } else if (!wasSupported && supported && !context && !pending) {
         status.textContent = "";
       }
     }

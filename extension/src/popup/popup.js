@@ -56,20 +56,21 @@ const providerState = bindProviderState(
   requireElement("#provider-state", HTMLElement),
   chrome.runtime,
   {},
-  { setupLink: requireElement("#companion-setup", HTMLElement) }
+  { setupLink: requireElement("#companion-setup", HTMLElement), checkOnOpen: false }
 );
 const providerSelector = bindProviderSelector(
   requireElement("#provider-select", HTMLSelectElement),
   chrome.runtime,
   chrome.storage.local,
   {
-    onChange({ providerId, label, status, providerChanged }) {
-      if (providerChanged) {
-        providerState.setProvider(providerId);
-      }
+    onChange(selection) {
+      providerState.follow(selection);
+      const { label, status, providerChanged } = selection;
       const pageContext = status?.capabilities?.page_context;
-      if (pageContext === true) contextControls.setSupported(true, label);
-      else if (pageContext === false) contextControls.setSupported(false, label);
+      // Until a provider's status says otherwise, the host decides: a
+      // provider change never keeps the previous provider's answer.
+      if (pageContext === false) contextControls.setSupported(false, label);
+      else if (pageContext === true || providerChanged) contextControls.setSupported(true, label);
     }
   }
 );
@@ -93,8 +94,9 @@ const view = bindAskForm(
       if (conversation?.provider_id) providerSelector.lock(conversation.provider_id);
       else providerSelector.unlock();
     },
-    onConversationId(id) {
-      if (id) providerSelector.lock(providerSelector.getProviderId());
+    onConversationId(id, providerId) {
+      // Locked to the provider the question went to, not whatever is shown.
+      if (id) providerSelector.lock(providerId ?? providerSelector.getProviderId());
       fullView.disabled = !id;
       remember(id);
       historyList.render();
@@ -103,7 +105,11 @@ const view = bindAskForm(
       remember(view.getConversationId());
       void refreshLists();
     },
-    onRequestStarted() { interacted = true; },
+    onRequestStarted() {
+      interacted = true;
+      providerSelector.hold(true);
+    },
+    onRequestEnded() { providerSelector.hold(false); },
     renderMessage: renderMarkdown,
     renderAnswer: createStreamReveal({
       render: (element, text) => renderMarkdown(element, text, { interactive: false }),

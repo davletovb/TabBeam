@@ -43,7 +43,9 @@ const STATE_KINDS = new Set([
  *   schedule?: (callback: () => void, ms: number) => any,
  *   cancel?: (timer: any) => void
  * }} [timers]
- * @param {{setupLink?: HTMLElement}} [options]
+ * @param {{setupLink?: HTMLElement, checkOnOpen?: boolean}} [options]
+ *   `checkOnOpen: false` leaves the checks to a provider selector, whose
+ *   results arrive through `follow`.
  */
 export function bindProviderState(element, runtime, timers = {}, options = {}) {
   const schedule = timers.schedule ?? setTimeout;
@@ -54,6 +56,9 @@ export function bindProviderState(element, runtime, timers = {}, options = {}) {
   /** @type {any} */
   let timer = null;
   let generation = 0;
+  // A question's outcome was shown after the status check began: the check's
+  // result, older news, doesn't replace it.
+  let outcomeShown = false;
 
   /** @param {ProviderView} view */
   function show(view) {
@@ -67,19 +72,18 @@ export function bindProviderState(element, runtime, timers = {}, options = {}) {
     }
   }
 
-  /** @param {string} nextProvider @param {any} [knownResponse] @param {boolean} [explicit] */
-  function setProvider(nextProvider, knownResponse, explicit = true) {
+  /**
+   * Shows that `nextProvider` is being checked, giving up after
+   * STATUS_WAIT_MS. Returns the generation the check's answer must match.
+   * @param {string} nextProvider
+   */
+  function wait(nextProvider) {
     providerId = nextProvider;
     const label = providerLabel(providerId);
     generation += 1;
     const current = generation;
+    outcomeShown = false;
     if (timer !== null) cancel(timer);
-    if (knownResponse !== undefined) {
-      checking = false;
-      timer = null;
-      show(providerView(knownResponse, label));
-      return;
-    }
     checking = true;
     show({ state: "checking", kind: null, message: `Checking ${label}…` });
     timer = schedule(() => {
@@ -88,6 +92,23 @@ export function bindProviderState(element, runtime, timers = {}, options = {}) {
       timer = null;
       show(unknownView(label));
     }, STATUS_WAIT_MS);
+    return current;
+  }
+
+  /** @param {string} nextProvider @param {any} [knownResponse] @param {boolean} [explicit] */
+  function setProvider(nextProvider, knownResponse, explicit = true) {
+    if (knownResponse !== undefined) {
+      providerId = nextProvider;
+      generation += 1;
+      outcomeShown = false;
+      if (timer !== null) cancel(timer);
+      checking = false;
+      timer = null;
+      show(providerView(knownResponse, providerLabel(providerId)));
+      return;
+    }
+    const current = wait(nextProvider);
+    const label = providerLabel(providerId);
 
     let sent;
     try {
@@ -117,10 +138,25 @@ export function bindProviderState(element, runtime, timers = {}, options = {}) {
   }
 
   // Preserve the original EXT-04 wire shape for the default-provider check.
-  setProvider(DEFAULT_PROVIDER_ID, undefined, false);
+  if (options.checkOnOpen === false) wait(DEFAULT_PROVIDER_ID);
+  else setProvider(DEFAULT_PROVIDER_ID, undefined, false);
 
   return {
     setProvider,
+    /**
+     * Follows a provider selector: a new provider shows its status, or that
+     * it is being checked; a check that finishes for the same provider shows
+     * its result unless a question's outcome has been shown since.
+     * @param {{providerId: string, response: any, providerChanged: boolean, statusUpdated: boolean}} selection
+     */
+    follow({ providerId: next, response, providerChanged, statusUpdated }) {
+      if (providerChanged) {
+        if (response === undefined) wait(next);
+        else setProvider(next, response);
+      } else if (statusUpdated && response !== undefined && next === providerId && !outcomeShown) {
+        setProvider(next, response);
+      }
+    },
     /** @param {{kind: string, message?: string}} outcome */
     update(outcome) {
       const label = providerLabel(providerId);
@@ -133,6 +169,7 @@ export function bindProviderState(element, runtime, timers = {}, options = {}) {
       }
       if (view !== null) {
         checking = false;
+        outcomeShown = true;
         generation += 1;
         if (timer !== null) cancel(timer);
         timer = null;

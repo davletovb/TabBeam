@@ -26,19 +26,13 @@ const providerState = bindProviderState(
   requireElement("#provider-state", HTMLElement),
   chrome.runtime,
   {},
-  { setupLink: requireElement("#companion-setup", HTMLElement) }
+  { setupLink: requireElement("#companion-setup", HTMLElement), checkOnOpen: false }
 );
 const providerSelector = bindProviderSelector(
   requireElement("#provider-select", HTMLSelectElement),
   chrome.runtime,
   chrome.storage.local,
-  {
-    onChange({ providerId, providerChanged }) {
-      if (providerChanged) {
-        providerState.setProvider(providerId);
-      }
-    }
-  }
+  { onChange: (selection) => providerState.follow(selection) }
 );
 const view = bindAskForm({
   form: requireElement("#ask-form", HTMLFormElement),
@@ -56,8 +50,9 @@ const view = bindAskForm({
     if (conversation?.provider_id) providerSelector.lock(conversation.provider_id);
     else providerSelector.unlock();
   },
-  onConversationId(id) {
-    if (id) providerSelector.lock(providerSelector.getProviderId());
+  onConversationId(id, providerId) {
+    // Locked to the provider the question went to, not whatever is shown.
+    if (id) providerSelector.lock(providerId ?? providerSelector.getProviderId());
     const url = new URL(window.location.href);
     if (id) url.searchParams.set("conversation", id);
     else url.searchParams.delete("conversation");
@@ -66,7 +61,11 @@ const view = bindAskForm({
     showTitle();
   },
   onSaved() { void conversations.refresh(); },
-  onRequestStarted() { interacted = true; },
+  onRequestStarted() {
+    interacted = true;
+    providerSelector.hold(true);
+  },
+  onRequestEnded() { providerSelector.hold(false); },
   renderMessage: renderMarkdown,
   renderAnswer: createStreamReveal({
     render: (element, text) => renderMarkdown(element, text, { interactive: false }),

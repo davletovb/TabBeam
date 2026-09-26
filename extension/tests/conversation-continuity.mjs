@@ -76,8 +76,8 @@ const manager = {
 };
 
 /** The popup and full page use the same controller and worker request path. */
-/** @param {string} [providerId] */
-function openView(providerId = "codex") {
+/** @param {string | (() => string)} [providerId] @param {any} [extra] more ask-form options */
+function openView(providerId = "codex", extra = {}) {
   const elements = {
     form: new Element(), input: new Element(), submit: new Element(),
     status: new Element(), answer: new Element(), history: new Element(),
@@ -111,8 +111,9 @@ function openView(providerId = "codex") {
     }
   };
   const view = bindAskForm(/** @type {any} */ (elements), runtime, undefined, {
-    getProviderId: () => providerId,
-    storageChanges: { addListener(listener) { storageListeners.push(listener); } }
+    getProviderId: () => typeof providerId === "function" ? providerId() : providerId,
+    storageChanges: { addListener(listener) { storageListeners.push(listener); } },
+    ...extra
   });
   return {
     view, elements, ports,
@@ -355,5 +356,24 @@ answerRequest(claudeIndex, "Claude answer", "claude_session_1", "claude");
 await settle();
 const claudeId = /** @type {string} */ (claudeView.view.getConversationId());
 assert.equal((await store.getPrivate(claudeId)).provider_id, "claude");
+
+// A new conversation reports the provider its question was sent to, even if
+// the shown choice changed while it was answering: that is what it locks to.
+let shownProvider = "claude";
+/** @type {[string | null, string | undefined][]} */
+const created = [];
+const switched = openView(() => shownProvider, {
+  /** @param {string | null} conversationId @param {string} [provider] */
+  onConversationId: (conversationId, provider) => created.push([conversationId, provider])
+});
+switched.ask("Asked with Claude");
+await settle();
+shownProvider = "codex";
+const switchedIndex = native.length - 1;
+assert.equal(native[switchedIndex].request.payload.provider_id, "claude");
+answerRequest(switchedIndex, "Claude answer", "claude_session_2", "claude");
+await settle();
+// The first report is the creation; a later reload reports the ID alone.
+assert.deepEqual(created[0], [switched.view.getConversationId(), "claude"]);
 
 console.log("Conversation continuity tests passed");

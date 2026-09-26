@@ -262,6 +262,108 @@ async function tick() {
 }
 
 {
+  // The saved preference applies before the checks finish, only its check is
+  // recorded in diagnostics, and a failed check is passed on as null.
+  const select = new FakeSelect();
+  const codex = deferred();
+  const claude = deferred();
+  /** @type {any[]} */
+  const sent = [];
+  /** @type {any[]} */
+  const changes = [];
+  const selector = bindProviderSelector(
+    /** @type {any} */ (select),
+    {
+      /** @param {any} message */
+      sendMessage(message) {
+        sent.push(message);
+        return message.provider_id === "codex" ? codex.promise : claude.promise;
+      }
+    },
+    {
+      async get() { return { [PROVIDER_STORAGE_KEY]: "claude" }; },
+      async set() {}
+    },
+    { onChange(selection) { changes.push(selection); } }
+  );
+  await tick();
+  assert.equal(selector.getProviderId(), "claude", "a quick question goes to the saved choice");
+  assert.equal(select.value, "claude");
+  assert.equal(changes.at(-1)?.providerChanged, true);
+  assert.equal(changes.at(-1)?.response, undefined, "still being checked");
+  assert.deepEqual(
+    sent.map((message) => [message.provider_id, message.record_diagnostics]),
+    [["codex", false], ["claude", true]]
+  );
+
+  codex.reject(new Error("worker restarted"));
+  claude.resolve({ provider_id: "claude", status: ready(false) });
+  await selector.ready;
+  assert.equal(changes.at(-1)?.statusUpdated, true);
+  assert.equal(changes.at(-1)?.response?.provider_id, "claude");
+  select.change("codex");
+  assert.equal(changes.at(-1)?.providerId, "codex");
+  assert.equal(changes.at(-1)?.response, null, "a failed check is known, not pending");
+}
+
+{
+  // While a first question is in flight, the choice can't change, and the
+  // saved preference doesn't replace the provider it was sent to.
+  const select = new FakeSelect();
+  const codex = deferred();
+  const claude = deferred();
+  const selector = bindProviderSelector(
+    /** @type {any} */ (select),
+    {
+      /** @param {any} message */
+      sendMessage(message) {
+        return message.provider_id === "codex" ? codex.promise : claude.promise;
+      }
+    },
+    {
+      async get() { return { [PROVIDER_STORAGE_KEY]: "claude" }; },
+      async set() {}
+    }
+  );
+  selector.hold(true);
+  assert.equal(select.disabled, true);
+  await tick();
+  assert.equal(selector.getProviderId(), "codex");
+  select.change("claude");
+  assert.equal(selector.getProviderId(), "codex");
+  assert.equal(select.value, "codex");
+  codex.resolve({ provider_id: "codex", status: ready(true) });
+  claude.resolve({ provider_id: "claude", status: ready(false) });
+  await selector.ready;
+  assert.equal(selector.getProviderId(), "codex");
+  selector.hold(false);
+  assert.equal(select.disabled, false);
+}
+
+{
+  // A capability refresh during a capture leaves its buttons disabled.
+  const elements = {
+    none: new FakeButton(),
+    selection: new FakeButton(),
+    page: new FakeButton(),
+    status: new FakeText(),
+    preview: new FakeText()
+  };
+  const capture = deferred();
+  const controls = bindContextControls(
+    /** @type {any} */ (elements),
+    { sendMessage: () => capture.promise }
+  );
+  elements.page.listeners.get("click")?.({});
+  assert.equal(controls.isPending(), true);
+  controls.setSupported(true, "Codex");
+  assert.equal(elements.selection.disabled, true);
+  assert.equal(elements.page.disabled, true);
+  capture.resolve({ ok: false });
+  await tick();
+}
+
+{
   // Capability refreshes must not throw away a context-menu handoff or retry
   // context. Only a real supported -> unsupported transition clears it.
   const elements = {

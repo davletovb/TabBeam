@@ -492,4 +492,44 @@ function settle() {
   assert.equal(popup.view.state, "ready");
 }
 
+{
+  // Following a provider selector: no check of its own, "checking" while the
+  // selector's check runs, and a finished check never replaces a question's
+  // outcome shown since.
+  const element = new FakeElement();
+  /** @type {any[]} */
+  const sent = [];
+  const line = bindProviderState(
+    /** @type {any} */ (element),
+    { async sendMessage(message) { sent.push(message); } },
+    { schedule: () => ({}), cancel() {} },
+    { checkOnOpen: false }
+  );
+  const view = () => ({
+    state: element.getAttribute("data-state"),
+    message: element.textContent
+  });
+  assert.deepEqual(sent, [], "the selector does the checking");
+  assert.deepEqual(view(), { state: "checking", message: "Checking Codex…" });
+
+  line.follow({ providerId: "claude", response: undefined, providerChanged: true, statusUpdated: false });
+  assert.deepEqual(view(), { state: "checking", message: "Checking Claude…" });
+
+  line.update({
+    kind: "provider-signed-out",
+    message: "Claude isn't signed in. Run \"claude auth login\" in a terminal, then try again."
+  });
+  line.follow({
+    providerId: "claude",
+    response: { provider_id: "claude", status: READY },
+    providerChanged: false,
+    statusUpdated: true
+  });
+  assert.equal(element.getAttribute("data-kind"), "provider-signed-out");
+
+  line.follow({ providerId: "codex", response: null, providerChanged: true, statusUpdated: false });
+  assert.deepEqual(view(), { state: "unknown", message: "Pervue couldn't check Codex." });
+  assert.deepEqual(sent, []);
+}
+
 console.log("EXT-04 provider status tests passed");
