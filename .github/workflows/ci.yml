@@ -57,17 +57,17 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-node@v5
         with:
-          python-version: "3.12"
-      - name: Install validator
-        run: python -m pip install --disable-pip-version-check jsonschema==4.25.1
+          node-version: "22"
+      - name: Install protocol validator
+        run: npm --prefix scripts install --ignore-scripts --no-audit --no-fund
       - name: Validate schemas and fixtures
-        run: python scripts/validate_protocol.py
+        run: npm --prefix scripts run validate
       - name: Build native host for contract conformance
         run: cargo build --manifest-path native/Cargo.toml --locked
       - name: Validate built host against golden protocol
-        run: python scripts/validate_host_protocol.py --host native/target/debug/pervue-host
+        run: npm --prefix scripts run validate:host -- --host native/target/debug/pervue-host
 
   native-msrv:
     name: Native minimum Rust (1.85)
@@ -127,21 +127,24 @@ jobs:
         working-directory: native
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
       - name: Install nightly Rust and cargo-fuzz
         run: |
           rustup toolchain install nightly --profile minimal
           cargo install cargo-fuzz --locked --version 0.13.2
       - name: Generate structured fuzz corpora
         run: |
-          python3 fuzz/create_corpus.py fuzz/corpus/frame_reader
-          python3 fuzz/create_protocol_corpus.py fuzz/corpus/protocol --fixtures ../docs/protocol/fixtures/v1-golden.json
-      # fuzz/max_len.py derives -max_len from the shared frame limit in
+          node fuzz/fuzz-support.mjs frame-corpus fuzz/corpus/frame_reader
+          node fuzz/fuzz-support.mjs protocol-corpus fuzz/corpus/protocol
+      # fuzz-support.mjs derives -max_len from the shared frame limit in
       # docs/protocol/native-messaging-v1.json.
       - name: Smoke-run frame fuzz target
         run: |
-          max_len=$(python3 fuzz/max_len.py frame_reader)
+          max_len=$(node fuzz/fuzz-support.mjs max-len frame_reader)
           cargo +nightly fuzz run frame_reader fuzz/corpus/frame_reader -- -runs=1000 -max_len="$max_len"
       - name: Smoke-run protocol fuzz target
         run: |
-          max_len=$(python3 fuzz/max_len.py protocol)
+          max_len=$(node fuzz/fuzz-support.mjs max-len protocol)
           cargo +nightly fuzz run protocol fuzz/corpus/protocol -- -runs=2000 -max_len="$max_len"
