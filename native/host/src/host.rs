@@ -1546,7 +1546,10 @@ mod tests {
         );
         let session = run_session(&with(provider), framed(&[&request]).as_slice());
         assert_eq!(session.result, Ok(()));
-        assert!(calls.borrow().is_empty(), "provider ran despite unsupported context");
+        assert!(
+            calls.borrow().is_empty(),
+            "provider ran despite unsupported context"
+        );
         let failure = &session.events()[1];
         assert_eq!(failure["event"], "response.failed");
         assert_eq!(
