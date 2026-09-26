@@ -23,7 +23,9 @@ fn run_to_end(exchange: &mut dyn Exchange) -> Vec<Update> {
     let deadline = Instant::now() + DEADLINE;
     let mut updates = Vec::new();
     loop {
-        let update = exchange.next(deadline).expect("provider contract timed out");
+        let update = exchange
+            .next(deadline)
+            .expect("provider contract timed out");
         let terminal = update.is_terminal();
         updates.push(update);
         if terminal {
@@ -66,7 +68,11 @@ fn common_contract(provider: &dyn Provider) {
         "{} did not complete",
         provider.id()
     );
-    assert!(first.iter().any(|update| matches!(update, Update::Delta(text) if !text.is_empty())));
+    assert!(
+        first
+            .iter()
+            .any(|update| matches!(update, Update::Delta(text) if !text.is_empty()))
+    );
 
     let second = visible(&run_to_end(
         provider
@@ -92,7 +98,10 @@ fn codex_and_claude_run_the_same_provider_neutral_contract() {
     let codex_adapter = codex.adapter();
     let claude_adapter = claude.adapter();
 
-    for provider in [&codex_adapter as &dyn Provider, &claude_adapter as &dyn Provider] {
+    for provider in [
+        &codex_adapter as &dyn Provider,
+        &claude_adapter as &dyn Provider,
+    ] {
         common_contract(provider);
     }
 }
@@ -104,6 +113,12 @@ fn provider_differences_are_expressed_only_as_capabilities() {
 
     assert_eq!(codex.capabilities().page_context, Capability::Supported);
     assert_eq!(claude.capabilities().page_context, Capability::Unsupported);
-    assert_eq!(codex.capabilities().model_selection, Capability::Unsupported);
-    assert_eq!(claude.capabilities().model_selection, Capability::Unsupported);
+    assert_eq!(
+        codex.capabilities().model_selection,
+        Capability::Unsupported
+    );
+    assert_eq!(
+        claude.capabilities().model_selection,
+        Capability::Unsupported
+    );
 }
