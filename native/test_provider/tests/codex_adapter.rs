@@ -238,6 +238,9 @@ fn page_context_reaches_codex_as_untrusted_reference_data() {
     for setting in [
         "features.shell_tool=false",
         "features.apps=false",
+        "features.multi_agent=false",
+        "features.hooks=false",
+        "features.remote_plugin=false",
         "tools.web_search=false",
         "tools.view_image=false",
         "agents.enabled=false",
