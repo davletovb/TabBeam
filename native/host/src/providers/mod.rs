@@ -37,6 +37,9 @@ pub struct SendRequest {
     /// Browser context explicitly attached to this turn, after validation
     /// at the native trust boundary.
     pub context: Option<BrowserContext>,
+    /// The model to answer with, already a valid model ID; `None` for the
+    /// provider's default. Only sent to adapters with `model_selection`.
+    pub model: Option<String>,
 }
 
 /// What an exchange reports, in protocol order. After a terminal update

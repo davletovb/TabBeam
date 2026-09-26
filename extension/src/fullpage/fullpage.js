@@ -5,6 +5,7 @@ import { bindDrawer } from "./drawer.js";
 import { bindProviderState } from "../popup/provider-state.js";
 import { bindProviderSelector } from "../shared/provider-selector.js";
 import { renderMarkdown } from "../shared/markdown.js";
+import { followModelPreferences } from "../shared/models.js";
 import { createStreamReveal } from "../shared/stream-reveal.js";
 import { bindThemeSelect } from "../shared/theme.js";
 import { bindThemeToggle } from "../shared/theme-toggle.js";
@@ -28,14 +29,22 @@ const providerState = bindProviderState(
   {},
   { setupLink: requireElement("#companion-setup", HTMLElement), checkOnOpen: false }
 );
-// The provider is chosen on the setup page; this view follows that choice.
+// The provider and model are chosen on the setup page; this view follows.
+const models = followModelPreferences(chrome.storage.local, chrome.storage.onChanged);
+/** Providers whose status says a model can be chosen. */
+const modelSelection = new Map();
 const providerSelector = bindProviderSelector(
   null,
   chrome.runtime,
   chrome.storage.local,
   {
     storageChanges: chrome.storage.onChanged,
-    onChange: (selection) => providerState.follow(selection)
+    onChange(selection) {
+      providerState.follow(selection);
+      if (selection.status) {
+        modelSelection.set(selection.providerId, selection.status.capabilities?.model_selection === true);
+      }
+    }
   }
 );
 const view = bindAskForm({
@@ -50,6 +59,7 @@ const view = bindAskForm({
 }, chrome.runtime, undefined, {
   onOutcome: (outcome) => providerState.update(outcome),
   getProviderId: () => providerSelector.getProviderId(),
+  getModel: (providerId) => models.modelFor(providerId, modelSelection.get(providerId) === true),
   onConversationLoaded(conversation) {
     if (conversation?.provider_id) providerSelector.lock(conversation.provider_id);
     else providerSelector.unlock();

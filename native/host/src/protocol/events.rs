@@ -122,11 +122,25 @@ pub struct Capabilities {
     pub cancellation: Capability,
 }
 
+/// A model an adapter suggests (`status.models`). Suggestions, not the
+/// complete set: a provider may accept other valid model IDs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct ModelOption {
+    /// What `conversation.send` passes as `model`.
+    pub id: &'static str,
+    /// How the extension names it.
+    pub label: &'static str,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct ProviderState {
     pub availability: Availability,
     pub authentication: Authentication,
     pub capabilities: Capabilities,
+    /// Suggested models, when `model_selection` is supported. Omitted when
+    /// empty; an adapter that can take any model ID may suggest none.
+    #[serde(skip_serializing_if = "<[ModelOption]>::is_empty")]
+    pub models: &'static [ModelOption],
 }
 
 /// Payload of a `provider.status` event.
@@ -366,6 +380,23 @@ mod tests {
     }
 
     #[test]
+    fn suggested_models_are_listed_only_when_there_are_some() {
+        const MODELS: &[ModelOption] = &[ModelOption {
+            id: "sonnet",
+            label: "Sonnet (latest)",
+        }];
+        let mut state = crate::providers::fake::STATUS;
+        let without = serde_json::to_value(state).unwrap();
+        assert!(without.get("models").is_none());
+        state.models = MODELS;
+        let with = serde_json::to_value(state).unwrap();
+        assert_eq!(
+            with["models"],
+            serde_json::json!([{"id": "sonnet", "label": "Sonnet (latest)"}])
+        );
+    }
+
+    #[test]
     fn provider_status_uses_the_normalized_vocabulary() {
         let request = parse_request(
             br#"{"version":1,"type":"request","request_id":"req","method":"provider.status","payload":{}}"#,
@@ -385,6 +416,7 @@ mod tests {
                     model_selection: Capability::Unknown,
                     cancellation: Capability::Supported,
                 },
+                models: &[],
             },
         };
 

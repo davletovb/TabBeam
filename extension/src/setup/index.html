@@ -46,6 +46,11 @@
         <div class="model-field">
           <label for="model-select">Model</label>
           <select id="model-select" disabled><option>Provider default</option></select>
+          <div id="model-custom-field" class="model-custom" hidden>
+            <label class="sr-only" for="model-custom">Model ID</label>
+            <input id="model-custom" type="text" autocomplete="off" spellcheck="false" maxlength="128" placeholder="Model ID" aria-describedby="model-note">
+            <button id="model-custom-save" class="button button-outline button-sm" type="button">Use model</button>
+          </div>
           <p id="model-note" class="field-note" aria-live="polite"></p>
         </div>
       </section>

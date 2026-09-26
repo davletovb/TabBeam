@@ -121,6 +121,13 @@ const PAGE_CONTEXT_UNSUPPORTED: ErrorBody<'static> = ErrorBody {
     retryable: false,
 };
 
+const MODEL_SELECTION_UNSUPPORTED: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::InvalidRequest,
+    reason: "MODEL_SELECTION_UNSUPPORTED",
+    message: "This AI provider can't switch models. Choose its default model, then ask again.",
+    retryable: false,
+};
+
 const UNKNOWN_TARGET_REQUEST: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::InvalidRequest,
     reason: "UNKNOWN_TARGET_REQUEST",
@@ -515,6 +522,7 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                 text,
                 history,
                 context,
+                model,
             } => {
                 let provider_id = provider_id.decode().into_owned();
                 let conversation_id = conversation_id.map(|id| id.decode().into_owned());
@@ -529,12 +537,24 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                             Some(provider.timeouts()),
                         )
                     }
+                    // A model the provider can't be given is refused, not
+                    // silently replaced by its default.
+                    Some(provider)
+                        if model.is_some()
+                            && provider.capabilities().model_selection != Capability::Supported =>
+                    {
+                        (
+                            Box::new(Scripted::failed(MODEL_SELECTION_UNSUPPORTED)),
+                            Some(provider.timeouts()),
+                        )
+                    }
                     Some(provider) => (
                         provider.send(SendRequest {
                             text: text.decode().into_owned(),
                             history,
                             conversation_id: conversation_id.clone(),
                             context,
+                            model,
                         }),
                         Some(provider.timeouts()),
                     ),
@@ -1212,9 +1232,13 @@ mod tests {
             } else {
                 ""
             };
+            let model = request
+                .model
+                .map(|model| format!("+model={model}"))
+                .unwrap_or_default();
             self.calls
                 .borrow_mut()
-                .push(format!("send:{}{context}", request.text));
+                .push(format!("send:{}{context}{model}", request.text));
             Box::new(Controlled {
                 script: self.script,
                 started: false,
@@ -1581,6 +1605,54 @@ mod tests {
             failure["payload"]["error"]["reason"],
             "PAGE_CONTEXT_UNSUPPORTED"
         );
+    }
+
+    #[test]
+    fn a_model_reaches_a_provider_that_can_switch_models() {
+        let mut provider = TestProvider::new("test", Script::answers("ok"));
+        provider.capabilities.model_selection = Capability::Supported;
+        let calls = Rc::clone(&provider.calls);
+        let requests = [
+            request(
+                "req_default",
+                "conversation.send",
+                r#"{"provider_id":"test","input":{"text":"plain"}}"#,
+            ),
+            request(
+                "req_model",
+                "conversation.send",
+                r#"{"provider_id":"test","input":{"text":"chosen"},"model":"sonnet"}"#,
+            ),
+        ];
+        let frames: Vec<&str> = requests.iter().map(String::as_str).collect();
+        let session = run_session(&with(provider), framed(&frames).as_slice());
+        assert_eq!(session.result, Ok(()));
+        assert_eq!(*calls.borrow(), ["send:plain", "send:chosen+model=sonnet"]);
+    }
+
+    #[test]
+    fn a_model_is_rejected_before_a_provider_that_cannot_switch_runs() {
+        let mut provider = TestProvider::new("test", Script::answers("ok"));
+        provider.capabilities.model_selection = Capability::Unsupported;
+        let calls = Rc::clone(&provider.calls);
+        let request = request(
+            "req_model",
+            "conversation.send",
+            r#"{"provider_id":"test","input":{"text":"chosen"},"model":"sonnet"}"#,
+        );
+        let session = run_session(&with(provider), framed(&[&request]).as_slice());
+        assert_eq!(session.result, Ok(()));
+        assert!(
+            calls.borrow().is_empty(),
+            "provider ran with a model it can't take"
+        );
+        let failure = &session.events()[1];
+        assert_eq!(failure["event"], "response.failed");
+        assert_eq!(
+            failure["payload"]["error"]["reason"],
+            "MODEL_SELECTION_UNSUPPORTED"
+        );
+        assert_eq!(failure["payload"]["error"]["retryable"], false);
     }
 
     #[test]

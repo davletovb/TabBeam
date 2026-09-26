@@ -29,6 +29,7 @@ pub const STATUS: ProviderState = ProviderState {
         model_selection: Capability::Unsupported,
         cancellation: Capability::Unsupported,
     },
+    models: &[],
 };
 
 pub struct Fake;

@@ -13,9 +13,14 @@ if (select instanceof HTMLSelectElement && toggle instanceof HTMLElement) {
 const providerOptions = document.querySelector("#provider-options");
 const modelSelect = document.querySelector("#model-select");
 const modelNote = document.querySelector("#model-note");
-if (providerOptions instanceof HTMLElement && modelSelect instanceof HTMLSelectElement && modelNote instanceof HTMLElement) {
+const customField = document.querySelector("#model-custom-field");
+const customInput = document.querySelector("#model-custom");
+const customSave = document.querySelector("#model-custom-save");
+if (providerOptions instanceof HTMLElement && modelSelect instanceof HTMLSelectElement &&
+    modelNote instanceof HTMLElement && customField instanceof HTMLElement &&
+    customInput instanceof HTMLInputElement && customSave instanceof HTMLButtonElement) {
   bindProviderSettings(
-    { options: providerOptions, model: modelSelect, modelNote },
+    { options: providerOptions, model: modelSelect, modelNote, customField, customInput, customSave },
     chrome.runtime,
     chrome.storage.local,
     chrome.storage.onChanged

@@ -27,7 +27,8 @@ export const PROVIDER_STATUS_TIMEOUT_MS = 15_000;
  * @typedef {{
  *   availability: "available" | "unavailable" | "not_found" | "unknown",
  *   authentication: "authenticated" | "unauthenticated" | "unknown",
- *   capabilities: Record<string, boolean | "unknown">
+ *   capabilities: Record<string, boolean | "unknown">,
+ *   models?: {id: string, label: string}[]
  * }} ProviderStatus
  */
 

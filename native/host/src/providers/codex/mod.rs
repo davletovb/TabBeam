@@ -81,14 +81,17 @@ pub const LIMITS: Limits = Limits {
 
 /// What this adapter supports. Answers arrive a message at a time, not token
 /// by token. Browser context is framed as untrusted reference data in the
-/// prompt; attachments and model selection are not passed to Codex yet.
+/// prompt; attachments are not passed to Codex yet. A chosen model goes to
+/// `codex exec --model`. Codex has no stable way to list its models, so the
+/// adapter suggests none: any valid model ID is passed on, and Codex reports
+/// one it doesn't know as a failed turn.
 pub const CAPABILITIES: Capabilities = Capabilities {
     streaming: Capability::Supported,
     continuation: Capability::Supported,
     web_search: Capability::Unknown,
     page_context: Capability::Supported,
     attachments: Capability::Unsupported,
-    model_selection: Capability::Unsupported,
+    model_selection: Capability::Supported,
     cancellation: Capability::Supported,
 };
 
@@ -381,6 +384,7 @@ impl Provider for Codex {
             conversations: Rc::clone(&self.conversations),
             finish_grace: self.limits.finish,
             restrict_tools: context_turn,
+            model: request.model,
             queue: VecDeque::new(),
             cancelled: false,
             thread_id: None,
@@ -455,6 +459,7 @@ fn status_update(availability: Availability, authentication: Authentication) -> 
             availability,
             authentication,
             capabilities: CAPABILITIES,
+            models: &[],
         },
     }
 }
@@ -622,6 +627,60 @@ fn save_thread(dir: &Path, id: &str, thread: &str) -> io::Result<()> {
     Ok(())
 }
 
+/// The `codex exec` command line for one turn. The question itself goes on
+/// stdin (`-`). `--model` is a global `exec` option, so it applies to
+/// `resume` too; it is one `--model=<id>` argument, so the ID can never be
+/// read as an option of its own.
+fn exec_args(
+    workspace: &Path,
+    restrict_tools: bool,
+    resume: Option<&str>,
+    model: Option<&str>,
+) -> Vec<OsString> {
+    let mut args: Vec<OsString> = [
+        "exec",
+        "--json",
+        "--skip-git-repo-check",
+        "--sandbox",
+        "read-only",
+    ]
+    .map(OsString::from)
+    .into();
+    if restrict_tools {
+        // Page text is attacker-controlled. A context turn is deliberately
+        // answer-only: no local shell/image tools, apps/plugins/hooks,
+        // web search, orchestrator MCP, or subagents. User-configured MCP
+        // servers are refused before this point because they are not all
+        // controlled by those feature gates.
+        for setting in [
+            "features.shell_tool=false",
+            "features.view_image=false",
+            "features.apps=false",
+            "features.plugins=false",
+            "features.hooks=false",
+            "features.multi_agent=false",
+            "features.multi_agent_v2=false",
+            "features.web_search_request=false",
+            "features.web_search_cached=false",
+            "features.standalone_web_search=false",
+            "web_search=\"disabled\"",
+            "orchestrator.mcp.enabled=false",
+        ] {
+            args.extend(["-c".into(), setting.into()]);
+        }
+    }
+    if let Some(model) = model {
+        args.push(format!("--model={model}").into());
+    }
+    args.push("-C".into());
+    args.push(workspace.as_os_str().to_owned());
+    if let Some(thread_id) = resume {
+        args.extend(["resume", thread_id].map(OsString::from));
+    }
+    args.push("-".into());
+    args
+}
+
 /// A new Pervue conversation ID. It is random so it reveals nothing about the
 /// Codex thread behind it.
 fn new_conversation_id(conversations: &HashMap<String, String>) -> String {
@@ -697,6 +756,8 @@ struct Turn {
     /// Browser context is untrusted, so context turns run with Codex's
     /// interactive/tool surfaces disabled.
     restrict_tools: bool,
+    /// The model to answer with, or `None` for Codex's own default.
+    model: Option<String>,
     /// Updates produced but not yet returned.
     queue: VecDeque<Update>,
     cancelled: bool,
@@ -725,44 +786,12 @@ impl Turn {
         let Ok(workspace) = self.launch.workspace() else {
             return self.end(Update::Failed(NO_WORKSPACE));
         };
-        let mut args: Vec<OsString> = [
-            "exec",
-            "--json",
-            "--skip-git-repo-check",
-            "--sandbox",
-            "read-only",
-        ]
-        .map(OsString::from)
-        .into();
-        if self.restrict_tools {
-            // Page text is attacker-controlled. A context turn is deliberately
-            // answer-only: no local shell/image tools, apps/plugins/hooks,
-            // web search, orchestrator MCP, or subagents. User-configured MCP
-            // servers are refused before this point because they are not all
-            // controlled by those feature gates.
-            for setting in [
-                "features.shell_tool=false",
-                "features.view_image=false",
-                "features.apps=false",
-                "features.plugins=false",
-                "features.hooks=false",
-                "features.multi_agent=false",
-                "features.multi_agent_v2=false",
-                "features.web_search_request=false",
-                "features.web_search_cached=false",
-                "features.standalone_web_search=false",
-                "web_search=\"disabled\"",
-                "orchestrator.mcp.enabled=false",
-            ] {
-                args.extend(["-c".into(), setting.into()]);
-            }
-        }
-        args.push("-C".into());
-        args.push(workspace.clone().into());
-        if let Some(thread_id) = &self.resume {
-            args.extend(["resume", thread_id].map(OsString::from));
-        }
-        args.push("-".into());
+        let args = exec_args(
+            &workspace,
+            self.restrict_tools,
+            self.resume.as_deref(),
+            self.model.as_deref(),
+        );
         match Process::spawn(&self.launch.command(&workspace, &self.executable, args)) {
             Ok(mut process) => {
                 // The question goes on stdin: it can exceed the size one
@@ -971,6 +1000,28 @@ impl Exchange for Turn {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_model_is_one_argument_that_applies_to_resumed_threads_too() {
+        let workspace = Path::new("/tmp/pervue-workspace");
+        let args = exec_args(workspace, false, Some("thread-1"), Some("gpt-5-codex"));
+        let args: Vec<&str> = args.iter().map(|arg| arg.to_str().unwrap()).collect();
+        let model = args
+            .iter()
+            .position(|arg| *arg == "--model=gpt-5-codex")
+            .unwrap();
+        let resume = args.iter().position(|arg| *arg == "resume").unwrap();
+        assert!(model < resume, "--model is an exec option: {args:?}");
+        assert_eq!(&args[resume..], ["resume", "thread-1", "-"]);
+
+        let default = exec_args(workspace, true, None, None);
+        assert!(
+            !default
+                .iter()
+                .any(|arg| arg.to_string_lossy().starts_with("--model"))
+        );
+        assert_eq!(default.last().unwrap(), "-");
+    }
 
     #[test]
     fn codex_s_directory_comes_first_on_its_path() {

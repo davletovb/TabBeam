@@ -45,6 +45,24 @@
             "model_selection": {"$ref": "#/$defs/capability"},
             "cancellation": {"$ref": "#/$defs/capability"}
           }
+        },
+        "models": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "label"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@-]*$"
+              },
+              "label": {"type": "string", "minLength": 1, "maxLength": 64}
+            }
+          }
         }
       }
     }
