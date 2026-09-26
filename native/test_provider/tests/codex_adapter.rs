@@ -281,9 +281,7 @@ fn context_with_history_is_framed_before_one_current_question() {
     assert_eq!(updates.last(), Some(&Update::Completed));
     let prompt = codex.prompts().pop().unwrap();
     assert_eq!(prompt.matches("Current user question:").count(), 1);
-    assert!(
-        prompt.find("Earlier answer").unwrap() < prompt.find("Browser context").unwrap()
-    );
+    assert!(prompt.find("Earlier answer").unwrap() < prompt.find("Browser context").unwrap());
     assert!(prompt.find("Browser context").unwrap() < prompt.find("Follow up").unwrap());
 }
 
