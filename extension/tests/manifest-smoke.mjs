@@ -112,7 +112,10 @@ globalThis.chrome = /** @type {any} */ ({
     create: (/** @type {any} */ properties) => { menuItems.push(properties); return properties.id; }
   },
   action: { openPopup: async () => {} },
-  storage: { local: { async get() { return {}; }, async set() {} } },
+  storage: {
+    local: { async get() { return {}; }, async set() {} },
+    session: { async get() { return {}; }, async set() {}, async remove() {} }
+  },
   tabs: {
     create: async () => ({ id: 1 })
   }
@@ -206,8 +209,9 @@ assert.equal(
   onMessage({ type: DIAGNOSTICS_MESSAGE }, { url: popupUrl }, (/** @type {any} */ response) => {
     diagnosticsResponse = response;
   }),
-  undefined
+  true
 );
+await new Promise((resolve) => setTimeout(resolve, 0));
 assert.equal(diagnosticsResponse.extension_version, manifest.version);
 assert.equal(diagnosticsResponse.protocol_version, 1);
 assert.equal(diagnosticsResponse.host.state, "unavailable");
