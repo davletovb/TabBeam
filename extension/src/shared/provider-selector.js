@@ -71,15 +71,7 @@ export function bindProviderSelector(select, runtime, storage, options = {}) {
   select.addEventListener("change", () => {
     if (locked) return;
     touched = true;
-    if (choose(select.value)) {
-      // Selector bootstrap probes are diagnostics-silent; a deliberate user
-      // choice becomes the active diagnostics provider.
-      void runtime.sendMessage({
-        type: PROVIDER_STATUS_MESSAGE,
-        provider_id: current,
-        record_diagnostics: true
-      }).catch(() => {});
-    }
+    choose(select.value);
   });
 
   const ready = (async () => {
@@ -111,14 +103,19 @@ export function bindProviderSelector(select, runtime, storage, options = {}) {
       option.disabled = availability === "not_found" || availability === "unavailable";
     }
 
+    let providerChanged = false;
     if (!touched) {
-      choose(firstEnabled(preferred), false, false);
+      const next = firstEnabled(preferred);
+      providerChanged = current !== next;
+      choose(next, false, false);
     } else if (!locked && optionFor(current)?.disabled) {
-      choose(firstEnabled(preferred), false, false);
+      const next = firstEnabled(preferred);
+      providerChanged = current !== next;
+      choose(next, false, false);
     }
     // Even if a newer choice/lock won while probes were pending, publish the
     // now-known capability status for that current provider without changing it.
-    notify(false, true);
+    notify(providerChanged, true);
     return current;
   })();
 
