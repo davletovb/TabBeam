@@ -22,6 +22,7 @@ export default [
         HTMLSelectElement: "readonly",
         HTMLDetailsElement: "readonly",
         globalThis: "readonly",
+        localStorage: "readonly",
         structuredClone: "readonly",
         TextEncoder: "readonly",
         NodeFilter: "readonly",
