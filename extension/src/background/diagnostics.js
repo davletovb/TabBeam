@@ -6,8 +6,15 @@ import {
 
 export const DIAGNOSTICS_STORAGE_KEY = "pervue.diagnostics";
 
+/** @param {string} extensionVersion */
 function emptySnapshot(extensionVersion) {
-  return {
+  return /** @type {{
+    extension_version: string,
+    protocol_version: number,
+    host: {state: string, version: string | null, protocol_versions: number[]},
+    provider: {provider_id: string | null, availability: string, authentication: string},
+    recent_failure: {code: string, reason: string, retryable: boolean, at: number} | null
+  }} */ ({
     extension_version: extensionVersion,
     protocol_version: PROTOCOL_VERSION,
     host: { state: "unknown", version: null, protocol_versions: [] },
@@ -17,7 +24,7 @@ function emptySnapshot(extensionVersion) {
       authentication: "unknown"
     },
     recent_failure: null
-  };
+  });
 }
 
 /** @param {any} value @param {string} extensionVersion */
