@@ -1221,9 +1221,9 @@ Measure product-level responsiveness, not microbenchmarks.
 **Status:** IMPLEMENTED — VERIFY
 
 **Implementation evidence**
-- `extension/src/shared/performance.js` defines local product budgets and Performance API measure names: popup input-ready 100 ms, native connection 250 ms, and first response chunk 1,500 ms.
-- Production instrumentation records popup readiness in `popup.js`, connection creation in `native-connection.js`, and first response delta separately from total provider completion in `ask-form.js`.
-- `extension/tests/performance-budgets.mjs` runs the deterministic local path in CI and prints a repeatable JSON timing report while failing any budget regression.
+- `extension/src/shared/performance.js` defines local product budgets and Performance API measure names: popup input-ready 100 ms, native readiness 250 ms, and first response chunk 1,500 ms.
+- Production instrumentation measures popup readiness from the navigation time origin in `popup.js`, native readiness when the first host message arrives in `native-connection.js`, and first response delta separately from total provider completion in `ask-form.js`.
+- `extension/tests/performance-budgets.mjs` verifies that the production instrumentation fires at the correct lifecycle points and that budget boundary logic is enforced. The built-host round-trip test launches the real native host and fails CI if native readiness or first-chunk latency exceeds its budget; popup readiness remains a real browser PerformanceEntry for browser profiling rather than a mock-latency assertion.
 
 ---
 
