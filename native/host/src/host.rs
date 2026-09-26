@@ -30,7 +30,7 @@ use crate::diagnostics::{
 use crate::framing::{self, FrameError};
 use crate::limits::MAX_FRAME_SIZE;
 use crate::protocol::events::{
-    self, Capability, Capabilities, ConversationCreated, ErrorBody, ErrorCode, Event, ProviderStatus,
+    self, Capability, ConversationCreated, ErrorBody, ErrorCode, Event, ProviderStatus,
     RequestCancelled, ResponseCompleted, ResponseDelta, ResponseStarted,
 };
 use crate::protocol::request::{self, Method, RequestFailure, RequestId};
@@ -880,6 +880,7 @@ mod tests {
     use crate::HOST_VERSION;
     use crate::framing::PREFIX_SIZE;
     use crate::limits::MAX_FRAME_SIZE;
+    use crate::protocol::events::Capabilities;
     use crate::providers::{Provider, fake};
 
     fn framed(payloads: &[&str]) -> Vec<u8> {
@@ -1243,6 +1244,10 @@ mod tests {
                 idle: Duration::from_secs(60),
                 stop_grace: Duration::ZERO,
             }
+        }
+
+        fn capabilities(&self) -> Capabilities {
+            fake::STATUS.capabilities
         }
 
         fn status(&self) -> Box<dyn Exchange> {
