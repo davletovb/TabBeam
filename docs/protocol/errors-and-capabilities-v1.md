@@ -144,7 +144,7 @@ Required v1 protocol reasons include:
 
 The extension also reports `REQUEST_TOO_LARGE` when it refuses to send a request that would exceed the Native Messaging frame limit (SEC-01, `docs/protocol/native-messaging-v1.json`). The host never receives such a request.
 
-A provider adapter reports `UNKNOWN_CONVERSATION` when `conversation_id` has no recoverable session and no usable dialogue history. Codex recovers its native session mapping after host restarts, or starts a new provider session from bounded `input.history` if the mapping has been lost or the resumed thread fails before a turn starts. It reports `PAGE_CONTEXT_UNSUPPORTED` when a request attaches browser context (`payload.context`) that its provider can't use (`page_context: false`), rather than answer without it (§6).
+A provider adapter reports `UNKNOWN_CONVERSATION` when `conversation_id` has no recoverable session and no usable dialogue history. Codex recovers its native session mapping after host restarts, or starts a new provider session from bounded `input.history` if the mapping has been lost or the resumed thread fails before a turn starts. An adapter whose provider reports `page_context: false` must reject attached browser context rather than silently answer without it (§6). Codex now reports `page_context: true` and consumes validated browser context.
 
 Default retryability: **false** unless the caller changes the request.
 
