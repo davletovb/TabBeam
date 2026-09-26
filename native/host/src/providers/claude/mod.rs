@@ -21,7 +21,8 @@ use super::forget;
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
 use crate::conversation::provider_prompt;
 use crate::protocol::events::{
-    Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ProviderState,
+    Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ModelOption,
+    ProviderState,
 };
 use pervue_core::discovery::SearchPath;
 use pervue_core::process::{Event, Exit, Process, ProcessSpec};
@@ -76,9 +77,27 @@ pub const CAPABILITIES: Capabilities = Capabilities {
     web_search: Capability::Unknown,
     page_context: Capability::Unsupported,
     attachments: Capability::Unsupported,
-    model_selection: Capability::Unsupported,
+    model_selection: Capability::Supported,
     cancellation: Capability::Supported,
 };
+
+/// Suggested models: Claude Code's documented aliases, which always resolve to
+/// the latest model of each family, so the list doesn't go stale. Any other
+/// valid model ID (a full model name) is passed on as well.
+pub const MODELS: &[ModelOption] = &[
+    ModelOption {
+        id: "sonnet",
+        label: "Sonnet (latest)",
+    },
+    ModelOption {
+        id: "opus",
+        label: "Opus (latest)",
+    },
+    ModelOption {
+        id: "haiku",
+        label: "Haiku (latest)",
+    },
+];
 
 const NOT_INSTALLED: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::ProviderNotFound,
@@ -354,6 +373,7 @@ impl Provider for Claude {
             conversation_id,
             conversations: Rc::clone(&self.conversations),
             finish_grace: self.limits.finish,
+            model: request.model,
             queue: VecDeque::new(),
             cancelled: false,
             started: false,
@@ -385,6 +405,7 @@ fn status_update(availability: Availability, authentication: Authentication) -> 
             availability,
             authentication,
             capabilities: CAPABILITIES,
+            models: MODELS,
         },
     }
 }
@@ -606,6 +627,40 @@ impl Exchange for StatusCheck {
     }
 }
 
+/// The `claude -p` command line for one turn; the question goes on stdin.
+/// A model is one `--model=<id>` argument, so the ID can never be read as an
+/// option of its own.
+fn claude_args(resume: Option<&str>, model: Option<&str>) -> Vec<OsString> {
+    let mut args: Vec<OsString> = [
+        "-p",
+        "--output-format",
+        "stream-json",
+        "--input-format",
+        "stream-json",
+        "--verbose",
+        "--include-partial-messages",
+        "--permission-mode",
+        "default",
+        // Pervue's Claude adapter is a conversational provider, not an
+        // agent. Disable built-in tools, load none of the user's MCP
+        // servers, and deny MCP tools explicitly as well.
+        "--tools",
+        "",
+        "--strict-mcp-config",
+        "--disallowedTools",
+        "mcp__*",
+    ]
+    .map(OsString::from)
+    .into();
+    if let Some(model) = model {
+        args.push(format!("--model={model}").into());
+    }
+    if let Some(session) = resume {
+        args.extend([OsString::from("--resume"), OsString::from(session)]);
+    }
+    args
+}
+
 struct Turn {
     stage: Stage,
     executable: PathBuf,
@@ -618,6 +673,8 @@ struct Turn {
     conversation_id: Option<String>,
     conversations: Conversations,
     finish_grace: Duration,
+    /// The model to answer with, or `None` for Claude's own default.
+    model: Option<String>,
     queue: VecDeque<Update>,
     cancelled: bool,
     /// This Claude run sent `init`.
@@ -646,30 +703,7 @@ impl Turn {
         let Ok(workspace) = self.launch.workspace() else {
             return self.end(Update::Failed(NO_WORKSPACE));
         };
-        let mut args: Vec<OsString> = [
-            "-p",
-            "--output-format",
-            "stream-json",
-            "--input-format",
-            "stream-json",
-            "--verbose",
-            "--include-partial-messages",
-            "--permission-mode",
-            "default",
-            // Pervue's Claude adapter is a conversational provider, not an
-            // agent. Disable built-in tools, load none of the user's MCP
-            // servers, and deny MCP tools explicitly as well.
-            "--tools",
-            "",
-            "--strict-mcp-config",
-            "--disallowedTools",
-            "mcp__*",
-        ]
-        .map(OsString::from)
-        .into();
-        if let Some(session) = &self.resume {
-            args.extend([OsString::from("--resume"), OsString::from(session)]);
-        }
+        let args = claude_args(self.resume.as_deref(), self.model.as_deref());
         let input = serde_json::json!({
             "type": "user",
             "message": {
@@ -974,6 +1008,38 @@ impl Exchange for Turn {
             Stage::Probing { .. } => self.end(Update::Stopped),
             Stage::Done if finished => self.queue.push_back(Update::Stopped),
             Stage::Done => {}
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_model_is_one_argument_before_the_session() {
+        let args = claude_args(Some("session-1"), Some("sonnet"));
+        let args: Vec<&str> = args.iter().map(|arg| arg.to_str().unwrap()).collect();
+        assert!(args.contains(&"--model=sonnet"));
+        assert_eq!(&args[args.len() - 2..], ["--resume", "session-1"]);
+        let default = claude_args(None, None);
+        assert!(
+            !default
+                .iter()
+                .any(|arg| arg.to_string_lossy().starts_with("--model"))
+        );
+    }
+
+    #[test]
+    fn suggested_models_are_valid_model_ids() {
+        assert_eq!(CAPABILITIES.model_selection, Capability::Supported);
+        assert!(!MODELS.is_empty());
+        for model in MODELS {
+            assert!(
+                crate::protocol::request::is_model_id(model.id),
+                "{}",
+                model.id
+            );
         }
     }
 }

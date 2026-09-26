@@ -60,6 +60,159 @@ body {
   line-height: 1.65;
 }
 
+/* ---------- Provider & model ---------- */
+
+.settings-card {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 40px;
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.settings-card h2,
+.section-title {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.section-lede {
+  color: var(--text-2);
+  line-height: 1.6;
+}
+
+.section-title + .section-lede {
+  margin: 6px 0 18px;
+}
+
+.provider-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  margin: 4px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.provider-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: border-color var(--fast) var(--ease), background var(--fast) var(--ease), box-shadow var(--fast) var(--ease);
+}
+
+.provider-option:hover {
+  border-color: var(--border-strong);
+}
+
+.provider-option:has(input:checked) {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.provider-option:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.provider-option input {
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+
+.provider-option input:focus-visible { outline: none; }
+
+.provider-option-text {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.provider-option-text strong {
+  font-size: 14.5px;
+  font-weight: 650;
+}
+
+.provider-option .provider-state {
+  align-items: flex-start;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.provider-option .provider-state::before {
+  margin-top: 5px;
+}
+
+.model-field {
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.model-field label {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.model-field select {
+  max-width: 320px;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.model-field select:disabled {
+  color: var(--text-2);
+  cursor: not-allowed;
+}
+
+.model-custom {
+  display: flex;
+  gap: 8px;
+  max-width: 420px;
+}
+
+.model-custom input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.model-custom input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.field-note[data-state="error"] {
+  color: var(--danger);
+}
+
+.field-note {
+  color: var(--text-3);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
 .steps {
   display: grid;
   gap: 12px;

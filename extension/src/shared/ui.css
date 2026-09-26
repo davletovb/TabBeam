@@ -1056,25 +1056,6 @@ button {
 }
 
 
-/* Provider choice for new conversations. */
-.provider-select {
-  max-width: 108px;
-  min-height: 28px;
-  padding: 0 24px 0 9px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-full);
-  background: var(--surface);
-  color: var(--text-2);
-  font: inherit;
-  font-size: 12px;
-  appearance: auto;
-}
-
-.provider-select:disabled {
-  opacity: 0.72;
-  cursor: default;
-}
-
 /* The provider line: a dot and a short sentence. */
 .provider-state {
   display: flex;

@@ -1312,6 +1312,8 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 - Popup and full-page ask flows send the selected provider ID for new conversations without provider-specific branching.
 - Browser-context controls consume `page_context` capability data: when Claude is selected they are disabled with an explanatory state instead of silently dropping context.
 - `extension/tests/provider-selector.mjs` covers persistence, missing-provider fallback, conversation locking, and capability-aware context controls.
+- The provider and model are chosen on the Provider & setup page (`extension/src/setup/provider-settings.js`); the popup and full view follow the saved choice without a picker, including changes made while they're open, and never overwrite a newer choice with a stale read.
+- Model choice follows the `model_selection` capability: optional `conversation.send` `model` and `status.models` in protocol v1, validated in the worker and the host, refused with `MODEL_SELECTION_UNSUPPORTED` for a provider that can't switch, and passed to Codex and Claude as one `--model=<id>` argument. `extension/tests/provider-settings.mjs`, `extension/tests/models.mjs`, and the host and adapter tests cover it.
 
 
 ### TST-10 — Add cross-provider contract test suite

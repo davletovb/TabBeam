@@ -85,6 +85,21 @@
       "sequence": "new conversation success"
     },
     {
+      "name": "model choice for a provider that cannot switch",
+      "value": {
+        "version": 1,
+        "type": "request",
+        "request_id": "req_model_1",
+        "method": "conversation.send",
+        "payload": {
+          "provider_id": "fake",
+          "input": {"text": "Hello"},
+          "model": "sonnet"
+        }
+      },
+      "sequence": "model selection unsupported"
+    },
+    {
       "name": "provider status all",
       "value": {
         "version": 1,
@@ -309,6 +324,13 @@
       "request_id": "req_forget_1",
       "events": [
         "response.completed"
+      ]
+    },
+    {
+      "name": "model selection unsupported",
+      "request_id": "req_model_1",
+      "events": [
+        "response.failed"
       ]
     }
   ],

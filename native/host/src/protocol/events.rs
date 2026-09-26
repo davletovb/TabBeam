@@ -49,7 +49,8 @@ pub enum EventError {
 }
 
 pub use pervue_core::protocol::{
-    Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ProviderState,
+    Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ModelOption,
+    ProviderState,
 };
 
 /// Payload of a `provider.status` event.
@@ -289,6 +290,23 @@ mod tests {
     }
 
     #[test]
+    fn suggested_models_are_listed_only_when_there_are_some() {
+        const MODELS: &[ModelOption] = &[ModelOption {
+            id: "sonnet",
+            label: "Sonnet (latest)",
+        }];
+        let mut state = crate::providers::fake::STATUS;
+        let without = serde_json::to_value(state).unwrap();
+        assert!(without.get("models").is_none());
+        state.models = MODELS;
+        let with = serde_json::to_value(state).unwrap();
+        assert_eq!(
+            with["models"],
+            serde_json::json!([{"id": "sonnet", "label": "Sonnet (latest)"}])
+        );
+    }
+
+    #[test]
     fn provider_status_uses_the_normalized_vocabulary() {
         let request = parse_request(
             br#"{"version":1,"type":"request","request_id":"req","method":"provider.status","payload":{}}"#,
@@ -308,6 +326,7 @@ mod tests {
                     model_selection: Capability::Unknown,
                     cancellation: Capability::Supported,
                 },
+                models: &[],
             },
         };
 

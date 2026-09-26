@@ -109,6 +109,7 @@ fn exchange_and_platform_types_do_not_depend_on_host() {
             model_selection: Capability::Unknown,
             cancellation: Capability::Supported,
         },
+        models: &[],
     };
     let mut exchange: Box<dyn Exchange> = Box::new(Scripted::new([
         Update::Status {

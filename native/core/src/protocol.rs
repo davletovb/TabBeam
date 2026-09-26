@@ -76,9 +76,23 @@ pub struct Capabilities {
     pub cancellation: Capability,
 }
 
+/// A model an adapter suggests (`status.models`). Suggestions, not the
+/// complete set: a provider may accept other valid model IDs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct ModelOption {
+    /// What `conversation.send` passes as `model`.
+    pub id: &'static str,
+    /// How the extension names it.
+    pub label: &'static str,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct ProviderState {
     pub availability: Availability,
     pub authentication: Authentication,
     pub capabilities: Capabilities,
+    /// Suggested models, when `model_selection` is supported. Omitted when
+    /// empty; an adapter that can take any model ID may suggest none.
+    #[serde(skip_serializing_if = "<[ModelOption]>::is_empty")]
+    pub models: &'static [ModelOption],
 }

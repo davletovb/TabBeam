@@ -15,9 +15,14 @@ export const PROVIDER_STORAGE_KEY = "pervue.provider";
  */
 
 /**
- * Capability-aware provider picker (EXT-15). Availability only controls which
+ * Capability-aware provider choice (EXT-15). Availability only controls which
  * provider can start a new conversation; an existing conversation is locked
  * to the provider that created it.
+ *
+ * The choice is made on the companion setup page and saved under
+ * PROVIDER_STORAGE_KEY. The popup and full view bind this without a `select`:
+ * they follow the saved preference (including a change made while they are
+ * open, via `storageChanges`) and lock conversations to their provider.
  *
  * The saved preference applies as soon as storage answers; each provider's
  * status is checked once, and a response (or `null` for a check that failed)
@@ -25,10 +30,13 @@ export const PROVIDER_STORAGE_KEY = "pervue.provider";
  * Only the check of the provider current when checks start is recorded in
  * diagnostics, so a background check can't overwrite it.
  *
- * @param {HTMLSelectElement} select
+ * @param {HTMLSelectElement | null} select a visible picker, or null to follow the saved choice
  * @param {{sendMessage(message: any): Promise<any>}} runtime
  * @param {{get(key: string): Promise<any>, set(values: object): Promise<void>}} storage
- * @param {{onChange?(selection: ProviderSelection): void}} [options]
+ * @param {{
+ *   onChange?(selection: ProviderSelection): void,
+ *   storageChanges?: {addListener(callback: (changes: Record<string, any>, area: string) => void): void}
+ * }} [options]
  */
 export function bindProviderSelector(select, runtime, storage, options = {}) {
   /** @type {Map<string, any>} */
@@ -42,7 +50,10 @@ export function bindProviderSelector(select, runtime, storage, options = {}) {
   let touched = false;
   let preferenceTouched = false;
 
-  select.replaceChildren(...USER_PROVIDERS.map(({ id, label }) => {
+  /** Providers whose check found them missing or unable to start. */
+  const unavailable = new Set();
+
+  select?.replaceChildren(...USER_PROVIDERS.map(({ id, label }) => {
     const option = select.ownerDocument.createElement("option");
     option.value = id;
     option.textContent = label;
@@ -51,7 +62,16 @@ export function bindProviderSelector(select, runtime, storage, options = {}) {
 
   /** @param {string} id */
   function optionFor(id) {
-    return Array.from(select.options).find((option) => option.value === id);
+    return USER_PROVIDERS.some((provider) => provider.id === id)
+      ? { disabled: unavailable.has(id) }
+      : undefined;
+  }
+
+  function syncSelect() {
+    if (!select) return;
+    for (const option of Array.from(select.options)) option.disabled = unavailable.has(option.value);
+    select.value = current;
+    select.disabled = locked || held;
   }
 
   /** @param {boolean} [providerChanged] @param {boolean} [statusUpdated] */
@@ -67,7 +87,7 @@ export function bindProviderSelector(select, runtime, storage, options = {}) {
   }
 
   function syncDisabled() {
-    select.disabled = locked || held;
+    if (select) select.disabled = locked || held;
   }
 
   /** @param {string} id */
@@ -85,7 +105,7 @@ export function bindProviderSelector(select, runtime, storage, options = {}) {
     if (!option || (option.disabled && !locked)) return false;
     const changed = current !== id;
     current = id;
-    select.value = id;
+    if (select) select.value = id;
     if (persist && !locked) {
       preferenceTouched = true;
       preferred = id;
@@ -95,13 +115,31 @@ export function bindProviderSelector(select, runtime, storage, options = {}) {
     return true;
   }
 
-  select.addEventListener("change", () => {
+  /** Moves to the saved choice, or the first available provider. */
+  function follow() {
+    const next = firstEnabled(preferred);
+    const changed = current !== next;
+    choose(next, false, false);
+    if (changed) notify(true);
+  }
+
+  select?.addEventListener("change", () => {
     if (locked || held) {
       select.value = current;
       return;
     }
     touched = true;
     choose(select.value);
+  });
+
+  // A choice made on the setup page while this view is open.
+  options.storageChanges?.addListener((changes, area) => {
+    const next = changes[PROVIDER_STORAGE_KEY]?.newValue;
+    if (area !== "local" || typeof next !== "string" || next === preferred) return;
+    preferred = next;
+    preferenceTouched = true;
+    if (locked || held) return;
+    follow();
   });
 
   const ready = (async () => {
@@ -132,11 +170,12 @@ export function bindProviderSelector(select, runtime, storage, options = {}) {
       }
     }));
 
-    for (const option of Array.from(select.options)) {
-      const response = statuses.get(option.value);
-      const availability = response?.status?.availability;
-      option.disabled = availability === "not_found" || availability === "unavailable";
+    for (const { id } of USER_PROVIDERS) {
+      const availability = statuses.get(id)?.status?.availability;
+      if (availability === "not_found" || availability === "unavailable") unavailable.add(id);
+      else unavailable.delete(id);
     }
+    syncSelect();
 
     // A question in flight keeps the provider it was sent to.
     let providerChanged = false;
@@ -163,10 +202,9 @@ export function bindProviderSelector(select, runtime, storage, options = {}) {
       touched = true;
       const changed = current !== providerId;
       locked = true;
-      const option = optionFor(providerId);
-      if (option) {
+      if (optionFor(providerId)) {
         current = providerId;
-        select.value = providerId;
+        if (select) select.value = providerId;
       }
       syncDisabled();
       // Re-loading the same conversation after a request must not erase a
@@ -177,14 +215,14 @@ export function bindProviderSelector(select, runtime, storage, options = {}) {
     hold(value) {
       held = value;
       syncDisabled();
+      // A question that ended without a conversation (it failed before one
+      // was created) locks nothing: a choice saved meanwhile applies now.
+      if (!held && !locked) follow();
     },
     unlock() {
       locked = false;
       syncDisabled();
-      const next = firstEnabled(preferred);
-      const changed = current !== next;
-      choose(next, false, false);
-      if (changed) notify(true);
+      follow();
     }
   };
 }

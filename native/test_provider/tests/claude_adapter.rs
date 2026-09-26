@@ -20,6 +20,7 @@ fn ask(text: &str) -> SendRequest {
         history: Vec::new(),
         conversation_id: None,
         context: None,
+        model: None,
     }
 }
 
@@ -115,6 +116,46 @@ fn status_uses_shared_discovery_and_auth_exit_status() {
             .iter()
             .all(|line| line == "auth status")
     );
+}
+
+#[test]
+fn a_chosen_model_goes_to_claude_as_one_argument() {
+    let claude = FakeClaude::install("answers", "signed-in");
+    let adapter = claude.adapter();
+    assert_eq!(
+        adapter.capabilities().model_selection,
+        Capability::Supported
+    );
+    let updates = run_to_end(
+        adapter
+            .send(SendRequest {
+                model: Some("sonnet".to_owned()),
+                ..ask("hello")
+            })
+            .as_mut(),
+    );
+    assert_eq!(updates.last(), Some(&Update::Completed), "{updates:?}");
+    let runs: Vec<String> = claude
+        .invocations()
+        .into_iter()
+        .filter(|line| line.starts_with("-p "))
+        .collect();
+    assert_eq!(runs.len(), 1, "{runs:?}");
+    assert!(
+        runs[0].split(' ').any(|arg| arg == "--model=sonnet"),
+        "{}",
+        runs[0]
+    );
+
+    // Without a model, Claude uses its own default: no flag at all.
+    let before = claude.invocations().len();
+    run_to_end(adapter.send(ask("again")).as_mut());
+    let default: Vec<String> = claude.invocations()[before..]
+        .iter()
+        .filter(|line| line.starts_with("-p "))
+        .cloned()
+        .collect();
+    assert!(!default[0].contains("--model"), "{}", default[0]);
 }
 
 #[test]
@@ -537,7 +578,8 @@ fn capabilities_express_claudes_observed_differences() {
     assert_eq!(capabilities.streaming, Capability::Supported);
     assert_eq!(capabilities.continuation, Capability::Supported);
     assert_eq!(capabilities.page_context, Capability::Unsupported);
-    assert_eq!(capabilities.model_selection, Capability::Unsupported);
+    // Claude Code takes `--model`, with aliases that track the latest models.
+    assert_eq!(capabilities.model_selection, Capability::Supported);
     assert_eq!(capabilities.cancellation, Capability::Supported);
 }
 

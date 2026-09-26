@@ -231,6 +231,10 @@ class FakeElement {
     assert.ok(markup.includes('id="theme-toggle"'));
   }
   assert.ok(setup.includes("./setup.js"));
+  // Provider and model are chosen on the setup page, not in the popup or full view.
+  for (const markup of [popup, fullpage]) assert.ok(!markup.includes('id="provider-select"'));
+  assert.ok(setup.includes('id="provider-options"'));
+  assert.ok(setup.includes('id="model-select"'));
 
   assert.ok(sharedCss.includes(':root[data-theme="light"]'));
   assert.ok(sharedCss.includes(':root[data-theme="dark"]'));

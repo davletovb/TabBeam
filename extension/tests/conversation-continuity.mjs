@@ -376,4 +376,23 @@ await settle();
 // The first report is the creation; a later reload reports the ID alone.
 assert.deepEqual(created[0], [switched.view.getConversationId(), "claude"]);
 
+// A chosen model travels with the question to the host; without one, the
+// payload has no model and the provider uses its default.
+/** @type {(string | undefined)[]} */
+const modelAsks = [];
+const modelView = openView("claude", {
+  /** @param {string | undefined} provider */
+  getModel: (provider) => { modelAsks.push(provider); return "sonnet"; }
+});
+modelView.ask("With a model");
+await settle();
+assert.deepEqual(modelAsks, ["claude"], "the model asked for is the question's provider's");
+assert.equal(native[native.length - 1].request.payload.model, "sonnet");
+answerRequest(native.length - 1, "Answer", "claude_session_3", "claude");
+await settle();
+const plain = openView("claude", { getModel: () => undefined });
+plain.ask("Default model");
+await settle();
+assert.ok(!("model" in native[native.length - 1].request.payload));
+
 console.log("Conversation continuity tests passed");
