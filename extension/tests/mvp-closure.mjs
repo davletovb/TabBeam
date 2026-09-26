@@ -48,6 +48,12 @@ class FakeElement {
 
   /** @type {Record<string, any>} */
   const values = {};
+  /** @type {Record<string, string>} */
+  const cacheValues = {};
+  const cache = {
+    getItem(key) { return cacheValues[key] ?? null; },
+    setItem(key, value) { cacheValues[key] = value; }
+  };
   const storage = {
     /** @param {string} key */
     async get(key) { return { [key]: values[key] }; },
@@ -69,7 +75,8 @@ class FakeElement {
     /** @type {any} */ (select),
     storage,
     /** @type {any} */ (root),
-    storageChanges
+    storageChanges,
+    /** @type {any} */ (cache)
   );
   assert.equal(select.value, "system");
 
@@ -81,7 +88,7 @@ class FakeElement {
 
   const secondRoot = new FakeElement();
   assert.equal(
-    await loadTheme(storage, /** @type {any} */ (secondRoot)),
+    await loadTheme(storage, /** @type {any} */ (secondRoot), /** @type {any} */ (cache)),
     "dark"
   );
   assert.equal(secondRoot.getAttribute("data-theme"), "dark");
@@ -89,10 +96,40 @@ class FakeElement {
   changeListeners[0]({ [THEME_STORAGE_KEY]: { newValue: "light" } }, "local");
   assert.equal(select.value, "light");
   assert.equal(root.getAttribute("data-theme"), "light");
+
+  // Cached theme applies synchronously, and a user change made while the
+  // authoritative storage read is pending is not overwritten by the late read.
+  cacheValues[THEME_STORAGE_KEY] = "dark";
+  let resolveGet = () => {};
+  const slowStorage = {
+    get() { return new Promise((resolve) => { resolveGet = () => resolve({ [THEME_STORAGE_KEY]: "light" }); }); },
+    async set() {}
+  };
+  const slowRoot = new FakeElement();
+  const slowSelect = new FakeElement();
+  const pendingBind = bindThemeSelect(
+    /** @type {any} */ (slowSelect),
+    slowStorage,
+    /** @type {any} */ (slowRoot),
+    undefined,
+    /** @type {any} */ (cache)
+  );
+  assert.equal(slowRoot.getAttribute("data-theme"), "dark");
+  slowSelect.value = "dark";
+  slowSelect.dispatch("change");
+  resolveGet();
+  await pendingBind;
+  assert.equal(slowSelect.value, "dark");
 }
 
 {
-  const diagnostics = createDiagnosticsState("0.1.0", () => 1234);
+  /** @type {Record<string, any>} */
+  const sessionValues = {};
+  const sessionStorage = {
+    async get(key) { return { [key]: sessionValues[key] }; },
+    async set(values) { Object.assign(sessionValues, structuredClone(values)); }
+  };
+  const diagnostics = createDiagnosticsState("0.1.0", sessionStorage, () => 1234);
   diagnostics.noteLifecycle({
     event: "host.ready",
     payload: { host_version: "0.1.0-dev", protocol_versions: [1] }
@@ -112,7 +149,7 @@ class FakeElement {
     retryable: true,
     prompt: "also-secret"
   });
-  const summary = diagnostics.summary();
+  const summary = await diagnostics.summary();
   assert.equal(summary.extension_version, "0.1.0");
   assert.deepEqual(summary.host, {
     state: "available",
@@ -138,7 +175,16 @@ class FakeElement {
     message: "credential-looking material",
     retryable: false
   });
-  assert.equal(diagnostics.summary().recent_failure?.reason, "UNKNOWN");
+  assert.equal((await diagnostics.summary()).recent_failure?.reason, "UNKNOWN");
+
+  // Host loss clears stale provider readiness, and the snapshot survives a
+  // simulated MV3 worker restart through storage.session.
+  diagnostics.noteDisconnect();
+  const disconnected = await diagnostics.summary();
+  assert.equal(disconnected.host.state, "unavailable");
+  assert.equal(disconnected.provider.availability, "unknown");
+  const restored = createDiagnosticsState("0.1.0", sessionStorage, () => 9999);
+  assert.deepEqual(await restored.summary(), disconnected);
 
   const elements = {
     host: new FakeElement(),
@@ -157,8 +203,10 @@ class FakeElement {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const popup = fs.readFileSync(path.join(root, "src/popup/index.html"), "utf8");
   const fullpage = fs.readFileSync(path.join(root, "src/fullpage/index.html"), "utf8");
+  const setup = fs.readFileSync(path.join(root, "src/setup/index.html"), "utf8");
   const popupCss = fs.readFileSync(path.join(root, "src/popup/popup.css"), "utf8");
   const fullpageCss = fs.readFileSync(path.join(root, "src/fullpage/fullpage.css"), "utf8");
+  const setupCss = fs.readFileSync(path.join(root, "src/setup/setup.css"), "utf8");
 
   for (const markup of [popup, fullpage]) {
     assert.ok(markup.includes('id="theme-select"'));
@@ -173,8 +221,12 @@ class FakeElement {
   assert.ok(popup.includes('id="diagnostics"'));
   assert.ok(popup.includes('id="companion-setup"'));
   assert.ok(popup.includes("../setup/index.html"));
+  for (const markup of [popup, fullpage, setup]) {
+    assert.ok(markup.includes("../shared/theme-bootstrap.js"));
+  }
+  assert.ok(setup.includes("./setup.js"));
 
-  for (const css of [popupCss, fullpageCss]) {
+  for (const css of [popupCss, fullpageCss, setupCss]) {
     assert.ok(css.includes(':root[data-theme="light"]'));
     assert.ok(css.includes(':root[data-theme="dark"]'));
     assert.ok(css.includes(":focus-visible"));
