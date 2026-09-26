@@ -6,9 +6,7 @@ mod support;
 use std::time::Duration;
 
 use serde_json::Value;
-use support::{
-    FakeClaude, PacedInput, request_id_for, serve_timed_claude,
-};
+use support::{FakeClaude, PacedInput, request_id_for, serve_timed_claude};
 
 fn request(method: &str, request_id: &str, payload: Value) -> String {
     serde_json::json!({
@@ -68,7 +66,9 @@ fn ignored_claude_flood_does_not_starve_status_or_cancel() {
         "status request was starved"
     );
     assert_eq!(
-        status_events.last().map(|event| event.event["event"].as_str()),
+        status_events
+            .last()
+            .map(|event| event.event["event"].as_str()),
         Some(Some("response.completed"))
     );
 
