@@ -30,8 +30,12 @@ const nativeConnectionManager = createNativeConnectionManager({
 });
 const conversations = createConversationStore(chrome.storage.local);
 const inFlightConversations = new Set();
-const diagnostics = createDiagnosticsState(chrome.runtime.getManifest().version);
+const diagnostics = createDiagnosticsState(
+  chrome.runtime.getManifest().version,
+  chrome.storage.session
+);
 nativeConnectionManager.onLifecycleEvent((event) => diagnostics.noteLifecycle(event));
+nativeConnectionManager.onDisconnect(() => diagnostics.noteDisconnect());
 
 /** @param {string} entry */
 async function openFullPage(entry) {
@@ -91,8 +95,8 @@ chrome.runtime.onMessage.addListener(
       if (!isExtensionPage(sender, chrome.runtime.getURL(""))) {
         return;
       }
-      sendResponse(diagnostics.summary());
-      return;
+      diagnostics.summary().then(sendResponse);
+      return true;
     }
     if (message?.type === MENU_CONSUME_MESSAGE) {
       entryActions.consume(message, sender).then(sendResponse);
