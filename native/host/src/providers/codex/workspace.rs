@@ -24,14 +24,19 @@ use crate::providers::environment;
 /// only where the temporary directory is private to the user, as it is on
 /// macOS and Windows.
 pub fn default(host: &[(OsString, OsString)]) -> PathBuf {
+    default_for(host, "codex")
+}
+
+/// A provider-specific private workspace, using the same trust checks as Codex.
+pub(crate) fn default_for(host: &[(OsString, OsString)], provider: &str) -> PathBuf {
     cache_dir(host).map_or_else(
         || {
             std::env::temp_dir().join(format!(
-                "pervue-codex-{:016x}",
+                "pervue-{provider}-{:016x}",
                 RandomState::new().hash_one(SystemTime::now())
             ))
         },
-        |cache| cache.join("codex-workspace"),
+        |cache| cache.join(format!("{provider}-workspace")),
     )
 }
 
