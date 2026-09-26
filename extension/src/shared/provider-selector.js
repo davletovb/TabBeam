@@ -11,13 +11,7 @@ export const PROVIDER_STORAGE_KEY = "pervue.provider";
  * @param {HTMLSelectElement} select
  * @param {{sendMessage(message: any): Promise<any>}} runtime
  * @param {{get(key: string): Promise<any>, set(values: object): Promise<void>}} storage
- * @param {{onChange?(selection: {
- *   providerId: string,
- *   label: string,
- *   status: any | null,
- *   providerChanged: boolean,
- *   statusUpdated: boolean
- * }): void}} [options]
+ * @param {{onChange?(selection: {providerId: string, label: string, status: any | null}): void}} [options]
  */
 export function bindProviderSelector(select, runtime, storage, options = {}) {
   /** @type {Map<string, any>} */
@@ -39,50 +33,56 @@ export function bindProviderSelector(select, runtime, storage, options = {}) {
     return Array.from(select.options).find((option) => option.value === id);
   }
 
-  /** @param {boolean} providerChanged @param {boolean} statusUpdated */
-  function notify(providerChanged, statusUpdated) {
+  function notify() {
     options.onChange?.({
       providerId: current,
       label: providerLabel(current),
-      status: statuses.get(current)?.status ?? null,
-      providerChanged,
-      statusUpdated
+      status: statuses.get(current)?.status ?? null
     });
   }
 
-  /** @param {string} id @param {boolean} persist @param {boolean} markTouched */
-  function choose(id, persist, markTouched) {
+  /** @param {string} id */
+  function firstEnabled(id) {
+    const candidates = [id, DEFAULT_PROVIDER_ID, ...USER_PROVIDERS.map(({ id: candidate }) => candidate)];
+    return candidates.find((candidate) => {
+      const option = optionFor(candidate);
+      return option && !option.disabled;
+    }) ?? DEFAULT_PROVIDER_ID;
+  }
+
+  /** @param {string} id @param {boolean} [persist] @param {boolean} [emit] */
+  function choose(id, persist = true, emit = true) {
     const option = optionFor(id);
     if (!option || (option.disabled && !locked)) return false;
     const changed = current !== id;
     current = id;
     select.value = id;
-    if (markTouched) touched = true;
     if (persist && !locked) {
       preferred = id;
       void storage.set({ [PROVIDER_STORAGE_KEY]: id }).catch(() => {});
     }
-    if (changed) notify(true, false);
+    if (emit && changed) notify();
     return true;
   }
 
-  /** The first usable provider following the saved preference. */
-  function fallbackProvider() {
-    return [preferred, DEFAULT_PROVIDER_ID, ...USER_PROVIDERS.map(({ id }) => id)]
-      .find((id) => {
-        const option = optionFor(id);
-        return option && !option.disabled;
-      }) ?? DEFAULT_PROVIDER_ID;
-  }
-
   select.addEventListener("change", () => {
-    if (!locked) choose(select.value, true, true);
+    if (locked) return;
+    touched = true;
+    if (choose(select.value)) {
+      // Selector bootstrap probes are diagnostics-silent; a deliberate user
+      // choice becomes the active diagnostics provider.
+      void runtime.sendMessage({
+        type: PROVIDER_STATUS_MESSAGE,
+        provider_id: current,
+        record_diagnostics: true
+      }).catch(() => {});
+    }
   });
 
   const ready = (async () => {
     try {
       const saved = await storage.get(PROVIDER_STORAGE_KEY);
-      if (typeof saved?.[PROVIDER_STORAGE_KEY] === "string" && optionFor(saved[PROVIDER_STORAGE_KEY])) {
+      if (typeof saved?.[PROVIDER_STORAGE_KEY] === "string") {
         preferred = saved[PROVIDER_STORAGE_KEY];
       }
     } catch {
@@ -94,11 +94,11 @@ export function bindProviderSelector(select, runtime, storage, options = {}) {
         const response = await runtime.sendMessage({
           type: PROVIDER_STATUS_MESSAGE,
           provider_id: id,
-          background: true
+          record_diagnostics: false
         });
         if (response?.provider_id === id) statuses.set(id, response);
       } catch {
-        // Host/worker failures stay visible in the active provider state line.
+        // Host/worker failures stay visible in the provider state line.
       }
     }));
 
@@ -109,16 +109,13 @@ export function bindProviderSelector(select, runtime, storage, options = {}) {
     }
 
     if (!touched) {
-      choose(fallbackProvider(), false, false);
+      choose(firstEnabled(preferred), false, false);
     } else if (!locked && optionFor(current)?.disabled) {
-      // A choice made before discovery completed cannot start a new
-      // conversation once discovery proves that provider unavailable.
-      choose(fallbackProvider(), true, false);
+      choose(firstEnabled(preferred), false, false);
     }
-
-    // A lock or explicit choice made while probes were pending wins, but it
-    // still needs the capabilities/status that just arrived.
-    notify(false, true);
+    // Even if a newer choice/lock won while probes were pending, publish the
+    // now-known capability status for that current provider without changing it.
+    notify();
     return current;
   })();
 
@@ -130,21 +127,27 @@ export function bindProviderSelector(select, runtime, storage, options = {}) {
     /** @param {string} providerId */
     lock(providerId) {
       touched = true;
+      const wasLocked = locked;
+      const changed = current !== providerId;
       locked = true;
       const option = optionFor(providerId);
-      const changed = Boolean(option) && current !== providerId;
       if (option) {
         current = providerId;
         select.value = providerId;
       }
       select.disabled = true;
-      if (changed) notify(true, false);
+      // Re-loading the same conversation after a request must not erase a
+      // fresh failure/status message. A real provider transition still emits.
+      if (changed || !wasLocked) notify();
     },
     unlock() {
-      touched = true;
+      const wasLocked = locked;
       locked = false;
       select.disabled = false;
-      choose(fallbackProvider(), false, false);
+      const next = firstEnabled(preferred);
+      const changed = current !== next;
+      choose(next, false, false);
+      if (changed || wasLocked) notify();
     }
   };
 }
