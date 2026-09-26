@@ -409,6 +409,39 @@ impl Write for TimedSink {
     }
 }
 
+/// Runs a host serving only Claude, with the same timing harness used for
+/// hostile Codex-provider cases.
+pub fn serve_timed_claude(claude: Claude, mut input: PacedInput, waiting: &[&str]) -> Session {
+    let (ended, when_ended) = mpsc::channel();
+    input.ended = Some(when_ended);
+    let sent = Arc::clone(&input.sent);
+    let mut sink = TimedSink {
+        bytes: Vec::new(),
+        parsed: 0,
+        events: Vec::new(),
+        waiting: waiting.iter().map(|id| (*id).to_owned()).collect(),
+        ended: Some(ended),
+    };
+    let providers = Providers::new(vec![Box::new(claude)]);
+    let mut log = Diagnostics::new(Vec::new());
+    let started = Instant::now();
+    host::run_with(&providers, &mut input, &mut sink, &mut log).expect("a clean Claude session");
+    let ended = Instant::now();
+    assert_eq!(
+        sink.parsed,
+        sink.bytes.len(),
+        "the host wrote an incomplete frame"
+    );
+    let sent = sent.lock().unwrap().clone();
+    Session {
+        events: sink.events,
+        records: records(log),
+        sent,
+        started,
+        ended,
+    }
+}
+
 /// Runs a host serving only `codex` on `input`, whose end comes as soon as
 /// every request in `waiting` has ended, and records when each event came.
 pub fn serve_timed(codex: Codex, mut input: PacedInput, waiting: &[&str]) -> Session {
