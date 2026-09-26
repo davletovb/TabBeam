@@ -1,9 +1,11 @@
 import { ASK_PORT_NAME } from "../shared/ask-port.js";
 import { PROVIDER_STATUS_MESSAGE } from "../shared/provider-status.js";
+import { DIAGNOSTICS_MESSAGE } from "../shared/diagnostics.js";
 import { isExtensionPage } from "./ask-bridge.js";
 import { serveConversationAskPort } from "./conversation-bridge.js";
 import { createConversationStore } from "./conversation-store.js";
 import { checkProviderStatus } from "./status-bridge.js";
+import { createDiagnosticsState } from "./diagnostics.js";
 import {
   NATIVE_HOST_NAME,
   createNativeConnectionManager
@@ -28,6 +30,12 @@ const nativeConnectionManager = createNativeConnectionManager({
 });
 const conversations = createConversationStore(chrome.storage.local);
 const inFlightConversations = new Set();
+const diagnostics = createDiagnosticsState(
+  chrome.runtime.getManifest().version,
+  chrome.storage.session
+);
+nativeConnectionManager.onLifecycleEvent((event) => diagnostics.noteLifecycle(event));
+nativeConnectionManager.onDisconnect(() => diagnostics.noteDisconnect());
 
 /** @param {string} entry */
 async function openFullPage(entry) {
@@ -77,7 +85,17 @@ chrome.runtime.onMessage.addListener(
       if (!isExtensionPage(sender, chrome.runtime.getURL(""))) {
         return;
       }
-      checkProviderStatus({ manager: nativeConnectionManager }).then(sendResponse);
+      checkProviderStatus({ manager: nativeConnectionManager }).then((response) => {
+        diagnostics.noteProvider(response);
+        sendResponse(response);
+      });
+      return true;
+    }
+    if (message?.type === DIAGNOSTICS_MESSAGE) {
+      if (!isExtensionPage(sender, chrome.runtime.getURL(""))) {
+        return;
+      }
+      diagnostics.summary().then(sendResponse);
       return true;
     }
     if (message?.type === MENU_CONSUME_MESSAGE) {
@@ -121,7 +139,8 @@ chrome.runtime.onConnect.addListener(
     serveConversationAskPort(port, {
       manager: nativeConnectionManager,
       store: conversations,
-      inFlight: inFlightConversations
+      inFlight: inFlightConversations,
+      onFailure: (error) => diagnostics.noteFailure(error)
     });
   }
 );

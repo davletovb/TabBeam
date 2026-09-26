@@ -177,13 +177,13 @@ Reached after **Milestone H**:
 | EXT-10 | Add keyboard command entry path | D | Extension | EXT-03 | IMPLEMENTED — VERIFY |
 | SEC-03 | Add context size limits, minimization, and safe UI/log handling | D | Security | CTX-03, CTX-04 | IMPLEMENTED — VERIFY |
 | TST-07 | Add browser-context extraction and permission tests | D | Testing | CTX-01, CTX-03, CTX-04 | IMPLEMENTED — VERIFY |
-| EXT-11 | Add light/dark/system theme support | MVP closure | Extension | EXT-03, EXT-06 | BACKLOG |
-| EXT-12 | Add response cancellation and retry UX | MVP closure | Extension | PRO-04, EXT-05 | BACKLOG |
-| EXT-13 | Add companion health/install state UX | MVP closure | Extension | EXT-04 | BACKLOG |
-| OBS-02 | Add sanitized diagnostics summary | MVP closure | Observability | OBS-01, EXT-13 | BACKLOG |
-| EXT-14 | Complete keyboard/accessibility baseline | MVP closure | Extension | EXT-03, EXT-06, EXT-11 | BACKLOG |
-| TST-08 | Add MVP critical-journey E2E suite | MVP closure | Testing | TST-06, TST-07, EXT-09, EXT-10, EXT-13 | BACKLOG |
-| TST-09 | Add startup/first-chunk performance budgets | MVP closure | Testing / Performance | TST-08 | BACKLOG |
+| EXT-11 | Add light/dark/system theme support | MVP closure | Extension | EXT-03, EXT-06 | IMPLEMENTED — VERIFY |
+| EXT-12 | Add response cancellation and retry UX | MVP closure | Extension | PRO-04, EXT-05 | IMPLEMENTED — VERIFY |
+| EXT-13 | Add companion health/install state UX | MVP closure | Extension | EXT-04 | IMPLEMENTED — VERIFY |
+| OBS-02 | Add sanitized diagnostics summary | MVP closure | Observability | OBS-01, EXT-13 | IMPLEMENTED — VERIFY |
+| EXT-14 | Complete keyboard/accessibility baseline | MVP closure | Extension | EXT-03, EXT-06, EXT-11 | IMPLEMENTED — VERIFY |
+| TST-08 | Add MVP critical-journey E2E suite | MVP closure | Testing | TST-06, TST-07, EXT-09, EXT-10, EXT-13 | IMPLEMENTED — VERIFY |
+| TST-09 | Add startup/first-chunk performance budgets | MVP closure | Testing / Performance | TST-08 | IMPLEMENTED — VERIFY |
 | PRO-05 | Implement Claude discovery and authentication status | E | Provider | PRO-01, PRO-02 | BACKLOG |
 | PRO-06 | Implement Claude request + streaming adapter | E | Provider | PRO-05, NAT-04, NAT-05 | BACKLOG |
 | PRO-07 | Reconcile provider contract from Codex + Claude evidence | E | Provider | PRO-03, PRO-06 | BACKLOG |
@@ -1107,7 +1107,12 @@ Reached after **Milestone H**:
 - Explicit light/dark preference persists.
 - Popup and full-page remain visually consistent.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `extension/src/shared/theme.js` owns the `system` / `light` / `dark` preference and persists it under `pervue.theme` in extension-local storage.
+- Popup and full-page surfaces bind the same helper and use `data-theme` + `color-scheme` so explicit choices and the system default render consistently.
+- `extension/tests/mvp-closure.mjs` verifies normalization, persistence, cross-surface controls, and theme CSS.
 
 ### EXT-12 — Add response cancellation and retry UX
 **Area:** Extension  
@@ -1118,7 +1123,13 @@ Reached after **Milestone H**:
 - Cancel updates UI immediately and native work terminates.
 - Retry creates a clear new request without duplicating persisted assistant messages.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- Popup and full-page composers expose Stop while a request is active and Retry only after a retryable terminal failure.
+- `extension/src/background/conversation-bridge.js` translates Stop into protocol-v1 `request.cancel`, including the race where a follow-up is still loading from storage when Stop is pressed.
+- Retry opens a fresh UI/native request from the last attempted text/context; conversation persistence continues to own message finalization, so no assistant message is duplicated by the UI.
+- `extension/tests/popup-ask.mjs` and `extension/tests/conversation-bridge-failures.mjs` cover UI state, retry behavior, native cancellation targeting, and the early-stop race.
 
 ### EXT-13 — Add companion health/install state UX
 **Area:** Extension  
@@ -1129,7 +1140,12 @@ Reached after **Milestone H**:
 - Development builds can point to setup instructions without pretending packaging already exists.
 - Normal errors avoid exposing Native Messaging jargon unless diagnostics are expanded.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- Existing normalized provider/host status remains the source of truth; the popup distinguishes companion missing/unavailable from provider missing, signed out, or failed.
+- Host failures expose a development-only “Companion setup” path to `extension/src/setup/index.html`; normal status text stays free of Native Messaging terminology.
+- The setup page explicitly states that manual registration is temporary until Milestone G packaging.
 
 ### OBS-02 — Add sanitized diagnostics summary
 **Area:** Observability  
@@ -1139,7 +1155,12 @@ Reached after **Milestone H**:
 - User can inspect host version, protocol version, provider availability, and recent normalized failure.
 - No full prompt/page content or secrets are included.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `extension/src/background/diagnostics.js` keeps an in-memory sanitized snapshot of extension version, host version/protocols, provider availability/authentication, and the latest normalized failure.
+- `extension/src/shared/diagnostics.js` whitelists normalized error codes/reason shapes and bounded host-version fields; messages, prompts, page/selection text, provider output, and credentials are never copied into the snapshot.
+- The popup exposes the snapshot only inside an expanded Diagnostics section. `extension/tests/mvp-closure.mjs` and `extension/tests/manifest-smoke.mjs` cover redaction and extension-page-only access.
 
 ### EXT-14 — Complete keyboard/accessibility baseline
 **Area:** Extension  
@@ -1152,7 +1173,12 @@ Reached after **Milestone H**:
 - Scalable text remains usable.
 - Reduced-motion preference is respected where motion exists.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- Popup/full-page controls are semantic buttons/forms/selects, status regions use polite live announcements with atomic terminal text, and focus-visible styling covers buttons, textareas, selects, links, and disclosure controls.
+- Both surfaces retain keyboard-first Enter/Shift+Enter behavior; responsive/scalable layouts avoid fixed text sizing, and reduced-motion preferences disable the only animated status indicator / smooth behavior.
+- `extension/tests/mvp-closure.mjs` guards the accessibility-critical markup and CSS baseline.
 
 ### TST-08 — Add MVP critical-journey E2E suite
 **Area:** Testing  
@@ -1172,7 +1198,12 @@ Automated or reproducible tests cover:
 10. host crash/restart;
 11. user cancellation.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `npm --prefix extension run test:mvp` is the dedicated critical-journey suite.
+- It composes the production tests for host/provider health, simple streaming ask, follow-up and full-page continuity, selection/current-page context, missing and unauthenticated provider states, native disconnect/reconnect, and explicit user cancellation.
+- EXT-12 adds direct cancellation/race assertions; the pre-existing journey tests remain the proof for the already-implemented Milestones B–D paths.
 
 ### TST-09 — Add startup/first-chunk performance budgets
 **Area:** Testing / Performance  
@@ -1187,7 +1218,12 @@ Measure product-level responsiveness, not microbenchmarks.
 - Time-to-first-response-chunk is measured separately from provider total latency.
 - Regressions are visible in CI or a repeatable benchmark report.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `extension/src/shared/performance.js` defines local product budgets and Performance API measure names: popup input-ready 100 ms, native readiness 250 ms, and first response chunk 1,500 ms.
+- Production instrumentation measures popup readiness from the navigation time origin in `popup.js`, native readiness when the first host message arrives in `native-connection.js`, and first response delta separately from total provider completion in `ask-form.js`.
+- `extension/tests/performance-budgets.mjs` verifies that the production instrumentation fires at the correct lifecycle points and that budget boundary logic is enforced. The built-host round-trip test launches the real native host and fails CI if native readiness or first-chunk latency exceeds its budget; popup readiness remains a real browser PerformanceEntry for browser profiling rather than a mock-latency assertion.
 
 ---
 
@@ -1667,13 +1703,13 @@ Update this section whenever item statuses change.
 | B — First provider | 10 | 0 | 10 | 0 | 0 | 0 | 0 | 0 |
 | C — Conversation continuity | 7 | 0 | 7 | 0 | 0 | 0 | 0 | 0 |
 | D — Browser context | 9 | 0 | 9 | 0 | 0 | 0 | 0 | 0 |
-| MVP closure | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
+| MVP closure | 7 | 0 | 7 | 0 | 0 | 0 | 0 | 0 |
 | E — Second provider | 5 | 0 | 0 | 0 | 0 | 5 | 0 | 0 |
 | F — Reusable native core | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
 | G — Installable product | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 |
 | H — Search/citations | 8 | 0 | 0 | 0 | 0 | 8 | 0 | 0 |
 | Post-milestone | 6 | 0 | 0 | 0 | 0 | 4 | 0 | 2 |
-| **Total** | **81** | **0** | **39** | **0** | **0** | **40** | **0** | **2** |
+| **Total** | **81** | **0** | **46** | **0** | **0** | **33** | **0** | **2** |
 
 ### Milestone completion rule
 

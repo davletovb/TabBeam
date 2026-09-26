@@ -42,11 +42,13 @@ const STATE_KINDS = new Set([
  *   schedule?: (callback: () => void, ms: number) => any,
  *   cancel?: (timer: any) => void
  * }} [timers]
+ * @param {{setupLink?: HTMLElement}} [options]
  */
-export function bindProviderState(element, runtime, timers = {}) {
+export function bindProviderState(element, runtime, timers = {}, options = {}) {
   const schedule = timers.schedule ?? setTimeout;
   const cancel = timers.cancel ?? clearTimeout;
   const label = providerLabel(DEFAULT_PROVIDER_ID);
+  const setupLink = options.setupLink;
   let checking = true;
 
   show({ state: "checking", kind: null, message: `Checking ${label}…` });
@@ -84,6 +86,9 @@ export function bindProviderState(element, runtime, timers = {}) {
       element.setAttribute("data-kind", view.kind);
     }
     element.hidden = false;
+    if (setupLink) {
+      setupLink.hidden = view.kind !== "host-missing" && view.kind !== "host-unavailable";
+    }
   }
 
   return {

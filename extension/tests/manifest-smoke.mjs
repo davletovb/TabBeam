@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { ASK_PORT_NAME } from "../src/shared/ask-port.js";
 import { MAX_HISTORY_BYTES, MAX_HISTORY_MESSAGES } from "../src/shared/limits.js";
 import { PROVIDER_STATUS_MESSAGE } from "../src/shared/provider-status.js";
+import { DIAGNOSTICS_MESSAGE } from "../src/shared/diagnostics.js";
 import { MockPort } from "./support/mock-port.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -44,6 +45,12 @@ const referencedFiles = [
   "src/background/entry-actions.js",
   "src/shared/ask-port.js",
   "src/shared/limits.js",
+  "src/shared/theme.js",
+  "src/shared/theme-bootstrap.js",
+  "src/shared/diagnostics.js",
+  "src/shared/performance.js",
+  "src/background/diagnostics.js",
+  "src/popup/diagnostics.js",
   "src/popup/context-controls.js",
   "src/popup/menu-preload.js",
   "src/popup/ask-form.js",
@@ -51,7 +58,10 @@ const referencedFiles = [
   "src/popup/popup.js",
   "src/popup/popup.css",
   "src/fullpage/fullpage.js",
-  "src/fullpage/fullpage.css"
+  "src/fullpage/fullpage.css",
+  "src/setup/index.html",
+  "src/setup/setup.css",
+  "src/setup/setup.js"
 ];
 
 for (const file of referencedFiles) {
@@ -104,7 +114,10 @@ globalThis.chrome = /** @type {any} */ ({
     create: (/** @type {any} */ properties) => { menuItems.push(properties); return properties.id; }
   },
   action: { openPopup: async () => {} },
-  storage: { local: { async get() { return {}; }, async set() {} } },
+  storage: {
+    local: { async get() { return {}; }, async set() {} },
+    session: { async get() { return {}; }, async set() {}, async remove() {} }
+  },
   tabs: {
     create: async () => ({ id: 1 })
   }
@@ -190,4 +203,25 @@ assert.equal(statusResponses.length, 1);
 assert.equal(statusResponses[0].provider_id, "codex");
 assert.equal(statusResponses[0].error.reason, "HOST_START_FAILED");
 
-console.log("EXT-01/EXT-02/EXT-03/EXT-04 manifest and service-worker smoke checks passed");
+// OBS-02: diagnostics are extension-page-only and expose only sanitized
+// versions/provider state/recent normalized failure.
+/** @type {any} */
+let diagnosticsResponse = null;
+assert.equal(
+  onMessage({ type: DIAGNOSTICS_MESSAGE }, { url: popupUrl }, (/** @type {any} */ response) => {
+    diagnosticsResponse = response;
+  }),
+  true
+);
+await new Promise((resolve) => setTimeout(resolve, 0));
+assert.equal(diagnosticsResponse.extension_version, manifest.version);
+assert.equal(diagnosticsResponse.protocol_version, 1);
+assert.equal(diagnosticsResponse.host.state, "unavailable");
+assert.equal(diagnosticsResponse.provider.provider_id, "codex");
+assert.equal(diagnosticsResponse.recent_failure.reason, "HOST_START_FAILED");
+assert.equal(
+  onMessage({ type: DIAGNOSTICS_MESSAGE }, { url: "https://example.com/" }, () => {}),
+  undefined
+);
+
+console.log("EXT-01/EXT-02/EXT-03/EXT-04/OBS-02 manifest and service-worker smoke checks passed");

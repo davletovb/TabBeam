@@ -4,16 +4,28 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Pervue</title>
+    <script src="../shared/theme-bootstrap.js"></script>
     <link rel="stylesheet" href="./popup.css">
   </head>
   <body>
     <main class="popup-shell">
-      <header>
-        <p class="eyebrow">Pervue</p>
-        <h1>Ask from the browser.</h1>
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Pervue</p>
+          <h1>Ask from the browser.</h1>
+        </div>
+        <label class="theme-control" for="theme-select">
+          <span>Theme</span>
+          <select id="theme-select" aria-label="Theme">
+            <option value="system">System</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        </label>
       </header>
 
       <p id="provider-state" class="provider-state" role="status" aria-live="polite" hidden></p>
+      <a id="companion-setup" class="setup-link" href="../setup/index.html" target="_blank" hidden>Companion setup</a>
 
       <nav class="conversation-nav" aria-label="Conversations">
         <label for="recent-conversations">Recent conversations</label>
@@ -34,14 +46,30 @@
         </fieldset>
         <p id="context-status" class="status" role="status" aria-live="polite"></p>
         <section id="context-preview" class="context-preview" aria-label="Context preview" hidden></section>
-        <button id="ask-submit" type="submit" aria-disabled="false">Ask</button>
+        <div class="request-actions">
+          <button id="ask-submit" type="submit" aria-disabled="false">Ask</button>
+          <button id="ask-cancel" class="secondary" type="button" hidden>Stop</button>
+          <button id="ask-retry" class="secondary" type="button" hidden>Retry</button>
+        </div>
       </form>
 
-      <p id="status" class="status" role="status" aria-live="polite"></p>
+      <p id="status" class="status" role="status" aria-live="polite" aria-atomic="true"></p>
 
       <section id="answer" class="answer" aria-label="Answer" aria-busy="false" hidden></section>
 
       <button id="open-full-page" class="secondary" type="button" disabled>Continue in full view</button>
+
+      <details id="diagnostics" class="diagnostics">
+        <summary>Diagnostics</summary>
+        <dl>
+          <div><dt>Host</dt><dd id="diag-host">Not checked</dd></div>
+          <div><dt>Protocol</dt><dd id="diag-protocol">Not checked</dd></div>
+          <div><dt>Provider</dt><dd id="diag-provider">Not checked</dd></div>
+          <div><dt>Recent failure</dt><dd id="diag-failure">None</dd></div>
+        </dl>
+        <button id="diag-refresh" class="secondary" type="button">Refresh diagnostics</button>
+        <p class="diagnostic-note">Diagnostics exclude prompts, page text, selections, credentials, and provider output.</p>
+      </details>
     </main>
 
     <script type="module" src="./popup.js"></script>

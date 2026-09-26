@@ -166,6 +166,65 @@ export function createConversationStore(storage, newId = () => crypto.randomUUID
         return { assistantId };
       });
     },
+    /** Retry the most recent failed pair without appending a duplicate user turn. */
+    /** @param {string} id @param {string} text @param {any} [context] */
+    retry(id, text, context) {
+      return serialized(async (index) => {
+        const conversation = await readRecord(index, id);
+        const user = conversation.messages.at(-2);
+        const assistant = conversation.messages.at(-1);
+        if (
+          user?.role !== "user" ||
+          assistant?.role !== "assistant" ||
+          assistant.status !== "failed" ||
+          user.text !== text
+        ) {
+          throw new Error("Retry target unavailable.");
+        }
+        const timestamp = now();
+        user.timestamp = timestamp;
+        assistant.text = "";
+        assistant.timestamp = timestamp;
+        assistant.status = "pending";
+        delete assistant.provider_metadata;
+        delete assistant.sources;
+        if (context) conversation.page_context_metadata = contextMetadata(context);
+        conversation.updated_at = timestamp;
+        await save(index, conversation);
+        return { assistantId: assistant.id };
+      });
+    },
+    /** Roll back a pending turn that was cancelled before native work started. */
+    /** @param {string} id @param {string} assistantId @param {boolean} [preservePair] */
+    discardPending(id, assistantId, preservePair = false) {
+      return serialized(async (index) => {
+        const conversation = await readRecord(index, id);
+        const assistantIndex = conversation.messages.findIndex(
+          (/** @type {any} */ item) => item.id === assistantId
+        );
+        const assistant = conversation.messages[assistantIndex];
+        const user = conversation.messages[assistantIndex - 1];
+        if (
+          assistantIndex < 1 ||
+          assistant?.role !== "assistant" ||
+          assistant.status !== "pending" ||
+          user?.role !== "user"
+        ) {
+          throw new Error("Pending turn not found.");
+        }
+        if (preservePair) {
+          assistant.status = "failed";
+          assistant.text = "";
+          assistant.provider_metadata = {
+            error: { code: "REQUEST_CANCELLED", reason: "USER_CANCELLED" }
+          };
+        } else {
+          conversation.messages.splice(assistantIndex - 1, 2);
+        }
+        conversation.updated_at = now();
+        await save(index, conversation);
+      });
+    },
     /** @param {string} id @param {string} providerSessionId */
     setSession(id, providerSessionId) {
       return serialized(async (index) => {

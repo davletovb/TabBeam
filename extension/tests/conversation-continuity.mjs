@@ -79,7 +79,8 @@ const manager = {
 function openView() {
   const elements = {
     form: new Element(), input: new Element(), submit: new Element(),
-    status: new Element(), answer: new Element(), history: new Element()
+    status: new Element(), answer: new Element(), history: new Element(),
+    cancel: new Element(), retry: new Element()
   };
   /** @type {MockPort[]} */
   const ports = [];
@@ -234,6 +235,68 @@ unavailable.elements.input.value = "Draft follow up";
 answerRequest(5, "Working now", "host_session_2");
 await settle();
 assert.equal(unavailable.elements.input.value, "Draft follow up");
+
+// Retrying a failed follow-up reuses the failed pair instead of appending a
+// duplicate "You" turn to persisted or rendered history.
+const retryView = openView();
+assert.equal(await retryView.view.loadConversation(id), true);
+retryView.ask("Retry this turn");
+await settle();
+const failedIndex = native.length - 1;
+native[failedIndex].owner.onEvent({
+  version: 1, type: "event",
+  request_id: native[failedIndex].request.request_id,
+  event: "response.failed",
+  payload: { error: {
+    code: "PROVIDER_FAILED", reason: "PROCESS_EXITED",
+    message: "Provider stopped.", retryable: true
+  } }
+});
+await settle();
+const failedRecord = await store.getPrivate(id);
+const failedLength = failedRecord.messages.length;
+assert.equal(failedRecord.messages.at(-2).text, "Retry this turn");
+assert.equal(failedRecord.messages.at(-1).status, "failed");
+retryView.elements.retry.fire("click");
+await settle();
+const retryIndex = native.length - 1;
+answerRequest(retryIndex, "Retried answer");
+await settle();
+const retriedRecord = await store.getPrivate(id);
+assert.equal(retriedRecord.messages.length, failedLength);
+assert.equal(
+  retriedRecord.messages.filter((/** @type {any} */ message) => message.role === "user" && message.text === "Retry this turn").length,
+  1
+);
+assert.equal(retriedRecord.messages.at(-1).text, "Retried answer");
+
+// Retry state belongs to one conversation only. Switching threads clears the
+// old failed question so it cannot be posted into the newly selected thread.
+retryView.ask("Do not cross threads");
+await settle();
+const crossThreadIndex = native.length - 1;
+native[crossThreadIndex].owner.onEvent({
+  version: 1, type: "event",
+  request_id: native[crossThreadIndex].request.request_id,
+  event: "response.failed",
+  payload: { error: {
+    code: "PROVIDER_FAILED", reason: "PROCESS_EXITED",
+    message: "Provider stopped.", retryable: true
+  } }
+});
+await settle();
+assert.equal(retryView.elements.retry.hidden, false);
+const other = await store.create({
+  providerId: "codex",
+  providerSessionId: "other_session",
+  text: "Other thread"
+});
+assert.equal(await retryView.view.loadConversation(other.id), true);
+assert.equal(retryView.elements.retry.hidden, true);
+const beforeStaleRetry = native.length;
+retryView.elements.retry.fire("click");
+await settle();
+assert.equal(native.length, beforeStaleRetry);
 
 // Eviction between viewing and asking must preserve the actionable NOT_FOUND
 // failure instead of replacing it with a failed history reload.

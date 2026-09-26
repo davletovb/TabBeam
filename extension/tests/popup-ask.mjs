@@ -21,6 +21,9 @@ class FakeElement {
     this.textContent = "";
     this.hidden = false;
     this.focused = false;
+    this.disabled = false;
+    /** @type {{activeElement?: any} | null} */
+    this.ownerDocument = null;
   }
 
   /**
@@ -75,6 +78,7 @@ class FakeElement {
 
   focus() {
     this.focused = true;
+    if (this.ownerDocument) this.ownerDocument.activeElement = this;
   }
 }
 
@@ -108,7 +112,7 @@ function cancellableEvent(fields) {
 }
 
 /**
- * @param {{getContext(): any | null, isPending(): boolean}} [contextControls]
+ * @param {{getContext(): any | null, isPending(): boolean, consume?(context: any): void}} [contextControls]
  * @param {{kind: string, message?: string}[]} [outcomes] receives each outcome
  */
 function openPopup(contextControls, outcomes = []) {
@@ -117,8 +121,12 @@ function openPopup(contextControls, outcomes = []) {
     input: new FakeTextArea(),
     submit: new FakeElement(),
     status: new FakeElement(),
-    answer: new FakeElement()
+    answer: new FakeElement(),
+    cancel: new FakeElement(),
+    retry: new FakeElement()
   };
+  const ownerDocument = { activeElement: null };
+  for (const element of Object.values(elements)) element.ownerDocument = ownerDocument;
   // As in index.html, the answer region starts hidden.
   elements.answer.hidden = true;
 
@@ -181,6 +189,14 @@ function openPopup(contextControls, outcomes = []) {
     clickAsk() {
       return elements.form.dispatch("submit", cancellableEvent({}));
     },
+    clickCancel() {
+      elements.cancel.focus();
+      return elements.cancel.dispatch("click", cancellableEvent({}));
+    },
+    clickRetry() {
+      elements.retry.focus();
+      return elements.retry.dispatch("click", cancellableEvent({}));
+    },
     get statusText() {
       return elements.status.textContent;
     },
@@ -192,6 +208,9 @@ function openPopup(contextControls, outcomes = []) {
     },
     get busy() {
       return elements.submit.getAttribute("aria-disabled") === "true";
+    },
+    get activeElement() {
+      return ownerDocument.activeElement;
     }
   };
 }
@@ -327,6 +346,112 @@ function hostEvent(event, payload = {}) {
   assert.equal(popup.busy, false);
   assert.equal(popup.answer.getAttribute("aria-busy"), "false");
   assert.equal(port.disconnectCalls, 1);
+}
+
+{
+  // EXT-12: Stop sends a cancellation request over the same UI port. The
+  // target's normalized cancellation makes Retry available, and Retry starts
+  // a fresh request with the original question rather than duplicating an
+  // assistant message locally.
+  const popup = openPopup();
+  popup.ask("Long answer");
+  const first = popup.ports[0];
+  assert.equal(popup.cancel.hidden, false);
+  assert.equal(popup.retry.hidden, true);
+
+  popup.clickCancel();
+  assert.deepEqual(first.messages, [
+    { type: "ask", text: "Long answer" },
+    { type: "cancel" }
+  ]);
+  assert.equal(popup.statusText, "Stopping…");
+  assert.equal(popup.statusState, "cancelled");
+  assert.equal(popup.cancel.getAttribute("aria-disabled"), "true");
+
+  first.emitMessage(hostEvent("response.failed", {
+    error: {
+      code: "REQUEST_CANCELLED",
+      reason: "USER_CANCELLED",
+      message: "Stopped. You can ask again.",
+      retryable: true
+    }
+  }));
+  assert.equal(popup.busy, false);
+  assert.equal(popup.cancel.hidden, true);
+  assert.equal(popup.retry.hidden, false);
+  assert.equal(popup.activeElement, popup.input);
+
+  popup.input.value = "edited after stop";
+  popup.clickRetry();
+  assert.equal(popup.ports.length, 2);
+  assert.deepEqual(popup.ports[1].messages, [{ type: "ask", text: "Long answer" }]);
+  assert.equal(popup.retry.hidden, true);
+  assert.equal(popup.cancel.hidden, false);
+  assert.equal(popup.activeElement, popup.input);
+}
+
+{
+  // Retry re-reads the user's current context choice and consumes that exact
+  // one-shot grant after success; revoked context is not resurrected.
+  /** @type {any} */
+  let currentContext = {
+    mode: "page", text: "old page", truncated: false,
+    page: { title: "Old", url: "https://example.com/" }
+  };
+  /** @type {any[]} */
+  const consumed = [];
+  const popup = openPopup({
+    isPending: () => false,
+    getContext: () => currentContext,
+    consume: (/** @type {any} */ context) => consumed.push(context)
+  });
+  popup.ask("Use context");
+  popup.ports[0].emitMessage(hostEvent("response.failed", {
+    error: {
+      code: "PROVIDER_FAILED", reason: "PROCESS_EXITED",
+      message: "Try again.", retryable: true
+    }
+  }));
+  currentContext = null;
+  popup.clickRetry();
+  assert.deepEqual(popup.ports[1].messages, [{ type: "ask", text: "Use context" }]);
+  popup.ports[1].emitMessage(hostEvent("response.completed"));
+  assert.deepEqual(consumed, [null]);
+
+  currentContext = {
+    mode: "selection", text: "new selection", truncated: false,
+    page: { title: "New", url: "https://example.com/" }
+  };
+  popup.ask("Again");
+  popup.ports[2].emitMessage(hostEvent("response.failed", {
+    error: {
+      code: "PROVIDER_FAILED", reason: "PROCESS_EXITED",
+      message: "Try again.", retryable: true
+    }
+  }));
+  popup.clickRetry();
+  assert.equal(popup.ports[3].messages[0].context, currentContext);
+  popup.ports[3].emitMessage(hostEvent("response.completed"));
+  assert.equal(consumed.at(-1), currentContext);
+}
+
+{
+  // A failed stop is non-terminal: Stop becomes actionable again and the
+  // answer can continue without leaving the UI stuck in Stopping.
+  const popup = openPopup();
+  popup.ask("Keep running");
+  popup.clickCancel();
+  popup.ports[0].emitMessage(hostEvent("cancel.failed", {
+    error: {
+      code: "INVALID_REQUEST", reason: "UNKNOWN_TARGET_REQUEST",
+      message: "Target is not running.", retryable: true
+    }
+  }));
+  assert.equal(popup.cancel.getAttribute("aria-disabled"), null);
+  assert.equal(popup.statusState, "pending");
+  assert.equal(popup.statusText, "Couldn't stop. The answer is still running.");
+  popup.clickCancel();
+  assert.deepEqual(popup.ports[0].messages.map((item) => item.type), ["ask", "cancel", "cancel"]);
 }
 
 {

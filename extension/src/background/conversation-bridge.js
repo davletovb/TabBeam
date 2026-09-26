@@ -19,12 +19,16 @@ const STORAGE_FAILED = Object.freeze({
   code: "INTERNAL_ERROR", reason: "CONVERSATION_STORE_FAILED",
   message: "Conversation history couldn't be saved. Check browser storage and try again.", retryable: true
 });
+const USER_CANCELLED = Object.freeze({
+  code: "REQUEST_CANCELLED", reason: "USER_CANCELLED",
+  message: "Stopped. You can ask again.", retryable: true
+});
 
 /**
  * Owns one question, including the extension's stable conversation ID and
  * the native host's opaque continuation ID. No page receives the latter.
  * @param {import("../shared/ask-port.js").AskPort} port
- * @param {{manager: {send(request: any, owner?: any): void}, store: any, inFlight: Set<string>, providerId?: string, createRequestId?: () => string}} options
+ * @param {{manager: {send(request: any, owner?: any): void}, store: any, inFlight: Set<string>, providerId?: string, createRequestId?: () => string, onFailure?: (error: any) => void}} options
  */
 export function serveConversationAskPort(port, options) {
   const { manager, store, inFlight, providerId = DEFAULT_PROVIDER_ID } = options;
@@ -34,6 +38,10 @@ export function serveConversationAskPort(port, options) {
   let finished = false;
   let stopped = false;
   let nativePending = false;
+  let cancelRequested = false;
+  let cancelSent = false;
+  /** @type {string | null} */
+  let activeRequestId = null;
   /** @type {string | null} */
   let conversationId = null;
   /** @type {string | null} */
@@ -44,6 +52,69 @@ export function serveConversationAskPort(port, options) {
   let work = Promise.resolve();
 
   port.onDisconnect.addListener(() => { open = false; });
+
+  /** @param {any} error */
+  function cancelFailed(error) {
+    cancelSent = false;
+    if (!open || finished) return;
+    try {
+      port.postMessage({
+        version: 1,
+        type: "event",
+        request_id: activeRequestId,
+        event: "cancel.failed",
+        payload: { error }
+      });
+    } catch {
+      open = false;
+    }
+  }
+
+  /** @param {string} targetRequestId */
+  function sendCancel(targetRequestId) {
+    if (cancelSent || finished) return;
+    cancelSent = true;
+    try {
+      manager.send({
+        version: 1,
+        type: "request",
+        request_id: nextRequestId(),
+        method: "request.cancel",
+        payload: { target_request_id: targetRequestId }
+      }, {
+        onEvent(/** @type {any} */ event) {
+          if (event?.event === "response.failed") {
+            cancelFailed(event.payload?.error ?? {
+              code: "INVALID_REQUEST",
+              reason: "UNKNOWN_TARGET_REQUEST",
+              message: "The request could not be stopped.",
+              retryable: true
+            });
+          }
+        },
+        onDisconnect() {
+          cancelFailed({
+            code: "HOST_UNAVAILABLE",
+            reason: "HOST_DISCONNECTED",
+            message: "Pervue lost its connection to the companion app.",
+            retryable: true
+          });
+        }
+      });
+    } catch {
+      cancelFailed({
+        code: "HOST_UNAVAILABLE",
+        reason: "HOST_START_FAILED",
+        message: "Pervue couldn't send the stop request.",
+        retryable: true
+      });
+    }
+  }
+
+  function requestNativeCancel() {
+    if (!cancelRequested || !activeRequestId || !nativePending || stopped || finished) return;
+    sendCancel(activeRequestId);
+  }
 
   /** @param {any} event */
   function forward(event) {
@@ -59,17 +130,11 @@ export function serveConversationAskPort(port, options) {
   }
 
   /** @param {string | null} requestId @param {any} error */
-  async function stop(requestId, error) {
+  async function stop(requestId, error, recordFailure = true) {
     if (stopped || finished) return;
     stopped = true;
-    if (nativePending && requestId) {
-      try {
-        manager.send({
-          version: 1, type: "request", request_id: nextRequestId(),
-          method: "request.cancel", payload: { target_request_id: requestId }
-        });
-      } catch { /* Original request still owns the lock until terminal/disconnect. */ }
-    }
+    if (recordFailure) options.onFailure?.(error);
+    if (nativePending && requestId) sendCancel(requestId);
     if (conversationId && assistantId) {
       try { await store.finish(conversationId, assistantId, answer, sources, error); }
       catch { error = STORAGE_FAILED; }
@@ -80,7 +145,10 @@ export function serveConversationAskPort(port, options) {
 
   /** @param {any} event */
   async function onNativeEvent(event) {
-    if (ASK_TERMINAL_EVENTS.has(event?.event)) nativePending = false;
+    if (ASK_TERMINAL_EVENTS.has(event?.event)) {
+      nativePending = false;
+      activeRequestId = null;
+    }
     if (stopped) {
       if (conversationId && !nativePending) inFlight.delete(conversationId);
       return;
@@ -113,6 +181,14 @@ export function serveConversationAskPort(port, options) {
       sources.push({ id: event.payload.source_id, data: event.payload.data });
     }
     if (ASK_TERMINAL_EVENTS.has(event?.event)) {
+      if (
+        event.event === "response.failed" &&
+        !(cancelRequested &&
+          event.payload?.error?.code === "REQUEST_CANCELLED" &&
+          event.payload?.error?.reason === "USER_CANCELLED")
+      ) {
+        options.onFailure?.(event.payload?.error);
+      }
       if (conversationId && assistantId) {
         await store.finish(conversationId, assistantId, answer, sources,
           event.event === "response.failed" ? event.payload?.error ?? HOST_START_FAILED : undefined);
@@ -129,9 +205,23 @@ export function serveConversationAskPort(port, options) {
   let context;
 
   port.onMessage.addListener((/** @type {any} */ message) => {
-    if (asked) return;
+    if (asked) {
+      if (message?.type === "cancel") {
+        cancelRequested = true;
+        requestNativeCancel();
+      }
+      return;
+    }
+    if (message?.type === "cancel") {
+      cancelRequested = true;
+      return;
+    }
     asked = true;
-    const text = message?.type === "ask" ? message.text : undefined;
+    if (message?.type !== "ask") {
+      forward(failed(null, EMPTY_QUESTION));
+      return;
+    }
+    const text = message.text;
     if (typeof text !== "string" || !text.trim()) {
       forward(failed(null, EMPTY_QUESTION));
       return;
@@ -155,14 +245,24 @@ export function serveConversationAskPort(port, options) {
 
     void (async () => {
       const requestId = nextRequestId();
+      activeRequestId = requestId;
       let sending = false;
+      const retry = message.retry === true;
       try {
+        if (cancelRequested) {
+          await stop(requestId, USER_CANCELLED, false);
+          return;
+        }
         let sessionId;
         /** @type {{role: string, text: string}[]} */
         let history = [];
         let selectedProvider = providerId;
         if (requestedId) {
           const stored = await store.getPrivate(requestedId);
+          if (cancelRequested) {
+            await stop(requestId, USER_CANCELLED, false);
+            return;
+          }
           if (inFlight.has(requestedId)) {
             forward(failed(requestId, BUSY));
             return;
@@ -172,7 +272,16 @@ export function serveConversationAskPort(port, options) {
           sessionId = stored.provider_session_id;
           history = dialogueHistory(stored);
           inFlight.add(requestedId);
-          ({ assistantId } = await store.begin(requestedId, question, context));
+          ({ assistantId } = retry
+            ? await store.retry(requestedId, question, context)
+            : await store.begin(requestedId, question, context));
+          if (cancelRequested) {
+            await store.discardPending(requestedId, assistantId, retry);
+            inFlight.delete(requestedId);
+            assistantId = null;
+            await stop(requestId, USER_CANCELLED, false);
+            return;
+          }
         }
         const request = {
           version: 1, type: "request", request_id: requestId, method: "conversation.send",
@@ -183,6 +292,10 @@ export function serveConversationAskPort(port, options) {
             ...(context === undefined ? {} : { context: copyContext(context) })
           }
         };
+        if (cancelRequested) {
+          await stop(requestId, USER_CANCELLED, false);
+          return;
+        }
         sending = true;
         nativePending = true;
         manager.send(request, {
@@ -200,6 +313,7 @@ export function serveConversationAskPort(port, options) {
             });
           }
         });
+        requestNativeCancel();
       } catch (error) {
         if (sending) nativePending = false;
         const reason = error instanceof RequestTooLargeError ? QUESTION_TOO_LONG

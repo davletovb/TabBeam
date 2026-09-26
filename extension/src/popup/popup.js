@@ -3,6 +3,11 @@ import { bindContextControls } from "./context-controls.js";
 import { preloadMenuContext } from "./menu-preload.js";
 import { bindProviderState } from "./provider-state.js";
 import { bindRecentConversations } from "../shared/recent-conversations.js";
+import { bindThemeSelect } from "../shared/theme.js";
+import { bindDiagnostics } from "./diagnostics.js";
+import { recordDuration } from "../shared/performance.js";
+
+const popupStartedAt = 0;
 
 /**
  * @template {HTMLElement} T
@@ -33,7 +38,9 @@ const recent = requireElement("#recent-conversations", HTMLSelectElement);
 let interacted = false;
 const providerState = bindProviderState(
   requireElement("#provider-state", HTMLElement),
-  chrome.runtime
+  chrome.runtime,
+  {},
+  { setupLink: requireElement("#companion-setup", HTMLElement) }
 );
 const view = bindAskForm(
   {
@@ -42,7 +49,9 @@ const view = bindAskForm(
     submit: requireElement("#ask-submit", HTMLButtonElement),
     status: requireElement("#status", HTMLElement),
     answer: requireElement("#answer", HTMLElement),
-    history: requireElement("#conversation-history", HTMLElement)
+    history: requireElement("#conversation-history", HTMLElement),
+    cancel: requireElement("#ask-cancel", HTMLButtonElement),
+    retry: requireElement("#ask-retry", HTMLButtonElement)
   },
   chrome.runtime,
   contextControls,
@@ -55,6 +64,31 @@ const view = bindAskForm(
   }
 );
 const recentIndex = bindRecentConversations(recent, chrome.runtime, view);
+
+void bindThemeSelect(
+  requireElement("#theme-select", HTMLSelectElement),
+  chrome.storage.local,
+  document.documentElement,
+  chrome.storage.onChanged
+);
+
+bindDiagnostics(
+  {
+    details: requireElement("#diagnostics", HTMLDetailsElement),
+    refresh: requireElement("#diag-refresh", HTMLButtonElement),
+    host: requireElement("#diag-host", HTMLElement),
+    protocol: requireElement("#diag-protocol", HTMLElement),
+    provider: requireElement("#diag-provider", HTMLElement),
+    failure: requireElement("#diag-failure", HTMLElement)
+  },
+  chrome.runtime
+);
+
+recordDuration(
+  "popup_input_ready",
+  popupStartedAt,
+  globalThis.performance?.now?.() ?? popupStartedAt
+);
 requireElement("#new-conversation", HTMLButtonElement).addEventListener("click", () => {
   if (view.newConversation()) {
     interacted = true;
