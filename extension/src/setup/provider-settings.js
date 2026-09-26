@@ -36,8 +36,11 @@ export function bindProviderSettings(elements, runtime, storage, storageChanges)
   const doc = options.ownerDocument;
   const OTHER = "other";
   let chosen = DEFAULT_PROVIDER_ID;
+  // A choice made (here or elsewhere) before the saved one is read is newer.
+  let touched = false;
   /** @type {Record<string, string>} each provider's saved model */
   let preferences = {};
+  let modelsChanged = false;
   /** @type {Map<string, any>} status responses; null for a check that failed */
   const statuses = new Map();
   /** @type {Map<string, {input: HTMLInputElement, status: HTMLElement}>} */
@@ -70,6 +73,7 @@ export function bindProviderSettings(elements, runtime, storage, storageChanges)
   /** @param {string} id @param {boolean} persist */
   function choose(id, persist) {
     if (!rows.has(id)) return;
+    touched = true;
     chosen = id;
     for (const [other, { input }] of rows) input.checked = other === id;
     if (persist) void storage.set({ [PROVIDER_STORAGE_KEY]: id }).catch(() => {});
@@ -107,6 +111,8 @@ export function bindProviderSettings(elements, runtime, storage, storageChanges)
 
     if (response === undefined) {
       note(`Checking what ${label} supports…`);
+    } else if (response === null) {
+      note(`Pervue couldn't check what ${label} supports, so its model can't be chosen yet. Reopen this page once the companion is connected.`);
     } else if (!supported) {
       note(`${label} uses the model set in its own configuration. This companion can't switch its model.`);
     } else if (!saved) {
@@ -126,6 +132,7 @@ export function bindProviderSettings(elements, runtime, storage, storageChanges)
 
   /** @param {string | null} id null for the provider's default */
   function saveModel(id) {
+    modelsChanged = true;
     const next = { ...preferences };
     if (id) next[chosen] = id;
     else delete next[chosen];
@@ -167,19 +174,24 @@ export function bindProviderSettings(elements, runtime, storage, storageChanges)
     const next = changes[PROVIDER_STORAGE_KEY]?.newValue;
     if (typeof next === "string" && next !== chosen) choose(next, false);
     if (changes[MODEL_PREFERENCES_KEY]) {
+      modelsChanged = true;
       preferences = validPreferences(changes[MODEL_PREFERENCES_KEY].newValue);
       showModel();
     }
   });
 
   const ready = (async () => {
-    preferences = await readModelPreferences(storage);
+    const savedModels = await readModelPreferences(storage);
+    if (!modelsChanged) preferences = savedModels;
+    /** @type {unknown} */
+    let saved;
     try {
-      const saved = (await storage.get(PROVIDER_STORAGE_KEY))[PROVIDER_STORAGE_KEY];
-      choose(typeof saved === "string" && rows.has(saved) ? saved : DEFAULT_PROVIDER_ID, false);
+      saved = (await storage.get(PROVIDER_STORAGE_KEY))[PROVIDER_STORAGE_KEY];
     } catch {
-      choose(DEFAULT_PROVIDER_ID, false);
+      // Falls back to the default below.
     }
+    if (!touched) choose(typeof saved === "string" && rows.has(saved) ? saved : DEFAULT_PROVIDER_ID, false);
+    else showModel();
     await Promise.all(USER_PROVIDERS.map(async ({ id, label }) => {
       let response = null;
       try {

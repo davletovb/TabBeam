@@ -115,6 +115,14 @@ export function bindProviderSelector(select, runtime, storage, options = {}) {
     return true;
   }
 
+  /** Moves to the saved choice, or the first available provider. */
+  function follow() {
+    const next = firstEnabled(preferred);
+    const changed = current !== next;
+    choose(next, false, false);
+    if (changed) notify(true);
+  }
+
   select?.addEventListener("change", () => {
     if (locked || held) {
       select.value = current;
@@ -131,10 +139,7 @@ export function bindProviderSelector(select, runtime, storage, options = {}) {
     preferred = next;
     preferenceTouched = true;
     if (locked || held) return;
-    const chosen = firstEnabled(preferred);
-    const changed = current !== chosen;
-    choose(chosen, false, false);
-    if (changed) notify(true);
+    follow();
   });
 
   const ready = (async () => {
@@ -210,14 +215,14 @@ export function bindProviderSelector(select, runtime, storage, options = {}) {
     hold(value) {
       held = value;
       syncDisabled();
+      // A question that ended without a conversation (it failed before one
+      // was created) locks nothing: a choice saved meanwhile applies now.
+      if (!held && !locked) follow();
     },
     unlock() {
       locked = false;
       syncDisabled();
-      const next = firstEnabled(preferred);
-      const changed = current !== next;
-      choose(next, false, false);
-      if (changed) notify(true);
+      follow();
     }
   };
 }

@@ -211,6 +211,51 @@ const doc = {
   assert.equal(settings.getProviderId(), "codex");
 }
 
+{
+  // A provider chosen while the saved one is still being read is newer, and
+  // stays chosen.
+  const options = new Node("fieldset");
+  /** @type {(value: any) => void} */
+  let answer = () => {};
+  /** @type {any[]} */
+  const writes = [];
+  const settings = bindProviderSettings(
+    /** @type {any} */ ({ options, model: new Node("select"), modelNote: new Node("p") }),
+    { async sendMessage(message) { return { provider_id: message.provider_id, status: status("available", "authenticated") }; } },
+    {
+      get: (/** @type {string} */ key) => key === PROVIDER_STORAGE_KEY
+        ? new Promise((resolve) => { answer = resolve; })
+        : Promise.resolve({}),
+      async set(values) { writes.push(values); }
+    }
+  );
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const claude = options.children[1].children[0];
+  claude.checked = true;
+  claude.fire("change");
+  assert.deepEqual(writes, [{ [PROVIDER_STORAGE_KEY]: "claude" }]);
+  answer({ [PROVIDER_STORAGE_KEY]: "codex" });
+  await settings.ready;
+  assert.equal(settings.getProviderId(), "claude", "a stale saved value doesn't undo a newer click");
+  assert.equal(claude.checked, true);
+  assert.equal(options.children[0].children[0].checked, false);
+}
+
+{
+  // A failed check says so; it doesn't claim the provider can't switch models.
+  const model = new Node("select");
+  const modelNote = new Node("p");
+  const settings = bindProviderSettings(
+    /** @type {any} */ ({ options: new Node("fieldset"), model, modelNote }),
+    { async sendMessage() { throw new Error("no companion"); } },
+    { async get(/** @type {string} */ key) { return key === PROVIDER_STORAGE_KEY ? { [key]: "claude" } : {}; }, async set() {} }
+  );
+  await settings.ready;
+  assert.equal(model.disabled, true);
+  assert.ok(/couldn't check what Claude supports/.test(modelNote.textContent), modelNote.textContent);
+  assert.ok(!/can't switch/.test(modelNote.textContent));
+}
+
 // ---------- The popup and full view follow the saved choice ----------
 {
   /** @type {((changes: any, area: string) => void)[]} */
@@ -252,7 +297,20 @@ const doc = {
   selector.hold(true);
   setupChooses("claude");
   assert.equal(selector.getProviderId(), "codex");
+  // The question failed before a conversation was created: nothing locks
+  // the view, so the choice saved meanwhile applies to the retry.
   selector.hold(false);
+  assert.equal(selector.getProviderId(), "claude", "a choice deferred by a hold applies when it's released");
+  assert.equal(selections.at(-1), "claude");
+
+  // A question that created a conversation keeps its provider after the hold.
+  selector.hold(true);
+  setupChooses("codex");
+  selector.lock("claude");
+  selector.hold(false);
+  assert.equal(selector.getProviderId(), "claude");
+  selector.unlock();
+  assert.equal(selector.getProviderId(), "codex");
 }
 
 {

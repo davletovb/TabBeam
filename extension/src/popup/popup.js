@@ -61,8 +61,6 @@ const providerState = bindProviderState(
 );
 // The provider and model are chosen on the setup page; the popup follows.
 const models = followModelPreferences(chrome.storage.local, chrome.storage.onChanged);
-/** Providers whose status says a model can be chosen. */
-const modelSelection = new Map();
 const providerSelector = bindProviderSelector(
   null,
   chrome.runtime,
@@ -71,9 +69,7 @@ const providerSelector = bindProviderSelector(
     storageChanges: chrome.storage.onChanged,
     onChange(selection) {
       providerState.follow(selection);
-      if (selection.status) {
-        modelSelection.set(selection.providerId, selection.status.capabilities?.model_selection === true);
-      }
+      models.observe(selection);
       const { label, status, providerChanged } = selection;
       const pageContext = status?.capabilities?.page_context;
       // Until a provider's status says otherwise, the host decides: a
@@ -99,7 +95,7 @@ const view = bindAskForm(
   {
     onOutcome: (outcome) => providerState.update(outcome),
     getProviderId: () => providerSelector.getProviderId(),
-    getModel: (providerId) => models.modelFor(providerId, modelSelection.get(providerId) === true),
+    getModel: (providerId) => models.modelFor(providerId),
     onConversationLoaded(conversation) {
       if (conversation?.provider_id) providerSelector.lock(conversation.provider_id);
       else providerSelector.unlock();
