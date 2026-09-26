@@ -213,7 +213,6 @@ export function serveConversationAskPort(port, options) {
   /** @type {any} */
   let context;
   let selectedProvider = providerId;
-  let selectedProvider = providerId;
 
   port.onMessage.addListener((/** @type {any} */ message) => {
     if (asked) {
