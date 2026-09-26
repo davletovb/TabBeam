@@ -136,7 +136,33 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
     const body = owner.createElement("p");
     body.textContent = text || (state === "pending" ? "Answering…" : "No answer.");
     item.append(label, body);
+    if (role === "assistant" && state === "complete" && text) item.append(copyAction(owner, text));
     return item;
+  }
+
+  /** @param {any} owner the document @param {string} text */
+  function copyAction(owner, text) {
+    const actions = owner.createElement("div");
+    actions.className = "message-actions";
+    const copy = owner.createElement("button");
+    copy.className = "message-copy";
+    copy.setAttribute("type", "button");
+    copy.textContent = "Copy";
+    copy.addEventListener("click", async () => {
+      try {
+        await globalThis.navigator?.clipboard?.writeText(text);
+        copy.textContent = "Copied";
+        copy.setAttribute("data-copied", "true");
+        setTimeout(() => {
+          copy.textContent = "Copy";
+          copy.removeAttribute("data-copied");
+        }, 1500);
+      } catch {
+        copy.textContent = "Couldn't copy";
+      }
+    });
+    actions.append(copy);
+    return actions;
   }
 
   function newConversation() {

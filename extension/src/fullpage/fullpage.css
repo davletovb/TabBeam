@@ -1,48 +1,343 @@
-:root {
-  color-scheme: light dark;
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-}
-:root[data-theme="light"] { color-scheme: light; }
-:root[data-theme="dark"] { color-scheme: dark; }
-* { box-sizing: border-box; }
-body { margin: 0; min-height: 100vh; background: Canvas; color: CanvasText; }
-.page-shell { width: min(760px, calc(100% - 40px)); margin: 0 auto; padding: 40px 0 72px; display: grid; gap: 22px; }
-.eyebrow { margin: 0 0 8px; font-size: 13px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.65; }
-h1 { margin: 0; font-size: clamp(30px, 6vw, 52px); }
-.topbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
-.theme-control { display: grid; gap: 5px; min-width: 110px; font-size: 13px; }
-.theme-control select { width: 100%; }
-.conversation-nav { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
-.conversation-nav label { font-size: 14px; font-weight: 650; }
-.conversation-nav select { flex: 1 1 280px; min-width: 180px; }
-.conversation-history { display: grid; gap: 18px; }
-.message { padding: 18px; border: 1px solid color-mix(in srgb, CanvasText 17%, transparent); border-radius: 14px; overflow-wrap: anywhere; }
-.message-user { margin-left: min(12%, 80px); }
-.message-assistant { margin-right: min(12%, 80px); }
-.message strong { font-size: 13px; }
-.message p { margin: 8px 0 0; white-space: pre-wrap; line-height: 1.6; }
-.message[data-state="failed"] { border-color: light-dark(#b3261e, #f2b8b5); }
-.composer { display: grid; gap: 10px; }
-.composer label { font-weight: 650; }
-textarea, select { padding: 10px; border: 1px solid color-mix(in srgb, CanvasText 25%, transparent); border-radius: 10px; background: Canvas; color: CanvasText; font: inherit; }
-textarea { width: 100%; resize: vertical; }
-button { padding: 10px 16px; border: 1px solid color-mix(in srgb, CanvasText 25%, transparent); border-radius: 10px; background: CanvasText; color: Canvas; font: inherit; font-weight: 650; cursor: pointer; }
-button.secondary { background: transparent; color: CanvasText; }
-.request-actions { display: flex; flex-wrap: wrap; gap: 10px; }
-.request-actions > * { flex: 0 1 160px; }
-.status { margin: 0; font-size: 14px; opacity: 0.75; }
-.status[data-state="failed"] { color: light-dark(#b3261e, #f2b8b5); opacity: 1; }
-.answer { white-space: pre-wrap; line-height: 1.6; overflow-wrap: anywhere; }
-[aria-disabled="true"] { opacity: 0.5; cursor: not-allowed; }
-:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
+/*
+ * The full view: the same conversation with room to read. Tokens, the theme
+ * (light, dark, or the system's), focus rings, and reduced motion come from
+ * ../shared/ui.css.
+ */
 
-@media (max-width: 520px) {
-  .page-shell { width: min(100% - 24px, 760px); padding-top: 24px; }
-  .topbar { align-items: stretch; flex-direction: column; }
-  .theme-control { width: min(180px, 100%); }
-  .message-user, .message-assistant { margin-left: 0; margin-right: 0; }
+html,
+body {
+  height: 100%;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  * { scroll-behavior: auto !important; }
+body {
+  overflow: hidden;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  height: 100%;
+}
+
+/* ---------- Sidebar ---------- */
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+  padding: 16px 12px 12px;
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 4px;
+}
+
+.sidebar-close { display: none; }
+
+.new-conversation {
+  width: 100%;
+  min-height: 38px;
+}
+
+.conversation-nav {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+}
+
+.sidebar-label {
+  padding: 0 8px;
+  color: var(--text-3);
+  font-size: 11.5px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.conversation-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: 1px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.conversation-list button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  font-size: 13px;
+  text-align: left;
+  transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
+}
+
+.conversation-list button > span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.conversation-list button .icon {
+  color: var(--text-3);
+}
+
+.conversation-list button:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.conversation-list button[aria-current="true"] {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm), 0 0 0 1px var(--border);
+}
+
+.conversation-list button[aria-current="true"] .icon {
+  color: var(--accent-text);
+}
+
+.conversation-list-empty {
+  padding: 4px 8px;
+  color: var(--text-3);
+  font-size: 12.5px;
+}
+
+.sidebar-foot {
+  display: grid;
+  gap: 12px;
+  padding: 12px 4px 0;
+  border-top: 1px solid var(--border);
+}
+
+.sidebar-foot .provider {
+  padding: 0 4px;
+}
+
+.sidebar-settings {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sidebar-settings .sidebar-label {
+  padding: 0 4px;
+}
+
+/* ---------- Main column ---------- */
+
+.main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface);
+}
+
+.main-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 56px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sidebar-open { display: none; }
+
+.conversation-title {
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 650;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.thread-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scroll-padding-bottom: 24px;
+}
+
+.thread {
+  width: min(760px, 100% - 48px);
+  min-height: 100%;
+  margin: 0 auto;
+  padding: 32px 0 24px;
+  gap: 28px;
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+.conversation-history {
+  gap: 24px;
+}
+
+.message-user {
+  max-width: 78%;
+}
+
+.message-user > p {
+  padding: 10px 16px;
+  border-radius: 20px 20px 6px 20px;
+}
+
+.empty-state {
+  padding: 24px 0 48px;
+}
+
+.empty-mark {
+  width: 60px;
+  height: 60px;
+  margin-bottom: 18px;
+  border-radius: 18px;
+}
+
+.empty-mark .icon {
+  width: 34px;
+  height: 34px;
+}
+
+.empty-state h2 {
+  font-size: clamp(22px, 3vw, 28px);
+  font-weight: 720;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.empty-state > p {
+  max-width: 440px;
+  margin-top: 10px;
+  font-size: 14.5px;
+  line-height: 1.6;
+}
+
+.tips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 20px;
+  margin: 22px 0 0;
+  padding: 0;
+  color: var(--text-3);
+  font-size: 12.5px;
+  list-style: none;
+}
+
+.tips li {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ---------- Dock ---------- */
+
+.dock {
+  padding: 0 24px 16px;
+  background: linear-gradient(to bottom, transparent, var(--surface) 24px);
+}
+
+.dock-inner {
+  display: grid;
+  gap: 8px;
+  width: min(760px, 100%);
+  margin: 0 auto;
+}
+
+.composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 8px 8px 8px 16px;
+  border-radius: 22px;
+}
+
+.composer textarea {
+  flex: 1 1 auto;
+  min-height: 38px;
+  max-height: 240px;
+  padding: 8px 0;
+  font-size: 15px;
+}
+
+.send {
+  width: 38px;
+  height: 38px;
+}
+
+.dock .status {
+  justify-content: center;
+  text-align: center;
+}
+
+.dock .status[data-state="failed"] {
+  justify-content: flex-start;
+  text-align: left;
+}
+
+/* ---------- Narrow windows: the sidebar becomes a drawer ---------- */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 9;
+  background: var(--overlay);
+  animation: fade-in var(--normal) var(--ease);
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+}
+
+@media (max-width: 860px) {
+  .app {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 10;
+    width: min(300px, 86vw);
+    box-shadow: var(--shadow-lg);
+    transform: translateX(-102%);
+    transition: transform var(--normal) var(--ease), visibility var(--normal);
+    visibility: hidden;
+  }
+
+  .app[data-sidebar="open"] .sidebar {
+    transform: none;
+    visibility: visible;
+  }
+
+  .sidebar-close,
+  .sidebar-open {
+    display: inline-grid;
+  }
+
+  .main-header { padding: 0 12px; }
+  .thread { width: min(760px, 100% - 32px); padding-top: 24px; }
+  .dock { padding: 0 12px 12px; }
+  .message-user { max-width: 88%; }
 }

@@ -4,6 +4,8 @@ import { preloadMenuContext } from "./menu-preload.js";
 import { bindProviderState } from "./provider-state.js";
 import { bindRecentConversations } from "../shared/recent-conversations.js";
 import { bindThemeSelect } from "../shared/theme.js";
+import { bindThemeToggle } from "../shared/theme-toggle.js";
+import { bindThreadView } from "../shared/thread-view.js";
 import { bindDiagnostics } from "./diagnostics.js";
 import { recordDuration } from "../shared/performance.js";
 
@@ -64,13 +66,52 @@ const view = bindAskForm(
   }
 );
 const recentIndex = bindRecentConversations(recent, chrome.runtime, view);
+const input = requireElement("#ask-input", HTMLTextAreaElement);
+const thread = bindThreadView({
+  scroller: requireElement("#thread-scroll", HTMLElement),
+  thread: requireElement("#thread", HTMLElement),
+  input,
+  maxInputHeight: 160
+});
 
+const themeSelect = requireElement("#theme-select", HTMLSelectElement);
 void bindThemeSelect(
-  requireElement("#theme-select", HTMLSelectElement),
+  themeSelect,
   chrome.storage.local,
   document.documentElement,
   chrome.storage.onChanged
 );
+bindThemeToggle(requireElement("#theme-toggle", HTMLElement), themeSelect, document.documentElement);
+
+// The settings menu closes like a menu: Escape, or a click outside it.
+const settings = requireElement("#settings", HTMLDetailsElement);
+document.addEventListener("click", (event) => {
+  if (settings.open && event.target instanceof Node && !settings.contains(event.target)) settings.open = false;
+});
+settings.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && settings.open) {
+    // Escape would otherwise close the whole popup.
+    event.preventDefault();
+    event.stopPropagation();
+    settings.open = false;
+    settings.querySelector("summary")?.focus();
+  }
+});
+
+// Starter suggestions: attach their context the same way the chips do, and
+// leave the question in the composer for the person to send or edit.
+for (const suggestion of Array.from(document.querySelectorAll(".suggestion"))) {
+  suggestion.addEventListener("click", () => {
+    const source = suggestion.getAttribute("data-context");
+    if (source === "page" || source === "selection") {
+      requireElement(`#context-${source}`, HTMLButtonElement).click();
+    }
+    input.value = suggestion.getAttribute("data-prompt") ?? "";
+    thread.fitInput();
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  });
+}
 
 bindDiagnostics(
   {
@@ -95,12 +136,16 @@ requireElement("#new-conversation", HTMLButtonElement).addEventListener("click",
     recent.value = "";
   }
 });
-recent.addEventListener("change", () => { interacted = true; });
+recent.addEventListener("change", () => {
+  interacted = true;
+  thread.reveal();
+});
 void preloadMenuContext(chrome.runtime, contextControls, window.location.search).then(async (menuOpened) => {
   const items = await recentIndex.refresh();
   if (!menuOpened && !interacted && !view.getConversationId() && items[0]) {
     await view.loadConversation(items[0].id);
     recent.value = view.getConversationId() ?? "";
+    thread.reveal();
   }
 });
 

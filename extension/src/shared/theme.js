@@ -54,23 +54,6 @@ export async function loadTheme(storage, root, cache = globalThis.localStorage) 
 }
 
 /**
- * @param {{get(key: string): Promise<Record<string, any>>, set(values: Record<string, any>): Promise<void>}} storage
- * @param {HTMLElement} root
- * @param {{addListener(callback: (changes: Record<string, any>, area: string) => void): void}} [storageChanges]
- * @param {Storage | undefined} [cache]
- */
-export function bindThemeSurface(storage, root, storageChanges, cache = globalThis.localStorage) {
-  applyTheme(root, cachedPreference(cache));
-  storageChanges?.addListener((changes, area) => {
-    if (area !== "local" || !changes[THEME_STORAGE_KEY]) return;
-    const preference = normalizeThemePreference(changes[THEME_STORAGE_KEY].newValue);
-    cachePreference(preference, cache);
-    applyTheme(root, preference);
-  });
-  return loadTheme(storage, root, cache);
-}
-
-/**
  * Listeners are installed synchronously before storage is read so user input
  * cannot be lost behind a slow or failed chrome.storage lookup.
  *
