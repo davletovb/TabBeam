@@ -281,7 +281,9 @@ fn context_with_history_is_framed_before_one_current_question() {
     assert_eq!(updates.last(), Some(&Update::Completed));
     let prompt = codex.prompts().pop().unwrap();
     assert_eq!(prompt.matches("Current user question:").count(), 1);
-    assert!(prompt.find("Earlier answer").unwrap() < prompt.find("Browser context").unwrap());
+    assert!(
+        prompt.find("Earlier answer").unwrap() < prompt.find("Browser context").unwrap()
+    );
     assert!(prompt.find("Browser context").unwrap() < prompt.find("Follow up").unwrap());
 }
 
@@ -314,7 +316,10 @@ fn context_fails_closed_when_user_codex_tools_are_configured() {
         failure(&updates),
         (ErrorCode::InvalidRequest, "PAGE_CONTEXT_TOOLS_ENABLED")
     );
-    assert!(codex.invocations().is_empty(), "Codex ran with unsafe context tools");
+    assert!(
+        codex.invocations().is_empty(),
+        "Codex ran with unsafe context tools"
+    );
 }
 
 #[test]
