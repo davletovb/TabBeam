@@ -1,5 +1,5 @@
-// Native Messaging's frame limit is recorded in the protocol contract (SEC-01).
-// Browser-context limits below are extension policy and are not host limits.
+// Trust-boundary limits shared with the native host are recorded in
+// docs/protocol/native-messaging-v1.json (SEC-01).
 
 /** Largest Native Messaging payload the host accepts, in UTF-8 bytes. */
 export const MAX_NATIVE_MESSAGE_BYTES = 1024 * 1024;
@@ -13,6 +13,12 @@ export const MAX_SELECTION_BYTES = 16 * 1024;
 
 /** Largest readable-page payload returned from a page (UTF-8 bytes). */
 export const MAX_PAGE_BYTES = 64 * 1024;
+
+/** Largest page title accepted in browser context, in UTF-8 bytes. */
+export const MAX_CONTEXT_TITLE_BYTES = 1024;
+
+/** Largest sanitized page URL accepted in browser context, in UTF-8 bytes. */
+export const MAX_CONTEXT_URL_BYTES = 2048;
 
 /** Maximum text nodes inspected while extracting readable page content. */
 export const MAX_PAGE_TEXT_NODES = 5000;
