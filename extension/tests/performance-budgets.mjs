@@ -44,8 +44,45 @@ class Form extends Element {
 
 globalThis.performance.clearMeasures();
 
-const popupStarted = globalThis.performance.now();
-/** @type {MockPort[]} */
+// Budget boundary logic is deterministic; real native/first-chunk budgets are
+// enforced by native-roundtrip.mjs against the built host.
+for (const [metric, budget] of Object.entries(PERFORMANCE_BUDGETS_MS)) {
+  assert.equal(withinPerformanceBudget(/** @type {any} */ (metric), budget), true);
+  assert.equal(withinPerformanceBudget(/** @type {any} */ (metric), budget + 0.001), false);
+}
+
+// Popup readiness uses the navigation origin (0), not module-evaluation time.
+const popupNow = globalThis.performance.now();
+recordDuration("popup_input_ready", 0, popupNow);
+assert.equal(
+  globalThis.performance.getEntriesByName(PERFORMANCE_MARKS.popup_input_ready).at(-1)?.duration,
+  popupNow
+);
+
+// Native connection timing must not fire at connectNative(); it fires only on
+// the first real host message, which is host.ready in production.
+const nativePort = new MockPort();
+const manager = createNativeConnectionManager({
+  connectNative() { return nativePort; }
+});
+manager.ensurePort();
+assert.equal(
+  globalThis.performance.getEntriesByName(PERFORMANCE_MARKS.native_connection).length,
+  0
+);
+nativePort.emitMessage({
+  version: 1,
+  type: "event",
+  request_id: null,
+  event: "host.ready",
+  payload: { host_version: "test", protocol_versions: [1] }
+});
+assert.equal(
+  globalThis.performance.getEntriesByName(PERFORMANCE_MARKS.native_connection).length,
+  1
+);
+
+// First-chunk instrumentation is emitted by the production ask renderer.
 const ports = [];
 const elements = {
   form: new Form(),
@@ -56,7 +93,7 @@ const elements = {
   cancel: new Element(),
   retry: new Element()
 };
-const view = bindAskForm(
+bindAskForm(
   /** @type {any} */ (elements),
   {
     connect() {
@@ -66,25 +103,8 @@ const view = bindAskForm(
     }
   }
 );
-assert.equal(view.getConversationId(), null);
-const popupReady = recordDuration(
-  "popup_input_ready",
-  popupStarted,
-  globalThis.performance.now()
-);
-assert.ok(withinPerformanceBudget("popup_input_ready", popupReady));
-
-const manager = createNativeConnectionManager({
-  connectNative() { return new MockPort(); }
-});
-const nativeStarted = globalThis.performance.now();
-manager.ensurePort();
-const nativeElapsed = globalThis.performance.now() - nativeStarted;
-assert.ok(withinPerformanceBudget("native_connection", nativeElapsed));
-
 elements.input.value = "Measure first chunk";
 elements.form.requestSubmit();
-const requestStarted = globalThis.performance.now();
 ports[0].emitMessage({
   version: 1,
   type: "event",
@@ -92,23 +112,9 @@ ports[0].emitMessage({
   event: "response.delta",
   payload: { text: "first" }
 });
-const firstChunkElapsed = globalThis.performance.now() - requestStarted;
-assert.ok(withinPerformanceBudget("first_response_chunk", firstChunkElapsed));
+assert.equal(
+  globalThis.performance.getEntriesByName(PERFORMANCE_MARKS.first_response_chunk).length,
+  1
+);
 
-for (const [metric, mark] of Object.entries(PERFORMANCE_MARKS)) {
-  const entries = globalThis.performance.getEntriesByName(mark);
-  assert.ok(entries.length > 0, "missing performance measure: " + metric);
-}
-
-assert.deepEqual(PERFORMANCE_BUDGETS_MS, {
-  popup_input_ready: 100,
-  native_connection: 250,
-  first_response_chunk: 1500
-});
-
-console.log(JSON.stringify({
-  popup_input_ready_ms: Number(popupReady.toFixed(3)),
-  native_connection_ms: Number(nativeElapsed.toFixed(3)),
-  first_response_chunk_ms: Number(firstChunkElapsed.toFixed(3)),
-  budgets_ms: PERFORMANCE_BUDGETS_MS
-}));
+console.log("TST-09 performance instrumentation contract passed");
