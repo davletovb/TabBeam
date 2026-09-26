@@ -22,6 +22,8 @@ class FakeElement {
     this.hidden = false;
     this.focused = false;
     this.disabled = false;
+    /** @type {{activeElement?: any} | null} */
+    this.ownerDocument = null;
   }
 
   /**
@@ -76,6 +78,7 @@ class FakeElement {
 
   focus() {
     this.focused = true;
+    if (this.ownerDocument) this.ownerDocument.activeElement = this;
   }
 }
 
@@ -122,6 +125,8 @@ function openPopup(contextControls, outcomes = []) {
     cancel: new FakeElement(),
     retry: new FakeElement()
   };
+  const ownerDocument = { activeElement: null };
+  for (const element of Object.values(elements)) element.ownerDocument = ownerDocument;
   // As in index.html, the answer region starts hidden.
   elements.answer.hidden = true;
 
@@ -185,9 +190,11 @@ function openPopup(contextControls, outcomes = []) {
       return elements.form.dispatch("submit", cancellableEvent({}));
     },
     clickCancel() {
+      elements.cancel.focus();
       return elements.cancel.dispatch("click", cancellableEvent({}));
     },
     clickRetry() {
+      elements.retry.focus();
       return elements.retry.dispatch("click", cancellableEvent({}));
     },
     get statusText() {
@@ -356,7 +363,7 @@ function hostEvent(event, payload = {}) {
   ]);
   assert.equal(popup.statusText, "Stopping…");
   assert.equal(popup.statusState, "cancelled");
-  assert.equal(popup.cancel.disabled, true);
+  assert.equal(popup.cancel.getAttribute("aria-disabled"), "true");
 
   first.emitMessage(hostEvent("response.failed", {
     error: {
@@ -369,6 +376,7 @@ function hostEvent(event, payload = {}) {
   assert.equal(popup.busy, false);
   assert.equal(popup.cancel.hidden, true);
   assert.equal(popup.retry.hidden, false);
+  assert.equal(popup.input.focused, true);
 
   popup.input.value = "edited after stop";
   popup.clickRetry();
@@ -376,6 +384,70 @@ function hostEvent(event, payload = {}) {
   assert.deepEqual(popup.ports[1].messages, [{ type: "ask", text: "Long answer" }]);
   assert.equal(popup.retry.hidden, true);
   assert.equal(popup.cancel.hidden, false);
+  assert.equal(popup.input.focused, true);
+}
+
+{
+  // Retry re-reads the user's current context choice and consumes that exact
+  // one-shot grant after success; revoked context is not resurrected.
+  let currentContext = {
+    mode: "page", text: "old page", truncated: false,
+    page: { title: "Old", url: "https://example.com/" }
+  };
+  /** @type {any[]} */
+  const consumed = [];
+  const popup = openPopup({
+    isPending: () => false,
+    getContext: () => currentContext,
+    consume: (context) => consumed.push(context)
+  });
+  popup.ask("Use context");
+  popup.ports[0].emitMessage(hostEvent("response.failed", {
+    error: {
+      code: "PROVIDER_FAILED", reason: "PROCESS_EXITED",
+      message: "Try again.", retryable: true
+    }
+  }));
+  currentContext = null;
+  popup.clickRetry();
+  assert.deepEqual(popup.ports[1].messages, [{ type: "ask", text: "Use context" }]);
+  popup.ports[1].emitMessage(hostEvent("response.completed"));
+  assert.deepEqual(consumed, [null]);
+
+  currentContext = {
+    mode: "selection", text: "new selection", truncated: false,
+    page: { title: "New", url: "https://example.com/" }
+  };
+  popup.ask("Again");
+  popup.ports[2].emitMessage(hostEvent("response.failed", {
+    error: {
+      code: "PROVIDER_FAILED", reason: "PROCESS_EXITED",
+      message: "Try again.", retryable: true
+    }
+  }));
+  popup.clickRetry();
+  assert.equal(popup.ports[3].messages[0].context, currentContext);
+  popup.ports[3].emitMessage(hostEvent("response.completed"));
+  assert.equal(consumed.at(-1), currentContext);
+}
+
+{
+  // A failed stop is non-terminal: Stop becomes actionable again and the
+  // answer can continue without leaving the UI stuck in Stopping.
+  const popup = openPopup();
+  popup.ask("Keep running");
+  popup.clickCancel();
+  popup.ports[0].emitMessage(hostEvent("cancel.failed", {
+    error: {
+      code: "INVALID_REQUEST", reason: "UNKNOWN_TARGET_REQUEST",
+      message: "Target is not running.", retryable: true
+    }
+  }));
+  assert.equal(popup.cancel.getAttribute("aria-disabled"), null);
+  assert.equal(popup.statusState, "pending");
+  assert.equal(popup.statusText, "Couldn't stop. The answer is still running.");
+  popup.clickCancel();
+  assert.deepEqual(popup.ports[0].messages.map((item) => item.type), ["ask", "cancel", "cancel"]);
 }
 
 {
