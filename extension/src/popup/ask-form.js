@@ -242,7 +242,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
     requestStartedAt = globalThis.performance?.now?.() ?? 0;
     firstChunkRecorded = false;
     options.onRequestStarted?.();
-    if (history) history.append(bubble("user", text, "pending"));
+    if (history && !attempt) history.append(bubble("user", text, "pending"));
     answer.textContent = "";
     answer.hidden = true;
     setBusy(true);
