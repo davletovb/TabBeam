@@ -112,6 +112,7 @@ export class NativeConnectionManager {
     }
 
     const startedAt = globalThis.performance?.now?.() ?? 0;
+    let connectionMeasured = false;
     const port = this.connectNative(this.hostName);
     if (!port || typeof port.postMessage !== "function") {
       throw new Error("connectNative did not return a valid port");
@@ -120,6 +121,11 @@ export class NativeConnectionManager {
     const onMessage = (/** @type {any} */ message) => {
       if (this.port !== port) {
         return;
+      }
+      if (!connectionMeasured) {
+        connectionMeasured = true;
+        const readyAt = globalThis.performance?.now?.() ?? startedAt;
+        recordDuration("native_connection", startedAt, readyAt);
       }
       this.handleMessage(message);
     };
@@ -137,8 +143,6 @@ export class NativeConnectionManager {
     port.onMessage.addListener(onMessage);
     port.onDisconnect.addListener(onDisconnect);
     this.port = port;
-    const endedAt = globalThis.performance?.now?.() ?? startedAt;
-    recordDuration("native_connection", startedAt, endedAt);
     return port;
   }
 
