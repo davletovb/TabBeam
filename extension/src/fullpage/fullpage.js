@@ -33,7 +33,7 @@ const providerSelector = bindProviderSelector(
   chrome.runtime,
   chrome.storage.local,
   {
-    onChange({ providerId, status, providerChanged }) {
+    onChange({ providerId, providerChanged }) {
       if (providerChanged) {
         providerState.setProvider(providerId);
       }
