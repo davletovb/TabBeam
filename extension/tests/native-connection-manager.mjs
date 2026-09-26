@@ -8,7 +8,13 @@ import {
   RequestTooLargeError,
   createNativeConnectionManager
 } from "../src/background/native-connection.js";
-import { MAX_NATIVE_MESSAGE_BYTES } from "../src/shared/limits.js";
+import {
+  MAX_CONTEXT_TITLE_BYTES,
+  MAX_CONTEXT_URL_BYTES,
+  MAX_NATIVE_MESSAGE_BYTES,
+  MAX_PAGE_BYTES,
+  MAX_SELECTION_BYTES
+} from "../src/shared/limits.js";
 
 class MockEvent {
   constructor() {
@@ -719,6 +725,10 @@ function request(id, method = "provider.status") {
   );
   assert.equal(NATIVE_HOST_NAME, contract.host_name);
   assert.equal(MAX_NATIVE_MESSAGE_BYTES, contract.max_frame_bytes);
+  assert.equal(MAX_SELECTION_BYTES, contract.max_selection_bytes);
+  assert.equal(MAX_PAGE_BYTES, contract.max_page_bytes);
+  assert.equal(MAX_CONTEXT_TITLE_BYTES, contract.max_context_title_bytes);
+  assert.equal(MAX_CONTEXT_URL_BYTES, contract.max_context_url_bytes);
   assert.ok(REQUEST_ID_PATTERN.test("a".repeat(contract.max_request_id_length)));
   assert.ok(!REQUEST_ID_PATTERN.test("a".repeat(contract.max_request_id_length + 1)));
 }

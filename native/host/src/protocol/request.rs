@@ -4,8 +4,13 @@ use std::borrow::Cow;
 
 use super::PROTOCOL_VERSION;
 use super::json::{JsonError, JsonStr, Reader};
-use crate::conversation::HistoryMessage;
-use crate::limits::{MAX_HISTORY_BYTES, MAX_HISTORY_MESSAGES, MAX_REQUEST_ID_LENGTH};
+use crate::conversation::{
+    BrowserContext, BrowserContextMode, HistoryMessage, is_javascript_trim_char,
+};
+use crate::limits::{
+    MAX_CONTEXT_TITLE_BYTES, MAX_CONTEXT_URL_BYTES, MAX_HISTORY_BYTES, MAX_HISTORY_MESSAGES,
+    MAX_PAGE_BYTES, MAX_REQUEST_ID_LENGTH, MAX_SELECTION_BYTES,
+};
 
 /// A validated request ID, kept as the raw bytes of its JSON string token so
 /// events echo it byte-for-byte (v1 §4).
@@ -50,8 +55,8 @@ pub enum Method<'a> {
         text: JsonStr<'a>,
         /// Parsed and validated once at the protocol boundary.
         history: Vec<HistoryMessage>,
-        /// Whether the request attaches browser context (`context`).
-        has_context: bool,
+        /// Validated browser context attached to this turn.
+        context: Option<BrowserContext>,
     },
     ProviderStatus {
         provider_id: Option<JsonStr<'a>>,
@@ -307,7 +312,7 @@ fn parse_conversation_payload(payload: &[u8]) -> Result<Method<'_>, FailureKind>
     let mut provider_id = None;
     let mut conversation_id = None;
     let mut input_data = None;
-    let mut has_context = false;
+    let mut context = None;
     let mut invalid = false;
 
     let has_members = walk_payload_object(payload, |key, reader| {
@@ -321,8 +326,8 @@ fn parse_conversation_payload(payload: &[u8]) -> Result<Method<'_>, FailureKind>
             conversation_id = read_nonempty_string(reader)?;
             invalid |= conversation_id.is_none();
         } else if key.equals_ascii("context") {
-            has_context = true;
-            invalid |= read_object(reader)?.is_none();
+            context = read_object(reader)?.and_then(|value| parse_browser_context(value).ok());
+            invalid |= context.is_none();
         } else {
             reader.skip_value().map_err(payload_error)?;
         }
@@ -336,7 +341,7 @@ fn parse_conversation_payload(payload: &[u8]) -> Result<Method<'_>, FailureKind>
                 conversation_id,
                 text,
                 history,
-                has_context,
+                context,
             })
         }
         _ => Err(FailureKind::InvalidPayload),
@@ -372,6 +377,51 @@ fn parse_input(input: &[u8]) -> Result<(JsonStr<'_>, Vec<HistoryMessage>), Failu
         Some(text) if has_members && !invalid => Ok((text, history.unwrap_or_default())),
         _ => Err(FailureKind::InvalidPayload),
     }
+}
+
+fn parse_browser_context(context: &[u8]) -> Result<BrowserContext, FailureKind> {
+    // Duplicate members were already rejected by the strict payload pass.
+    // Typed deserialization skips forward-compatible unknown fields without
+    // allocating an arbitrary serde_json::Value tree.
+    let context: BrowserContext =
+        serde_json::from_slice(context).map_err(|_| FailureKind::InvalidPayload)?;
+
+    if context
+        .text
+        .trim_matches(is_javascript_trim_char)
+        .is_empty()
+    {
+        return Err(FailureKind::InvalidPayload);
+    }
+    let text_limit = match context.mode {
+        BrowserContextMode::Selection => MAX_SELECTION_BYTES,
+        BrowserContextMode::Page => MAX_PAGE_BYTES,
+    };
+    if context.text.len() > text_limit
+        || context.page.title.len() > MAX_CONTEXT_TITLE_BYTES
+        || context.page.url.len() > MAX_CONTEXT_URL_BYTES
+        || !valid_context_url(&context.page.url)
+    {
+        return Err(FailureKind::InvalidPayload);
+    }
+
+    Ok(context)
+}
+
+fn valid_context_url(url: &str) -> bool {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return false;
+    };
+    if !matches!(scheme, "http" | "https") || rest.is_empty() {
+        return false;
+    }
+    let authority = rest.split('/').next().unwrap_or_default();
+    // The extension strips credentials, query, and fragment before sending.
+    !authority.is_empty()
+        && !authority.contains('@')
+        && !url.contains('?')
+        && !url.contains('#')
+        && !url.chars().any(char::is_whitespace)
 }
 
 fn parse_status_payload(payload: &[u8]) -> Result<Method<'_>, FailureKind> {
@@ -545,7 +595,7 @@ mod tests {
             conversation_id,
             text,
             history,
-            has_context,
+            context,
         } = request.method
         else {
             panic!("unexpected method");
@@ -554,7 +604,7 @@ mod tests {
         assert_eq!(conversation_id, None);
         assert_eq!(text.decode(), "Hello");
         assert!(history.is_empty());
-        assert!(!has_context);
+        assert!(context.is_none());
     }
 
     #[test]
@@ -676,8 +726,9 @@ mod tests {
             // Members the host does not interpret, at every level.
             r#"{"provider_id":"fake","input":{"text":"Hi"},"future":1,"future":2}"#,
             r#"{"provider_id":"fake","input":{"text":"Hi","future":1,"future":2}}"#,
-            r#"{"provider_id":"fake","input":{"text":"Hi"},"context":{"page":1,"page":2}}"#,
-            r#"{"provider_id":"fake","input":{"text":"Hi"},"context":{"page":{"url":"a","url":"b"}}}"#,
+            r#"{"provider_id":"fake","input":{"text":"Hi"},"context":{"mode":"selection","text":"benign","text":"evil","truncated":false,"page":{"title":"T","url":"https://example.com/"}}}"#,
+            r#"{"provider_id":"fake","input":{"text":"Hi"},"context":{"mode":"selection","mode":"page","text":"x","truncated":false,"page":{"title":"T","url":"https://example.com/"}}}"#,
+            r#"{"provider_id":"fake","input":{"text":"Hi"},"context":{"mode":"selection","text":"x","truncated":false,"page":{"title":"T","url":"https://example.com/","url":"https://evil.example/"}}}"#,
             r#"{"provider_id":"fake","input":{"text":"Hi"},"future":[{"k":1},{"k":1,"k":2}]}"#,
             // Names are compared after decoding escapes.
             r#"{"provider_id":"fake","input":{"text":"Hi"},"future":1,"futur\u0065":2}"#,
@@ -712,7 +763,7 @@ mod tests {
         let input = envelope(
             "req_names",
             "conversation.send",
-            r#"{"provider_id":"fake","input":{"text":"Hi"},"context":{"text":"x","items":[{"k":1},{"k":2}]},"k":{"k":{"k":1}}}"#,
+            r#"{"provider_id":"fake","input":{"text":"Hi"},"context":{"mode":"selection","text":"x","truncated":false,"page":{"title":"T","url":"https://example.com/"},"future":{"k":1}},"k":{"k":{"k":1}}}"#,
         );
         assert!(parse_request(input.as_bytes()).is_ok());
     }
@@ -865,7 +916,7 @@ mod tests {
         let input = envelope(
             "req_8",
             "conversation.send",
-            r#"{"provider_id":"codex","input":{"text":"Hi","extra":1},"conversation_id":"conv_1","context":{"x":[]},"future":null}"#,
+            r#"{"provider_id":"codex","input":{"text":"Hi","extra":1},"conversation_id":"conv_1","context":{"mode":"selection","text":"Selected","truncated":false,"page":{"title":"Example","url":"https://example.com/path"},"future":null},"future":null}"#,
         );
         let request = parse_request(input.as_bytes()).unwrap();
         let Method::ConversationSend {
@@ -873,7 +924,7 @@ mod tests {
             conversation_id,
             text,
             history,
-            has_context,
+            context,
         } = request.method
         else {
             panic!("unexpected method");
@@ -881,8 +932,77 @@ mod tests {
         assert!(provider_id.equals_ascii("codex"));
         assert_eq!(text.decode(), "Hi");
         assert!(history.is_empty());
-        assert!(has_context);
+        assert!(context.is_some());
         assert_eq!(conversation_id.map(JsonStr::raw), Some(&b"conv_1"[..]));
+    }
+
+    #[test]
+    fn validates_browser_context_schema_and_bounds() {
+        let valid = envelope(
+            "req_context",
+            "conversation.send",
+            r#"{"provider_id":"codex","input":{"text":"Explain"},"context":{"mode":"page","text":"Article text","truncated":true,"page":{"title":"Article","url":"https://example.com/path"},"future":1}}"#,
+        );
+        let request = parse_request(valid.as_bytes()).unwrap();
+        let Method::ConversationSend {
+            context: Some(context),
+            ..
+        } = request.method
+        else {
+            panic!("expected browser context");
+        };
+        assert_eq!(context.mode, BrowserContextMode::Page);
+        assert_eq!(context.text, "Article text");
+        assert!(context.truncated);
+        assert_eq!(context.page.title, "Article");
+        assert_eq!(context.page.url, "https://example.com/path");
+
+        // Match JavaScript String.prototype.trim(): U+0085 is content,
+        // while U+FEFF is trimmed and therefore cannot be the whole context.
+        let nel = envelope(
+            "req_nel",
+            "conversation.send",
+            r#"{"provider_id":"codex","input":{"text":"Explain"},"context":{"mode":"selection","text":"\u0085","truncated":false,"page":{"title":"T","url":"https://example.com/"}}}"#,
+        );
+        assert!(parse_request(nel.as_bytes()).is_ok());
+
+        let bom = envelope(
+            "req_bom",
+            "conversation.send",
+            r#"{"provider_id":"codex","input":{"text":"Explain"},"context":{"mode":"selection","text":"\ufeff","truncated":false,"page":{"title":"T","url":"https://example.com/"}}}"#,
+        );
+        expect_failure(&bom, FailureKind::InvalidPayload, Some("req_bom"));
+
+        for context in [
+            r#"{}"#.to_owned(),
+            r#"{"mode":"other","text":"x","truncated":false,"page":{"title":"T","url":"https://example.com/"}}"#.to_owned(),
+            r#"{"mode":"selection","text":"","truncated":false,"page":{"title":"T","url":"https://example.com/"}}"#.to_owned(),
+            r#"{"mode":"selection","text":"x","truncated":"no","page":{"title":"T","url":"https://example.com/"}}"#.to_owned(),
+            r#"{"mode":"selection","text":"x","truncated":false,"page":{"title":"T","url":"file:///tmp/a"}}"#.to_owned(),
+            r#"{"mode":"selection","text":"x","truncated":false,"page":{"title":"T","url":"https://user@example.com/"}}"#.to_owned(),
+            r#"{"mode":"selection","text":"x","truncated":false,"page":{"title":"T","url":"https://example.com/?secret=1"}}"#.to_owned(),
+            serde_json::json!({
+                "mode": "selection",
+                "text": "x".repeat(MAX_SELECTION_BYTES + 1),
+                "truncated": true,
+                "page": {"title":"T","url":"https://example.com/"}
+            }).to_string(),
+            serde_json::json!({
+                "mode": "page",
+                "text": "x".repeat(MAX_PAGE_BYTES + 1),
+                "truncated": true,
+                "page": {"title":"T","url":"https://example.com/"}
+            }).to_string(),
+        ] {
+            let payload = format!(
+                r#"{{"provider_id":"codex","input":{{"text":"Explain"}},"context":{context}}}"#
+            );
+            expect_failure(
+                &envelope("req_bad_context", "conversation.send", &payload),
+                FailureKind::InvalidPayload,
+                Some("req_bad_context"),
+            );
+        }
     }
 
     #[test]

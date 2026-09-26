@@ -1,4 +1,10 @@
-import { MAX_PAGE_BYTES, MAX_SELECTION_BYTES, boundedUtf8Text, utf8ByteLength } from "../shared/limits.js";
+import {
+  MAX_CONTEXT_URL_BYTES,
+  MAX_PAGE_BYTES,
+  MAX_SELECTION_BYTES,
+  boundedUtf8Text,
+  utf8ByteLength
+} from "../shared/limits.js";
 
 export const CONTEXT_CAPTURE_MESSAGE = "pervue.context.capture";
 const CONTENT_MESSAGES = Object.freeze({
@@ -51,7 +57,7 @@ export function metadataForTab(tab) {
     url.password = "";
     url.search = "";
     url.hash = "";
-    if (utf8ByteLength(url.href) > 2048) {
+    if (utf8ByteLength(url.href) > MAX_CONTEXT_URL_BYTES) {
       return failure("CONTEXT_TOO_LARGE");
     }
     const title = typeof tab.title === "string"

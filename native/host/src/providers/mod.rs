@@ -14,8 +14,8 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use crate::conversation::HistoryMessage;
-use crate::protocol::events::{ErrorBody, ProviderState};
+use crate::conversation::{BrowserContext, HistoryMessage};
+use crate::protocol::events::{Capabilities, ErrorBody, ProviderState};
 pub use crate::stream::BUSY_LIMIT;
 
 pub mod codex;
@@ -32,10 +32,9 @@ pub struct SendRequest {
     pub history: Vec<HistoryMessage>,
     /// The conversation to continue, or `None` to start one.
     pub conversation_id: Option<String>,
-    /// Whether the request attaches browser context (`payload.context`). An
-    /// adapter whose provider can't use it fails the request rather than
-    /// answer without it (DOC-02 §6).
-    pub has_context: bool,
+    /// Browser context explicitly attached to this turn, after validation
+    /// at the native trust boundary.
+    pub context: Option<BrowserContext>,
 }
 
 /// What an exchange reports, in protocol order. After a terminal update
@@ -102,6 +101,10 @@ pub trait Provider {
     fn id(&self) -> &str;
 
     fn timeouts(&self) -> Timeouts;
+
+    /// Capabilities that are stable for this adapter implementation. The host
+    /// uses these to reject requests that would otherwise be silently degraded.
+    fn capabilities(&self) -> Capabilities;
 
     /// Starts checking availability, authentication, and capabilities. The
     /// exchange reports one `Status` and then `Completed`.

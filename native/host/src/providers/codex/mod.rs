@@ -29,7 +29,7 @@ use std::time::{Duration, Instant, SystemTime};
 use super::discovery::SearchPath;
 use super::environment;
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
-use crate::conversation::normalized_prompt;
+use crate::conversation::provider_prompt;
 use crate::process::{Event, Exit, Process, ProcessSpec};
 use crate::protocol::events::{
     Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ProviderState,
@@ -78,14 +78,14 @@ pub const LIMITS: Limits = Limits {
     finish: Duration::from_secs(5),
 };
 
-/// What this adapter supports. Answers arrive a message at a time, not
-/// token by token; page context, attachments, and model selection are not
-/// passed to Codex yet.
+/// What this adapter supports. Answers arrive a message at a time, not token
+/// by token. Browser context is framed as untrusted reference data in the
+/// prompt; attachments and model selection are not passed to Codex yet.
 pub const CAPABILITIES: Capabilities = Capabilities {
     streaming: Capability::Supported,
     continuation: Capability::Supported,
     web_search: Capability::Unknown,
-    page_context: Capability::Unsupported,
+    page_context: Capability::Supported,
     attachments: Capability::Unsupported,
     model_selection: Capability::Unsupported,
     cancellation: Capability::Supported,
@@ -105,10 +105,10 @@ const NOT_SIGNED_IN: ErrorBody<'static> = ErrorBody {
     retryable: false,
 };
 
-const PAGE_CONTEXT_UNSUPPORTED: ErrorBody<'static> = ErrorBody {
+const CONTEXT_TOOLS_ENABLED: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::InvalidRequest,
-    reason: "PAGE_CONTEXT_UNSUPPORTED",
-    message: "Codex can't use page context yet. Choose No context, then ask again.",
+    reason: "PAGE_CONTEXT_TOOLS_ENABLED",
+    message: "Pervue won't send browser context to Codex while external tools, plugins, or hooks are configured. Disable them or choose No context.",
     retryable: false,
 };
 
@@ -269,6 +269,10 @@ impl Provider for Codex {
         ID
     }
 
+    fn capabilities(&self) -> Capabilities {
+        CAPABILITIES
+    }
+
     fn timeouts(&self) -> Timeouts {
         self.limits.timeouts
     }
@@ -296,15 +300,18 @@ impl Provider for Codex {
         let Some(executable) = self.executable() else {
             return Box::new(Scripted::failed(NOT_INSTALLED));
         };
-        // Codex doesn't receive browser context yet (`page_context: false`).
-        // Answering without it would silently ignore what the user attached.
-        if request.has_context {
-            return Box::new(Scripted::failed(PAGE_CONTEXT_UNSUPPORTED));
+        let context_turn = request.context.is_some();
+        if context_turn && !context_configuration_is_safe(&self.launch) {
+            return Box::new(Scripted::failed(CONTEXT_TOOLS_ENABLED));
         }
+
         let mut conversation_id = request.conversation_id;
-        let mut prompt = request.text;
-        let mut fallback_prompt =
-            (!request.history.is_empty()).then(|| normalized_prompt(&request.history, &prompt));
+        let mut fallback_prompt = (!request.history.is_empty())
+            .then(|| provider_prompt(&request.history, request.context.as_ref(), &request.text));
+        let mut prompt = match request.context.as_ref() {
+            Some(context) => provider_prompt(&[], Some(context), &request.text),
+            None => request.text,
+        };
         let resume = match &conversation_id {
             None => None,
             Some(conversation_id) => match self
@@ -339,6 +346,7 @@ impl Provider for Codex {
             conversation_id,
             conversations: Rc::clone(&self.conversations),
             finish_grace: self.limits.finish,
+            restrict_tools: context_turn,
             queue: VecDeque::new(),
             cancelled: false,
             thread_id: None,
@@ -359,6 +367,63 @@ impl Provider for Codex {
         }
         Box::new(turn)
     }
+}
+
+fn context_configuration_is_safe(launch: &Launch) -> bool {
+    let home = environment::lookup(&launch.inherited, "CODEX_HOME")
+        .map(PathBuf::from)
+        .or_else(|| {
+            #[cfg(unix)]
+            {
+                environment::lookup(&launch.inherited, "HOME")
+                    .map(PathBuf::from)
+                    .map(|home| home.join(".codex"))
+            }
+            #[cfg(not(unix))]
+            {
+                environment::lookup(&launch.inherited, "USERPROFILE")
+                    .map(PathBuf::from)
+                    .map(|home| home.join(".codex"))
+            }
+        });
+    let Some(home) = home else {
+        return true;
+    };
+
+    // Installed plugins and hooks can contribute executable/external tools
+    // even when the main config is otherwise empty.
+    if home.join("plugins").exists() || home.join("hooks.json").exists() {
+        return false;
+    }
+
+    let mut configs = vec![home.join("config.toml")];
+    if home.exists() {
+        let Ok(entries) = std::fs::read_dir(&home) else {
+            return false;
+        };
+        configs.extend(
+            entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .filter(|path| {
+                    path.file_name()
+                        .and_then(OsStr::to_str)
+                        .is_some_and(|name| name.ends_with(".config.toml"))
+                }),
+        );
+    }
+    configs.into_iter().all(|path| {
+        if !path.exists() {
+            return true;
+        }
+        let Ok(config) = std::fs::read_to_string(path) else {
+            return false;
+        };
+        let config = config.to_ascii_lowercase();
+        !["mcp_servers", "[plugins.", "[marketplaces.", "[hooks"]
+            .iter()
+            .any(|marker| config.contains(marker))
+    })
 }
 
 fn status_update(availability: Availability, authentication: Authentication) -> Update {
@@ -540,6 +605,9 @@ struct Turn {
     conversation_id: Option<String>,
     conversations: Conversations,
     finish_grace: Duration,
+    /// Browser context is untrusted, so context turns run with Codex's
+    /// interactive/tool surfaces disabled.
+    restrict_tools: bool,
     /// Updates produced but not yet returned.
     queue: VecDeque<Update>,
     cancelled: bool,
@@ -574,10 +642,28 @@ impl Turn {
             "--skip-git-repo-check",
             "--sandbox",
             "read-only",
-            "-C",
         ]
         .map(OsString::from)
         .into();
+        if self.restrict_tools {
+            // Page text is attacker-controlled. A context turn is deliberately
+            // answer-only: no local shell/file-image tools, apps/web search,
+            // or subagents. User-configured MCP/plugin tooling is refused
+            // before this point by context_configuration_is_safe().
+            for setting in [
+                "features.shell_tool=false",
+                "features.apps=false",
+                "features.multi_agent=false",
+                "features.hooks=false",
+                "features.remote_plugin=false",
+                "tools.web_search=false",
+                "tools.view_image=false",
+                "agents.enabled=false",
+            ] {
+                args.extend(["-c".into(), setting.into()]);
+            }
+        }
+        args.push("-C".into());
         args.push(workspace.clone().into());
         if let Some(thread_id) = &self.resume {
             args.extend(["resume", thread_id].map(OsString::from));

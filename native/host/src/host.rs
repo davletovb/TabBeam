@@ -30,8 +30,8 @@ use crate::diagnostics::{
 use crate::framing::{self, FrameError};
 use crate::limits::MAX_FRAME_SIZE;
 use crate::protocol::events::{
-    self, ConversationCreated, ErrorBody, ErrorCode, Event, ProviderStatus, RequestCancelled,
-    ResponseCompleted, ResponseDelta, ResponseStarted,
+    self, Capability, ConversationCreated, ErrorBody, ErrorCode, Event, ProviderStatus,
+    RequestCancelled, ResponseCompleted, ResponseDelta, ResponseStarted,
 };
 use crate::protocol::request::{self, Method, RequestFailure, RequestId};
 use crate::providers::{Exchange, Providers, Scripted, SendRequest, StatusOfAll, Timeouts, Update};
@@ -111,6 +111,13 @@ const PROVIDER_NOT_INSTALLED: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::ProviderNotFound,
     reason: "PROVIDER_NOT_INSTALLED",
     message: "Pervue's companion app doesn't support this AI provider yet. Update it, then try again.",
+    retryable: false,
+};
+
+const PAGE_CONTEXT_UNSUPPORTED: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::InvalidRequest,
+    reason: "PAGE_CONTEXT_UNSUPPORTED",
+    message: "This AI provider can't use browser context. Choose No context, then ask again.",
     retryable: false,
 };
 
@@ -507,18 +514,27 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                 conversation_id,
                 text,
                 history,
-                has_context,
+                context,
             } => {
                 let provider_id = provider_id.decode().into_owned();
                 let conversation_id = conversation_id.map(|id| id.decode().into_owned());
                 let provider = self.providers.get(&provider_id);
                 let (exchange, timeouts): (Box<dyn Exchange>, _) = match provider {
+                    Some(provider)
+                        if context.is_some()
+                            && provider.capabilities().page_context != Capability::Supported =>
+                    {
+                        (
+                            Box::new(Scripted::failed(PAGE_CONTEXT_UNSUPPORTED)),
+                            Some(provider.timeouts()),
+                        )
+                    }
                     Some(provider) => (
                         provider.send(SendRequest {
                             text: text.decode().into_owned(),
                             history,
                             conversation_id: conversation_id.clone(),
-                            has_context,
+                            context,
                         }),
                         Some(provider.timeouts()),
                     ),
@@ -864,6 +880,7 @@ mod tests {
     use crate::HOST_VERSION;
     use crate::framing::PREFIX_SIZE;
     use crate::limits::MAX_FRAME_SIZE;
+    use crate::protocol::events::Capabilities;
     use crate::providers::{Provider, fake};
 
     fn framed(payloads: &[&str]) -> Vec<u8> {
@@ -1125,6 +1142,7 @@ mod tests {
         id: &'static str,
         script: Script,
         timeouts: Timeouts,
+        capabilities: Capabilities,
         calls: Rc<RefCell<Vec<String>>>,
     }
 
@@ -1138,6 +1156,7 @@ mod tests {
                     idle: Duration::from_secs(60),
                     stop_grace: Duration::ZERO,
                 },
+                capabilities: fake::STATUS.capabilities,
                 calls: Rc::default(),
             }
         }
@@ -1152,6 +1171,10 @@ mod tests {
             self.timeouts
         }
 
+        fn capabilities(&self) -> Capabilities {
+            self.capabilities
+        }
+
         fn status(&self) -> Box<dyn Exchange> {
             self.calls.borrow_mut().push("status".to_owned());
             Box::new(Scripted::new([
@@ -1164,7 +1187,11 @@ mod tests {
         }
 
         fn send(&self, request: SendRequest) -> Box<dyn Exchange> {
-            let context = if request.has_context { "+context" } else { "" };
+            let context = if request.context.is_some() {
+                "+context"
+            } else {
+                ""
+            };
             self.calls
                 .borrow_mut()
                 .push(format!("send:{}{context}", request.text));
@@ -1217,6 +1244,10 @@ mod tests {
                 idle: Duration::from_secs(60),
                 stop_grace: Duration::ZERO,
             }
+        }
+
+        fn capabilities(&self) -> Capabilities {
+            fake::STATUS.capabilities
         }
 
         fn status(&self) -> Box<dyn Exchange> {
@@ -1506,6 +1537,30 @@ mod tests {
         let session = run_session(&with(provider), framed(&frames).as_slice());
         assert_eq!(session.result, Ok(()));
         assert_eq!(*calls.borrow(), ["send:plain", "send:with+context"]);
+    }
+
+    #[test]
+    fn context_is_rejected_before_an_unsupported_provider_runs() {
+        let mut provider = TestProvider::new("test", Script::answers("ok"));
+        provider.capabilities.page_context = Capability::Unsupported;
+        let calls = Rc::clone(&provider.calls);
+        let request = request(
+            "req_context",
+            "conversation.send",
+            r#"{"provider_id":"test","input":{"text":"with"},"context":{"mode":"selection","text":"x","truncated":false,"page":{"title":"T","url":"https://example.com/"}}}"#,
+        );
+        let session = run_session(&with(provider), framed(&[&request]).as_slice());
+        assert_eq!(session.result, Ok(()));
+        assert!(
+            calls.borrow().is_empty(),
+            "provider ran despite unsupported context"
+        );
+        let failure = &session.events()[1];
+        assert_eq!(failure["event"], "response.failed");
+        assert_eq!(
+            failure["payload"]["error"]["reason"],
+            "PAGE_CONTEXT_UNSUPPORTED"
+        );
     }
 
     #[test]
@@ -2254,7 +2309,7 @@ mod tests {
         const MARKER: &str = "SECRET-PROMPT-7f3a";
         let input = framed(&[
             &format!(
-                r#"{{"version":1,"type":"request","request_id":"req_1","method":"conversation.send","payload":{{"provider_id":"fake","input":{{"text":"{MARKER}"}},"context":{{"page":"{MARKER}"}},"extra":"{MARKER}"}}}}"#
+                r#"{{"version":1,"type":"request","request_id":"req_1","method":"conversation.send","payload":{{"provider_id":"fake","input":{{"text":"{MARKER}"}},"context":{{"mode":"page","text":"{MARKER}","truncated":false,"page":{{"title":"{MARKER}","url":"https://example.com/"}}}},"extra":"{MARKER}"}}}}"#
             ),
             &format!(
                 r#"{{"version":1,"type":"request","request_id":"req_2","method":"conversation.send","payload":{{"provider_id":"none","input":{{"text":"{MARKER}"}}}}}}"#

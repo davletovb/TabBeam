@@ -1,4 +1,10 @@
-import { MAX_PAGE_BYTES, MAX_SELECTION_BYTES, utf8ByteLength } from "../shared/limits.js";
+import {
+  MAX_CONTEXT_TITLE_BYTES,
+  MAX_CONTEXT_URL_BYTES,
+  MAX_PAGE_BYTES,
+  MAX_SELECTION_BYTES,
+  utf8ByteLength
+} from "../shared/limits.js";
 
 /** @typedef {import("../shared/provider-status.js").ErrorBody} ErrorBody */
 
@@ -107,7 +113,7 @@ export function isValidContext(context) {
   const limit = context.mode === "selection" ? MAX_SELECTION_BYTES : MAX_PAGE_BYTES;
   if (
     utf8ByteLength(context.text) > limit ||
-    utf8ByteLength(context.page.title) > 1024 ||
+    utf8ByteLength(context.page.title) > MAX_CONTEXT_TITLE_BYTES ||
     /[\uD800-\uDFFF]/u.test(context.text) ||
     /[\uD800-\uDFFF]/u.test(context.page.title)
   ) {
@@ -121,7 +127,7 @@ export function isValidContext(context) {
       url.password === "" &&
       url.search === "" &&
       url.hash === "" &&
-      utf8ByteLength(context.page.url) <= 2048
+      utf8ByteLength(context.page.url) <= MAX_CONTEXT_URL_BYTES
     );
   } catch {
     return false;
