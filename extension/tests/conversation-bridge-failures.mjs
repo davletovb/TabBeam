@@ -43,13 +43,13 @@ function harness(options = {}) {
         messages: [{ role: "user", text: "Previous" }, { role: "assistant", text: "Answer", status: "complete" }]
       };
     },
-    async begin(...args) {
+    async begin(/** @type {any[]} */ ...args) {
       begins.push(args);
       if (options.begin) return options.begin();
       return { assistantId: "msg_2" };
     },
-    async retry(...args) { retries.push(args); return { assistantId: "msg_2" }; },
-    async discardPending(...args) { discards.push(args); },
+    async retry(/** @type {any[]} */ ...args) { retries.push(args); return { assistantId: "msg_2" }; },
+    async discardPending(/** @type {any[]} */ ...args) { discards.push(args); },
     async setSession() { if (options.setSession) await options.setSession(); },
     /** @param {...any} args */
     async finish(...args) { finishes.push(args); },
@@ -157,7 +157,7 @@ function harness(options = {}) {
   port.emitMessage({ type: "ask", text: "Follow-up", conversation_id: id });
   await settle();
   port.emitMessage({ type: "cancel" });
-  releaseBegin();
+  releaseBegin(undefined);
   await settle();
   assert.equal(sent.length, 0);
   assert.deepEqual(discards, [[id, "msg_2", false]]);
