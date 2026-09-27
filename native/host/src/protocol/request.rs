@@ -738,10 +738,10 @@ mod tests {
         );
 
         for search in [
-            r#"{"backend_id":"","count":5}"#,
-            r#"{"backend_id":"../brave","count":5}"#,
-            r#"{"backend_id":"brave","count":0}"#,
-            r#"{"backend_id":"brave","count":11}"#,
+            r#"{"backend_id":""}"#,
+            r#"{"backend_id":"brave"}"#,
+            r#"{"backend_id":"../provider"}"#,
+            r#"{"backend_id":"provider","count":5}"#,
             r#"[]"#,
         ] {
             let payload = format!(
