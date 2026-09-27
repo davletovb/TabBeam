@@ -21,6 +21,7 @@ native/
 │   │   ├── manifest.rs  caller-origin checks and the Native Messaging manifest
 │   │   ├── providers/   adapter contract, host discovery policy, fake, Codex, Claude
 │   │   ├── protocol/    strict request validation and event emission
+│   │   ├── search.rs    provider-independent search + Brave adapter/synthesis bridge
 │   │   ├── host.rs      request loop: requests side by side, cancellation, timeouts
 │   │   └── main.rs      command-line entry point
 │   └── tests/       command-line tests and the opt-in live Codex test
@@ -31,6 +32,7 @@ native/
 ## Requirements
 
 - Rust 1.85 or newer (install with [rustup](https://rustup.rs))
+- `curl` for Brave-backed web search (the standard system client on supported macOS/Windows installations)
 
 ## Development build
 
@@ -151,6 +153,22 @@ Every record has `ts` (RFC 3339 UTC, with milliseconds) and `event`. A field tha
 A record never contains request content: no prompt text, page context, other payload members, raw frame bytes, or error messages. Nor does it contain provider output: a provider's stderr and error messages are discarded (see [Codex](#codex)). A record copies only identifiers Pervue made itself (SEC-02): a request ID in the shape the extension gives every request, `req_` and a UUID in lowercase hex (`req_4f1c2a7e-9b3d-4c21-8e0f-2a6b5c7d8e9f`); a provider the host serves; and a conversation this host process created. Any other identifier a request carries, such as a hand-written `req-1`, an unknown provider, or a conversation the host never created, is written as `[redacted]`. So is a conversation an earlier host process created and this one continues from its stored mapping (CON-03). So a record holds no free text: not a secret sent where an ID belongs, whatever its format, and nothing that could forge or split a record. To find their requests in the log, tools that talk to the host directly should use IDs of the extension's shape.
 
 Command-line errors, such as a usage error or an invalid `--print-manifest` ID, are plain text on stderr, because no session is running.
+
+## Web search
+
+Milestone H search is separate from AI-provider execution. A `conversation.send` can include:
+
+```json
+"search": {"backend_id": "brave", "count": 8}
+```
+
+The host retrieves and normalizes sources first, then gives the same bounded source set to the selected Codex or Claude adapter for synthesis. It emits those sources as `response.source` events, so source identity is independent of the model provider.
+
+Brave is the first search backend. For development, set `BRAVE_SEARCH_API_KEY` in the environment that launches Chrome/the native host. Pervue does not copy that key into extension storage or pass it to an AI provider. The Brave key and user query are supplied to the HTTPS client over stdin rather than command-line arguments. Search responses are capped at 2 MiB; at most 10 deduplicated HTTP(S) sources are retained, with bounded plain-text metadata.
+
+`PERVUE_CURL_PATH` may point to an absolute curl executable for a controlled installation/test environment. Otherwise the host discovers the fixed executable name `curl` through platform-controlled search paths; webpage/request input cannot select a program. `PERVUE_SEARCH_PATH` is the hermetic search-path override used by tests/unusual installations.
+
+Search failures use `SEARCH_FAILED`, separately from model-provider failures. Missing configuration, backend authentication, rate limiting, transport failure, oversized output, and malformed backend responses therefore remain distinguishable from Codex/Claude synthesis failures.
 
 ## Providers
 
