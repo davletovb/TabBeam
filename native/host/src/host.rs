@@ -34,10 +34,6 @@ use crate::protocol::events::{
 };
 use crate::protocol::request::{self, Method, RequestFailure, RequestId};
 use crate::providers::{Exchange, Providers, Scripted, SendRequest, StatusOfAll, Timeouts, Update};
-use crate::search::{
-    BRAVE_BACKEND_ID, DEFAULT_BACKEND_ID, PROVIDER_BACKEND_ID, SearchProviders, SearchRequest,
-    SynthesisExchange,
-};
 use pervue_core::framing::{self, FrameError};
 use pervue_core::stream::split_text;
 
@@ -118,25 +114,11 @@ const PROVIDER_NOT_INSTALLED: ErrorBody<'static> = ErrorBody {
     retryable: false,
 };
 
-const SEARCH_BACKEND_NOT_FOUND: ErrorBody<'static> = ErrorBody {
-    code: ErrorCode::SearchFailed,
-    reason: "SEARCH_BACKEND_NOT_FOUND",
-    message: "Pervue's companion app doesn't support this search backend yet.",
-    retryable: false,
-};
-
 const NATIVE_SEARCH_UNSUPPORTED: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::SearchFailed,
     reason: "NATIVE_SEARCH_UNSUPPORTED",
     message: "The selected AI provider does not support native web search.",
     retryable: false,
-};
-
-const SEARCH_TIMEOUT: ErrorBody<'static> = ErrorBody {
-    code: ErrorCode::SearchFailed,
-    reason: "SEARCH_TIMEOUT",
-    message: "Web search took too long. Try again.",
-    retryable: true,
 };
 
 const PAGE_CONTEXT_UNSUPPORTED: ErrorBody<'static> = ErrorBody {
@@ -220,33 +202,12 @@ where
     L: Write,
 {
     let providers = Providers::installed();
-    let searches = SearchProviders::installed();
-    run_with_services(&providers, &searches, input, output, log)
+    run_with(&providers, input, output, log)
 }
 
 /// Runs the host as [`run`] does, serving `providers`.
 pub fn run_with<R, W, L>(
     providers: &Providers,
-    input: &mut R,
-    output: &mut W,
-    log: &mut Diagnostics<L>,
-) -> Result<(), HostError>
-where
-    R: Read + Send + ?Sized,
-    W: Write + ?Sized,
-    L: Write,
-{
-    // Explicit-provider runs are used by tests and fuzzing and must never
-    // discover credentials or start network search processes implicitly.
-    let searches = SearchProviders::new(Vec::new());
-    run_with_services(providers, &searches, input, output, log)
-}
-
-/// Runs the host with explicit model and search registries. Tests use this to
-/// prove the search -> synthesis path without network access.
-pub fn run_with_services<R, W, L>(
-    providers: &Providers,
-    searches: &SearchProviders,
     input: &mut R,
     output: &mut W,
     log: &mut Diagnostics<L>,
@@ -270,7 +231,6 @@ where
         scope.spawn(move || read_frames(input, &sender));
         let mut session = Session {
             providers,
-            searches,
             output,
             log: &mut *log,
             counts: &mut counts,
@@ -504,7 +464,6 @@ fn logged(error: &ErrorBody<'static>) -> LoggedError {
 /// The state of one host session.
 struct Session<'a, W: ?Sized, L: Write> {
     providers: &'a Providers,
-    searches: &'a SearchProviders,
     output: &'a mut W,
     log: &'a mut Diagnostics<L>,
     counts: &'a mut Counts,
@@ -601,23 +560,10 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                 let provider = self.providers.get(&provider_id);
                 let provider_served = provider.is_some();
                 let question = text.decode().into_owned();
-                let search_requested = search.is_some();
+                let native_search = search.is_some();
                 let native_supported = provider.as_ref().is_some_and(|provider| {
                     provider.capabilities().web_search == Capability::Supported
                 });
-                let search_route = search.as_ref().map(|options| {
-                    if options.backend_id == DEFAULT_BACKEND_ID {
-                        if native_supported {
-                            PROVIDER_BACKEND_ID.to_owned()
-                        } else {
-                            BRAVE_BACKEND_ID.to_owned()
-                        }
-                    } else {
-                        options.backend_id.clone()
-                    }
-                });
-                let independent_search =
-                    search_requested && search_route.as_deref() != Some(PROVIDER_BACKEND_ID);
                 let (exchange, timeouts): (Box<dyn Exchange>, _) = match provider {
                     Some(provider)
                         if context.is_some()
@@ -641,87 +587,40 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                     }
                     Some(provider) => {
                         let provider_timeouts = provider.timeouts();
-                        let native_search = search_route.as_deref() == Some(PROVIDER_BACKEND_ID);
                         let request = SendRequest {
-                            text: question.clone(),
+                            text: question,
                             history,
                             conversation_id: conversation_id.clone(),
                             context,
                             model,
                             native_search,
-                            search_results: independent_search.then(Vec::new),
                         };
-                        match (search, search_route.as_deref()) {
-                            (Some(_), Some(PROVIDER_BACKEND_ID)) if !native_supported => (
+                        if native_search && !native_supported {
+                            (
                                 Box::new(Scripted::failed(NATIVE_SEARCH_UNSUPPORTED))
                                     as Box<dyn Exchange>,
                                 Some(provider_timeouts),
-                            ),
-                            (Some(_), Some(PROVIDER_BACKEND_ID)) => {
-                                match provider.preflight(&request) {
-                                    Err(error) => (
-                                        Box::new(Scripted::failed(error)) as Box<dyn Exchange>,
-                                        Some(provider_timeouts),
-                                    ),
-                                    Ok(()) => (provider.send(request), Some(provider_timeouts)),
-                                }
-                            }
-                            (Some(options), Some(backend_id)) => match provider.preflight(&request)
-                            {
+                            )
+                        } else {
+                            match provider.preflight(&request) {
                                 Err(error) => (
                                     Box::new(Scripted::failed(error)) as Box<dyn Exchange>,
                                     Some(provider_timeouts),
                                 ),
-                                Ok(()) => match self.searches.get(backend_id) {
-                                    Some(search_provider) => {
-                                        let search_timeouts = search_provider.timeouts();
-                                        let handle = search_provider.search(SearchRequest {
-                                            query: question,
-                                            count: options.count,
-                                        });
-                                        (
-                                            Box::new(SynthesisExchange::new(
-                                                handle,
-                                                provider,
-                                                provider_timeouts,
-                                                request,
-                                            ))
-                                                as Box<dyn Exchange>,
-                                            Some(search_timeouts),
-                                        )
-                                    }
-                                    None => (
-                                        Box::new(Scripted::failed(SEARCH_BACKEND_NOT_FOUND))
-                                            as Box<dyn Exchange>,
-                                        Some(provider_timeouts),
-                                    ),
-                                },
-                            },
-                            _ => (provider.send(request), Some(provider_timeouts)),
+                                Ok(()) => (provider.send(request), Some(provider_timeouts)),
+                            }
                         }
                     }
                     None => (Box::new(Scripted::failed(PROVIDER_NOT_INSTALLED)), None),
                 };
-                if independent_search && timeouts.is_some() {
-                    Running::new_with_start_error(
-                        id,
-                        "conversation.send",
-                        Some((provider_id, provider_served)),
-                        conversation_id,
-                        timeouts,
-                        SEARCH_TIMEOUT,
-                        exchange,
-                    )
-                } else {
-                    Running::new(
-                        id,
-                        "conversation.send",
-                        Some((provider_id, provider_served)),
-                        conversation_id,
-                        timeouts,
-                        exchange,
-                    )
-                }
+                Running::new(
+                    id,
+                    "conversation.send",
+                    Some((provider_id, provider_served)),
+                    conversation_id,
+                    timeouts,
+                    exchange,
+                )
             }
             Method::ProviderStatus { provider_id } => {
                 let provider_id = provider_id.map(|id| id.decode().into_owned());
