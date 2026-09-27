@@ -103,7 +103,7 @@ pub struct SearchOptions {
 impl Default for SearchOptions {
     fn default() -> Self {
         Self {
-            backend_id: BRAVE_BACKEND_ID.to_owned(),
+            backend_id: DEFAULT_BACKEND_ID.to_owned(),
             count: DEFAULT_RESULT_COUNT,
         }
     }
