@@ -129,7 +129,7 @@ Reached after **Milestone H**:
 | MVP closure | All MVP entry points, theme, health/failure UX, accessibility baseline, and end-to-end regression suite are green. |
 | E — Second provider | Claude works through the same normalized adapter contract and exposes capabilities without UI hard-coding. |
 | F — Reusable native core | Reused process/messaging/stream/provider primitives are extracted behind documented library APIs. |
-| G — Installable product | Clean-machine macOS installation works without terminal; Windows path is implemented and verified next. |
+| G — Installable product | macOS and Windows packaging paths are implemented; clean-machine human release verification remains open on both platforms. |
 | H — Search/citations | Search is provider-independent and returns normalized, grounded, cited responses. |
 
 ---
@@ -201,10 +201,10 @@ Reached after **Milestone H**:
 | PKG-03 | Add extension/host protocol compatibility check | G | Packaging / Protocol | DOC-01, PKG-01 | IMPLEMENTED — VERIFY |
 | PKG-04 | Add signing/notarization-ready macOS release pipeline | G | Packaging | PKG-01 | IMPLEMENTED — VERIFY |
 | TST-12 | Verify macOS clean-machine install/use/uninstall journey | G | Testing | PKG-01, PKG-02, PKG-03 | BLOCKED |
-| PKG-05 | Implement Windows native host registration/build | G | Packaging | LIB-02, LIB-05 | BACKLOG |
-| PKG-06 | Build Windows companion installer | G | Packaging | PKG-05, PRO-07 | BACKLOG |
-| TST-13 | Verify Windows clean-machine install/use/uninstall journey | G | Testing | PKG-06, PKG-03 | BACKLOG |
-| SEC-04 | Security review of packaged trust boundaries and permissions | G | Security | PKG-04, PKG-06 | BACKLOG |
+| PKG-05 | Implement Windows native host registration/build | G | Packaging | LIB-02, LIB-05 | IMPLEMENTED — VERIFY |
+| PKG-06 | Build Windows companion installer | G | Packaging | PKG-05, PRO-07 | IMPLEMENTED — VERIFY |
+| TST-13 | Verify Windows clean-machine install/use/uninstall journey | G | Testing | PKG-06, PKG-03 | BLOCKED |
+| SEC-04 | Security review of packaged trust boundaries and permissions | G | Security | PKG-04, PKG-06 | IMPLEMENTED — VERIFY |
 | SRCH-01 | Define provider-independent search adapter contract | H | Search | CON-01, PRO-07 | BACKLOG |
 | SRCH-02 | Implement first search backend adapter | H | Search | SRCH-01 | BACKLOG |
 | SRCH-03 | Normalize search results into source model | H | Search | SRCH-02, CON-01 | BACKLOG |
@@ -1519,7 +1519,10 @@ without terminal commands during the user journey.
 - Windows process/path/registration implementation follows the same host protocol.
 - No POSIX-only assumption leaks into the public reusable interfaces.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- The existing native core/host builds and tests on `windows-latest`, with Windows-specific provider discovery (`.exe` then npm `.cmd`), environment handling, Chrome's `--parent-window` launch shape, and the same Native Messaging framing/protocol interfaces used on macOS/Linux. `packaging/windows/build.ps1` explicitly builds `x86_64-pc-windows-msvc` regardless of build-host architecture, validates the exact generated Native Messaging manifest before staging it, and the package gate launches the installed binary through the real protocol path.
 
 ### PKG-06 — Build Windows companion installer
 **Area:** Packaging  
@@ -1530,7 +1533,10 @@ without terminal commands during the user journey.
 - Provider discovery works for supported Windows provider tooling.
 - Uninstall is clean.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `packaging/windows/Pervue.iss` builds a per-user Inno Setup companion under `%LOCALAPPDATA%\\Programs\\Pervue`, separate from runtime/session state under `%LOCALAPPDATA%\\Pervue`; it registers `com.pervue.host` in HKCU automatically and relies on the Inno uninstall log rather than recursive directory deletion. CI rejects directory overrides, discovers an npm-style `codex.cmd` from the real `%APPDATA%\\npm` default, verifies the exact allowlist/protocol round trip, reinstalls while the native host is running, and proves runtime-state data survives clean uninstall. `packaging/windows/build.ps1` and `.github/workflows/windows-release.yml` also provide Authenticode-signing support for release candidates.
 
 ### TST-13 — Verify Windows clean-machine install/use/uninstall journey
 **Area:** Testing  
@@ -1540,7 +1546,10 @@ without terminal commands during the user journey.
 - Same user-level journey as TST-12 passes on supported Windows.
 - No terminal is required for normal setup/use.
 
-**Status:** BACKLOG
+**Status:** BLOCKED
+
+**Implementation evidence / remaining gate**
+- `packaging/windows/README.md` records the no-terminal clean-machine checklist and required evidence, while the Windows CI job covers package mechanics, fixed-location enforcement, registration, protocol startup, real default npm discovery, running-host upgrade, and state-preserving removal. The full gate still requires a matching released Chrome extension, a signed Authenticode release candidate on an actual clean Windows machine, and a signed-in real provider; automated CI cannot prove the browser/provider/publisher/no-terminal human journey.
 
 ### SEC-04 — Security review of packaged trust boundaries and permissions
 **Area:** Security  
@@ -1552,7 +1561,10 @@ without terminal commands during the user journey.
 - Logs and update/install metadata contain no provider credentials.
 - Extension permissions are reviewed against minimum required capability.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `docs/security/trust-boundaries.md` records the package-level review for macOS and Windows. Exact extension-permission invariants live in `extension/tests/manifest-smoke.mjs`; the path-anchored `packaging/security-audit.mjs` gates packaging-specific location/registration, no-recursive-delete/no-run-command policy, case-sensitive extension-ID validation, explicit x64 target, generated-manifest validation, signing hook presence, and credential-free build inputs. Platform package verification additionally checks the generated Native Messaging allowlist and installed registration.
 
 ---
 
@@ -1788,10 +1800,10 @@ Update this section whenever item statuses change.
 | MVP closure | 7 | 7 | 0 | 0 | 0 | 0 | 0 | 0 |
 | E — Second provider | 5 | 0 | 5 | 0 | 0 | 0 | 0 | 0 |
 | F — Reusable native core | 7 | 0 | 7 | 0 | 0 | 0 | 0 | 0 |
-| G — Installable product | 9 | 0 | 4 | 0 | 0 | 4 | 1 | 0 |
+| G — Installable product | 9 | 0 | 7 | 0 | 0 | 0 | 2 | 0 |
 | H — Search/citations | 8 | 0 | 0 | 0 | 0 | 8 | 0 | 0 |
 | Post-milestone | 6 | 0 | 0 | 0 | 0 | 4 | 0 | 2 |
-| **Total** | **81** | **46** | **16** | **0** | **0** | **16** | **1** | **2** |
+| **Total** | **81** | **46** | **19** | **0** | **0** | **12** | **2** | **2** |
 
 ### Milestone completion rule
 
