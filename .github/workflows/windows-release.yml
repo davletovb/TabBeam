@@ -26,7 +26,7 @@ jobs:
           key: windows-release-cargo-${{ hashFiles('native/Cargo.lock') }}
       - name: Install pinned Inno Setup
         shell: pwsh
-        run: choco install innosetup --version 6.7.3 --no-progress -y
+        run: choco install innosetup --version 6.7.1 --no-progress -y
       - name: Import code-signing certificate
         shell: pwsh
         env:
