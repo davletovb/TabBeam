@@ -129,7 +129,7 @@ Reached after **Milestone H**:
 | MVP closure | All MVP entry points, theme, health/failure UX, accessibility baseline, and end-to-end regression suite are green. |
 | E — Second provider | Claude works through the same normalized adapter contract and exposes capabilities without UI hard-coding. |
 | F — Reusable native core | Reused process/messaging/stream/provider primitives are extracted behind documented library APIs. |
-| G — Installable product | Clean-machine macOS installation works without terminal; Windows path is implemented and verified next. |
+| G — Installable product | macOS and Windows packaging paths are implemented; clean-machine human release verification remains open on both platforms. |
 | H — Search/citations | Search is provider-independent and returns normalized, grounded, cited responses. |
 
 ---
@@ -201,10 +201,10 @@ Reached after **Milestone H**:
 | PKG-03 | Add extension/host protocol compatibility check | G | Packaging / Protocol | DOC-01, PKG-01 | IMPLEMENTED — VERIFY |
 | PKG-04 | Add signing/notarization-ready macOS release pipeline | G | Packaging | PKG-01 | IMPLEMENTED — VERIFY |
 | TST-12 | Verify macOS clean-machine install/use/uninstall journey | G | Testing | PKG-01, PKG-02, PKG-03 | BLOCKED |
-| PKG-05 | Implement Windows native host registration/build | G | Packaging | LIB-02, LIB-05 | BACKLOG |
-| PKG-06 | Build Windows companion installer | G | Packaging | PKG-05, PRO-07 | BACKLOG |
-| TST-13 | Verify Windows clean-machine install/use/uninstall journey | G | Testing | PKG-06, PKG-03 | BACKLOG |
-| SEC-04 | Security review of packaged trust boundaries and permissions | G | Security | PKG-04, PKG-06 | BACKLOG |
+| PKG-05 | Implement Windows native host registration/build | G | Packaging | LIB-02, LIB-05 | IMPLEMENTED — VERIFY |
+| PKG-06 | Build Windows companion installer | G | Packaging | PKG-05, PRO-07 | IMPLEMENTED — VERIFY |
+| TST-13 | Verify Windows clean-machine install/use/uninstall journey | G | Testing | PKG-06, PKG-03 | BLOCKED |
+| SEC-04 | Security review of packaged trust boundaries and permissions | G | Security | PKG-04, PKG-06 | IMPLEMENTED — VERIFY |
 | SRCH-01 | Define provider-independent search adapter contract | H | Search | CON-01, PRO-07 | BACKLOG |
 | SRCH-02 | Implement first search backend adapter | H | Search | SRCH-01 | BACKLOG |
 | SRCH-03 | Normalize search results into source model | H | Search | SRCH-02, CON-01 | BACKLOG |
@@ -1800,10 +1800,10 @@ Update this section whenever item statuses change.
 | MVP closure | 7 | 7 | 0 | 0 | 0 | 0 | 0 | 0 |
 | E — Second provider | 5 | 0 | 5 | 0 | 0 | 0 | 0 | 0 |
 | F — Reusable native core | 7 | 0 | 7 | 0 | 0 | 0 | 0 | 0 |
-| G — Installable product | 9 | 0 | 4 | 0 | 0 | 4 | 1 | 0 |
+| G — Installable product | 9 | 0 | 7 | 0 | 0 | 0 | 2 | 0 |
 | H — Search/citations | 8 | 0 | 0 | 0 | 0 | 8 | 0 | 0 |
 | Post-milestone | 6 | 0 | 0 | 0 | 0 | 4 | 0 | 2 |
-| **Total** | **81** | **46** | **16** | **0** | **0** | **16** | **1** | **2** |
+| **Total** | **81** | **46** | **19** | **0** | **0** | **12** | **2** | **2** |
 
 ### Milestone completion rule
 
