@@ -253,16 +253,11 @@ fn live_claude_answers_a_question() {
     {
         return skip_or_fail(mode, "Claude isn't signed in");
     }
-    let diagnostics = host.finish();
-
     let kinds: Vec<&str> = answer
         .iter()
         .map(|event| event["event"].as_str().unwrap())
         .collect();
-    let printed = format!("{answer:?}{diagnostics}");
-    assert_no_credentials("the events and diagnostics", &printed);
     eprintln!("events: {kinds:?}");
-    eprintln!("diagnostics:\n{diagnostics}");
 
     assert_eq!(kinds.first(), Some(&"conversation.created"), "{last}");
     assert_eq!(kinds.get(1), Some(&"response.started"), "{last}");
@@ -310,6 +305,11 @@ fn live_claude_answers_a_question() {
         followed.iter().any(|event| event["event"] == "response.delta"),
         "plain follow-up returned no answer"
     );
+
+    let diagnostics = host.finish();
+    let printed = format!("{answer:?}{searched:?}{followed:?}{diagnostics}");
+    assert_no_credentials("the events and diagnostics", &printed);
+    eprintln!("diagnostics:\n{diagnostics}");
 
     // The host's own records name the request, never its content.
     assert!(!diagnostics.contains(QUESTION));
