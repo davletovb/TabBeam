@@ -22,7 +22,7 @@ for target in aarch64-apple-darwin x86_64-apple-darwin; do
 done
 host="$stage/Library/Application Support/Pervue/pervue-host"
 manifest="$stage/Library/Google/Chrome/NativeMessagingHosts/com.pervue.host.json"
-mkdir -p "$(dirname "$host")" "$(dirname "$manifest")" "$stage/Applications/Pervue"
+mkdir -p "$(dirname "$host")" "$(dirname "$manifest")" "$stage/Applications"
 lipo -create "$root/native/target/aarch64-apple-darwin/release/pervue-host" \
   "$root/native/target/x86_64-apple-darwin/release/pervue-host" -output "$host"
 chmod 755 "$host"
@@ -47,12 +47,12 @@ print()
 chmod 644 "$manifest"
 
 install -m 755 "$root/packaging/macos/uninstall.sh" "$stage/Library/Application Support/Pervue/uninstall.sh"
-osacompile -o "$stage/Applications/Pervue/Uninstall Pervue.app" \
+osacompile -o "$stage/Applications/Uninstall Pervue.app" \
   -e 'do shell script (quoted form of "/Library/Application Support/Pervue/uninstall.sh") with administrator privileges'
 if [[ -n "${PERVUE_APP_SIGN_IDENTITY:-}" ]]; then
   codesign --force --options runtime --timestamp --sign "$PERVUE_APP_SIGN_IDENTITY" "$host"
   codesign --force --options runtime --timestamp --sign "$PERVUE_APP_SIGN_IDENTITY" \
-    "$stage/Applications/Pervue/Uninstall Pervue.app"
+    "$stage/Applications/Uninstall Pervue.app"
 fi
 
 python3 - "$stage/Library/Application Support/Pervue/build-info.json" "$host_version" "$package_version" "$extension_id" "$source_commit" <<'PY'
@@ -65,8 +65,9 @@ with open(sys.argv[1], 'w') as target:
 PY
 
 pkgbuild --analyze --root "$stage" "$components"
+plutil -p "$components"
 /usr/libexec/PlistBuddy -c 'Print :0:RootRelativeBundlePath' "$components" | \
-  grep -F 'Applications/Pervue/Uninstall Pervue.app' >/dev/null
+  grep -Fx 'Applications/Uninstall Pervue.app' >/dev/null
 /usr/libexec/PlistBuddy -c 'Set :0:BundleIsRelocatable false' "$components"
 pkg="$output/Pervue-${host_version}-${source_commit:0:12}-macos-universal.pkg"
 if [[ -n "${PERVUE_INSTALLER_SIGN_IDENTITY:-}" && -z "${PERVUE_APP_SIGN_IDENTITY:-}" ]]; then

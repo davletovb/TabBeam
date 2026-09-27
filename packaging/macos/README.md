@@ -1,6 +1,6 @@
 # macOS companion release and verification
 
-The package installs the release host at `/Library/Application Support/Pervue/pervue-host` and its Chrome system Native Messaging manifest at `/Library/Google/Chrome/NativeMessagingHosts/com.pervue.host.json`. It also installs a Finder uninstaller at `/Applications/Pervue/Uninstall Pervue.app`. No user profile, provider credentials, or browser storage are touched by uninstall.
+The package installs the release host at `/Library/Application Support/Pervue/pervue-host` and its Chrome system Native Messaging manifest at `/Library/Google/Chrome/NativeMessagingHosts/com.pervue.host.json`. It also installs a Finder uninstaller at `/Applications/Uninstall Pervue.app`. No user profile, provider credentials, or browser storage are touched by uninstall.
 
 ## Build a paired package
 
@@ -27,6 +27,6 @@ For **TST-12**, additionally record an actual clean Mac run with a signed/notari
 3. Open Pervue setup; verify host detection and that missing Codex/Claude tools and signed-out providers show useful states. Follow the provider's own installation and authentication flow.
 4. Ask a question; see text stream, ask a follow-up, and open that conversation in the full-page view.
 5. Quit and reopen Chrome; verify the extension reconnects and a new question works.
-6. Run `Applications → Pervue → Uninstall Pervue`, authorize the macOS prompt, and verify Pervue reports the companion missing. Remove the extension in Chrome. Verify provider credentials are unaffected.
+6. Run `Applications → Uninstall Pervue`, authorize the macOS prompt, and verify Pervue reports the companion missing. Remove the extension in Chrome. Verify provider credentials are unaffected.
 
 Record macOS version/architecture, Chrome version, package artifact checksum, extension ID, provider/tool version, date, and pass/fail evidence in the release issue. CI cannot establish the browser UI, provider authentication, or a no-terminal human journey; keep TST-12 open until that evidence exists.

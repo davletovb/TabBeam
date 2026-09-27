@@ -85,7 +85,7 @@ jobs:
           sudo '/Library/Application Support/Pervue/uninstall.sh'
           test ! -e '/Library/Application Support/Pervue/pervue-host'
           test ! -e '/Library/Google/Chrome/NativeMessagingHosts/com.pervue.host.json'
-          test ! -e '/Applications/Pervue/Uninstall Pervue.app'
+          test ! -e '/Applications/Uninstall Pervue.app'
 
   protocol:
     name: Protocol fixtures

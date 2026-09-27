@@ -21,7 +21,7 @@ assert.equal(build.architecture, "universal2");
 assert.match(build.version, /^\d+\.\d+\.\d+/);
 assert.match(build.source_commit, /^[0-9a-f]{40}$/);
 assert.ok(fs.statSync(host).isFile());
-assert.ok(fs.statSync("/Applications/Pervue/Uninstall Pervue.app").isDirectory());
+assert.ok(fs.statSync("/Applications/Uninstall Pervue.app").isDirectory());
 
 // Keep stdin open until the status probe finishes. Closing it earlier tells
 // the host to cancel pending work, which hides a provider-present failure.
