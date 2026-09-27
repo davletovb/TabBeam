@@ -296,9 +296,14 @@ impl Provider for Codex {
     }
 
     fn status(&self) -> Box<dyn Exchange> {
+        let capabilities = self.capabilities();
         let Some(executable) = self.executable() else {
             return Box::new(Scripted::new([
-                status_update(Availability::NotFound, Authentication::Unknown),
+                status_update(
+                    Availability::NotFound,
+                    Authentication::Unknown,
+                    capabilities,
+                ),
                 Update::Completed,
             ]));
         };
@@ -306,9 +311,14 @@ impl Provider for Codex {
             Ok(process) => StatusCheck::Probing {
                 process,
                 give_up: after(self.limits.probe),
+                capabilities,
             },
             Err(_) => StatusCheck::Done(VecDeque::from([
-                status_update(Availability::Unavailable, Authentication::Unknown),
+                status_update(
+                    Availability::Unavailable,
+                    Authentication::Unknown,
+                    capabilities,
+                ),
                 Update::Completed,
             ])),
         })
@@ -498,13 +508,17 @@ fn context_configuration_is_safe(launch: &Launch) -> bool {
     })
 }
 
-fn status_update(availability: Availability, authentication: Authentication) -> Update {
+fn status_update(
+    availability: Availability,
+    authentication: Authentication,
+    capabilities: Capabilities,
+) -> Update {
     Update::Status {
         provider_id: ID.to_owned(),
         status: ProviderState {
             availability,
             authentication,
-            capabilities: CAPABILITIES,
+            capabilities,
             models: &[],
         },
     }
@@ -762,7 +776,11 @@ fn new_conversation_id(conversations: &HashMap<String, String>) -> String {
 
 /// The `provider.status` check.
 enum StatusCheck {
-    Probing { process: Process, give_up: Instant },
+    Probing {
+        process: Process,
+        give_up: Instant,
+        capabilities: Capabilities,
+    },
     Done(VecDeque<Update>),
 }
 
@@ -773,11 +791,19 @@ impl Exchange for StatusCheck {
             let authentication = match self {
                 Self::Done(updates) => return updates.pop_front(),
                 // Checked first, so output that keeps coming can't put it off.
-                Self::Probing { process, give_up } if Instant::now() >= *give_up => {
+                Self::Probing {
+                    process,
+                    give_up,
+                    capabilities: _,
+                } if Instant::now() >= *give_up => {
                     process.kill();
                     Authentication::Unknown
                 }
-                Self::Probing { process, give_up } => {
+                Self::Probing {
+                    process,
+                    give_up,
+                    capabilities: _,
+                } => {
                     match process.next_event(deadline.min(*give_up)) {
                         Some(Event::Exited(exit)) => signed_in(&exit),
                         // The probe's output names the account: never read.
@@ -792,8 +818,12 @@ impl Exchange for StatusCheck {
                     }
                 }
             };
+            let capabilities = match self {
+                Self::Probing { capabilities, .. } => *capabilities,
+                Self::Done(_) => unreachable!("handled above"),
+            };
             *self = Self::Done(VecDeque::from([
-                status_update(Availability::Available, authentication),
+                status_update(Availability::Available, authentication, capabilities),
                 Update::Completed,
             ]));
         }
