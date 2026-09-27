@@ -68,7 +68,7 @@
         <li class="step" id="windows-package" hidden>
           <div class="step-body">
             <h2>Install the Windows companion</h2>
-            <p>Download the Pervue companion installer from the <a href="https://github.com/davletovb/pervue/releases" target="_blank" rel="noopener noreferrer">Pervue releases</a> and open it normally. It installs for your Windows account and registers the host with Chrome automatically. If the popup says the companion needs an update, install the matching newer package.</p>
+            <p>Download the signed Pervue companion installer from the <a href="https://github.com/davletovb/pervue/releases" target="_blank" rel="noopener noreferrer">Pervue releases</a> and open it normally. Windows should identify the expected publisher; do not continue with an unknown-publisher release build. It installs for your Windows account and registers the host with Chrome automatically. If the popup says the companion needs an update, install the matching newer package.</p>
           </div>
         </li>
         <li class="step">
@@ -103,7 +103,7 @@
           <code>native/target/debug/pervue-host --print-manifest &lt;extension-id&gt;</code>
           <button class="copy-command" type="button" aria-label="Copy command" title="Copy"><svg class="icon icon-sm" aria-hidden="true"><use href="../shared/icons.svg#copy"/></svg><svg class="icon icon-sm icon-copied" aria-hidden="true"><use href="../shared/icons.svg#check"/></svg></button>
         </div>
-        <p>Save the resulting JSON as <code>com.pervue.host.json</code> in Chrome's NativeMessagingHosts directory: <code>~/.config/google-chrome/NativeMessagingHosts</code> on Linux or <code>~/Library/Application Support/Google/Chrome/NativeMessagingHosts</code> on macOS. On Windows, save it at a stable path and set the default value of <code>HKCU\Software\Google\Chrome\NativeMessagingHosts\com.pervue.host</code> to that full path. The manifest's host path must be absolute.</p>
+        <p>Save the resulting JSON as <code>com.pervue.host.json</code> in Chrome's NativeMessagingHosts directory: <code>~/.config/google-chrome/NativeMessagingHosts</code> on Linux or <code>~/Library/Application Support/Google/Chrome/NativeMessagingHosts</code> on macOS. On Windows, save it at a stable path and set the default value of <code>HKCU\Software\Google\Chrome\NativeMessagingHosts\com.pervue.host</code> to that full path. The manifest's host path must be absolute on Linux and macOS; on Windows Chrome also permits a path relative to the manifest file.</p>
       </details>
 
       <aside class="note" id="macos-uninstall" hidden>
@@ -113,7 +113,7 @@
 
       <aside class="note" id="windows-uninstall" hidden>
         <svg class="icon" aria-hidden="true"><use href="../shared/icons.svg#shield"/></svg>
-        <p>To remove the companion on Windows, open <strong>Settings → Apps → Installed apps → Pervue Companion → Uninstall</strong>. Remove the extension separately in Chrome. Provider credentials stay with the provider tool.</p>
+        <p>To remove the companion on Windows, quit Chrome, then open <strong>Settings → Apps → Installed apps → Pervue Companion → Uninstall</strong>. Remove the extension separately in Chrome. Provider credentials and Pervue runtime state stay untouched.</p>
       </aside>
     </main>
     <script type="module" src="./setup.js"></script>
