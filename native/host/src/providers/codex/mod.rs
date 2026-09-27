@@ -34,6 +34,7 @@ use crate::conversation::provider_prompt;
 use crate::protocol::events::{
     Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ProviderState,
 };
+use crate::search::{NATIVE_SEARCH_NO_SOURCES, SourceCollector, codex_message_sources};
 use pervue_core::discovery::SearchPath;
 use pervue_core::process::{Event, Exit, Process, ProcessSpec};
 use pervue_core::stream::{BUSY_LIMIT, LineStream, Output};
@@ -118,9 +119,9 @@ const CONTEXT_TOOLS_ENABLED: ErrorBody<'static> = ErrorBody {
 };
 
 const SEARCH_TOOLS_ENABLED: ErrorBody<'static> = ErrorBody {
-    code: ErrorCode::InvalidRequest,
-    reason: "SEARCH_REFERENCE_TOOLS_ENABLED",
-    message: "Pervue won't send web-search sources to Codex while user-configured MCP servers are enabled. Disable them or use a plain Ask turn.",
+    code: ErrorCode::SearchFailed,
+    reason: "NATIVE_SEARCH_CONFIGURATION_UNSAFE",
+    message: "Pervue won't enable Codex web search while user-configured MCP servers are enabled. Disable them or use a plain Ask turn.",
     retryable: false,
 };
 
@@ -282,7 +283,12 @@ impl Provider for Codex {
     }
 
     fn capabilities(&self) -> Capabilities {
-        CAPABILITIES
+        let mut capabilities = CAPABILITIES;
+        if !context_configuration_is_safe(&self.launch) {
+            capabilities.web_search = Capability::Unsupported;
+            capabilities.page_context = Capability::Unsupported;
+        }
+        capabilities
     }
 
     fn timeouts(&self) -> Timeouts {
@@ -345,7 +351,8 @@ impl Provider for Codex {
         if self.executable().is_none() {
             return Err(NOT_INSTALLED);
         }
-        let reference_turn = request.context.is_some() || request.native_search;
+        let context_turn = request.context.is_some();
+        let reference_turn = context_turn || request.native_search;
         if reference_turn && !context_configuration_is_safe(&self.launch) {
             return Err(if request.context.is_some() {
                 CONTEXT_TOOLS_ENABLED
@@ -371,7 +378,9 @@ impl Provider for Codex {
         if let Err(error) = self.preflight(&request) {
             return Box::new(Scripted::failed(error));
         }
-        let executable = self.executable().expect("preflight found Codex");
+        let Some(executable) = self.executable() else {
+            return Box::new(Scripted::failed(NOT_INSTALLED));
+        };
         let reference_turn = request.context.is_some() || request.native_search;
 
         let mut conversation_id = request.conversation_id;
@@ -417,11 +426,11 @@ impl Provider for Codex {
             conversations: Rc::clone(&self.conversations),
             finish_grace: self.limits.finish,
             restrict_tools: reference_turn,
+            context_turn,
             native_search: request.native_search,
             model: request.model,
             queue: VecDeque::new(),
-            source_urls: HashSet::new(),
-            source_count: 0,
+            sources: SourceCollector::new(ID),
             cancelled: false,
             thread_id: None,
             started: false,
@@ -670,6 +679,7 @@ fn save_thread(dir: &Path, id: &str, thread: &str) -> io::Result<()> {
 fn exec_args(
     workspace: &Path,
     restrict_tools: bool,
+    context_turn: bool,
     native_search: bool,
     resume: Option<&str>,
     model: Option<&str>,
@@ -702,15 +712,27 @@ fn exec_args(
         ] {
             args.extend(["-c".into(), setting.into()]);
         }
-        args.extend([
-            "-c".into(),
-            if native_search {
-                "web_search=\"live\"".into()
-            } else {
-                "web_search=\"disabled\"".into()
-            },
-        ]);
+        if context_turn {
+            // Older Codex builds also honor these gates. Keep them for
+            // attacker-controlled page-context turns as defense in depth.
+            for setting in [
+                "features.web_search_request=false",
+                "features.web_search_cached=false",
+            ] {
+                args.extend(["-c".into(), setting.into()]);
+            }
+        }
     }
+    // Search is explicit in Pervue. Plain and context turns never inherit
+    // Codex's cached-search default.
+    args.extend([
+        "-c".into(),
+        if native_search && !context_turn {
+            "web_search=\"live\"".into()
+        } else {
+            "web_search=\"disabled\"".into()
+        },
+    ]);
     if let Some(model) = model {
         args.push(format!("--model={model}").into());
     }
@@ -795,17 +817,18 @@ struct Turn {
     conversation_id: Option<String>,
     conversations: Conversations,
     finish_grace: Duration,
-    /// Browser context is untrusted, so context turns run with Codex's
-    /// interactive/tool surfaces disabled.
+    /// Browser context or native search requires all unrelated Codex tool
+    /// surfaces to be disabled.
     restrict_tools: bool,
+    /// Whether untrusted browser context is attached to this turn.
+    context_turn: bool,
     /// Whether this same Codex turn may use its authenticated web search.
     native_search: bool,
     /// The model to answer with, or `None` for Codex's own default.
     model: Option<String>,
     /// Updates produced but not yet returned.
     queue: VecDeque<Update>,
-    source_urls: HashSet<String>,
-    source_count: usize,
+    sources: SourceCollector,
     cancelled: bool,
     thread_id: Option<String>,
     started: bool,
@@ -835,6 +858,7 @@ impl Turn {
         let args = exec_args(
             &workspace,
             self.restrict_tools,
+            self.context_turn,
             self.native_search,
             self.resume.as_deref(),
             self.model.as_deref(),
@@ -869,26 +893,16 @@ impl Turn {
             Err(_) => self.end(Update::Failed(MALFORMED_OUTPUT)),
             Ok(Line::ThreadStarted(thread_id)) => self.thread_id = Some(thread_id),
             Ok(Line::TurnStarted) => self.turn_started(),
-            Ok(Line::WebSearch(results)) => {
-                for result in results {
-                    if self.source_urls.insert(result.url.clone()) {
-                        self.source_count += 1;
-                        self.queue
-                            .push_back(Update::Source(pervue_core::protocol::Source {
-                                id: format!("src_codex_{}", self.source_count),
-                                backend_id: ID.to_owned(),
-                                title: result.title,
-                                url: result.url,
-                                snippet: result.snippet,
-                                source_name: result.source_name,
-                                age: result.age,
-                            }));
-                    }
-                }
-            }
             Ok(Line::AgentMessage(text)) => {
                 if !self.started {
                     return self.end(Update::Failed(MALFORMED_OUTPUT));
+                }
+                if self.native_search {
+                    for result in codex_message_sources(&text) {
+                        if let Some(source) = self.sources.push(result) {
+                            self.queue.push_back(Update::Source(source));
+                        }
+                    }
                 }
                 if !text.is_empty() {
                     // Later messages continue the answer after a blank line.
@@ -942,6 +956,11 @@ impl Turn {
     }
 
     fn turn_ended(&mut self, outcome: Result<(), ErrorBody<'static>>) {
+        let outcome = if outcome.is_ok() && self.native_search && self.sources.count() == 0 {
+            Err(NATIVE_SEARCH_NO_SOURCES)
+        } else {
+            outcome
+        };
         self.outcome = Some(outcome);
         self.finish_by = Some(after(self.finish_grace));
     }
@@ -1010,6 +1029,7 @@ impl Exchange for Turn {
                             self.conversation_id = None;
                             self.thread_id = None;
                             self.outcome = None;
+                            self.sources.reset();
                             self.finish_by = None;
                             self.prompt = self.fallback_prompt.take().expect("checked above");
                             self.start();
