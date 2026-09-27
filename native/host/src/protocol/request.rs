@@ -447,9 +447,9 @@ fn is_search_backend_id(id: &str) -> bool {
     !bytes.is_empty()
         && bytes.len() <= 32
         && bytes[0].is_ascii_lowercase()
-        && bytes
-            .iter()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-'))
+        && bytes.iter().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
+        })
 }
 
 fn parse_browser_context(context: &[u8]) -> Result<BrowserContext, FailureKind> {
