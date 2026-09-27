@@ -22,7 +22,10 @@ pub enum Line {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolEvent {
     WebSearchUse(String),
-    ToolResult { tool_use_id: String, content: String },
+    ToolResult {
+        tool_use_id: String,
+        content: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -265,9 +268,6 @@ mod tests {
             })
         );
     }
-
-
-
     #[test]
     fn parses_real_claude_websearch_tool_use_and_result_shapes() {
         let use_line = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"WebSearch","input":{"query":"rust"}}]}}"#;
