@@ -263,7 +263,9 @@ fn live_codex_answers_a_question() {
         "native search failed: {search_last}"
     );
     assert!(
-        searched.iter().any(|event| event["event"] == "response.source"),
+        searched
+            .iter()
+            .any(|event| event["event"] == "response.source"),
         "Codex search silently completed without normalized sources: {searched:?}"
     );
 
