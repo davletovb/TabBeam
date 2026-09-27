@@ -29,7 +29,6 @@ pub enum Line {
     ThreadStarted(String),
     TurnStarted,
     AgentMessage(String),
-    WebSearch(Vec<SearchResult>),
     /// Work in progress, with nothing to show.
     Progress,
     TurnCompleted,
@@ -37,15 +36,6 @@ pub enum Line {
     TurnFailed(String),
     /// Nothing the adapter acts on.
     Ignored,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SearchResult {
-    pub title: String,
-    pub url: String,
-    pub snippet: String,
-    pub source_name: Option<String>,
-    pub age: Option<String>,
 }
 
 /// A line that is not a Codex event.
@@ -99,73 +89,12 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
                         .ok_or(Malformed)?
                         .to_owned(),
                 ),
-                ("item.completed", "web_search") => {
-                    let results = item
-                        .get("results")
-                        .and_then(Value::as_array)
-                        .map(|results| results.iter().filter_map(search_result).collect())
-                        .unwrap_or_default();
-                    Line::WebSearch(results)
-                }
+                ("item.completed", "web_search") => Line::Progress,
                 _ => Line::Progress,
             }
         }
         _ => Line::Ignored,
     })
-}
-
-fn search_result(value: &Value) -> Option<SearchResult> {
-    let url = value.get("url").and_then(Value::as_str)?;
-    if !safe_http_url(url) {
-        return None;
-    }
-    let title = value
-        .get("title")
-        .and_then(Value::as_str)
-        .unwrap_or(url)
-        .trim();
-    if title.is_empty() {
-        return None;
-    }
-    let snippet = ["snippet", "text", "content"]
-        .into_iter()
-        .find_map(|key| value.get(key).and_then(Value::as_str))
-        .unwrap_or_default();
-    Some(SearchResult {
-        title: bounded(title, 512),
-        url: bounded(url, 4096),
-        snippet: bounded(snippet, 4096),
-        source_name: value
-            .get("domain")
-            .and_then(Value::as_str)
-            .map(|value| bounded(value, 256))
-            .filter(|value| !value.is_empty()),
-        age: value
-            .get("page_age")
-            .or_else(|| value.get("age"))
-            .and_then(Value::as_str)
-            .map(|value| bounded(value, 256))
-            .filter(|value| !value.is_empty()),
-    })
-}
-
-fn safe_http_url(url: &str) -> bool {
-    (url.starts_with("https://") || url.starts_with("http://"))
-        && url.len() <= 4096
-        && !url
-            .chars()
-            .any(|character| character.is_control() || character.is_whitespace())
-}
-
-fn bounded(value: &str, limit: usize) -> String {
-    if value.len() <= limit {
-        return value.to_owned();
-    }
-    let mut end = limit;
-    while !value.is_char_boundary(end) {
-        end -= 1;
-    }
-    value[..end].to_owned()
 }
 
 const AUTH_REJECTED: ErrorBody<'static> = ErrorBody {
@@ -247,19 +176,11 @@ mod tests {
     }
 
     #[test]
-    fn parses_structured_web_search_results() {
-        let line = r#"{"type":"item.completed","item":{"id":"search_1","type":"web_search","query":"rust","action":{"type":"search","query":"rust"},"results":[{"title":"Rust","url":"https://www.rust-lang.org/","snippet":"A language","domain":"rust-lang.org"},{"title":"Unsafe","url":"javascript:alert(1)"}]}}"#;
-        assert_eq!(
-            parse(line),
-            Ok(Line::WebSearch(vec![SearchResult {
-                title: "Rust".to_owned(),
-                url: "https://www.rust-lang.org/".to_owned(),
-                snippet: "A language".to_owned(),
-                source_name: Some("rust-lang.org".to_owned()),
-                age: None,
-            }]))
-        );
+    fn web_search_items_are_progress_without_fake_results() {
+        let line = r#"{\"type\":\"item.completed\",\"item\":{\"id\":\"search_1\",\"type\":\"web_search\",\"query\":\"rust\",\"action\":{\"type\":\"search\",\"query\":\"rust\"}}}"#;
+        assert_eq!(parse(line), Ok(Line::Progress));
     }
+
 
     #[test]
     fn a_resumed_turn_reports_the_same_thread() {
