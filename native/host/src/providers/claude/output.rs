@@ -95,7 +95,7 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
                 _ => Line::Progress,
             }
         }
-        "assistant" => event
+        "assistant" | "user" => event
             .pointer("/message/content")
             .and_then(Value::as_array)
             .map(|blocks| {
@@ -108,7 +108,6 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
             .filter(|results| !results.is_empty())
             .map(Line::WebSearch)
             .unwrap_or(Line::Progress),
-        "user" => Line::Progress,
         "result" => {
             let failed = event
                 .get("is_error")
@@ -331,6 +330,20 @@ mod tests {
                 age: Some("1 day ago".to_owned()),
             }]))
         );
+    }
+
+    #[test]
+    fn parses_top_level_tool_result_message_from_either_role() {
+        for role in ["assistant", "user"] {
+            let line = format!(
+                r#"{{"type":"{role}","message":{{"content":[{{"type":"web_search_tool_result","content":[{{"type":"web_search_result","title":"Result","url":"https://example.org/"}}]}}]}}}}"#
+            );
+            assert!(matches!(
+                parse(&line),
+                Ok(Line::WebSearch(results))
+                    if results.len() == 1 && results[0].url == "https://example.org/"
+            ));
+        }
     }
 
     #[test]
