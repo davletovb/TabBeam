@@ -1378,10 +1378,9 @@ mod tests {
                 .model
                 .map(|model| format!("+model={model}"))
                 .unwrap_or_default();
-            let sources = if request.search_results.is_empty() {
-                String::new()
-            } else {
-                format!("+sources={}", request.search_results.len())
+            let sources = match request.search_results.as_ref() {
+                None => String::new(),
+                Some(sources) => format!("+sources={}", sources.len()),
             };
             self.calls
                 .borrow_mut()
