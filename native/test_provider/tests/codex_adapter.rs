@@ -515,7 +515,7 @@ fn a_question_streams_its_answer_and_opens_a_conversation() {
     assert_eq!(
         command,
         format!(
-            "exec --json --skip-git-repo-check --sandbox read-only -C {} -",
+            "exec --json --skip-git-repo-check --sandbox read-only -c web_search=\"disabled\" -C {} -",
             workspace(&codex).display()
         )
     );
@@ -549,7 +549,7 @@ fn a_chosen_model_goes_to_codex_as_one_argument() {
     assert_eq!(
         command,
         format!(
-            "exec --json --skip-git-repo-check --sandbox read-only --model=gpt-5-codex -C {} -",
+            "exec --json --skip-git-repo-check --sandbox read-only -c web_search=\"disabled\" --model=gpt-5-codex -C {} -",
             workspace(&codex).display()
         )
     );
