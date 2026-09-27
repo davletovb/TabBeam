@@ -714,10 +714,7 @@ mod tests {
         let Method::ConversationSend { search, .. } = parsed.method else {
             panic!("expected conversation");
         };
-        assert_eq!(
-            search,
-            Some(SearchOptions)
-        );
+        assert_eq!(search, Some(SearchOptions));
     }
 
     #[test]
@@ -731,10 +728,7 @@ mod tests {
         let Method::ConversationSend { search, .. } = parsed.method else {
             panic!("expected conversation");
         };
-        assert_eq!(
-            search,
-            Some(SearchOptions)
-        );
+        assert_eq!(search, Some(SearchOptions));
 
         for search in [
             r#"{"backend_id":""}"#,
