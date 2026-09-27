@@ -1083,11 +1083,11 @@ mod tests {
 
     #[test]
     fn a_model_is_one_argument_before_the_session() {
-        let args = claude_args(Some("session-1"), Some("sonnet"));
+        let args = claude_args(Some("session-1"), Some("sonnet"), false);
         let args: Vec<&str> = args.iter().map(|arg| arg.to_str().unwrap()).collect();
         assert!(args.contains(&"--model=sonnet"));
         assert_eq!(&args[args.len() - 2..], ["--resume", "session-1"]);
-        let default = claude_args(None, None);
+        let default = claude_args(None, None, false);
         assert!(
             !default
                 .iter()
