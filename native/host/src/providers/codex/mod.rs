@@ -18,7 +18,7 @@
 //! starts with Codex's directory.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::{OsStr, OsString};
 use std::hash::{BuildHasher, RandomState};
 use std::io::{self, Read, Write};
@@ -89,7 +89,7 @@ pub const LIMITS: Limits = Limits {
 pub const CAPABILITIES: Capabilities = Capabilities {
     streaming: Capability::Supported,
     continuation: Capability::Supported,
-    web_search: Capability::Unknown,
+    web_search: Capability::Supported,
     page_context: Capability::Supported,
     attachments: Capability::Unsupported,
     model_selection: Capability::Supported,
@@ -345,7 +345,8 @@ impl Provider for Codex {
         if self.executable().is_none() {
             return Err(NOT_INSTALLED);
         }
-        let reference_turn = request.context.is_some() || request.search_results.is_some();
+        let reference_turn =
+            request.context.is_some() || request.search_results.is_some() || request.native_search;
         if reference_turn && !context_configuration_is_safe(&self.launch) {
             return Err(if request.context.is_some() {
                 CONTEXT_TOOLS_ENABLED
@@ -372,7 +373,8 @@ impl Provider for Codex {
             return Box::new(Scripted::failed(error));
         }
         let executable = self.executable().expect("preflight found Codex");
-        let reference_turn = request.context.is_some() || request.search_results.is_some();
+        let reference_turn =
+            request.context.is_some() || request.search_results.is_some() || request.native_search;
 
         let mut conversation_id = request.conversation_id;
         let mut fallback_prompt = (!request.history.is_empty()).then(|| {
@@ -428,8 +430,11 @@ impl Provider for Codex {
             conversations: Rc::clone(&self.conversations),
             finish_grace: self.limits.finish,
             restrict_tools: reference_turn,
+            native_search: request.native_search,
             model: request.model,
             queue: VecDeque::new(),
+            source_urls: HashSet::new(),
+            source_count: 0,
             cancelled: false,
             thread_id: None,
             started: false,
@@ -678,6 +683,7 @@ fn save_thread(dir: &Path, id: &str, thread: &str) -> io::Result<()> {
 fn exec_args(
     workspace: &Path,
     restrict_tools: bool,
+    native_search: bool,
     resume: Option<&str>,
     model: Option<&str>,
 ) -> Vec<OsString> {
@@ -704,14 +710,19 @@ fn exec_args(
             "features.hooks=false",
             "features.multi_agent=false",
             "features.multi_agent_v2=false",
-            "features.web_search_request=false",
-            "features.web_search_cached=false",
             "features.standalone_web_search=false",
-            "web_search=\"disabled\"",
             "orchestrator.mcp.enabled=false",
         ] {
             args.extend(["-c".into(), setting.into()]);
         }
+        args.extend([
+            "-c".into(),
+            if native_search {
+                "web_search=\"live\"".into()
+            } else {
+                "web_search=\"disabled\"".into()
+            },
+        ]);
     }
     if let Some(model) = model {
         args.push(format!("--model={model}").into());
@@ -800,10 +811,14 @@ struct Turn {
     /// Browser context is untrusted, so context turns run with Codex's
     /// interactive/tool surfaces disabled.
     restrict_tools: bool,
+    /// Whether this same Codex turn may use its authenticated web search.
+    native_search: bool,
     /// The model to answer with, or `None` for Codex's own default.
     model: Option<String>,
     /// Updates produced but not yet returned.
     queue: VecDeque<Update>,
+    source_urls: HashSet<String>,
+    source_count: usize,
     cancelled: bool,
     thread_id: Option<String>,
     started: bool,
@@ -833,6 +848,7 @@ impl Turn {
         let args = exec_args(
             &workspace,
             self.restrict_tools,
+            self.native_search,
             self.resume.as_deref(),
             self.model.as_deref(),
         );
@@ -866,6 +882,22 @@ impl Turn {
             Err(_) => self.end(Update::Failed(MALFORMED_OUTPUT)),
             Ok(Line::ThreadStarted(thread_id)) => self.thread_id = Some(thread_id),
             Ok(Line::TurnStarted) => self.turn_started(),
+            Ok(Line::WebSearch(results)) => {
+                for result in results {
+                    if self.source_urls.insert(result.url.clone()) {
+                        self.source_count += 1;
+                        self.queue.push_back(Update::Source(pervue_core::protocol::Source {
+                            id: format!("src_codex_{}", self.source_count),
+                            backend_id: ID.to_owned(),
+                            title: result.title,
+                            url: result.url,
+                            snippet: result.snippet,
+                            source_name: result.source_name,
+                            age: result.age,
+                        }));
+                    }
+                }
+            }
             Ok(Line::AgentMessage(text)) => {
                 if !self.started {
                     return self.end(Update::Failed(MALFORMED_OUTPUT));
