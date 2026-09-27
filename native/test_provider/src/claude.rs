@@ -237,6 +237,11 @@ fn print_mode(dir: &Path, args: &[String], behavior: &str) -> io::Result<ExitCod
                 }
             }),
         )?;
+        let links = if behavior == "search-no-links" {
+            "[]"
+        } else {
+            r#"[{"title":"Claude search result","url":"https://example.com/claude-search"}]"#
+        };
         emit(
             &mut out,
             &json!({
@@ -247,7 +252,7 @@ fn print_mode(dir: &Path, args: &[String], behavior: &str) -> io::Result<ExitCod
                     "content":[{
                         "tool_use_id":"toolu_test",
                         "type":"tool_result",
-                        "content":"Web search results for query: \"test\"\n\nLinks: [{\"title\":\"Claude search result\",\"url\":\"https://example.com/claude-search\"}]"
+                        "content":format!("Web search results for query: \"test\"\n\nLinks: {links}")
                     }]
                 }
             }),
