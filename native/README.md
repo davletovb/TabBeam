@@ -32,7 +32,7 @@ native/
 ## Requirements
 
 - Rust 1.85 or newer (install with [rustup](https://rustup.rs))
-- `curl` for Brave-backed web search (the standard system client on supported macOS/Windows installations)
+- system `curl` for Brave-backed web search (`/usr/bin/curl` on macOS/Linux or `%SystemRoot%\\System32\\curl.exe` on Windows)
 
 ## Development build
 
