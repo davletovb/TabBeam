@@ -1570,71 +1570,74 @@ without terminal commands during the user journey.
 
 ## Milestone H — Search & Citations
 
-### SRCH-01 — Define provider-independent search adapter contract
+### SRCH-01 — Define provider-neutral search contract
 **Area:** Search  
 **Dependencies:** CON-01, PRO-07
 
 **Acceptance criteria**
-- Search request/result interface is independent of model provider.
-- Normalized result includes enough data for title, URL, snippet/content excerpt, and source identity.
-- Search errors do not masquerade as provider errors.
+- Search intent is represented independently of any provider-specific CLI syntax.
+- Normalized source events include enough data for title, URL, snippet/content excerpt, and source identity.
+- A provider that cannot perform native search fails explicitly rather than silently answering without search.
 
 **Status:** IMPLEMENTED — VERIFY
 
 **Implementation evidence**
-- `native/host/src/search.rs` defines a model-provider-independent `SearchProvider` / `SearchRequest` / `SearchHandle` contract for independent retrieval while `SendRequest.native_search` represents the distinct single-turn provider-native execution mode. `conversation.send.search` is validated independently of `provider_id`, defaults to `auto`, and supports `auto`, `provider`, `brave`, plus future bounded backend IDs. `auto` prefers the selected provider's authenticated native search and falls back to Brave when native search is unsupported.
-- Search failures use the separate normalized `SEARCH_FAILED` category, so retrieval/configuration failures cannot masquerade as Codex/Claude failures. Protocol documentation and fixtures include the new category.
+- `conversation.send.search` is a provider-neutral opt-in contract validated independently of `provider_id`. `search: {}` defaults to `auto`; `backend_id: "provider"` is an explicit alias for the same current behavior.
+- `SendRequest.native_search` is the only execution signal passed into AI adapters. No external search-provider registry, credentials, or retrieval transport exists.
+- `NATIVE_SEARCH_UNSUPPORTED` uses the normalized `SEARCH_FAILED` category when the selected provider does not advertise `web_search: true`.
 
-### SRCH-02 — Implement first search backend adapter
+### SRCH-02 — Implement provider-native search execution
 **Area:** Search  
 **Dependencies:** SRCH-01
 
 **Implementation notes**
-- Choose one supported search mechanism during implementation.
-- Keep search execution separate from model execution.
-- Do not couple the adapter to Codex/Claude.
+- Search uses the authenticated provider runtime the user already selected.
+- Do not add a separate API-key search provider unless the product direction changes later.
+- Provider-specific tool invocation remains inside each provider adapter.
 
 **Acceptance criteria**
-- Query returns normalized raw search results.
-- Timeout/error behavior is bounded and normalized.
+- Codex and Claude can perform authenticated native web search in the same answer turn.
+- Unrelated provider tools remain disabled/bounded.
+- Provider auth, rate-limit, cancellation, and timeout behavior stay normalized through the provider contract.
 
 **Status:** IMPLEMENTED — VERIFY
 
 **Implementation evidence**
-- `native/host/src/search.rs` implements Brave Search Web API as the first independent backend. In addition, both real provider adapters now expose authenticated native search through their existing subscription/session auth: Codex enables live web search in the same `codex exec` turn; Claude allows only `WebSearch,WebFetch` in the same print-mode turn. Brave remains available when explicitly selected and as Auto's fallback for providers without native search.
-- The native companion reads `BRAVE_SEARCH_API_KEY`; the key and user query are written to curl's stdin configuration rather than argv, events, or diagnostics. Installed builds use only the operating system's fixed curl path (with one explicit absolute test/install override), and curl starts with user config disabled.
-- Unit tests cover Brave response normalization, deduplication, URL/query encoding, bounds, and search-specific failure classification. A real API-key smoke remains part of verification rather than normal CI.
+- Codex enables live web search for a native-search turn while shell, image, apps/plugins/hooks, MCP/orchestrator, and subagent surfaces remain disabled.
+- Claude allows only `WebSearch,WebFetch` for a native-search turn while MCP configuration/use remains blocked.
+- Both paths reuse the provider's existing authenticated local runtime; Pervue stores no search API key and starts no separate network search process.
 
 ### SRCH-03 — Normalize search results into source model
 **Area:** Search  
 **Dependencies:** SRCH-02, CON-01
 
 **Acceptance criteria**
-- Search results map into the conversation/source model used by popup/full-page UI.
+- Provider-native search results map into the conversation/source model used by popup/full-page UI.
 - Duplicate sources can be collapsed deterministically.
 - Source URL/title remain untrusted data and are safely rendered.
 
 **Status:** IMPLEMENTED — VERIFY
 
 **Implementation evidence**
-- `pervue-core::protocol::Source` is the normalized source shape: stable `id`, `backend_id`, title, URL, bounded snippet, and optional source/age metadata. Brave, Codex structured `web_search` results, and Claude `web_search_tool_result` blocks all map into this shape; unsafe URL schemes are dropped and provider-native sources are deduplicated by URL.
-- The host carries sources as `Update::Source` and emits protocol-v1 `response.source` with the same source identity/data that synthesis receives. `docs/protocol/v1.md` defines the concrete search-source payload.
+- `pervue-core::protocol::Source` is the normalized source shape: stable `id`, `backend_id`, title, URL, bounded snippet, and optional source/age metadata.
+- Codex structured `web_search` results and Claude `web_search_tool_result` blocks both map into that shape; unsafe URL schemes are dropped and duplicate provider-native sources are collapsed by URL.
+- The host carries sources as `Update::Source` and emits protocol-v1 `response.source`, so popup/full-page rendering is independent of either provider's native result format.
 
-### SRCH-04 — Implement search → synthesis pipeline
+### SRCH-04 — Implement search + synthesis turn
 **Area:** Search  
 **Dependencies:** SRCH-03, PRO-07
 
 **Acceptance criteria**
-- Search results are passed to selected provider for synthesis.
+- Search and synthesis complete in one selected-provider turn.
 - Response can emit source references independently of provider-specific citation formats.
-- Search can work with either supported provider.
+- Search works with either supported provider without a second model request.
 
 **Status:** IMPLEMENTED — VERIFY
 
 **Implementation evidence**
-- Search has two execution paths behind one protocol. Provider-native search is a single authenticated Codex/Claude turn that performs retrieval and synthesis together and emits normalized structured search results as `response.source`; Brave remains the independent retrieval → normalized-source → selected-provider synthesis path through `SynthesisExchange`.
-- Native search is deliberately tool-bounded: Codex enables live web search while shell/images/apps/plugins/hooks/MCP/subagents stay disabled; Claude allows only `WebSearch,WebFetch` with MCP loading/use still blocked. Independent Brave results continue to be framed as quoted, untrusted reference data for synthesis.
-- Host and adapter regression tests prove Auto selects native search without calling Brave, Codex and Claude enable their authenticated search surfaces and emit normalized sources, and explicit Brave retrieval still yields the identical provider-neutral `response.source` contract.
+- Provider-native retrieval and synthesis happen in the same authenticated Codex or Claude turn; there is no independent retrieval → second synthesis pipeline.
+- Adapter parsers normalize structured search-result events while answer deltas continue through the ordinary provider-neutral stream.
+- Host and adapter regression tests prove `search: {}` sets the native-search flag, unsupported providers fail explicitly, provider preflight still runs, and both Codex and Claude emit normalized sources.
 
 ### EXT-16 — Add Search mode and compact citations to popup
 **Area:** Extension  
