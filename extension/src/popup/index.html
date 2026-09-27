@@ -143,6 +143,10 @@
 
           <div class="composer-bar">
             <div class="composer-tools">
+              <button id="search-toggle" class="search-toggle" type="button" aria-pressed="true">
+                <svg class="icon icon-xs" aria-hidden="true"><use href="../shared/icons.svg#globe"/></svg>
+                <span>Web</span>
+              </button>
               <fieldset class="context-choices">
                 <legend class="sr-only">Context for this question</legend>
                 <button id="context-none" class="chip" type="button" title="Don't share anything from the page">
@@ -158,10 +162,6 @@
                   <span>This page</span>
                 </button>
               </fieldset>
-              <button id="search-toggle" class="search-toggle" type="button" aria-pressed="false">
-                <svg class="icon icon-xs" aria-hidden="true"><use href="../shared/icons.svg#globe"/></svg>
-                <span>Web</span>
-              </button>
             </div>
 
             <button id="ask-submit" class="send" type="submit" aria-disabled="false" aria-label="Ask" title="Ask (Enter)">

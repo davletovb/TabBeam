@@ -30,7 +30,7 @@ use super::discovery;
 use super::environment;
 use super::forget;
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
-use crate::conversation::provider_prompt;
+use crate::conversation::{provider_prompt, search_prompt};
 use crate::protocol::events::{
     Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ProviderState,
 };
@@ -392,9 +392,16 @@ impl Provider for Codex {
         let reference_turn = context_turn || request.native_search;
 
         let mut conversation_id = request.conversation_id;
-        let mut fallback_prompt = (!request.history.is_empty())
-            .then(|| provider_prompt(&request.history, request.context.as_ref(), &request.text));
-        let mut prompt = if request.context.is_some() {
+        let mut fallback_prompt = (!request.history.is_empty()).then(|| {
+            if request.native_search {
+                search_prompt(&request.history, &request.text)
+            } else {
+                provider_prompt(&request.history, request.context.as_ref(), &request.text)
+            }
+        });
+        let mut prompt = if request.native_search {
+            search_prompt(&[], &request.text)
+        } else if request.context.is_some() {
             provider_prompt(&[], request.context.as_ref(), &request.text)
         } else {
             request.text
@@ -443,6 +450,7 @@ impl Provider for Codex {
             thread_id: None,
             started: false,
             messages: 0,
+            held: None,
             outcome: None,
             finish_by: None,
         };
@@ -861,6 +869,10 @@ struct Turn {
     thread_id: Option<String>,
     started: bool,
     messages: usize,
+    /// In a search turn, the latest message, held until Codex's next event
+    /// shows whether a web search follows it. One that does is narration
+    /// ("I'll look that up"), not answer, and is dropped.
+    held: Option<String>,
     /// How the turn ended, once Codex said so.
     outcome: Option<Result<(), ErrorBody<'static>>>,
     /// When to stop waiting for Codex to exit after the turn ended.
@@ -926,28 +938,56 @@ impl Turn {
                     return self.end(Update::Failed(MALFORMED_OUTPUT));
                 }
                 if self.native_search {
-                    for result in codex_message_sources(&text) {
-                        if let Some(source) = self.sources.push(result) {
-                            self.queue.push_back(Update::Source(source));
-                        }
-                    }
+                    self.flush_held();
+                    self.held = Some(text);
+                } else {
+                    self.show_message(text);
                 }
-                if !text.is_empty() {
-                    // Later messages continue the answer after a blank line.
-                    let text = if self.messages == 0 {
-                        text
-                    } else {
-                        format!("\n\n{text}")
-                    };
-                    self.messages += 1;
-                    self.queue.push_back(Update::Delta(text));
-                }
+            }
+            Ok(Line::WebSearch) => {
+                // What came before a search was narration.
+                self.held = None;
+                self.queue.push_back(Update::Activity);
             }
             Ok(Line::Progress) => self.queue.push_back(Update::Activity),
             Ok(Line::TurnCompleted) if !self.started => self.end(Update::Failed(MALFORMED_OUTPUT)),
-            Ok(Line::TurnCompleted) => self.turn_ended(Ok(())),
-            Ok(Line::TurnFailed(message)) => self.turn_ended(Err(output::turn_failure(&message))),
+            Ok(Line::TurnCompleted) => {
+                self.flush_held();
+                self.turn_ended(Ok(()));
+            }
+            Ok(Line::TurnFailed(message)) => {
+                self.flush_held();
+                self.turn_ended(Err(output::turn_failure(&message)));
+            }
             Ok(Line::Ignored) => {}
+        }
+    }
+
+    fn flush_held(&mut self) {
+        if let Some(text) = self.held.take() {
+            self.show_message(text);
+        }
+    }
+
+    /// One message of the answer. In a search turn, the links it cites are
+    /// its sources.
+    fn show_message(&mut self, text: String) {
+        if self.native_search {
+            for result in codex_message_sources(&text) {
+                if let Some(source) = self.sources.push(result) {
+                    self.queue.push_back(Update::Source(source));
+                }
+            }
+        }
+        if !text.is_empty() {
+            // Later messages continue the answer after a blank line.
+            let text = if self.messages == 0 {
+                text
+            } else {
+                format!("\n\n{text}")
+            };
+            self.messages += 1;
+            self.queue.push_back(Update::Delta(text));
         }
     }
 

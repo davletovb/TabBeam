@@ -19,7 +19,7 @@ use super::discovery;
 use super::environment;
 use super::forget;
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
-use crate::conversation::provider_prompt;
+use crate::conversation::{provider_prompt, search_prompt};
 use crate::protocol::events::{
     Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ModelOption,
     ProviderState,
@@ -70,13 +70,15 @@ pub const LIMITS: Limits = Limits {
     finish: Duration::from_secs(5),
 };
 
-/// Claude's first proven adapter surface. Page context is deliberately
-/// unsupported until its own untrusted-context/tool boundary is implemented.
+/// Page context reaches Claude as untrusted reference data in the prompt
+/// (`provider_prompt`). A context turn is a plain turn: Claude gets no tools
+/// at all (`--tools ""`), MCP stays blocked, and the host refuses context with
+/// search, so page text can't make Claude act, only inform its answer.
 pub const CAPABILITIES: Capabilities = Capabilities {
     streaming: Capability::Supported,
     continuation: Capability::Supported,
     web_search: Capability::Supported,
-    page_context: Capability::Unsupported,
+    page_context: Capability::Supported,
     attachments: Capability::Unsupported,
     model_selection: Capability::Supported,
     cancellation: Capability::Supported,
@@ -120,6 +122,11 @@ const UNKNOWN_CONVERSATION: ErrorBody<'static> = ErrorBody {
     message: "This conversation can't be continued. Start a new one.",
     retryable: false,
 };
+
+/// How much of a search turn's message is held back before it counts as the
+/// answer rather than narration before a search. Narration is a sentence or
+/// two; past this, the answer streams live.
+const HELD_TEXT_LIMIT: usize = 600;
 
 const START_FAILED: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::ProviderFailed,
@@ -355,15 +362,26 @@ impl Provider for Claude {
         if let Err(error) = self.validate_request(&request) {
             return Box::new(Scripted::failed(error));
         }
-        // The host enforces page_context=false before this method is called.
-        if request.context.is_some() {
+        // The host refuses search with context before this is called.
+        if request.context.is_some() && request.native_search {
             return Box::new(Scripted::failed(MALFORMED_OUTPUT));
         }
 
         let mut conversation_id = request.conversation_id;
-        let mut fallback_prompt = (!request.history.is_empty())
-            .then(|| provider_prompt(&request.history, None, &request.text));
-        let mut prompt = request.text;
+        let mut fallback_prompt = (!request.history.is_empty()).then(|| {
+            if request.native_search {
+                search_prompt(&request.history, &request.text)
+            } else {
+                provider_prompt(&request.history, request.context.as_ref(), &request.text)
+            }
+        });
+        let mut prompt = if request.native_search {
+            search_prompt(&[], &request.text)
+        } else if request.context.is_some() {
+            provider_prompt(&[], request.context.as_ref(), &request.text)
+        } else {
+            request.text
+        };
         let resume = match &conversation_id {
             None => None,
             Some(id) => match self.conversations.borrow().get(id).cloned().or_else(|| {
@@ -404,6 +422,8 @@ impl Provider for Claude {
             saw_delta: false,
             messages: 0,
             break_before_text: false,
+            held: String::new(),
+            live: false,
             outcome: None,
             finish_by: None,
         };
@@ -719,6 +739,13 @@ struct Turn {
     saw_delta: bool,
     messages: usize,
     break_before_text: bool,
+    /// In a search turn, the text of the message being streamed, held until
+    /// it's clear it isn't narration before a search ("Let me look that
+    /// up"): a tool call starting in the same message drops it; the message
+    /// ending, or the text growing past HELD_TEXT_LIMIT, shows it.
+    held: String,
+    /// The message being streamed has shown its text; the rest streams live.
+    live: bool,
     outcome: Option<Result<(), ErrorBody<'static>>>,
     finish_by: Option<Instant>,
 }
@@ -841,26 +868,36 @@ impl Turn {
                 if !self.started {
                     return self.end(Update::Failed(MALFORMED_OUTPUT));
                 }
+                self.flush_held();
+                self.live = false;
                 if self.messages > 0 {
                     self.break_before_text = true;
                 }
                 self.messages += 1;
             }
-            Ok(Line::TextDelta(mut text)) => {
+            Ok(Line::TextDelta(text)) => {
                 if !self.started {
                     return self.end(Update::Failed(MALFORMED_OUTPUT));
                 }
-                if !text.is_empty() {
-                    if self.messages == 0 {
-                        self.messages = 1;
+                if self.native_search && !self.live {
+                    self.held.push_str(&text);
+                    if self.held.len() > HELD_TEXT_LIMIT {
+                        // Too long to be narration: it's the answer.
+                        self.flush_held();
                     }
-                    if self.break_before_text && self.saw_delta {
-                        text.insert_str(0, "\n\n");
-                    }
-                    self.break_before_text = false;
-                    self.saw_delta = true;
-                    self.queue.push_back(Update::Delta(text));
+                } else {
+                    self.show_text(text);
                 }
+            }
+            Ok(Line::ToolUseStart) => {
+                if !self.live {
+                    self.held.clear();
+                }
+                self.queue.push_back(Update::Activity);
+            }
+            Ok(Line::MessageStop) => {
+                self.flush_held();
+                self.queue.push_back(Update::Activity);
             }
             Ok(Line::Progress) => self.queue.push_back(Update::Activity),
             Ok(Line::ResultSuccess { session_id, text }) => {
@@ -872,6 +909,7 @@ impl Turn {
                 {
                     self.follow_session(&conversation, session);
                 }
+                self.flush_held();
                 if !self.saw_delta && !text.is_empty() {
                     self.saw_delta = true;
                     self.queue.push_back(Update::Delta(text));
@@ -885,6 +923,30 @@ impl Turn {
             Ok(Line::ResultFailed(error)) => self.turn_ended(Err(error)),
             Ok(Line::Ignored) => {}
         }
+    }
+
+    /// Shows held text, if any, and streams the rest of its message live.
+    fn flush_held(&mut self) {
+        if !self.held.is_empty() {
+            let text = std::mem::take(&mut self.held);
+            self.show_text(text);
+            self.live = true;
+        }
+    }
+
+    fn show_text(&mut self, mut text: String) {
+        if text.is_empty() {
+            return;
+        }
+        if self.messages == 0 {
+            self.messages = 1;
+        }
+        if self.break_before_text && self.saw_delta {
+            text.insert_str(0, "\n\n");
+        }
+        self.break_before_text = false;
+        self.saw_delta = true;
+        self.queue.push_back(Update::Delta(text));
     }
 
     /// Records `session` for `conversation`: on disk when there is a session
@@ -949,6 +1011,8 @@ impl Turn {
         self.saw_delta = false;
         self.messages = 0;
         self.break_before_text = false;
+        self.held.clear();
+        self.live = false;
         self.sources.reset();
         self.web_search_uses.clear();
         self.prompt = self

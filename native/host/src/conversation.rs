@@ -117,6 +117,22 @@ pub fn provider_prompt(
     prompt
 }
 
+/// What a web-search turn asks of the provider, before the question. Both
+/// providers decide for themselves whether to search and whether to cite;
+/// without this, a turn can end with no usable source (the provider answered
+/// from memory, or asked which meaning was meant), which fails the turn as
+/// `NATIVE_SEARCH_NO_SOURCES`. It holds no link of its own, so nothing here
+/// can be mistaken for a cited source.
+pub const SEARCH_INSTRUCTIONS: &str = "Search the web before you answer the question below, even if you think you know the answer, and base your answer on what you find. Cite every page you use as a Markdown link: the page title in square brackets, then its full URL in parentheses. Answer directly: don't describe your searching, and don't mention files, tools, or what you can or can't access. If the question could mean several things, answer its most likely meanings, each with its sources, instead of asking which one was meant.\n\n";
+
+/// A web-search turn's prompt: the instructions, then the dialogue (when a
+/// native session can't be resumed) and the question.
+pub fn search_prompt(history: &[HistoryMessage], question: &str) -> String {
+    let mut prompt = String::from(SEARCH_INSTRUCTIONS);
+    prompt.push_str(&provider_prompt(history, None, question));
+    prompt
+}
+
 /// Encodes previous messages as quoted JSON lines when a native continuation
 /// cannot be recovered. The current question remains the final user message.
 pub fn normalized_prompt(history: &[HistoryMessage], question: &str) -> String {

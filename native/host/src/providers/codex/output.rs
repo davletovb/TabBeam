@@ -29,6 +29,9 @@ pub enum Line {
     ThreadStarted(String),
     TurnStarted,
     AgentMessage(String),
+    /// A web search started, ran, or finished. It reports only the query,
+    /// never results.
+    WebSearch,
     /// Work in progress, with nothing to show.
     Progress,
     TurnCompleted,
@@ -89,7 +92,7 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
                         .ok_or(Malformed)?
                         .to_owned(),
                 ),
-                ("item.completed", "web_search") => Line::Progress,
+                (_, "web_search") => Line::WebSearch,
                 _ => Line::Progress,
             }
         }
@@ -176,9 +179,11 @@ mod tests {
     }
 
     #[test]
-    fn web_search_items_are_progress_without_fake_results() {
+    fn web_search_items_are_searches_without_fake_results() {
         let line = r#"{"type":"item.completed","item":{"id":"search_1","type":"web_search","query":"rust","action":{"type":"search","query":"rust"}}}"#;
-        assert_eq!(parse(line), Ok(Line::Progress));
+        assert_eq!(parse(line), Ok(Line::WebSearch));
+        let started = r#"{"type":"item.started","item":{"id":"search_1","type":"web_search","query":"","action":{"type":"other"}}}"#;
+        assert_eq!(parse(started), Ok(Line::WebSearch));
     }
     #[test]
     fn a_resumed_turn_reports_the_same_thread() {

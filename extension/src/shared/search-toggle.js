@@ -1,19 +1,24 @@
 /**
- * The Search the web switch in the composer (EXT-16). When it's on, the next
- * questions ask the chosen AI provider to search the web and cite what it
- * found (protocol v1 `conversation.send` `search`). It stays on until it's
- * turned off, and it follows the provider's `web_search` capability: it's
- * off and unavailable for a provider whose status says it can't search, and
- * available while that's still being checked (the host refuses a search the
- * provider can't do, with a clear message).
+ * The Web search switch in the composer (EXT-16). When it's on, questions ask
+ * the chosen AI provider to search the web and cite what it found (protocol
+ * v1 `conversation.send` `search`). It's on by default and stays as the
+ * person leaves it.
+ *
+ * It follows the provider's `web_search` capability: for a provider whose
+ * status says it can't search, it's off and unavailable; the person's choice
+ * comes back with a provider that can. While a status is still being checked
+ * it's available (the host refuses a search the provider can't do, with a
+ * clear message).
  *
  * @param {HTMLButtonElement} button
- * @param {{onChange?(on: boolean): void}} [options]
+ * @param {{onChange?(on: boolean): void, initial?: boolean}} [options]
  */
 export function bindSearchToggle(button, options = {}) {
-  let on = false;
+  // What the person chose, and whether the provider can search.
+  let wanted = options.initial ?? true;
   let supported = true;
   let label = "This provider";
+  let on = wanted && supported;
 
   function sync() {
     button.setAttribute("aria-pressed", String(on));
@@ -25,25 +30,29 @@ export function bindSearchToggle(button, options = {}) {
         : "Search the web for your questions";
   }
 
-  /** @param {boolean} next */
-  function set(next) {
-    const value = next && supported;
-    if (value === on) return;
-    on = value;
+  function update() {
+    const next = wanted && supported;
+    const changed = next !== on;
+    on = next;
     sync();
-    options.onChange?.(on);
+    if (changed) options.onChange?.(on);
   }
 
   button.addEventListener("click", () => {
-    if (supported) set(!on);
+    if (!supported) return;
+    wanted = !wanted;
+    update();
   });
   sync();
 
   return {
     /** Whether the next question searches the web. */
     isOn: () => on,
-    /** @param {boolean} next */
-    set,
+    /** @param {boolean} next the person's choice */
+    set(next) {
+      wanted = next;
+      update();
+    },
     /**
      * @param {boolean | "unknown" | undefined} capability the provider's
      *   `web_search`; undefined while it hasn't been checked
@@ -52,11 +61,7 @@ export function bindSearchToggle(button, options = {}) {
     setSupported(capability, providerLabel = label) {
       label = providerLabel;
       supported = capability !== false;
-      if (!supported && on) {
-        on = false;
-        options.onChange?.(false);
-      }
-      sync();
+      update();
     }
   };
 }

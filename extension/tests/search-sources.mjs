@@ -14,6 +14,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { bindAskForm } from "../src/popup/ask-form.js";
+import { bindContextControls } from "../src/popup/context-controls.js";
 import { serveConversationAskPort } from "../src/background/conversation-bridge.js";
 import { createConversationStore } from "../src/background/conversation-store.js";
 import { dialogueHistory } from "../src/shared/conversation-model.js";
@@ -273,11 +274,13 @@ assert.deepEqual(storedSources(undefined), []);
   /** @type {boolean[]} */
   const changes = [];
   const search = bindSearchToggle(/** @type {any} */ (button), { onChange: (on) => changes.push(on) });
+  assert.equal(search.isOn(), true, "on by default");
+  assert.equal(button.getAttribute("aria-pressed"), "true");
+  button.click();
   assert.equal(search.isOn(), false);
   assert.equal(button.getAttribute("aria-pressed"), "false");
   button.click();
   assert.equal(search.isOn(), true);
-  assert.equal(button.getAttribute("aria-pressed"), "true");
   search.setSupported("unknown", "Codex");
   assert.equal(search.isOn(), true, "an unknown capability is left to the host");
   search.setSupported(undefined, "Codex");
@@ -285,14 +288,38 @@ assert.deepEqual(storedSources(undefined), []);
   search.setSupported(false, "Codex");
   assert.equal(search.isOn(), false, "a provider that can't search turns it off");
   assert.equal(button.disabled, true);
+  assert.equal(button.getAttribute("aria-pressed"), "false");
   assert.ok(/Codex can't search the web/.test(button.title));
   button.click();
   assert.equal(search.isOn(), false);
   search.setSupported(true, "Claude");
-  assert.equal(search.isOn(), false, "it stays off until it's chosen again");
-  search.set(true);
+  assert.equal(search.isOn(), true, "the person's choice comes back with a provider that can search");
   search.set(false);
-  assert.deepEqual(changes, [true, false, true, false]);
+  search.setSupported(false, "Codex");
+  search.setSupported(true, "Claude");
+  assert.equal(search.isOn(), false, "and so does turning it off");
+  assert.deepEqual(changes, [false, true, false, true, false]);
+  assert.equal(bindSearchToggle(/** @type {any} */ (new Element("button")), { initial: false }).isOn(), false);
+}
+
+{
+  // The popup's wiring: sharing a selection or the page, by a click, a
+  // suggestion, or a menu handoff, turns web search off; a capture that
+  // fails leaves it on.
+  const search = bindSearchToggle(/** @type {any} */ (new Element("button")));
+  let reply = { ok: false, error: { message: "No page access." } };
+  const chips = { none: new Element("button"), selection: new Element("button"), page: new Element("button") };
+  const controls = bindContextControls(/** @type {any} */ ({ ...chips, status: new Element("p"), preview: new Element("div") }), {
+    async sendMessage() { return reply; }
+  }, { onCapture: () => search.set(false) });
+  chips.page.click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(search.isOn(), true, "nothing was shared");
+  reply = /** @type {any} */ ({ ok: true, context: { mode: "page", text: "Page text", truncated: false, page: { title: "Page", url: "https://example.com/" } } });
+  chips.page.click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(controls.getContext()?.mode, "page");
+  assert.equal(search.isOn(), false, "sharing the page turned web search off");
 }
 
 // ---------- A search journey through the worker and the store ----------

@@ -42,14 +42,16 @@ const contextControls = bindContextControls(
     status: requireElement("#context-status", HTMLElement),
     preview: requireElement("#context-preview", HTMLElement)
   },
-  chrome.runtime
+  chrome.runtime,
+  // Sharing the page turns web search off (they don't combine).
+  { onCapture: () => search.set(false) }
 );
 const fullView = requireElement("#open-full-page", HTMLButtonElement);
 const contextStatus = requireElement("#context-status", HTMLElement);
 let interacted = false;
 
-// Web search and page context don't combine (protocol v1): choosing one
-// turns the other off, and says so.
+// Web search (on by default) and page context don't combine (protocol v1):
+// choosing one turns the other off, and says so.
 const search = bindSearchToggle(requireElement("#search-toggle", HTMLButtonElement), {
   onChange(on) {
     if (on && (contextControls.getContext() || contextControls.isPending())) {
@@ -58,9 +60,6 @@ const search = bindSearchToggle(requireElement("#search-toggle", HTMLButtonEleme
     }
   }
 });
-for (const chip of ["#context-selection", "#context-page"]) {
-  requireElement(chip, HTMLButtonElement).addEventListener("click", () => search.set(false), { capture: true });
-}
 
 // The tab the popup was opened over, for resuming its conversation.
 /** @type {Promise<{id?: number, url?: string} | null>} */

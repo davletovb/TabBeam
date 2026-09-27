@@ -220,6 +220,33 @@ fn print_mode(dir: &Path, args: &[String], behavior: &str) -> io::Result<ExitCod
         _ => {}
     }
 
+    if native_search && behavior == "search-narrates" {
+        // Claude often says what it's about to do in the message that calls
+        // the tool.
+        message_start(&mut out, &result_session)?;
+        text_delta(
+            &mut out,
+            &result_session,
+            "I don't have file-read access in this session, ",
+        )?;
+        text_delta(
+            &mut out,
+            &result_session,
+            "so let me search the web for that.",
+        )?;
+        emit(
+            &mut out,
+            &json!({
+                "type":"stream_event",
+                "session_id":result_session,
+                "event":{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_test","name":"WebSearch","input":{}}}
+            }),
+        )?;
+        emit(
+            &mut out,
+            &json!({"type":"stream_event","session_id":result_session,"event":{"type":"message_stop"}}),
+        )?;
+    }
     if native_search {
         emit(
             &mut out,
@@ -286,18 +313,25 @@ fn print_mode(dir: &Path, args: &[String], behavior: &str) -> io::Result<ExitCod
         text_delta(&mut out, &result_session, "Second.")?;
     } else if behavior != "no-partial" {
         message_start(&mut out, &result_session)?;
-        let pieces: Vec<&str> = if behavior == "two-deltas" {
-            vec!["First.", " Second."]
-        } else {
-            vec!["You asked: ", prompt]
+        let long = "x".repeat(400);
+        let pieces: Vec<&str> = match behavior {
+            "two-deltas" => vec!["First.", " Second."],
+            // A long answer, in three pieces.
+            "search-long" => vec![&long, &long, &long],
+            _ => vec!["You asked: ", prompt],
         };
         for text in pieces {
             text_delta(&mut out, &result_session, text)?;
         }
+        emit(
+            &mut out,
+            &json!({"type":"stream_event","session_id":result_session,"event":{"type":"message_stop"}}),
+        )?;
     }
 
     let result = match behavior {
         "two-deltas" => "First. Second.".to_owned(),
+        "search-long" => "x".repeat(1200),
         "two-messages" => "First.\n\nSecond.".to_owned(),
         _ => answer.clone(),
     };

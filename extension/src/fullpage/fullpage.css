@@ -239,7 +239,7 @@ body {
 .composer .search-toggle {
   align-self: flex-end;
   height: 32px;
-  margin-bottom: 3px;
+  margin: 0 0 3px -8px;
 }
 
 /* ---------- Sources ---------- */

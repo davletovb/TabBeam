@@ -236,9 +236,12 @@ class FakeElement {
   // EXT-16/EXT-17: both views can search the web and show an answer's
   // sources as they arrive, after the typing indicator it keys off.
   for (const markup of [popup, fullpage]) {
-    assert.ok(/<button id="search-toggle"[^>]*type="button"[^>]*aria-pressed="false"/.test(markup));
+    // On by default, and first in the composer.
+    assert.ok(/<button id="search-toggle"[^>]*type="button"[^>]*aria-pressed="true"/.test(markup));
     assert.ok(/class="typing"[^\n]*\n\s*<section id="answer-sources" class="sources answer-sources" hidden>/.test(markup));
   }
+  assert.ok(popup.indexOf('id="search-toggle"') < popup.indexOf('id="context-none"'));
+  assert.ok(fullpage.indexOf('id="search-toggle"') < fullpage.indexOf('id="ask-input"'));
   assert.ok(setup.includes('id="provider-options"'));
   assert.ok(setup.includes('id="model-select"'));
 
