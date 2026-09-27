@@ -1117,6 +1117,7 @@ mod tests {
             history,
             context,
             model: _,
+            search: _,
         } = request.method
         else {
             panic!("unexpected method");
