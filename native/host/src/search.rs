@@ -326,6 +326,9 @@ impl SearchProvider for Brave {
             return failed_handle(results, SEARCH_REQUEST_FAILED);
         }
         let count = request.count.clamp(1, MAX_RESULT_COUNT);
+        // Neither the API key nor the user's query is placed in argv. They go
+        // through curl's stdin config, so local process listings do not expose
+        // either value.
         let spec = ProcessSpec::new(curl)
             .args([
                 "--silent",
@@ -337,23 +340,20 @@ impl SearchProvider for Brave {
                 "5",
                 "--max-time",
                 "15",
-                "--data-urlencode",
+                "--write-out",
             ])
-            .arg(format!("q={query}"))
-            .arg("--data-urlencode")
-            .arg(format!("count={count}"))
-            .arg("--write-out")
             .arg(format!("{HTTP_MARKER}%{{http_code}}"))
             .arg("--config")
             .arg("-")
-            .arg(BRAVE_URL)
             .envs(self.inherited.iter().cloned());
 
         let Ok(mut process) = Process::spawn(&spec) else {
             return failed_handle(results, SEARCH_START_FAILED);
         };
+        let url = brave_url(&query, count);
         let config = format!(
-            "header = \"X-Subscription-Token: {}\"\nheader = \"Accept: application/json\"\n",
+            "url = \"{}\"\nheader = \"X-Subscription-Token: {}\"\nheader = \"Accept: application/json\"\n",
+            curl_config_escape(&url),
             curl_config_escape(api_key)
         );
         if process.write(config.as_bytes()).is_err() {
@@ -392,6 +392,29 @@ fn configured_curl() -> Option<PathBuf> {
 
 fn curl_config_escape(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+fn brave_url(query: &str, count: usize) -> String {
+    format!(
+        "{BRAVE_URL}?q={}&count={}",
+        percent_encode(query.as_bytes()),
+        count.clamp(1, MAX_RESULT_COUNT)
+    )
+}
+
+fn percent_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut out = String::with_capacity(bytes.len());
+    for &byte in bytes {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            out.push(char::from(byte));
+        } else {
+            out.push('%');
+            out.push(char::from(HEX[usize::from(byte >> 4)]));
+            out.push(char::from(HEX[usize::from(byte & 0x0f)]));
+        }
+    }
+    out
 }
 
 fn bounded_brave_query(query: &str) -> String {
@@ -635,6 +658,16 @@ mod tests {
         assert!(prompt.contains("untrusted reference data"));
         assert!(prompt.contains("\"source_id\":\"src_search_1\""));
         assert!(prompt.ends_with("User question:\nWhat happened?"));
+    }
+
+    #[test]
+    fn brave_url_percent_encodes_query_for_stdin_config() {
+        let url = brave_url("rust & café?", 8);
+        assert_eq!(
+            url,
+            "https://api.search.brave.com/res/v1/web/search?q=rust%20%26%20caf%C3%A9%3F&count=8"
+        );
+        assert!(!url.contains(' '));
     }
 
     #[test]
