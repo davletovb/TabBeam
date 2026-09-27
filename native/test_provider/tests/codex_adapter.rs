@@ -238,7 +238,10 @@ fn native_search_uses_codex_subscription_search_and_emits_sources() {
         .into_iter()
         .find(|line| line.starts_with("exec "))
         .expect("Codex exec ran");
-    assert!(invocation.contains("-c web_search=\"live\""), "{invocation}");
+    assert!(
+        invocation.contains("-c web_search=\"live\""),
+        "{invocation}"
+    );
     for setting in [
         "features.shell_tool=false",
         "features.view_image=false",
@@ -250,9 +253,15 @@ fn native_search_uses_codex_subscription_search_and_emits_sources() {
         "features.standalone_web_search=false",
         "orchestrator.mcp.enabled=false",
     ] {
-        assert!(invocation.contains(&format!("-c {setting}")), "{invocation}");
+        assert!(
+            invocation.contains(&format!("-c {setting}")),
+            "{invocation}"
+        );
     }
-    assert!(!invocation.contains("web_search=\"disabled\""), "{invocation}");
+    assert!(
+        !invocation.contains("web_search=\"disabled\""),
+        "{invocation}"
+    );
 }
 
 #[test]
