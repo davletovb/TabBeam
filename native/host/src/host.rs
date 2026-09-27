@@ -602,9 +602,9 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                 let provider_served = provider.is_some();
                 let question = text.decode().into_owned();
                 let search_requested = search.is_some();
-                let native_supported = provider
-                    .as_ref()
-                    .is_some_and(|provider| provider.capabilities().web_search == Capability::Supported);
+                let native_supported = provider.as_ref().is_some_and(|provider| {
+                    provider.capabilities().web_search == Capability::Supported
+                });
                 let search_route = search.as_ref().map(|options| {
                     if options.backend_id == DEFAULT_BACKEND_ID {
                         if native_supported {
@@ -657,14 +657,17 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                                     as Box<dyn Exchange>,
                                 Some(provider_timeouts),
                             ),
-                            (Some(_), Some(PROVIDER_BACKEND_ID)) => match provider.preflight(&request) {
-                                Err(error) => (
-                                    Box::new(Scripted::failed(error)) as Box<dyn Exchange>,
-                                    Some(provider_timeouts),
-                                ),
-                                Ok(()) => (provider.send(request), Some(provider_timeouts)),
-                            },
-                            (Some(options), Some(backend_id)) => match provider.preflight(&request) {
+                            (Some(_), Some(PROVIDER_BACKEND_ID)) => {
+                                match provider.preflight(&request) {
+                                    Err(error) => (
+                                        Box::new(Scripted::failed(error)) as Box<dyn Exchange>,
+                                        Some(provider_timeouts),
+                                    ),
+                                    Ok(()) => (provider.send(request), Some(provider_timeouts)),
+                                }
+                            }
+                            (Some(options), Some(backend_id)) => match provider.preflight(&request)
+                            {
                                 Err(error) => (
                                     Box::new(Scripted::failed(error)) as Box<dyn Exchange>,
                                     Some(provider_timeouts),
@@ -1436,7 +1439,10 @@ mod tests {
                 .model
                 .map(|model| format!("+model={model}"))
                 .unwrap_or_default();
-            let native_search = request.native_search.then_some("+native-search").unwrap_or("");
+            let native_search = request
+                .native_search
+                .then_some("+native-search")
+                .unwrap_or("");
             let sources = match request.search_results.as_ref() {
                 None => String::new(),
                 Some(sources) => format!("+sources={}", sources.len()),
@@ -1508,8 +1514,8 @@ mod tests {
 
     #[test]
     fn auto_search_prefers_provider_native_search_without_calling_brave() {
-        let provider =
-            TestProvider::new("model", Script::answers("native search answer")).with_native_search();
+        let provider = TestProvider::new("model", Script::answers("native search answer"))
+            .with_native_search();
         let calls = Rc::clone(&provider.calls);
         let providers = Providers::new(vec![Box::new(provider)]);
         let search_calls = Rc::new(RefCell::new(Vec::new()));
