@@ -12,7 +12,6 @@
 //! protocol terms, and the popup sees only protocol events.
 
 use std::collections::VecDeque;
-use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use crate::conversation::{BrowserContext, HistoryMessage};
@@ -85,11 +84,11 @@ pub trait Provider {
 }
 
 /// The providers a host serves, in the order `provider.status` reports them.
-pub struct Providers(Vec<Rc<dyn Provider>>);
+pub struct Providers(Vec<Box<dyn Provider>>);
 
 impl Providers {
     pub fn new(providers: Vec<Box<dyn Provider>>) -> Self {
-        Self(providers.into_iter().map(Rc::from).collect())
+        Self(providers)
     }
 
     /// The providers of an installed host. The fake scaffold stays registered
@@ -97,24 +96,27 @@ impl Providers {
     /// platform discovery rules.
     pub fn installed() -> Self {
         Self(vec![
-            Rc::new(fake::Fake),
-            Rc::new(codex::Codex::installed()),
-            Rc::new(claude::Claude::installed()),
+            Box::new(fake::Fake),
+            Box::new(codex::Codex::installed()),
+            Box::new(claude::Claude::installed()),
         ])
     }
 
     /// Only the deterministic fake scaffold, which starts no processes: for
     /// fuzzing and protocol tests.
     pub fn scaffold() -> Self {
-        Self(vec![Rc::new(fake::Fake)])
+        Self(vec![Box::new(fake::Fake)])
     }
 
-    pub fn get(&self, id: &str) -> Option<Rc<dyn Provider>> {
-        self.0.iter().find(|provider| provider.id() == id).cloned()
+    pub fn get(&self, id: &str) -> Option<&dyn Provider> {
+        self.0
+            .iter()
+            .map(Box::as_ref)
+            .find(|provider| provider.id() == id)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &dyn Provider> {
-        self.0.iter().map(Rc::as_ref)
+        self.0.iter().map(Box::as_ref)
     }
 }
 
