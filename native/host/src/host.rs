@@ -642,7 +642,8 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                                                 provider,
                                                 provider_timeouts,
                                                 request,
-                                            )) as Box<dyn Exchange>,
+                                            ))
+                                                as Box<dyn Exchange>,
                                             Some(search_timeouts),
                                         )
                                     }
@@ -653,20 +654,12 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                                     ),
                                 },
                             },
-                            None => (
-                                provider.send(request),
-                                Some(provider_timeouts),
-                            ),
+                            None => (provider.send(request), Some(provider_timeouts)),
                         }
                     }
                     None => (Box::new(Scripted::failed(PROVIDER_NOT_INSTALLED)), None),
                 };
-                if search_requested
-                    && matches!(
-                        timeouts,
-                        Some(_)
-                    )
-                {
+                if search_requested && matches!(timeouts, Some(_)) {
                     Running::new_with_start_error(
                         id,
                         "conversation.send",
