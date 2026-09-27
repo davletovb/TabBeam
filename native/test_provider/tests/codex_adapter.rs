@@ -212,6 +212,50 @@ fn context_adapter(codex: &FakeCodex) -> Codex {
 }
 
 #[test]
+fn native_search_uses_codex_subscription_search_and_emits_sources() {
+    let codex = FakeCodex::install("answers", "signed-in");
+    let adapter = context_adapter(&codex);
+    assert_eq!(adapter.capabilities().web_search, Capability::Supported);
+    let updates = visible(&run_to_end(
+        adapter
+            .send(SendRequest {
+                native_search: true,
+                ..ask("What is new in Rust?")
+            })
+            .as_mut(),
+    ));
+    assert!(updates.iter().any(|update| matches!(
+        update,
+        Update::Source(source)
+            if source.backend_id == "codex"
+                && source.url == "https://example.com/codex-search"
+                && source.title == "Codex search result"
+    )));
+    assert_eq!(updates.last(), Some(&Update::Completed));
+
+    let invocation = codex
+        .invocations()
+        .into_iter()
+        .find(|line| line.starts_with("exec "))
+        .expect("Codex exec ran");
+    assert!(invocation.contains("-c web_search=\"live\""), "{invocation}");
+    for setting in [
+        "features.shell_tool=false",
+        "features.view_image=false",
+        "features.apps=false",
+        "features.plugins=false",
+        "features.hooks=false",
+        "features.multi_agent=false",
+        "features.multi_agent_v2=false",
+        "features.standalone_web_search=false",
+        "orchestrator.mcp.enabled=false",
+    ] {
+        assert!(invocation.contains(&format!("-c {setting}")), "{invocation}");
+    }
+    assert!(!invocation.contains("web_search=\"disabled\""), "{invocation}");
+}
+
+#[test]
 fn page_context_reaches_codex_as_untrusted_reference_data() {
     let codex = FakeCodex::install("answers", "signed-in");
     let adapter = context_adapter(&codex);
