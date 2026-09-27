@@ -6,7 +6,7 @@ The manifest uses `pervue-host.exe` as a path relative to its own directory. Chr
 
 ## Build a paired installer
 
-Build from PowerShell 7 with Rust/rustup and Inno Setup 6.3 or newer. CI pins Inno Setup 6.7.3. Use the ID of the exact Chrome extension build that the package will accompany:
+Build from PowerShell 7 with Rust/rustup and Inno Setup 6.3 or newer. CI pins Inno Setup 6.7.1. Use the ID of the exact Chrome extension build that the package will accompany:
 
 ```powershell
 pwsh -File packaging\windows\build.ps1 -ExtensionId <32-character-extension-id>
