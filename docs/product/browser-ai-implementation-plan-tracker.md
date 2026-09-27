@@ -205,10 +205,10 @@ Reached after **Milestone H**:
 | PKG-06 | Build Windows companion installer | G | Packaging | PKG-05, PRO-07 | IMPLEMENTED — VERIFY |
 | TST-13 | Verify Windows clean-machine install/use/uninstall journey | G | Testing | PKG-06, PKG-03 | BLOCKED |
 | SEC-04 | Security review of packaged trust boundaries and permissions | G | Security | PKG-04, PKG-06 | IMPLEMENTED — VERIFY |
-| SRCH-01 | Define provider-independent search adapter contract | H | Search | CON-01, PRO-07 | BACKLOG |
-| SRCH-02 | Implement first search backend adapter | H | Search | SRCH-01 | BACKLOG |
-| SRCH-03 | Normalize search results into source model | H | Search | SRCH-02, CON-01 | BACKLOG |
-| SRCH-04 | Implement search → synthesis pipeline | H | Search | SRCH-03, PRO-07 | BACKLOG |
+| SRCH-01 | Define provider-independent search adapter contract | H | Search | CON-01, PRO-07 | IMPLEMENTED — VERIFY |
+| SRCH-02 | Implement first search backend adapter | H | Search | SRCH-01 | IMPLEMENTED — VERIFY |
+| SRCH-03 | Normalize search results into source model | H | Search | SRCH-02, CON-01 | IMPLEMENTED — VERIFY |
+| SRCH-04 | Implement search → synthesis pipeline | H | Search | SRCH-03, PRO-07 | IMPLEMENTED — VERIFY |
 | EXT-16 | Add Search mode and compact citations to popup | H | Extension | SRCH-04, EXT-08 | BACKLOG |
 | EXT-17 | Add rich sources/citations to full-page view | H | Extension | SRCH-04, EXT-06 | BACKLOG |
 | SEC-05 | Sanitize/limit untrusted search-result content | H | Security | SRCH-02, SRCH-03 | BACKLOG |
@@ -1579,7 +1579,11 @@ without terminal commands during the user journey.
 - Normalized result includes enough data for title, URL, snippet/content excerpt, and source identity.
 - Search errors do not masquerade as provider errors.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `native/host/src/search.rs` defines a model-provider-independent `SearchProvider` / `SearchRequest` / `SearchHandle` contract and a registry keyed by bounded backend IDs. `conversation.send.search` is validated independently of `provider_id`, defaults to `brave`, and caps requested results at 10.
+- Search failures use the separate normalized `SEARCH_FAILED` category, so retrieval/configuration failures cannot masquerade as Codex/Claude failures. Protocol documentation and fixtures include the new category.
 
 ### SRCH-02 — Implement first search backend adapter
 **Area:** Search  
@@ -1594,7 +1598,12 @@ without terminal commands during the user journey.
 - Query returns normalized raw search results.
 - Timeout/error behavior is bounded and normalized.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `native/host/src/search.rs` implements the first backend as Brave Search Web API. The adapter performs bounded HTTPS retrieval, caps response bytes, maps authentication/rate-limit/transport/malformed-output failures, and normalizes only safe HTTP(S) results.
+- The native companion reads `BRAVE_SEARCH_API_KEY`; the key and user query are written to the HTTPS client's stdin configuration rather than argv, events, or diagnostics. The backend executable is discovered through fixed platform rules rather than request/page input.
+- Unit tests cover Brave response normalization, deduplication, URL/query encoding, bounds, and search-specific failure classification. A real API-key smoke remains part of verification rather than normal CI.
 
 ### SRCH-03 — Normalize search results into source model
 **Area:** Search  
@@ -1605,7 +1614,11 @@ without terminal commands during the user journey.
 - Duplicate sources can be collapsed deterministically.
 - Source URL/title remain untrusted data and are safely rendered.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `pervue-core::protocol::Source` is the normalized source shape: stable `id`, `backend_id`, title, URL, bounded snippet, and optional source/age metadata. Brave results are deduplicated by normalized URL, unsafe schemes are dropped, and result text is converted to bounded plain data before synthesis/UI emission.
+- The host carries sources as `Update::Source` and emits protocol-v1 `response.source` with the same source identity/data that synthesis receives. `docs/protocol/v1.md` defines the concrete search-source payload.
 
 ### SRCH-04 — Implement search → synthesis pipeline
 **Area:** Search  
@@ -1616,7 +1629,12 @@ without terminal commands during the user journey.
 - Response can emit source references independently of provider-specific citation formats.
 - Search can work with either supported provider.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `SynthesisExchange` in `native/host/src/search.rs` composes retrieval and model execution without coupling the search adapter to Codex or Claude: Brave completes first, its normalized source set is attached to `SendRequest`, and then the selected provider starts.
+- `native/host/src/conversation.rs` frames every search source as quoted, untrusted reference data with stable source IDs. Both Codex and Claude consume the same source contract; Codex applies its answer-only tool restrictions to search turns as it does to browser-reference turns.
+- The host regression test `search_retrieval_is_normalized_before_provider_synthesis_and_source_events` proves retrieval → normalized sources → provider synthesis → identical `response.source` events → answer completion without network access.
 
 ### EXT-16 — Add Search mode and compact citations to popup
 **Area:** Extension  
@@ -1801,9 +1819,9 @@ Update this section whenever item statuses change.
 | E — Second provider | 5 | 0 | 5 | 0 | 0 | 0 | 0 | 0 |
 | F — Reusable native core | 7 | 0 | 7 | 0 | 0 | 0 | 0 | 0 |
 | G — Installable product | 9 | 0 | 7 | 0 | 0 | 0 | 2 | 0 |
-| H — Search/citations | 8 | 0 | 0 | 0 | 0 | 8 | 0 | 0 |
+| H — Search/citations | 8 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
 | Post-milestone | 6 | 0 | 0 | 0 | 0 | 4 | 0 | 2 |
-| **Total** | **81** | **46** | **19** | **0** | **0** | **12** | **2** | **2** |
+| **Total** | **81** | **46** | **23** | **0** | **0** | **8** | **2** | **2** |
 
 ### Milestone completion rule
 
