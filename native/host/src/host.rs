@@ -978,7 +978,9 @@ mod tests {
     use crate::limits::MAX_FRAME_SIZE;
     use crate::protocol::events::Capabilities;
     use crate::providers::{Provider, fake};
+    use crate::search::{SearchHandle, SearchProvider};
     use pervue_core::framing::PREFIX_SIZE;
+    use pervue_core::protocol::Source;
 
     fn framed(payloads: &[&str]) -> Vec<u8> {
         let mut wire = Vec::new();
@@ -1293,9 +1295,12 @@ mod tests {
                 .model
                 .map(|model| format!("+model={model}"))
                 .unwrap_or_default();
+            let sources = (!request.search_results.is_empty())
+                .then(|| format!("+sources={}", request.search_results.len()))
+                .unwrap_or_default();
             self.calls
                 .borrow_mut()
-                .push(format!("send:{}{context}{model}", request.text));
+                .push(format!("send:{}{context}{model}{sources}", request.text));
             Box::new(Controlled {
                 script: self.script,
                 started: false,
@@ -1309,6 +1314,106 @@ mod tests {
 
     fn with(provider: TestProvider) -> Providers {
         Providers::new(vec![Box::new(fake::Fake), Box::new(provider)])
+    }
+
+    struct TestSearch {
+        calls: Rc<RefCell<Vec<SearchRequest>>>,
+    }
+
+    impl SearchProvider for TestSearch {
+        fn id(&self) -> &str {
+            "brave"
+        }
+
+        fn timeouts(&self) -> Timeouts {
+            Timeouts {
+                start: Duration::from_secs(1),
+                idle: Duration::from_secs(1),
+                stop_grace: Duration::ZERO,
+            }
+        }
+
+        fn search(&self, request: SearchRequest) -> SearchHandle {
+            self.calls.borrow_mut().push(request);
+            let results = Rc::new(RefCell::new(Some(vec![
+                Source {
+                    id: "src_search_1".to_owned(),
+                    backend_id: "brave".to_owned(),
+                    title: "One".to_owned(),
+                    url: "https://example.com/one".to_owned(),
+                    snippet: "First result".to_owned(),
+                    source_name: Some("Example".to_owned()),
+                    age: None,
+                },
+                Source {
+                    id: "src_search_2".to_owned(),
+                    backend_id: "brave".to_owned(),
+                    title: "Two".to_owned(),
+                    url: "https://example.org/two".to_owned(),
+                    snippet: "Second result".to_owned(),
+                    source_name: None,
+                    age: Some("1 day ago".to_owned()),
+                },
+            ])));
+            SearchHandle {
+                exchange: Box::new(Scripted::new([Update::Completed])),
+                results,
+            }
+        }
+    }
+
+    #[test]
+    fn search_retrieval_is_normalized_before_provider_synthesis_and_source_events() {
+        let provider = TestProvider::new("model", Script::answers("grounded answer"));
+        let provider_calls = Rc::clone(&provider.calls);
+        let providers = Providers::new(vec![Box::new(provider)]);
+        let search_calls = Rc::new(RefCell::new(Vec::new()));
+        let searches = SearchProviders::new(vec![Box::new(TestSearch {
+            calls: Rc::clone(&search_calls),
+        })]);
+
+        let input = framed(&[r#"{"version":1,"type":"request","request_id":"req_search","method":"conversation.send","payload":{"provider_id":"model","input":{"text":"What changed?"},"search":{"backend_id":"brave","count":2}}}"#]);
+        let mut output = Vec::new();
+        let mut log = Diagnostics::new(Vec::new());
+        let mut wire = input.as_slice();
+        assert_eq!(
+            run_with_services(&providers, &searches, &mut wire, &mut output, &mut log),
+            Ok(())
+        );
+
+        let mut frames = output.as_slice();
+        let mut events = Vec::new();
+        while let Some(frame) = framing::read_frame(&mut frames).unwrap() {
+            events.push(serde_json::from_slice::<Value>(&frame).unwrap());
+        }
+        let sequence: Vec<_> = events[1..]
+            .iter()
+            .map(|event| event["event"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            sequence,
+            [
+                "response.started",
+                "response.source",
+                "response.source",
+                "response.delta",
+                "response.completed"
+            ]
+        );
+        assert_eq!(events[2]["payload"]["source_id"], "src_search_1");
+        assert_eq!(events[2]["payload"]["data"]["backend_id"], "brave");
+        assert_eq!(events[3]["payload"]["source_id"], "src_search_2");
+        assert_eq!(
+            search_calls.borrow().as_slice(),
+            &[SearchRequest {
+                query: "What changed?".to_owned(),
+                count: 2,
+            }]
+        );
+        assert_eq!(
+            provider_calls.borrow().as_slice(),
+            &["send:What changed?+sources=2"]
+        );
     }
 
     /// An exchange that always has another update ready, like a provider that
