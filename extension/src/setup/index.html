@@ -65,6 +65,12 @@
             <p>Download the Pervue companion package from the <a href="https://github.com/davletovb/pervue/releases" target="_blank" rel="noopener noreferrer">Pervue releases</a> and open it in Finder. The installer registers the host with Chrome automatically. If the popup says the companion needs an update, install the matching newer package.</p>
           </div>
         </li>
+        <li class="step" id="windows-package" hidden>
+          <div class="step-body">
+            <h2>Install the Windows companion</h2>
+            <p>Download the Pervue companion installer from the <a href="https://github.com/davletovb/pervue/releases" target="_blank" rel="noopener noreferrer">Pervue releases</a> and open it normally. It installs for your Windows account and registers the host with Chrome automatically. If the popup says the companion needs an update, install the matching newer package.</p>
+          </div>
+        </li>
         <li class="step">
           <div class="step-body">
             <h2>Choose a provider</h2>
@@ -86,8 +92,8 @@
       </ol>
 
       <details id="manual-setup" class="manual-setup">
-        <summary>Other platforms or development build</summary>
-        <p>For Windows, Linux, or an unpacked extension with its own ID, build the native host from a checkout and register it for the exact ID shown on Pervue's card at <code>chrome://extensions</code>.</p>
+        <summary>Development build or Linux</summary>
+        <p>For Linux or an unpacked extension with its own ID, build the native host from a checkout and register it for the exact ID shown on Pervue's card at <code>chrome://extensions</code>. Windows development registration can use the HKCU path described below.</p>
         <div class="command">
           <code>cargo build --manifest-path native/Cargo.toml</code>
           <button class="copy-command" type="button" aria-label="Copy command" title="Copy"><svg class="icon icon-sm" aria-hidden="true"><use href="../shared/icons.svg#copy"/></svg><svg class="icon icon-sm icon-copied" aria-hidden="true"><use href="../shared/icons.svg#check"/></svg></button>
@@ -103,6 +109,11 @@
       <aside class="note" id="macos-uninstall" hidden>
         <svg class="icon" aria-hidden="true"><use href="../shared/icons.svg#shield"/></svg>
         <p>To remove the companion on macOS, open <strong>Applications → Uninstall Pervue</strong>. Remove the extension separately in Chrome. Provider credentials stay with the provider tool.</p>
+      </aside>
+
+      <aside class="note" id="windows-uninstall" hidden>
+        <svg class="icon" aria-hidden="true"><use href="../shared/icons.svg#shield"/></svg>
+        <p>To remove the companion on Windows, open <strong>Settings → Apps → Installed apps → Pervue Companion → Uninstall</strong>. Remove the extension separately in Chrome. Provider credentials stay with the provider tool.</p>
       </aside>
     </main>
     <script type="module" src="./setup.js"></script>
