@@ -1519,7 +1519,10 @@ without terminal commands during the user journey.
 - Windows process/path/registration implementation follows the same host protocol.
 - No POSIX-only assumption leaks into the public reusable interfaces.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- The existing native core/host already builds and tests on `windows-latest`, with Windows-specific provider discovery (`.exe` then npm `.cmd`), environment handling, Chrome's `--parent-window` launch shape, and the same Native Messaging framing/protocol interfaces used on macOS/Linux. `packaging/windows/build.ps1` now builds the release host for packaging, and the package gate launches the installed binary through the real protocol path.
 
 ### PKG-06 — Build Windows companion installer
 **Area:** Packaging  
@@ -1530,7 +1533,10 @@ without terminal commands during the user journey.
 - Provider discovery works for supported Windows provider tooling.
 - Uninstall is clean.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `packaging/windows/Pervue.iss` builds a per-user Inno Setup companion under `%LOCALAPPDATA%\\Pervue`, registers `com.pervue.host` in HKCU automatically, and removes its owned registry/files on uninstall. `packaging/windows/verify.mjs` verifies the installed registration, exact extension allowlist, Chrome Windows launch arguments, protocol v1 handshake, and provider status with an npm-style `codex.cmd`. CI builds, installs, verifies, and uninstalls the real installer artifact.
 
 ### TST-13 — Verify Windows clean-machine install/use/uninstall journey
 **Area:** Testing  
@@ -1540,7 +1546,10 @@ without terminal commands during the user journey.
 - Same user-level journey as TST-12 passes on supported Windows.
 - No terminal is required for normal setup/use.
 
-**Status:** BACKLOG
+**Status:** BLOCKED
+
+**Implementation evidence / remaining gate**
+- `packaging/windows/README.md` records the no-terminal clean-machine checklist and required evidence, while the Windows CI job covers package mechanics, registration, protocol startup, provider discovery, and clean removal. The full gate still requires a matching released Chrome extension, the Windows installer on an actual clean Windows machine, and a signed-in real provider; automated CI cannot prove the browser/provider/no-terminal human journey.
 
 ### SEC-04 — Security review of packaged trust boundaries and permissions
 **Area:** Security  
@@ -1552,7 +1561,10 @@ without terminal commands during the user journey.
 - Logs and update/install metadata contain no provider credentials.
 - Extension permissions are reviewed against minimum required capability.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `docs/security/trust-boundaries.md` now records the package-level review for macOS and Windows. `packaging/security-audit.mjs` gates the exact MV3 permission set, absence of broad host/external-connect permissions, fixed installer locations/registry identity, extension-ID validation, and credential-free package build inputs. Platform package verification additionally checks the generated Native Messaging allowlist and installed registration.
 
 ---
 
