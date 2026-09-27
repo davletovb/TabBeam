@@ -16,7 +16,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use crate::conversation::{BrowserContext, HistoryMessage};
-use crate::protocol::events::Capabilities;
+use crate::protocol::events::{Capabilities, ErrorBody};
 use pervue_core::protocol::Source;
 pub use pervue_core::stream::BUSY_LIMIT;
 
@@ -42,9 +42,10 @@ pub struct SendRequest {
     /// The model to answer with, already a valid model ID; `None` for the
     /// provider's default. Only sent to adapters with `model_selection`.
     pub model: Option<String>,
-    /// Normalized web sources retrieved before this turn. These are
-    /// provider-independent, bounded, untrusted reference data.
-    pub search_results: Vec<Source>,
+    /// Normalized web sources retrieved before this turn. `None` means this
+    /// is not a search turn; `Some([])` preserves a search that returned no
+    /// usable sources.
+    pub search_results: Option<Vec<Source>>,
 }
 
 pub use pervue_core::exchange::{Exchange, Scripted, Timeouts, Update};
@@ -59,6 +60,13 @@ pub trait Provider {
     /// Capabilities that are stable for this adapter implementation. The host
     /// uses these to reject requests that would otherwise be silently degraded.
     fn capabilities(&self) -> Capabilities;
+
+    /// Cheap, side-effect-free checks that must pass before Pervue sends a
+    /// search query off-device. Adapters repeat the same checks in `send`
+    /// because local provider state may change between retrieval and synthesis.
+    fn preflight(&self, _request: &SendRequest) -> Result<(), ErrorBody<'static>> {
+        Ok(())
+    }
 
     /// Starts checking availability, authentication, and capabilities. The
     /// exchange reports one `Status` and then `Completed`.
