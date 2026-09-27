@@ -1602,7 +1602,7 @@ without terminal commands during the user journey.
 
 **Implementation evidence**
 - `native/host/src/search.rs` implements the first backend as Brave Search Web API. The adapter performs bounded HTTPS retrieval, caps response bytes, maps authentication/rate-limit/transport/malformed-output failures, and normalizes only safe HTTP(S) results.
-- The native companion reads `BRAVE_SEARCH_API_KEY`; the key and user query are written to the HTTPS client's stdin configuration rather than argv, events, or diagnostics. The backend executable is discovered through fixed platform rules rather than request/page input.
+- The native companion reads `BRAVE_SEARCH_API_KEY`; the key and user query are written to curl's stdin configuration rather than argv, events, or diagnostics. Installed builds use only the operating system's fixed curl path (with one explicit absolute test/install override), and curl starts with user config disabled.
 - Unit tests cover Brave response normalization, deduplication, URL/query encoding, bounds, and search-specific failure classification. A real API-key smoke remains part of verification rather than normal CI.
 
 ### SRCH-03 — Normalize search results into source model
