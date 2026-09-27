@@ -16,7 +16,7 @@ use serde::Deserialize;
 
 use crate::protocol::events::{ErrorBody, ErrorCode};
 use crate::providers::environment;
-use crate::providers::{Exchange, Provider, SendRequest, Timeouts, Update, BUSY_LIMIT};
+use crate::providers::{BUSY_LIMIT, Exchange, Provider, SendRequest, Timeouts, Update};
 use pervue_core::process::{Event as ProcessEvent, Process, ProcessSpec};
 use pervue_core::protocol::Source;
 
@@ -645,9 +645,8 @@ fn strip_decorations(value: &str) -> String {
         let rest = &value[offset..];
         if rest.as_bytes().first() == Some(&b'<') {
             let next = rest.as_bytes().get(1).copied();
-            let looks_like_tag = next.is_some_and(|byte| {
-                byte.is_ascii_alphabetic() || matches!(byte, b'/' | b'!')
-            });
+            let looks_like_tag =
+                next.is_some_and(|byte| byte.is_ascii_alphabetic() || matches!(byte, b'/' | b'!'));
             if looks_like_tag {
                 if let Some(end) = rest.find('>') {
                     offset += end + 1;
@@ -752,7 +751,10 @@ mod tests {
 
     #[test]
     fn plain_text_keeps_comparisons_and_decodes_entities_once() {
-        assert_eq!(plain_text("Rust 1.80 < 1.81 adds X"), "Rust 1.80 < 1.81 adds X");
+        assert_eq!(
+            plain_text("Rust 1.80 < 1.81 adds X"),
+            "Rust 1.80 < 1.81 adds X"
+        );
         assert_eq!(plain_text("A <strong>B</strong> &amp; C"), "A B & C");
         assert_eq!(plain_text("&amp;lt;script&amp;gt;"), "&lt;script&gt;");
     }
