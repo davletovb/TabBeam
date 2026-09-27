@@ -435,7 +435,10 @@ fn parse_search(value: &[u8]) -> Result<SearchOptions, FailureKind> {
     let backend_id = wire
         .backend_id
         .unwrap_or_else(|| DEFAULT_BACKEND_ID.to_owned());
-    if !matches!(backend_id.as_str(), DEFAULT_BACKEND_ID | PROVIDER_BACKEND_ID) {
+    if !matches!(
+        backend_id.as_str(),
+        DEFAULT_BACKEND_ID | PROVIDER_BACKEND_ID
+    ) {
         return Err(FailureKind::InvalidPayload);
     }
     Ok(SearchOptions { backend_id })
@@ -739,7 +742,7 @@ mod tests {
 
         for search in [
             r#"{"backend_id":""}"#,
-            r#"{"backend_id":"brave"}"#,
+            r#"{"backend_id":"external"}"#,
             r#"{"backend_id":"../provider"}"#,
             r#"{"backend_id":"provider","count":5}"#,
             r#"[]"#,
