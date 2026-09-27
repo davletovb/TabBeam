@@ -109,6 +109,8 @@ Typical reasons:
 - `SEARCH_TRANSPORT_NOT_FOUND` — the fixed local HTTPS transport executable is unavailable.
 - `SEARCH_AUTHENTICATION_FAILED` — the backend rejected its credential.
 - `SEARCH_RATE_LIMITED` — the backend rate-limited the request.
+- `SEARCH_TIMEOUT` — retrieval exceeded the selected search backend's start deadline.
+- `SEARCH_QUERY_INVALID` — the bounded query was empty or rejected as invalid; the user must change it.
 - `MALFORMED_SEARCH_OUTPUT` — the backend response could not be normalized safely.
 - `SEARCH_RESPONSE_TOO_LARGE` — retrieval exceeded Pervue's bounded response limit.
 
