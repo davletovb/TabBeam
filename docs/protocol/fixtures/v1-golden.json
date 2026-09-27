@@ -200,8 +200,15 @@
         "request_id": "req_answer_1",
         "event": "response.source",
         "payload": {
-          "source_id": "src_1",
-          "data": {}
+          "source_id": "src_search_1",
+          "data": {
+            "id": "src_search_1",
+            "backend_id": "brave",
+            "title": "Example result",
+            "url": "https://example.com/article",
+            "snippet": "Bounded result excerpt.",
+            "source_name": "Example"
+          }
         }
       }
     },
