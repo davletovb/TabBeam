@@ -30,7 +30,7 @@ use super::discovery;
 use super::environment;
 use super::forget;
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
-use crate::conversation::provider_prompt_with_sources;
+use crate::conversation::provider_prompt;
 use crate::protocol::events::{
     Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ProviderState,
 };
@@ -345,8 +345,7 @@ impl Provider for Codex {
         if self.executable().is_none() {
             return Err(NOT_INSTALLED);
         }
-        let reference_turn =
-            request.context.is_some() || request.search_results.is_some() || request.native_search;
+        let reference_turn = request.context.is_some() || request.native_search;
         if reference_turn && !context_configuration_is_safe(&self.launch) {
             return Err(if request.context.is_some() {
                 CONTEXT_TOOLS_ENABLED
@@ -373,25 +372,14 @@ impl Provider for Codex {
             return Box::new(Scripted::failed(error));
         }
         let executable = self.executable().expect("preflight found Codex");
-        let reference_turn =
-            request.context.is_some() || request.search_results.is_some() || request.native_search;
+        let reference_turn = request.context.is_some() || request.native_search;
 
         let mut conversation_id = request.conversation_id;
         let mut fallback_prompt = (!request.history.is_empty()).then(|| {
-            provider_prompt_with_sources(
-                &request.history,
-                request.context.as_ref(),
-                request.search_results.as_deref(),
-                &request.text,
-            )
+            provider_prompt(&request.history, request.context.as_ref(), &request.text)
         });
-        let mut prompt = if request.context.is_some() || request.search_results.is_some() {
-            provider_prompt_with_sources(
-                &[],
-                request.context.as_ref(),
-                request.search_results.as_deref(),
-                &request.text,
-            )
+        let mut prompt = if request.context.is_some() {
+            provider_prompt(&[], request.context.as_ref(), &request.text)
         } else {
             request.text
         };
