@@ -1391,6 +1391,11 @@ mod tests {
             self.preflight_error = Some(error);
             self
         }
+
+        fn with_native_search(mut self) -> Self {
+            self.capabilities.web_search = Capability::Supported;
+            self
+        }
     }
 
     impl Provider for TestProvider {
@@ -1431,13 +1436,15 @@ mod tests {
                 .model
                 .map(|model| format!("+model={model}"))
                 .unwrap_or_default();
+            let native_search = request.native_search.then_some("+native-search").unwrap_or("");
             let sources = match request.search_results.as_ref() {
                 None => String::new(),
                 Some(sources) => format!("+sources={}", sources.len()),
             };
-            self.calls
-                .borrow_mut()
-                .push(format!("send:{}{context}{model}{sources}", request.text));
+            self.calls.borrow_mut().push(format!(
+                "send:{}{context}{model}{native_search}{sources}",
+                request.text
+            ));
             Box::new(Controlled {
                 script: self.script,
                 started: false,
@@ -1497,6 +1504,31 @@ mod tests {
                 results,
             }
         }
+    }
+
+    #[test]
+    fn auto_search_prefers_provider_native_search_without_calling_brave() {
+        let provider =
+            TestProvider::new("model", Script::answers("native search answer")).with_native_search();
+        let calls = Rc::clone(&provider.calls);
+        let providers = Providers::new(vec![Box::new(provider)]);
+        let search_calls = Rc::new(RefCell::new(Vec::new()));
+        let searches = SearchProviders::new(vec![Box::new(TestSearch {
+            calls: Rc::clone(&search_calls),
+        })]);
+        let session = run_session_with_services(
+            &providers,
+            &searches,
+            Cursor::new(framed(&[
+                r#"{"version":1,"type":"request","request_id":"req_auto_search","method":"conversation.send","payload":{"provider_id":"model","input":{"text":"What changed?"},"search":{}}}"#,
+            ])),
+        );
+        assert_eq!(session.result, Ok(()));
+        assert!(search_calls.borrow().is_empty());
+        assert_eq!(
+            calls.borrow().as_slice(),
+            &["send:What changed?+native-search"]
+        );
     }
 
     #[test]
