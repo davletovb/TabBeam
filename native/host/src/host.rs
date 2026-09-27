@@ -621,7 +621,11 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                             conversation_id: conversation_id.clone(),
                             context,
                             model,
-                            search_results: None,
+                            search_results: if search_requested {
+                                Some(Vec::new())
+                            } else {
+                                None
+                            },
                         };
                         match search {
                             Some(options) => match provider.preflight(&request) {
