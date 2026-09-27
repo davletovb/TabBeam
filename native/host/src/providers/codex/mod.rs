@@ -383,7 +383,7 @@ impl Provider for Codex {
                 &request.text,
             )
         });
-        let mut prompt = if request.context.is_some() || !request.search_results.is_empty() {
+        let mut prompt = if request.context.is_some() || request.search_results.is_some() {
             provider_prompt_with_sources(
                 &[],
                 request.context.as_ref(),
