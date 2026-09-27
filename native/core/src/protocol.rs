@@ -19,9 +19,9 @@ pub enum ErrorCode {
     InternalError,
 }
 
-/// A normalized source attached to an answer. Search backends fill this
-/// provider-neutral shape; model providers receive the same data and the host
-/// emits it through `response.source`.
+/// A normalized source attached to an answer. Provider adapters fill this
+/// provider-neutral shape from their native search results, and the host emits
+/// it through `response.source`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Source {
     pub id: String,
