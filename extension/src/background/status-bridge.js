@@ -3,6 +3,7 @@ import { isErrorCode } from "../shared/outcomes.js";
 import { PROVIDER_STATUS_TIMEOUT_MS } from "../shared/provider-status.js";
 import { suggestedModels } from "../shared/models.js";
 import { DEFAULT_PROVIDER_ID } from "../shared/providers.js";
+import { HOST_PROTOCOL_MISMATCH } from "./native-connection.js";
 
 /** @typedef {import("../shared/provider-status.js").ErrorBody} ErrorBody */
 /** @typedef {import("../shared/provider-status.js").ProviderStatus} ProviderStatus */
@@ -26,12 +27,7 @@ export const CAPABILITY_KEYS = Object.freeze([
  * The failure for a host whose answer doesn't follow the protocol this
  * extension speaks: an older or newer companion app.
  */
-export const HOST_OUT_OF_DATE = Object.freeze({
-  code: "HOST_UNAVAILABLE",
-  reason: "HOST_PROTOCOL_MISMATCH",
-  message: "Pervue's companion app needs an update. Update it, then try again.",
-  retryable: false
-});
+export const HOST_OUT_OF_DATE = HOST_PROTOCOL_MISMATCH;
 
 /**
  * The failure for a host that doesn't answer a status check in time.

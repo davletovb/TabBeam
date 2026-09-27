@@ -30,6 +30,7 @@ function worker({ connectFails = false } = {}) {
   /** @type {string | null} */
   let lastError = null;
   const manager = createNativeConnectionManager({
+    requireHandshake: false, // Synthetic host responses are injected directly.
     connectNative() {
       if (connectFails) {
         throw new Error("mock connectNative failure");
@@ -228,6 +229,7 @@ function hostEvent(requestId, event, payload = {}) {
   // A connection that can't open answers at once, with no timer.
   const failed = await checkProviderStatus({
     manager: createNativeConnectionManager({
+      requireHandshake: false,
       connectNative() {
         throw new Error("mock connectNative failure");
       },

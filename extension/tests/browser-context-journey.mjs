@@ -92,6 +92,7 @@ function harness({ tab = webTab, pageReply = { ok: true, text: "Readable article
     cancel(id) { timers.delete(id); }
   });
   const manager = createNativeConnectionManager({
+    requireHandshake: false, // This mock exercises context routing, not host startup.
     connectNative() { const port = new MockPort("native"); nativePorts.push(port); return port; },
     reportError() { throw new Error("unexpected callback failure"); }
   });
@@ -192,7 +193,7 @@ function harness({ tab = webTab, pageReply = { ok: true, text: "Readable article
   console.error = (...values) => { logs.push(values.map(String).join(" ")); };
   try {
     const port = new MockPort("native");
-    const manager = createNativeConnectionManager({ connectNative: () => port });
+    const manager = createNativeConnectionManager({ connectNative: () => port, requireHandshake: false });
     manager.send({ request_id: "req_private", type: "request" }, {
       onEvent() { throw new Error("private page text"); }
     });

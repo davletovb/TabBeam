@@ -76,6 +76,12 @@ const createRequestId = () => `req_forget_${++nextId}`;
   manager.sent[2].owner.onDisconnect({ message: null });
   assert.equal(await lost, "unreachable");
 
+  for (const reason of ["HOST_PROTOCOL_MISMATCH", "HOST_READY_TIMEOUT"]) {
+    const pending = forgetProviderSession({ manager, providerId: "codex", conversationId: "conv_3", createRequestId });
+    manager.answer(manager.sent.length - 1, "response.failed", { error: { code: "HOST_UNAVAILABLE", reason } });
+    assert.equal(await pending, "unreachable");
+  }
+
   /** @type {(() => void)[]} */
   const timers = [];
   const silent = forgetProviderSession({
@@ -91,7 +97,7 @@ const createRequestId = () => `req_forget_${++nextId}`;
   });
   timers[0]();
   assert.equal(await silent, "unreachable");
-  assert.deepEqual(manager.forgotten, [manager.sent[3].request.request_id], "a timed-out route is dropped");
+  assert.deepEqual(manager.forgotten, [manager.sent.at(-1)?.request.request_id], "a timed-out route is dropped");
 }
 
 // ---------- Deleting a conversation forgets its provider session ----------

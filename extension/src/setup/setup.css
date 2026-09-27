@@ -332,6 +332,18 @@ body {
   color: var(--success);
 }
 
+.manual-setup {
+  margin-top: 20px;
+  padding: 16px 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.manual-setup summary { cursor: pointer; font-weight: 650; }
+.manual-setup p { margin-top: 12px; color: var(--text-2); line-height: 1.6; }
+.manual-setup code { overflow-wrap: anywhere; }
+
 .note {
   display: flex;
   align-items: flex-start;

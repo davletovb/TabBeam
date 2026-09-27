@@ -30,6 +30,7 @@ interface PervueChrome {
     >;
     getURL(path: string): string;
     getManifest(): { version: string };
+    getPlatformInfo(): Promise<{os: string; arch: string}>;
     sendMessage(message: any): Promise<any>;
     connect(connectInfo: { name: string }): PervueChromeRuntimePort;
     connectNative(hostName: string): PervueChromePort;
