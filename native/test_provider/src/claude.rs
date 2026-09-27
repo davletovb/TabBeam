@@ -98,13 +98,24 @@ fn print_mode(dir: &Path, args: &[String], behavior: &str) -> io::Result<ExitCod
         || !has_pair(args, "--input-format", "stream-json")
         || !args.iter().any(|arg| arg == "--verbose")
         || !has_pair(args, "--permission-mode", "default")
-        || !has_pair(args, "--tools", "")
         || !args.iter().any(|arg| arg == "--strict-mcp-config")
         || !has_pair(args, "--disallowedTools", "mcp__*")
     {
         let _ = writeln!(io::stderr(), "fake claude: expected safe stream-json flags");
         return Ok(ExitCode::from(2));
     }
+
+    let tools = args
+        .iter()
+        .position(|arg| arg == "--tools")
+        .and_then(|index| args.get(index + 1))
+        .map(String::as_str)
+        .unwrap_or_default();
+    if !matches!(tools, "" | "WebSearch,WebFetch") {
+        let _ = writeln!(io::stderr(), "fake claude: unexpected tool allowlist");
+        return Ok(ExitCode::from(2));
+    }
+    let native_search = tools == "WebSearch,WebFetch";
 
     let mut input = String::new();
     io::stdin().read_to_string(&mut input)?;
@@ -193,6 +204,31 @@ fn print_mode(dir: &Path, args: &[String], behavior: &str) -> io::Result<ExitCod
             return Ok(ExitCode::SUCCESS);
         }
         _ => {}
+    }
+
+    if native_search {
+        emit(
+            &mut out,
+            &json!({
+                "type":"stream_event",
+                "session_id":result_session,
+                "event":{
+                    "type":"content_block_start",
+                    "index":1,
+                    "content_block":{
+                        "type":"web_search_tool_result",
+                        "tool_use_id":"srvtoolu_test",
+                        "content":[{
+                            "type":"web_search_result",
+                            "title":"Claude search result",
+                            "url":"https://example.com/claude-search",
+                            "page_age":"today",
+                            "encrypted_content":"opaque"
+                        }]
+                    }
+                }
+            }),
+        )?;
     }
 
     let answer = format!("You asked: {prompt}");
