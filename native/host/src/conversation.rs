@@ -1,7 +1,7 @@
 //! Provider-neutral conversation framing for adapters.
 
-use serde::{Deserialize, Serialize};
 use pervue_core::protocol::Source;
+use serde::{Deserialize, Serialize};
 
 /// Only actual dialogue is sent to a provider; system instructions and page
 /// context are never reconstructed from saved conversation history.
