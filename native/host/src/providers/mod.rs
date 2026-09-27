@@ -42,9 +42,12 @@ pub struct SendRequest {
     /// The model to answer with, already a valid model ID; `None` for the
     /// provider's default. Only sent to adapters with `model_selection`.
     pub model: Option<String>,
-    /// Normalized web sources retrieved before this turn. `None` means this
-    /// is not a search turn; `Some([])` preserves a search that returned no
-    /// usable sources.
+    /// Whether the selected AI provider should perform its own authenticated
+    /// native web search during this same turn.
+    pub native_search: bool,
+    /// Normalized web sources retrieved by an independent search backend
+    /// before this turn. `None` means no independent retrieval;
+    /// `Some([])` preserves a retrieval that returned no usable sources.
     pub search_results: Option<Vec<Source>>,
 }
 
