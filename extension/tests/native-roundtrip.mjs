@@ -225,6 +225,7 @@ function question(text) {
 let native;
 let nextId = 0;
 let providerId = "fake";
+let searchNext = false;
 /** @type {Record<string, any>} */
 const savedConversations = {};
 const store = createConversationStore({
@@ -286,7 +287,7 @@ bindAskForm(/** @type {any} */ (elements), {
     };
     return /** @type {any} */ (ui);
   }
-});
+}, undefined, { getSearch: () => searchNext });
 
 /** @param {() => boolean} condition */
 async function until(condition) {
@@ -394,6 +395,24 @@ try {
   assert.equal(events.at(-1).request_id, "req_roundtrip_5");
   assert.equal(native.messagesSent, count + 1);
   assert.equal(elements.status.getAttribute("data-state"), "done");
+
+  // TST-14: a web search the provider can't do fails with the host's own
+  // explanation, and the host keeps answering afterwards.
+  events.length = 0;
+  searchNext = true;
+  ask("Search the web for this");
+  await until(() => events.at(-1)?.event === "response.failed");
+  searchNext = false;
+  assert.equal(events.at(-1).request_id, "req_roundtrip_6");
+  assert.equal(events.at(-1).payload.error.code, "SEARCH_FAILED");
+  assert.equal(events.at(-1).payload.error.reason, "NATIVE_SEARCH_UNSUPPORTED");
+  assert.equal(elements.status.getAttribute("data-kind"), "search-failed");
+  assert.equal(elements.status.textContent, "The selected AI provider does not support native web search.");
+  assert.ok(events.every((event) => event.event !== "response.source" && event.event !== "response.delta"));
+  events.length = 0;
+  ask("Still answering?");
+  await until(() => events.at(-1)?.event === "response.completed");
+  assert.equal(events.at(-1).request_id, "req_roundtrip_7");
 
   // EXT-04: provider state through the same host. The fake scaffold is
   // ready, Codex isn't installed here, and an unknown provider fails.

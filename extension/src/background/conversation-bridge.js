@@ -3,6 +3,7 @@ import {
   copyContext, createRequestId, failed, hostDisconnectError, isValidContext
 } from "./ask-bridge.js";
 import { isModelId } from "../shared/models.js";
+import { createSourceSet, sourceFromEvent } from "../shared/sources.js";
 import { DEFAULT_PROVIDER_ID, isProviderId } from "../shared/providers.js";
 import { RequestTooLargeError } from "./native-connection.js";
 import { dialogueHistory, CONVERSATION_ID_PATTERN } from "../shared/conversation-model.js";
@@ -23,6 +24,15 @@ const INVALID_PROVIDER = Object.freeze({
 const INVALID_MODEL = Object.freeze({
   code: "INVALID_REQUEST", reason: "INVALID_PAYLOAD",
   message: "Choose a valid model on the Provider & setup page.", retryable: false
+});
+const INVALID_SEARCH = Object.freeze({
+  code: "INVALID_REQUEST", reason: "INVALID_PAYLOAD",
+  message: "Pervue couldn't send that question. Try again.", retryable: false
+});
+const SEARCH_WITH_CONTEXT = Object.freeze({
+  code: "SEARCH_FAILED", reason: "SEARCH_WITH_CONTEXT_UNSUPPORTED",
+  message: "Pervue won't combine web search with browser context yet. Choose No context or turn off Search.",
+  retryable: false
 });
 const STORAGE_FAILED = Object.freeze({
   code: "INTERNAL_ERROR", reason: "CONVERSATION_STORE_FAILED",
@@ -56,8 +66,8 @@ export function serveConversationAskPort(port, options) {
   /** @type {string | null} */
   let assistantId = null;
   let answer = "";
-  /** @type {any[]} */
-  const sources = [];
+  // Only well-formed, new sources, up to the per-answer limit (SEC-05).
+  const sources = createSourceSet();
   let work = Promise.resolve();
 
   port.onDisconnect.addListener(() => { open = false; });
@@ -145,7 +155,7 @@ export function serveConversationAskPort(port, options) {
     if (recordFailure) options.onFailure?.(error);
     if (nativePending && requestId) sendCancel(requestId);
     if (conversationId && assistantId) {
-      try { await store.finish(conversationId, assistantId, answer, sources, error); }
+      try { await store.finish(conversationId, assistantId, answer, sources.list(), error); }
       catch { error = STORAGE_FAILED; }
     }
     if (conversationId && !nativePending) inFlight.delete(conversationId);
@@ -173,7 +183,8 @@ export function serveConversationAskPort(port, options) {
           providerId: selectedProvider,
           providerSessionId,
           text: question,
-          context
+          context,
+          search
         });
         conversationId = created.id;
         assistantId = created.assistantId;
@@ -191,8 +202,14 @@ export function serveConversationAskPort(port, options) {
     if (event?.event === "response.delta" && typeof event.payload?.text === "string") {
       answer += event.payload.text;
     }
-    if (event?.event === "response.source" && typeof event.payload?.source_id === "string") {
-      sources.push({ id: event.payload.source_id, data: event.payload.data });
+    if (event?.event === "response.source") {
+      // A page only ever sees the checked copy; a malformed or repeated
+      // source is dropped.
+      const source = sourceFromEvent(event.payload);
+      if (sources.add(source) && source) {
+        forward({ ...event, payload: { source_id: source.id, data: source } });
+      }
+      return;
     }
     if (ASK_TERMINAL_EVENTS.has(event?.event)) {
       if (
@@ -204,7 +221,7 @@ export function serveConversationAskPort(port, options) {
         options.onFailure?.(event.payload?.error);
       }
       if (conversationId && assistantId) {
-        await store.finish(conversationId, assistantId, answer, sources,
+        await store.finish(conversationId, assistantId, answer, sources.list(),
           event.event === "response.failed" ? event.payload?.error ?? HOST_START_FAILED : undefined);
         inFlight.delete(conversationId);
       }
@@ -217,6 +234,7 @@ export function serveConversationAskPort(port, options) {
   let question = "";
   /** @type {any} */
   let context;
+  let search = false;
   let selectedProvider = providerId;
 
   port.onMessage.addListener((/** @type {any} */ message) => {
@@ -255,6 +273,17 @@ export function serveConversationAskPort(port, options) {
     const model = message.model;
     if (model !== undefined && !isModelId(model)) {
       forward(failed(null, INVALID_MODEL));
+      return;
+    }
+    if (message.search !== undefined && typeof message.search !== "boolean") {
+      forward(failed(null, INVALID_SEARCH));
+      return;
+    }
+    search = message.search === true;
+    // Refused here too, so nothing is saved for a question the host would
+    // refuse.
+    if (search && context !== undefined) {
+      forward(failed(null, SEARCH_WITH_CONTEXT));
       return;
     }
     const requestedId = message.conversation_id;
@@ -298,8 +327,8 @@ export function serveConversationAskPort(port, options) {
           history = dialogueHistory(stored);
           inFlight.add(requestedId);
           ({ assistantId } = retry
-            ? await store.retry(requestedId, question, context)
-            : await store.begin(requestedId, question, context));
+            ? await store.retry(requestedId, question, context, search)
+            : await store.begin(requestedId, question, context, search));
           if (cancelRequested) {
             await store.discardPending(requestedId, assistantId, retry);
             inFlight.delete(requestedId);
@@ -315,7 +344,8 @@ export function serveConversationAskPort(port, options) {
             ...(sessionId ? { conversation_id: sessionId } : {}),
             input: { text: question, ...(history.length ? { history } : {}) },
             ...(context === undefined ? {} : { context: copyContext(context) }),
-            ...(model === undefined ? {} : { model })
+            ...(model === undefined ? {} : { model }),
+            ...(search ? { search: {} } : {})
           }
         };
         if (cancelRequested) {

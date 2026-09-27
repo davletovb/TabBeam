@@ -236,6 +236,22 @@ body {
   height: 38px;
 }
 
+.composer .search-toggle {
+  align-self: flex-end;
+  height: 32px;
+  margin-bottom: 3px;
+}
+
+/* ---------- Sources ---------- */
+
+.answer-sources {
+  margin-top: 14px;
+}
+
+.message-sources {
+  margin-top: 6px;
+}
+
 .dock .status {
   justify-content: center;
   text-align: center;

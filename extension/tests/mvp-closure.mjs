@@ -233,6 +233,12 @@ class FakeElement {
   assert.ok(setup.includes("./setup.js"));
   // Provider and model are chosen on the setup page, not in the popup or full view.
   for (const markup of [popup, fullpage]) assert.ok(!markup.includes('id="provider-select"'));
+  // EXT-16/EXT-17: both views can search the web and show an answer's
+  // sources as they arrive, after the typing indicator it keys off.
+  for (const markup of [popup, fullpage]) {
+    assert.ok(/<button id="search-toggle"[^>]*type="button"[^>]*aria-pressed="false"/.test(markup));
+    assert.ok(/class="typing"[^\n]*\n\s*<section id="answer-sources" class="sources answer-sources" hidden>/.test(markup));
+  }
   assert.ok(setup.includes('id="provider-options"'));
   assert.ok(setup.includes('id="model-select"'));
 

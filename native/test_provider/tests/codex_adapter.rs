@@ -263,6 +263,77 @@ fn native_search_uses_codex_subscription_search_and_emits_sources() {
     );
 }
 
+/// SEC-05: cited links are untrusted text. They reach the browser as
+/// bounded plain text, and nothing from them ever becomes part of a command
+/// line or a later prompt.
+#[test]
+fn hostile_cited_links_are_plain_text_and_never_reach_a_command_line() {
+    let codex = FakeCodex::install("search-hostile", "signed-in");
+    let adapter = context_adapter(&codex);
+    let first = visible(&run_to_end(
+        adapter
+            .send(SendRequest {
+                native_search: true,
+                ..ask("Search this")
+            })
+            .as_mut(),
+    ));
+    assert_eq!(first.last(), Some(&Update::Completed));
+    let sources: Vec<_> = first
+        .iter()
+        .filter_map(|update| match update {
+            Update::Source(source) => Some(source.clone()),
+            _ => None,
+        })
+        .collect();
+    // The script link and the URL with credentials are dropped; the bare
+    // repeat of the cited URL collapses into the first.
+    assert_eq!(sources.len(), 1, "{sources:?}");
+    assert_eq!(sources[0].id, "src_codex_1");
+    assert_eq!(sources[0].url, "https://example.com/codex-hostile");
+    assert_eq!(sources[0].title, "--config=evil $(touch pwned) bold");
+
+    let Update::ConversationCreated(conversation) = first[0].clone() else {
+        panic!("missing conversation: {first:?}");
+    };
+    let second = visible(&run_to_end(
+        adapter
+            .send(SendRequest {
+                conversation_id: Some(conversation),
+                ..ask("Plain follow up")
+            })
+            .as_mut(),
+    ));
+    assert_eq!(second.last(), Some(&Update::Completed));
+
+    let invocations = codex.invocations();
+    assert_eq!(
+        invocations
+            .iter()
+            .filter(|line| line.starts_with("exec "))
+            .count(),
+        2
+    );
+    for line in &invocations {
+        for fragment in [
+            "--config=evil",
+            "$(",
+            "pwned",
+            "javascript:",
+            "evil.example",
+        ] {
+            assert!(
+                !line.contains(fragment),
+                "{fragment:?} reached a command line: {line}"
+            );
+        }
+    }
+    assert_eq!(
+        codex.prompts().last().map(String::as_str),
+        Some("Plain follow up")
+    );
+}
+
 #[test]
 fn native_search_without_cited_urls_fails_instead_of_silently_completing() {
     let codex = FakeCodex::install("search-no-links", "signed-in");

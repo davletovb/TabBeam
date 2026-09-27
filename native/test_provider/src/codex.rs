@@ -320,7 +320,13 @@ fn exec(dir: &Path, args: &[String], behavior: &str) -> io::Result<ExitCode> {
             emit(&mut out, &agent_message("item_2", &text))?;
         }
         _ => {
-            let answer = if native_search && behavior != "search-no-links" {
+            let answer = if native_search && behavior == "search-hostile" {
+                // Cited links whose text tries to look like command-line
+                // options, shell, or markup (SEC-05).
+                format!(
+                    "You asked: {prompt}\n\n[--config=evil $(touch pwned) <b>bold</b>](https://example.com/codex-hostile) [run](javascript:alert(1)) https://user@evil.example/ https://example.com/codex-hostile"
+                )
+            } else if native_search && behavior != "search-no-links" {
                 format!(
                     "You asked: {prompt}\n\n[Codex search result](https://example.com/codex-search)"
                 )

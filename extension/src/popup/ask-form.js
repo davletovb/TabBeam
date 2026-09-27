@@ -3,6 +3,7 @@ import { MAX_NATIVE_MESSAGE_BYTES, utf8ByteLength } from "../shared/limits.js";
 import { copyWithFeedback } from "../shared/clipboard.js";
 import { describeFailure } from "../shared/outcomes.js";
 import { recordDuration } from "../shared/performance.js";
+import { createSourceSet, sourceFromEvent } from "../shared/sources.js";
 
 /** @typedef {import("../shared/ask-port.js").AskPort} AskPort */
 
@@ -22,6 +23,7 @@ export const WORKER_LOST = "Pervue stopped unexpectedly. Reopen it, then try aga
  *   status: HTMLElement,
  *   answer: HTMLElement,
  *   history?: HTMLElement,
+ *   sources?: HTMLElement,
  *   cancel?: HTMLButtonElement,
  *   retry?: HTMLButtonElement
  * }} AskElements
@@ -48,6 +50,12 @@ export const WORKER_LOST = "Pervue stopped unexpectedly. Reopen it, then try aga
  * a conversation deleted from under them) is `notice`; `idle` is only the
  * resting hint.
  *
+ * A question can ask the provider to search the web (`getSearch`, EXT-16).
+ * The sources a search turn finds are shown in `sources` as they arrive and
+ * with the saved answer afterwards (`renderSources`), checked again here
+ * because they're untrusted (SEC-05). A retry searches again only if the
+ * question it repeats did.
+ *
  * @param {AskElements} elements
  * @param {{connect(connectInfo: {name: string}): AskPort, sendMessage?(message: any): Promise<any>}} runtime
  * @param {{getContext(): any | null, isPending(): boolean, consume?(context: any): void}} [contextControls]
@@ -57,6 +65,8 @@ export const WORKER_LOST = "Pervue stopped unexpectedly. Reopen it, then try aga
  *   onConversationLoaded?(conversation: any | null): void,
  *   getProviderId?(): string,
  *   getModel?(providerId: string | undefined): string | undefined,
+ *   getSearch?(): boolean,
+ *   renderSources?(container: HTMLElement, sources: import("../shared/sources.js").Source[]): void,
  *   onSaved?(): void,
  *   onRequestStarted?(): void,
  *   onRequestEnded?(): void,
@@ -71,6 +81,10 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
   const history = elements.history;
   const cancel = elements.cancel;
   const retry = elements.retry;
+  const liveSources = elements.sources;
+  // The sources of the answer in flight.
+  const sources = createSourceSet();
+  let submittedSearch = false;
   /** @type {string | null} */
   let conversationId = null;
   let viewGeneration = 0;
@@ -80,7 +94,14 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
   let submittedProvider;
   /** @type {any} */
   let submittedContext = null;
-  /** @type {{text: string, conversationId: string | null} | null} */
+  /**
+   * A question as it was asked. Retry repeats its search mode. A search
+   * question is retried without page context, as it was asked (the two never
+   * combine); any other question re-reads the current context choice, so
+   * context removed since is never sent again.
+   * @typedef {{text: string, conversationId: string | null, search: boolean}} Attempt
+   */
+  /** @type {Attempt | null} */
   let lastAttempt = null;
   let requestStartedAt = 0;
   let firstChunkRecorded = false;
@@ -108,6 +129,11 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
     answer.hidden = true;
     answerText = "";
     reveal = options.renderAnswer ? options.renderAnswer(answer, "") : null;
+    sources.clear();
+    if (liveSources) {
+      liveSources.replaceChildren();
+      liveSources.hidden = true;
+    }
   }
 
   function clearRetry() {
@@ -155,11 +181,18 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
   /** @param {any[]} messages */
   function renderHistory(messages) {
     if (!history) return;
-    history.replaceChildren(...messages.map((message) => bubble(message.role, message.text, message.status)));
+    history.replaceChildren(...messages.map((message) => {
+      const item = bubble(message.role, message.text, message.status, message.sources);
+      if (message.role === "user" && message.search === true) item.setAttribute("data-search", "true");
+      return item;
+    }));
   }
 
-  /** @param {string} role @param {string} text @param {string} state */
-  function bubble(role, text, state) {
+  /**
+   * @param {string} role @param {string} text @param {string} state
+   * @param {unknown} [saved] a complete answer's sources
+   */
+  function bubble(role, text, state, saved) {
     const owner = history?.ownerDocument ?? document;
     const item = owner.createElement("article");
     item.className = `message message-${role}`;
@@ -175,6 +208,12 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
       body.textContent = text || (state === "pending" ? "Answering…" : "No answer.");
     }
     item.append(label, body);
+    if (role === "assistant" && state === "complete" && Array.isArray(saved) && saved.length && options.renderSources) {
+      const list = owner.createElement("section");
+      list.className = "sources message-sources";
+      options.renderSources(list, /** @type {any[]} */ (saved));
+      if (!list.hidden) item.append(list);
+    }
     if (role === "assistant" && state === "complete" && text) item.append(copyAction(owner, text));
     return item;
   }
@@ -260,14 +299,15 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
   hideControl(retry);
   input.focus();
 
-  /** @param {{text: string, conversationId: string | null} | null} [attempt] */
+  /** @param {Attempt | null} [attempt] */
   function ask(attempt = null) {
     // Duplicate-submit guard: a question in flight blocks every other submit
     // path (Enter, the button, requestSubmit), not just the button.
     if (active !== null || loadPending) {
       return;
     }
-    if (contextControls?.isPending()) {
+    // A search retry doesn't use what's being captured now.
+    if (!attempt?.search && contextControls?.isPending()) {
       setStatus("Wait for context capture to finish.", "notice");
       return;
     }
@@ -298,15 +338,23 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
     submittedText = text;
     submittedProvider = options.getProviderId?.();
     const submittedModel = options.getModel?.(submittedProvider);
-    submittedContext = contextControls?.getContext();
-    lastAttempt = { text, conversationId };
+    // A retry repeats the question's search mode (see Attempt).
+    submittedSearch = attempt ? attempt.search : options.getSearch?.() === true;
+    submittedContext = attempt?.search ? null : contextControls?.getContext();
+    lastAttempt = { text, conversationId, search: submittedSearch };
     requestStartedAt = globalThis.performance?.now?.() ?? 0;
     firstChunkRecorded = false;
     options.onRequestStarted?.();
     // An answer still typing out when the next question is asked would
     // vanish with the live answer: keep it in the thread as a finished turn.
-    if (history && revealing && answerText) history.append(bubble("assistant", answerText, "complete"));
-    if (history && !attempt) history.append(bubble("user", text, "pending"));
+    if (history && revealing && answerText) {
+      history.append(bubble("assistant", answerText, "complete", sources.list()));
+    }
+    if (history && !attempt) {
+      const item = bubble("user", text, "pending");
+      if (submittedSearch) item.setAttribute("data-search", "true");
+      history.append(item);
+    }
     clearAnswer();
     setBusy(true);
     if (cancel) {
@@ -334,7 +382,8 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
         ...(submittedModel ? { model: submittedModel } : {}),
         ...(history && conversationId ? { conversation_id: conversationId } : {}),
         ...(attempt && conversationId ? { retry: true } : {}),
-        ...(context ? { context } : {})
+        ...(context ? { context } : {}),
+        ...(submittedSearch ? { search: true } : {})
       });
     } catch {
       // No events will follow a question the port couldn't carry, such as
@@ -357,14 +406,22 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
         }
         break;
       case "response.started":
-        setStatus("Answering…", "pending");
+        setStatus(submittedSearch ? "Searching the web…" : "Answering…", "pending");
         break;
+      case "response.source": {
+        const source = sourceFromEvent(event.payload);
+        if (sources.add(source) && liveSources && options.renderSources) {
+          options.renderSources(liveSources, sources.list());
+        }
+        break;
+      }
       case "response.delta":
         if (typeof event.payload?.text === "string") {
           if (!firstChunkRecorded) {
             firstChunkRecorded = true;
             const endedAt = globalThis.performance?.now?.() ?? requestStartedAt;
             recordDuration("first_response_chunk", requestStartedAt, endedAt);
+            if (submittedSearch) setStatus("Answering…", "pending");
           }
           answer.hidden = false;
           if (options.renderAnswer) {
@@ -408,7 +465,6 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
         break;
       }
       default:
-        // Sources are persisted by the background worker for later display.
         break;
     }
   }

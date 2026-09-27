@@ -684,6 +684,218 @@ button {
   animation: caret 1s steps(1) infinite;
 }
 
+/* ---------- Sources (EXT-16, EXT-17) ---------- */
+
+/* A question asked with web search. */
+.message-user[data-search="true"] {
+  align-items: flex-end;
+}
+
+.message-user[data-search="true"]::after {
+  content: "Searched the web";
+  color: var(--text-3);
+  font-size: 11.5px;
+  font-weight: 550;
+}
+
+.sources[hidden] { display: none; }
+
+.sources {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.sources-title {
+  color: var(--text-3);
+  font-size: 11.5px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.source-chips,
+.source-cards {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.source-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.source-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 190px;
+  height: 26px;
+  padding: 0 9px 0 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 560;
+  text-decoration: none;
+  transition: border-color var(--fast) var(--ease), background var(--fast) var(--ease), color var(--fast) var(--ease);
+}
+
+.source-chip:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.source-more {
+  padding: 0 10px;
+  cursor: pointer;
+}
+
+.source-chip .source-host {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-number {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: var(--radius-full);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.source-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr));
+  gap: 8px;
+}
+
+.source-card {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  transition: border-color var(--fast) var(--ease), box-shadow var(--fast) var(--ease);
+}
+
+.source-card:hover,
+.source-card:focus-within {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-sm);
+}
+
+.source-link {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--text);
+  font-size: 13.5px;
+  font-weight: 620;
+  line-height: 1.35;
+  text-decoration: none;
+}
+
+.source-link:hover .source-title {
+  color: var(--accent-text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.source-link .source-number { margin-top: 1px; }
+
+.source-title {
+  display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+/* One line: site · publisher · age, cut short with an ellipsis. */
+.source-meta {
+  padding-left: 26px;
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-meta > span + span::before {
+  content: "·";
+  margin: 0 6px;
+}
+
+.source-snippet {
+  display: -webkit-box;
+  padding-left: 26px;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+/* The web search switch in the composer. */
+.search-toggle {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 560;
+  white-space: nowrap;
+  transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease), color var(--fast) var(--ease);
+}
+
+.search-toggle:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.search-toggle[aria-pressed="true"],
+.search-toggle[aria-pressed="true"]:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.search-toggle[aria-pressed="true"]:hover:not(:disabled) {
+  background: var(--accent-soft-hover);
+}
+
+.search-toggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* ---------- Markdown ---------- */
 
 .markdown {

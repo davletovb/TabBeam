@@ -83,6 +83,7 @@
             <section id="conversation-history" class="conversation-history" aria-label="Conversation history" aria-live="polite"></section>
             <section id="answer" class="answer markdown" aria-label="Answer in progress" aria-busy="false" hidden></section>
             <div class="typing" aria-hidden="true">Thinking<span><i></i><i></i><i></i></span></div>
+            <section id="answer-sources" class="sources answer-sources" hidden></section>
           </div>
         </div>
 
@@ -102,6 +103,10 @@
             <form id="ask-form" class="composer">
               <label class="sr-only" for="ask-input">Ask a follow-up</label>
               <textarea id="ask-input" rows="1" placeholder="Ask anything…"></textarea>
+              <button id="search-toggle" class="search-toggle" type="button" aria-pressed="false">
+                <svg class="icon icon-xs" aria-hidden="true"><use href="../shared/icons.svg#globe"/></svg>
+                <span>Web search</span>
+              </button>
               <button id="ask-submit" class="send" type="submit" aria-disabled="false" aria-label="Ask" title="Ask (Enter)">
                 <svg class="icon" aria-hidden="true"><use href="../shared/icons.svg#arrow-up"/></svg>
               </button>

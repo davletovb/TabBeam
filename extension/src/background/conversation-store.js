@@ -3,6 +3,7 @@ import {
   conversationTitle, publicConversation
 } from "../shared/conversation-model.js";
 import { boundedUtf8Text, utf8ByteLength } from "../shared/limits.js";
+import { MAX_SOURCES_PER_ANSWER } from "../shared/sources.js";
 
 export const CONVERSATIONS_KEY = "pervue.conversations";
 const RECORD_PREFIX = "pervue.conversation.";
@@ -27,7 +28,9 @@ function boundRecord(conversation) {
   for (const message of conversation.messages) {
     message.text = storedText(message.text);
     if (message.sources) {
-      message.sources = message.sources.slice(-16).map((/** @type {any} */ source) =>
+      // The first ones, in order: their numbers are how the answer's
+      // sources are told apart.
+      message.sources = message.sources.slice(0, MAX_SOURCES_PER_ANSWER).map((/** @type {any} */ source) =>
         size(source) <= 16 * 1024 ? source : { id: source.id, truncated: true });
     }
   }
@@ -149,8 +152,8 @@ export function createConversationStore(storage, newId = () => crypto.randomUUID
       await queue;
       return structuredClone(await readRecord(await readIndex(), id));
     },
-    /** @param {{providerId: string, providerSessionId: string, text: string, context?: any}} details */
-    create({ providerId, providerSessionId, text, context }) {
+    /** @param {{providerId: string, providerSessionId: string, text: string, context?: any, search?: boolean}} details */
+    create({ providerId, providerSessionId, text, context, search = false }) {
       return serialized(async (index) => {
         const id = "conv_" + newId();
         const timestamp = now();
@@ -160,7 +163,7 @@ export function createConversationStore(storage, newId = () => crypto.randomUUID
           title: conversationTitle(text), provider_id: providerId,
           provider_session_id: providerSessionId,
           messages: [
-            { id: "msg_" + newId(), role: "user", text, timestamp, status: "complete" },
+            { id: "msg_" + newId(), role: "user", text, timestamp, status: "complete", ...(search ? { search: true } : {}) },
             { id: assistantId, role: "assistant", text: "", timestamp, status: "pending" }
           ],
           sources: [],
@@ -170,8 +173,8 @@ export function createConversationStore(storage, newId = () => crypto.randomUUID
         return { id, assistantId };
       });
     },
-    /** @param {string} id @param {string} text @param {any} [context] */
-    begin(id, text, context) {
+    /** @param {string} id @param {string} text @param {any} [context] @param {boolean} [search] */
+    begin(id, text, context, search = false) {
       return serialized(async (index) => {
         const conversation = await readRecord(index, id);
         const timestamp = now();
@@ -180,7 +183,7 @@ export function createConversationStore(storage, newId = () => crypto.randomUUID
         }
         const assistantId = "msg_" + newId();
         conversation.messages.push(
-          { id: "msg_" + newId(), role: "user", text, timestamp, status: "complete" },
+          { id: "msg_" + newId(), role: "user", text, timestamp, status: "complete", ...(search ? { search: true } : {}) },
           { id: assistantId, role: "assistant", text: "", timestamp, status: "pending" }
         );
         if (context) conversation.page_context_metadata = contextMetadata(context);
@@ -190,8 +193,8 @@ export function createConversationStore(storage, newId = () => crypto.randomUUID
       });
     },
     /** Retry the most recent failed pair without appending a duplicate user turn. */
-    /** @param {string} id @param {string} text @param {any} [context] */
-    retry(id, text, context) {
+    /** @param {string} id @param {string} text @param {any} [context] @param {boolean} [search] */
+    retry(id, text, context, search = false) {
       return serialized(async (index) => {
         const conversation = await readRecord(index, id);
         const user = conversation.messages.at(-2);
@@ -206,6 +209,8 @@ export function createConversationStore(storage, newId = () => crypto.randomUUID
         }
         const timestamp = now();
         user.timestamp = timestamp;
+        if (search) user.search = true;
+        else delete user.search;
         assistant.text = "";
         assistant.timestamp = timestamp;
         assistant.status = "pending";
@@ -265,7 +270,9 @@ export function createConversationStore(storage, newId = () => crypto.randomUUID
         message.text = text;
         message.status = error ? "failed" : "complete";
         if (error) message.provider_metadata = { error: { code: error.code, reason: error.reason } };
-        if (sources.length) {
+        // Only a complete answer keeps its sources: a failed or stopped one
+        // mustn't look grounded.
+        if (sources.length && !error) {
           message.sources = sources;
           conversation.sources.push(...sources);
         }

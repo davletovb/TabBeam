@@ -119,6 +119,7 @@
           <section id="conversation-history" class="conversation-history" aria-label="Conversation history" aria-live="polite"></section>
           <section id="answer" class="answer markdown" aria-label="Answer" aria-busy="false" hidden></section>
           <div class="typing" aria-hidden="true">Thinking<span><i></i><i></i><i></i></span></div>
+          <section id="answer-sources" class="sources answer-sources" hidden></section>
         </div>
       </div>
 
@@ -141,21 +142,27 @@
           <textarea id="ask-input" rows="1" placeholder="Ask anything…"></textarea>
 
           <div class="composer-bar">
-            <fieldset class="context-choices">
-              <legend class="sr-only">Context for this question</legend>
-              <button id="context-none" class="chip" type="button" title="Don't share anything from the page">
-                <svg class="icon icon-xs" aria-hidden="true"><use href="../shared/icons.svg#none"/></svg>
-                <span>No context</span>
+            <div class="composer-tools">
+              <fieldset class="context-choices">
+                <legend class="sr-only">Context for this question</legend>
+                <button id="context-none" class="chip" type="button" title="Don't share anything from the page">
+                  <svg class="icon icon-xs" aria-hidden="true"><use href="../shared/icons.svg#none"/></svg>
+                  <span>No context</span>
+                </button>
+                <button id="context-selection" class="chip" type="button" title="Share the text you've highlighted">
+                  <svg class="icon icon-xs" aria-hidden="true"><use href="../shared/icons.svg#selection"/></svg>
+                  <span>Selection</span>
+                </button>
+                <button id="context-page" class="chip" type="button" title="Share this page's readable text">
+                  <svg class="icon icon-xs" aria-hidden="true"><use href="../shared/icons.svg#page"/></svg>
+                  <span>This page</span>
+                </button>
+              </fieldset>
+              <button id="search-toggle" class="search-toggle" type="button" aria-pressed="false">
+                <svg class="icon icon-xs" aria-hidden="true"><use href="../shared/icons.svg#globe"/></svg>
+                <span>Web</span>
               </button>
-              <button id="context-selection" class="chip" type="button" title="Share the text you've highlighted">
-                <svg class="icon icon-xs" aria-hidden="true"><use href="../shared/icons.svg#selection"/></svg>
-                <span>Selection</span>
-              </button>
-              <button id="context-page" class="chip" type="button" title="Share this page's readable text">
-                <svg class="icon icon-xs" aria-hidden="true"><use href="../shared/icons.svg#page"/></svg>
-                <span>This page</span>
-              </button>
-            </fieldset>
+            </div>
 
             <button id="ask-submit" class="send" type="submit" aria-disabled="false" aria-label="Ask" title="Ask (Enter)">
               <svg class="icon" aria-hidden="true"><use href="../shared/icons.svg#arrow-up"/></svg>
