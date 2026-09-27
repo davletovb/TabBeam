@@ -381,7 +381,8 @@ impl Provider for Codex {
         let Some(executable) = self.executable() else {
             return Box::new(Scripted::failed(NOT_INSTALLED));
         };
-        let reference_turn = request.context.is_some() || request.native_search;
+        let context_turn = request.context.is_some();
+        let reference_turn = context_turn || request.native_search;
 
         let mut conversation_id = request.conversation_id;
         let mut fallback_prompt = (!request.history.is_empty())
