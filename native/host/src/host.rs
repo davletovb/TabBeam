@@ -996,9 +996,7 @@ mod tests {
     use crate::limits::MAX_FRAME_SIZE;
     use crate::protocol::events::Capabilities;
     use crate::providers::{Provider, fake};
-    use crate::search::{SearchHandle, SearchProvider};
     use pervue_core::framing::PREFIX_SIZE;
-    use pervue_core::protocol::Source;
 
     fn framed(payloads: &[&str]) -> Vec<u8> {
         let mut wire = Vec::new();
@@ -1084,14 +1082,10 @@ mod tests {
         }
     }
 
-    fn run_session_with_services<R: Read + Send>(
-        providers: &Providers,
-        searches: &SearchProviders,
-        mut input: R,
-    ) -> Session {
+    fn run_session<R: Read + Send>(providers: &Providers, mut input: R) -> Session {
         let mut output = Vec::new();
         let mut log = Diagnostics::new(Vec::new());
-        let result = run_with_services(providers, searches, &mut input, &mut output, &mut log);
+        let result = run_with(providers, &mut input, &mut output, &mut log);
 
         let mut wire = output.as_slice();
         let mut frames = Vec::new();
@@ -1108,11 +1102,6 @@ mod tests {
             frames,
             records,
         }
-    }
-
-    fn run_session<R: Read + Send>(providers: &Providers, input: R) -> Session {
-        let searches = SearchProviders::new(Vec::new());
-        run_session_with_services(providers, &searches, input)
     }
 
     fn run_host(input: &[u8]) -> Session {
@@ -1343,12 +1332,8 @@ mod tests {
             } else {
                 ""
             };
-            let sources = match request.search_results.as_ref() {
-                None => String::new(),
-                Some(sources) => format!("+sources={}", sources.len()),
-            };
             self.calls.borrow_mut().push(format!(
-                "send:{}{context}{model}{native_search}{sources}",
+                "send:{}{context}{model}{native_search}",
                 request.text
             ));
             Box::new(Controlled {
@@ -1366,71 +1351,19 @@ mod tests {
         Providers::new(vec![Box::new(fake::Fake), Box::new(provider)])
     }
 
-    struct TestSearch {
-        calls: Rc<RefCell<Vec<SearchRequest>>>,
-    }
-
-    impl SearchProvider for TestSearch {
-        fn id(&self) -> &str {
-            "brave"
-        }
-
-        fn timeouts(&self) -> Timeouts {
-            Timeouts {
-                start: Duration::from_secs(1),
-                idle: Duration::from_secs(1),
-                stop_grace: Duration::ZERO,
-            }
-        }
-
-        fn search(&self, request: SearchRequest) -> SearchHandle {
-            self.calls.borrow_mut().push(request);
-            let results = Rc::new(RefCell::new(Some(vec![
-                Source {
-                    id: "src_search_1".to_owned(),
-                    backend_id: "brave".to_owned(),
-                    title: "One".to_owned(),
-                    url: "https://example.com/one".to_owned(),
-                    snippet: "First result".to_owned(),
-                    source_name: Some("Example".to_owned()),
-                    age: None,
-                },
-                Source {
-                    id: "src_search_2".to_owned(),
-                    backend_id: "brave".to_owned(),
-                    title: "Two".to_owned(),
-                    url: "https://example.org/two".to_owned(),
-                    snippet: "Second result".to_owned(),
-                    source_name: None,
-                    age: Some("1 day ago".to_owned()),
-                },
-            ])));
-            SearchHandle {
-                exchange: Box::new(Scripted::new([Update::Completed])),
-                results,
-            }
-        }
-    }
-
     #[test]
-    fn auto_search_prefers_provider_native_search_without_calling_brave() {
+    fn search_turn_uses_the_selected_providers_native_search() {
         let provider = TestProvider::new("model", Script::answers("native search answer"))
             .with_native_search();
         let calls = Rc::clone(&provider.calls);
         let providers = Providers::new(vec![Box::new(provider)]);
-        let search_calls = Rc::new(RefCell::new(Vec::new()));
-        let searches = SearchProviders::new(vec![Box::new(TestSearch {
-            calls: Rc::clone(&search_calls),
-        })]);
-        let session = run_session_with_services(
+        let session = run_session(
             &providers,
-            &searches,
             Cursor::new(framed(&[
                 r#"{"version":1,"type":"request","request_id":"req_auto_search","method":"conversation.send","payload":{"provider_id":"model","input":{"text":"What changed?"},"search":{}}}"#,
             ])),
         );
         assert_eq!(session.result, Ok(()));
-        assert!(search_calls.borrow().is_empty());
         assert_eq!(
             calls.borrow().as_slice(),
             &["send:What changed?+native-search"]
@@ -1438,132 +1371,24 @@ mod tests {
     }
 
     #[test]
-    fn search_retrieval_is_normalized_before_provider_synthesis_and_source_events() {
-        let provider = TestProvider::new("model", Script::answers("grounded answer"));
-        let provider_calls = Rc::clone(&provider.calls);
-        let providers = Providers::new(vec![Box::new(provider)]);
-        let search_calls = Rc::new(RefCell::new(Vec::new()));
-        let searches = SearchProviders::new(vec![Box::new(TestSearch {
-            calls: Rc::clone(&search_calls),
-        })]);
-
-        let input = framed(&[
-            r#"{"version":1,"type":"request","request_id":"req_search","method":"conversation.send","payload":{"provider_id":"model","input":{"text":"What changed?"},"search":{"backend_id":"brave","count":2}}}"#,
-        ]);
-        let mut output = Vec::new();
-        let mut log = Diagnostics::new(Vec::new());
-        let mut wire = input.as_slice();
-        assert_eq!(
-            run_with_services(&providers, &searches, &mut wire, &mut output, &mut log),
-            Ok(())
-        );
-
-        let mut frames = output.as_slice();
-        let mut events = Vec::new();
-        while let Some(frame) = framing::read_frame(&mut frames).unwrap() {
-            events.push(serde_json::from_slice::<Value>(&frame).unwrap());
-        }
-        let sequence: Vec<_> = events[1..]
-            .iter()
-            .map(|event| event["event"].as_str().unwrap())
-            .collect();
-        assert_eq!(
-            sequence,
-            [
-                "response.started",
-                "response.source",
-                "response.source",
-                "response.delta",
-                "response.completed"
-            ]
-        );
-        assert_eq!(events[2]["payload"]["source_id"], "src_search_1");
-        assert_eq!(events[2]["payload"]["data"]["backend_id"], "brave");
-        assert_eq!(events[3]["payload"]["source_id"], "src_search_2");
-        assert_eq!(
-            search_calls.borrow().as_slice(),
-            &[SearchRequest {
-                query: "What changed?".to_owned(),
-                count: 2,
-            }]
-        );
-        assert_eq!(
-            provider_calls.borrow().as_slice(),
-            &["send:What changed?+sources=2"]
-        );
-    }
-
-    struct EmptySearch;
-
-    impl SearchProvider for EmptySearch {
-        fn id(&self) -> &str {
-            "brave"
-        }
-
-        fn timeouts(&self) -> Timeouts {
-            Timeouts {
-                start: Duration::from_secs(1),
-                idle: Duration::from_secs(1),
-                stop_grace: Duration::ZERO,
-            }
-        }
-
-        fn search(&self, _request: SearchRequest) -> SearchHandle {
-            let results = Rc::new(RefCell::new(Some(Vec::new())));
-            SearchHandle {
-                exchange: Box::new(Scripted::new([Update::Completed])),
-                results,
-            }
-        }
-    }
-
-    #[test]
-    fn zero_search_results_still_reach_provider_as_search_turn() {
-        let provider = TestProvider::new("model", Script::answers("no grounded sources"));
-        let calls = Rc::clone(&provider.calls);
-        let providers = Providers::new(vec![Box::new(provider)]);
-        let searches = SearchProviders::new(vec![Box::new(EmptySearch)]);
-        let session = run_session_with_services(
-            &providers,
-            &searches,
-            Cursor::new(framed(&[
-                r#"{"version":1,"type":"request","request_id":"req_empty_search","method":"conversation.send","payload":{"provider_id":"model","input":{"text":"What changed?"},"search":{"backend_id":"brave","count":2}}}"#,
-            ])),
-        );
-        assert_eq!(session.result, Ok(()));
-        assert_eq!(calls.borrow().as_slice(), &["send:What changed?+sources=0"]);
-        assert!(
-            session
-                .events()
-                .iter()
-                .all(|event| event["event"] != "response.source")
-        );
-    }
-
-    #[test]
-    fn provider_preflight_blocks_search_before_query_leaves_host() {
+    fn provider_preflight_still_runs_before_native_search() {
         const BLOCKED: ErrorBody<'static> = ErrorBody {
             code: ErrorCode::InvalidRequest,
             reason: "PREFLIGHT_BLOCKED",
             message: "Blocked before search.",
             retryable: false,
         };
-        let provider =
-            TestProvider::new("model", Script::answers("unused")).rejecting_preflight(BLOCKED);
+        let provider = TestProvider::new("model", Script::answers("unused"))
+            .with_native_search()
+            .rejecting_preflight(BLOCKED);
         let providers = Providers::new(vec![Box::new(provider)]);
-        let search_calls = Rc::new(RefCell::new(Vec::new()));
-        let searches = SearchProviders::new(vec![Box::new(TestSearch {
-            calls: Rc::clone(&search_calls),
-        })]);
-        let session = run_session_with_services(
+        let session = run_session(
             &providers,
-            &searches,
             Cursor::new(framed(&[
-                r#"{"version":1,"type":"request","request_id":"req_preflight","method":"conversation.send","payload":{"provider_id":"model","input":{"text":"private query"},"search":{"backend_id":"brave","count":2}}}"#,
+                r#"{"version":1,"type":"request","request_id":"req_preflight","method":"conversation.send","payload":{"provider_id":"model","input":{"text":"private query"},"search":{}}}"#,
             ])),
         );
         assert_eq!(session.result, Ok(()));
-        assert!(search_calls.borrow().is_empty());
         let failure = session
             .events()
             .into_iter()
@@ -1573,67 +1398,28 @@ mod tests {
         assert_eq!(failure["payload"]["error"]["reason"], "PREFLIGHT_BLOCKED");
     }
 
-    struct StalledSearch;
-
-    struct StalledSearchExchange {
-        stopped: bool,
-    }
-
-    impl Exchange for StalledSearchExchange {
-        fn next(&mut self, _deadline: Instant) -> Option<Update> {
-            self.stopped.then_some(Update::Stopped)
-        }
-
-        fn cancel(&mut self, _grace: Duration) {
-            self.stopped = true;
-        }
-    }
-
-    impl SearchProvider for StalledSearch {
-        fn id(&self) -> &str {
-            "brave"
-        }
-
-        fn timeouts(&self) -> Timeouts {
-            Timeouts {
-                start: Duration::from_millis(20),
-                idle: Duration::from_millis(20),
-                stop_grace: Duration::ZERO,
-            }
-        }
-
-        fn search(&self, _request: SearchRequest) -> SearchHandle {
-            SearchHandle {
-                exchange: Box::new(StalledSearchExchange { stopped: false }),
-                results: Rc::new(RefCell::new(None)),
-            }
-        }
-    }
-
     #[test]
-    fn search_timeout_is_search_failure_not_provider_start_timeout() {
+    fn native_search_fails_cleanly_when_provider_does_not_support_it() {
         let provider = TestProvider::new("model", Script::answers("unused"));
         let providers = Providers::new(vec![Box::new(provider)]);
-        let searches = SearchProviders::new(vec![Box::new(StalledSearch)]);
-        let session = run_session_with_services(
+        let session = run_session(
             &providers,
-            &searches,
-            lingering(
-                &[
-                    r#"{"version":1,"type":"request","request_id":"req_search_timeout","method":"conversation.send","payload":{"provider_id":"model","input":{"text":"slow"},"search":{"backend_id":"brave","count":2}}}"#,
-                ],
-                Duration::from_millis(100),
-            ),
+            Cursor::new(framed(&[
+                r#"{"version":1,"type":"request","request_id":"req_no_search","method":"conversation.send","payload":{"provider_id":"model","input":{"text":"What changed?"},"search":{}}}"#,
+            ])),
         );
         assert_eq!(session.result, Ok(()));
         let failure = session
             .events()
             .into_iter()
-            .find(|event| event["request_id"] == "req_search_timeout")
+            .find(|event| event["request_id"] == "req_no_search")
             .unwrap();
         assert_eq!(failure["event"], "response.failed");
         assert_eq!(failure["payload"]["error"]["code"], "SEARCH_FAILED");
-        assert_eq!(failure["payload"]["error"]["reason"], "SEARCH_TIMEOUT");
+        assert_eq!(
+            failure["payload"]["error"]["reason"],
+            "NATIVE_SEARCH_UNSUPPORTED"
+        );
     }
 
     /// An exchange that always has another update ready, like a provider that
