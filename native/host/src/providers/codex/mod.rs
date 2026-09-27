@@ -341,26 +341,45 @@ impl Provider for Codex {
         )
     }
 
-    fn send(&self, request: SendRequest) -> Box<dyn Exchange> {
-        let Some(executable) = self.executable() else {
-            return Box::new(Scripted::failed(NOT_INSTALLED));
-        };
-        let reference_turn = request.context.is_some() || !request.search_results.is_empty();
+    fn preflight(&self, request: &SendRequest) -> Result<(), ErrorBody<'static>> {
+        if self.executable().is_none() {
+            return Err(NOT_INSTALLED);
+        }
+        let reference_turn = request.context.is_some() || request.search_results.is_some();
         if reference_turn && !context_configuration_is_safe(&self.launch) {
-            let error = if request.context.is_some() {
+            return Err(if request.context.is_some() {
                 CONTEXT_TOOLS_ENABLED
             } else {
                 SEARCH_TOOLS_ENABLED
-            };
+            });
+        }
+        if let Some(conversation_id) = request.conversation_id.as_deref() {
+            let known = self.conversations.borrow().contains_key(conversation_id)
+                || self
+                    .session_dir
+                    .as_deref()
+                    .and_then(|dir| read_thread(dir, conversation_id))
+                    .is_some();
+            if !known && request.history.is_empty() {
+                return Err(UNKNOWN_CONVERSATION);
+            }
+        }
+        Ok(())
+    }
+
+    fn send(&self, request: SendRequest) -> Box<dyn Exchange> {
+        if let Err(error) = self.preflight(&request) {
             return Box::new(Scripted::failed(error));
         }
+        let executable = self.executable().expect("preflight found Codex");
+        let reference_turn = request.context.is_some() || request.search_results.is_some();
 
         let mut conversation_id = request.conversation_id;
         let mut fallback_prompt = (!request.history.is_empty()).then(|| {
             provider_prompt_with_sources(
                 &request.history,
                 request.context.as_ref(),
-                &request.search_results,
+                request.search_results.as_deref(),
                 &request.text,
             )
         });
@@ -368,7 +387,7 @@ impl Provider for Codex {
             provider_prompt_with_sources(
                 &[],
                 request.context.as_ref(),
-                &request.search_results,
+                request.search_results.as_deref(),
                 &request.text,
             )
         } else {
