@@ -210,6 +210,41 @@ fn request_streams_with_tools_disabled_and_keeps_question_off_argv() {
 }
 
 #[test]
+fn native_search_uses_claude_web_tools_and_emits_sources() {
+    let claude = FakeClaude::install("answers", "signed-in");
+    let adapter = claude.adapter();
+    assert_eq!(adapter.capabilities().web_search, Capability::Supported);
+    let updates = visible(&run_to_end(
+        adapter
+            .send(SendRequest {
+                native_search: true,
+                ..ask("What changed today?")
+            })
+            .as_mut(),
+    ));
+    assert!(updates.iter().any(|update| matches!(
+        update,
+        Update::Source(source)
+            if source.backend_id == "claude"
+                && source.url == "https://example.com/claude-search"
+                && source.title == "Claude search result"
+    )));
+    assert_eq!(updates.last(), Some(&Update::Completed));
+
+    let invocation = claude
+        .invocations()
+        .into_iter()
+        .find(|line| line.starts_with("-p "))
+        .expect("Claude print mode ran");
+    assert!(
+        invocation.contains("--tools WebSearch,WebFetch"),
+        "{invocation}"
+    );
+    assert!(invocation.contains("--strict-mcp-config"), "{invocation}");
+    assert!(invocation.contains("--disallowedTools mcp__*"), "{invocation}");
+}
+
+#[test]
 fn claude_inherits_node_extra_ca_certs_but_not_arbitrary_secrets() {
     let claude = FakeClaude::install("answers", "signed-in");
     let adapter = claude.adapter().with_environment([
