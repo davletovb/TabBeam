@@ -121,6 +121,13 @@ const NATIVE_SEARCH_UNSUPPORTED: ErrorBody<'static> = ErrorBody {
     retryable: false,
 };
 
+const SEARCH_WITH_CONTEXT_UNSUPPORTED: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::SearchFailed,
+    reason: "SEARCH_WITH_CONTEXT_UNSUPPORTED",
+    message: "Pervue won't combine web search with browser context yet. Choose No context or turn off Search.",
+    retryable: false,
+};
+
 const PAGE_CONTEXT_UNSUPPORTED: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::InvalidRequest,
     reason: "PAGE_CONTEXT_UNSUPPORTED",
@@ -346,7 +353,6 @@ struct Running {
     conversation_id: Option<String>,
     /// The active phase's limits for a `conversation.send`; none for status checks.
     timeouts: Option<Timeouts>,
-    start_timeout_error: ErrorBody<'static>,
     stop_grace: Duration,
     started_at: Instant,
     last_update: Instant,
@@ -366,26 +372,6 @@ impl Running {
         timeouts: Option<Timeouts>,
         exchange: Box<dyn Exchange>,
     ) -> Self {
-        Self::new_with_start_error(
-            id,
-            method,
-            provider,
-            conversation_id,
-            timeouts,
-            START_TIMEOUT,
-            exchange,
-        )
-    }
-
-    fn new_with_start_error(
-        id: Id,
-        method: &'static str,
-        provider: Option<(String, bool)>,
-        conversation_id: Option<String>,
-        timeouts: Option<Timeouts>,
-        start_timeout_error: ErrorBody<'static>,
-        exchange: Box<dyn Exchange>,
-    ) -> Self {
         let now = Instant::now();
         let (provider_id, provider_served) =
             provider.map_or((None, false), |(id, served)| (Some(id), served));
@@ -396,7 +382,6 @@ impl Running {
             provider_served,
             conversation_id,
             timeouts,
-            start_timeout_error,
             stop_grace: timeouts.map_or(STATUS_STOP_GRACE, |timeouts| timeouts.stop_grace),
             started_at: now,
             last_update: now,
@@ -415,7 +400,7 @@ impl Running {
                 .then_some(RESPONSE_TIMEOUT)
         } else {
             (now.saturating_duration_since(self.started_at) >= timeouts.start)
-                .then_some(self.start_timeout_error)
+                .then_some(START_TIMEOUT)
         }
     }
 
@@ -565,6 +550,10 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                     provider.capabilities().web_search == Capability::Supported
                 });
                 let (exchange, timeouts): (Box<dyn Exchange>, _) = match provider {
+                    Some(provider) if context.is_some() && native_search => (
+                        Box::new(Scripted::failed(SEARCH_WITH_CONTEXT_UNSUPPORTED)),
+                        Some(provider.timeouts()),
+                    ),
                     Some(provider)
                         if context.is_some()
                             && provider.capabilities().page_context != Capability::Supported =>
@@ -602,13 +591,7 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                                 Some(provider_timeouts),
                             )
                         } else {
-                            match provider.preflight(&request) {
-                                Err(error) => (
-                                    Box::new(Scripted::failed(error)) as Box<dyn Exchange>,
-                                    Some(provider_timeouts),
-                                ),
-                                Ok(()) => (provider.send(request), Some(provider_timeouts)),
-                            }
+                            (provider.send(request), Some(provider_timeouts))
                         }
                     }
                     None => (Box::new(Scripted::failed(PROVIDER_NOT_INSTALLED)), None),
@@ -753,16 +736,6 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                 return Ok(Pumped::Waiting);
             };
             running.last_update = Instant::now();
-            if let Update::ResetTimeouts(timeouts) = update {
-                let now = Instant::now();
-                running.timeouts = Some(timeouts);
-                running.start_timeout_error = START_TIMEOUT;
-                running.stop_grace = timeouts.stop_grace;
-                running.started_at = now;
-                running.last_update = now;
-                running.response_started = false;
-                continue;
-            }
             if let Update::ConversationCreated(conversation_id) = &update {
                 self.conversations.insert(conversation_id.clone());
             }
