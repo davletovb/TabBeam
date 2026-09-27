@@ -1231,7 +1231,6 @@ mod tests {
         script: Script,
         timeouts: Timeouts,
         capabilities: Capabilities,
-        preflight_error: Option<ErrorBody<'static>>,
         calls: Rc<RefCell<Vec<String>>>,
     }
 
@@ -1246,14 +1245,8 @@ mod tests {
                     stop_grace: Duration::ZERO,
                 },
                 capabilities: fake::STATUS.capabilities,
-                preflight_error: None,
                 calls: Rc::default(),
             }
-        }
-
-        fn rejecting_preflight(mut self, error: ErrorBody<'static>) -> Self {
-            self.preflight_error = Some(error);
-            self
         }
 
         fn with_native_search(mut self) -> Self {
@@ -1273,10 +1266,6 @@ mod tests {
 
         fn capabilities(&self) -> Capabilities {
             self.capabilities
-        }
-
-        fn preflight(&self, _request: &SendRequest) -> Result<(), ErrorBody<'static>> {
-            self.preflight_error.map_or(Ok(()), Err)
         }
 
         fn status(&self) -> Box<dyn Exchange> {
@@ -1343,32 +1332,32 @@ mod tests {
         );
     }
 
+
     #[test]
-    fn provider_preflight_still_runs_before_native_search() {
-        const BLOCKED: ErrorBody<'static> = ErrorBody {
-            code: ErrorCode::InvalidRequest,
-            reason: "PREFLIGHT_BLOCKED",
-            message: "Blocked before search.",
-            retryable: false,
-        };
+    fn search_with_browser_context_is_refused_before_provider_runs() {
         let provider = TestProvider::new("model", Script::answers("unused"))
-            .with_native_search()
-            .rejecting_preflight(BLOCKED);
+            .with_native_search();
+        let calls = Rc::clone(&provider.calls);
         let providers = Providers::new(vec![Box::new(provider)]);
         let session = run_session(
             &providers,
             Cursor::new(framed(&[
-                r#"{"version":1,"type":"request","request_id":"req_preflight","method":"conversation.send","payload":{"provider_id":"model","input":{"text":"private query"},"search":{}}}"#,
+                r#"{"version":1,"type":"request","request_id":"req_context_search","method":"conversation.send","payload":{"provider_id":"model","input":{"text":"What changed?"},"context":{"mode":"selection","text":"private selection","truncated":false,"page":{"title":"Example","url":"https://example.com/"}},"search":{}}}"#,
             ])),
         );
         assert_eq!(session.result, Ok(()));
+        assert!(calls.borrow().is_empty());
         let failure = session
             .events()
             .into_iter()
-            .find(|event| event["request_id"] == "req_preflight")
+            .find(|event| event["request_id"] == "req_context_search")
             .unwrap();
         assert_eq!(failure["event"], "response.failed");
-        assert_eq!(failure["payload"]["error"]["reason"], "PREFLIGHT_BLOCKED");
+        assert_eq!(failure["payload"]["error"]["code"], "SEARCH_FAILED");
+        assert_eq!(
+            failure["payload"]["error"]["reason"],
+            "SEARCH_WITH_CONTEXT_UNSUPPORTED"
+        );
     }
 
     #[test]
