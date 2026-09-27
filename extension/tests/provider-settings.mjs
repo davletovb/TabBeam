@@ -106,7 +106,7 @@ const doc = {
   const rows = options.children;
   const radio = (/** @type {number} */ i) => rows[i].children[0];
   const line = (/** @type {number} */ i) => rows[i].children[1].children[1];
-  assert.deepEqual(rows.map((row) => row.children[1].children[0].textContent), ["Codex", "Claude"]);
+  assert.deepEqual(rows.map((row) => row.children[1].children[0].textContent), ["Codex", "Claude", "Gemini"]);
   assert.equal(radio(1).checked, true, "the saved choice is selected");
   assert.equal(radio(0).checked, false);
   assert.equal(settings.getProviderId(), "claude");
