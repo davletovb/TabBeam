@@ -122,6 +122,13 @@ const SEARCH_BACKEND_NOT_FOUND: ErrorBody<'static> = ErrorBody {
     retryable: false,
 };
 
+const SEARCH_TIMEOUT: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::SearchFailed,
+    reason: "SEARCH_TIMEOUT",
+    message: "Web search took too long. Try again.",
+    retryable: true,
+};
+
 const PAGE_CONTEXT_UNSUPPORTED: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::InvalidRequest,
     reason: "PAGE_CONTEXT_UNSUPPORTED",
@@ -219,7 +226,9 @@ where
     W: Write + ?Sized,
     L: Write,
 {
-    let searches = SearchProviders::installed();
+    // Explicit-provider runs are used by tests and fuzzing and must never
+    // discover credentials or start network search processes implicitly.
+    let searches = SearchProviders::new(Vec::new());
     run_with_services(providers, &searches, input, output, log)
 }
 
@@ -365,8 +374,9 @@ struct Running {
     /// Whether the host serves the provider the request names.
     provider_served: bool,
     conversation_id: Option<String>,
-    /// The provider's limits for a `conversation.send`; none for status checks.
+    /// The active phase's limits for a `conversation.send`; none for status checks.
     timeouts: Option<Timeouts>,
+    start_timeout_error: ErrorBody<'static>,
     stop_grace: Duration,
     started_at: Instant,
     last_update: Instant,
@@ -386,6 +396,26 @@ impl Running {
         timeouts: Option<Timeouts>,
         exchange: Box<dyn Exchange>,
     ) -> Self {
+        Self::new_with_start_error(
+            id,
+            method,
+            provider,
+            conversation_id,
+            timeouts,
+            START_TIMEOUT,
+            exchange,
+        )
+    }
+
+    fn new_with_start_error(
+        id: Id,
+        method: &'static str,
+        provider: Option<(String, bool)>,
+        conversation_id: Option<String>,
+        timeouts: Option<Timeouts>,
+        start_timeout_error: ErrorBody<'static>,
+        exchange: Box<dyn Exchange>,
+    ) -> Self {
         let now = Instant::now();
         let (provider_id, provider_served) =
             provider.map_or((None, false), |(id, served)| (Some(id), served));
@@ -396,6 +426,7 @@ impl Running {
             provider_served,
             conversation_id,
             timeouts,
+            start_timeout_error,
             stop_grace: timeouts.map_or(STATUS_STOP_GRACE, |timeouts| timeouts.stop_grace),
             started_at: now,
             last_update: now,
@@ -414,7 +445,7 @@ impl Running {
                 .then_some(RESPONSE_TIMEOUT)
         } else {
             (now.saturating_duration_since(self.started_at) >= timeouts.start)
-                .then_some(START_TIMEOUT)
+                .then_some(self.start_timeout_error)
         }
     }
 
@@ -560,6 +591,7 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                 let provider = self.providers.get(&provider_id);
                 let provider_served = provider.is_some();
                 let question = text.decode().into_owned();
+                let search_requested = search.is_some();
                 let (exchange, timeouts): (Box<dyn Exchange>, _) = match provider {
                     Some(provider)
                         if context.is_some()
@@ -582,40 +614,78 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                         )
                     }
                     Some(provider) => {
-                        let timeouts = Some(provider.timeouts());
+                        let provider_timeouts = provider.timeouts();
                         let request = SendRequest {
                             text: question.clone(),
                             history,
                             conversation_id: conversation_id.clone(),
                             context,
                             model,
-                            search_results: Vec::new(),
+                            search_results: None,
                         };
-                        let exchange: Box<dyn Exchange> = match search {
-                            Some(options) => match self.searches.get(&options.backend_id) {
-                                Some(search_provider) => {
-                                    let handle = search_provider.search(SearchRequest {
-                                        query: question,
-                                        count: options.count,
-                                    });
-                                    Box::new(SynthesisExchange::new(handle, provider, request))
-                                }
-                                None => Box::new(Scripted::failed(SEARCH_BACKEND_NOT_FOUND)),
+                        match search {
+                            Some(options) => match provider.preflight(&request) {
+                                Err(error) => (
+                                    Box::new(Scripted::failed(error)) as Box<dyn Exchange>,
+                                    Some(provider_timeouts),
+                                ),
+                                Ok(()) => match self.searches.get(&options.backend_id) {
+                                    Some(search_provider) => {
+                                        let search_timeouts = search_provider.timeouts();
+                                        let handle = search_provider.search(SearchRequest {
+                                            query: question,
+                                            count: options.count,
+                                        });
+                                        (
+                                            Box::new(SynthesisExchange::new(
+                                                handle,
+                                                provider,
+                                                provider_timeouts,
+                                                request,
+                                            )) as Box<dyn Exchange>,
+                                            Some(search_timeouts),
+                                        )
+                                    }
+                                    None => (
+                                        Box::new(Scripted::failed(SEARCH_BACKEND_NOT_FOUND))
+                                            as Box<dyn Exchange>,
+                                        Some(provider_timeouts),
+                                    ),
+                                },
                             },
-                            None => provider.send(request),
-                        };
-                        (exchange, timeouts)
+                            None => (
+                                provider.send(request),
+                                Some(provider_timeouts),
+                            ),
+                        }
                     }
                     None => (Box::new(Scripted::failed(PROVIDER_NOT_INSTALLED)), None),
                 };
-                Running::new(
-                    id,
-                    "conversation.send",
-                    Some((provider_id, provider_served)),
-                    conversation_id,
-                    timeouts,
-                    exchange,
-                )
+                if search_requested
+                    && matches!(
+                        timeouts,
+                        Some(_)
+                    )
+                {
+                    Running::new_with_start_error(
+                        id,
+                        "conversation.send",
+                        Some((provider_id, provider_served)),
+                        conversation_id,
+                        timeouts,
+                        SEARCH_TIMEOUT,
+                        exchange,
+                    )
+                } else {
+                    Running::new(
+                        id,
+                        "conversation.send",
+                        Some((provider_id, provider_served)),
+                        conversation_id,
+                        timeouts,
+                        exchange,
+                    )
+                }
             }
             Method::ProviderStatus { provider_id } => {
                 let provider_id = provider_id.map(|id| id.decode().into_owned());
@@ -748,6 +818,16 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                 return Ok(Pumped::Waiting);
             };
             running.last_update = Instant::now();
+            if let Update::ResetTimeouts(timeouts) = update {
+                let now = Instant::now();
+                running.timeouts = Some(timeouts);
+                running.start_timeout_error = START_TIMEOUT;
+                running.stop_grace = timeouts.stop_grace;
+                running.started_at = now;
+                running.last_update = now;
+                running.response_started = false;
+                continue;
+            }
             if let Update::ConversationCreated(conversation_id) = &update {
                 self.conversations.insert(conversation_id.clone());
             }
@@ -912,7 +992,11 @@ fn forward<W: Write + ?Sized>(
             };
             write_event(output, raw, Event::ProviderStatus, &payload)
         }
-        Update::Activity | Update::Completed | Update::Failed(_) | Update::Stopped => Ok(()),
+        Update::ResetTimeouts(_)
+        | Update::Activity
+        | Update::Completed
+        | Update::Failed(_)
+        | Update::Stopped => Ok(()),
     }
 }
 
