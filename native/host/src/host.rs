@@ -900,9 +900,7 @@ fn forward<W: Write + ?Sized>(
             };
             write_event(output, raw, Event::ProviderStatus, &payload)
         }
-        Update::Activity | Update::Completed
-        | Update::Failed(_)
-        | Update::Stopped => Ok(()),
+        Update::Activity | Update::Completed | Update::Failed(_) | Update::Stopped => Ok(()),
     }
 }
 
@@ -1329,12 +1327,9 @@ mod tests {
             &["send:What changed?+native-search"]
         );
     }
-
-
     #[test]
     fn search_with_browser_context_is_refused_before_provider_runs() {
-        let provider = TestProvider::new("model", Script::answers("unused"))
-            .with_native_search();
+        let provider = TestProvider::new("model", Script::answers("unused")).with_native_search();
         let calls = Rc::clone(&provider.calls);
         let providers = Providers::new(vec![Box::new(provider)]);
         let session = run_session(
