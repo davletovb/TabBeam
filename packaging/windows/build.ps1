@@ -118,15 +118,13 @@ try {
         throw 'Inno Setup 6.3 or newer compiler (ISCC.exe) is required.'
     }
 
-    $innoVersionText = (& $iscc --version | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0 -or $innoVersionText -notmatch '(\d+)\.(\d+)(?:\.(\d+))?') {
-        throw "Could not determine Inno Setup version from: $innoVersionText"
+    $versionInfo = [Diagnostics.FileVersionInfo]::GetVersionInfo($iscc)
+    $innoVersionText = $versionInfo.ProductVersion
+    if (-not $innoVersionText -or $innoVersionText -notmatch '^(\d+)\.(\d+)(?:\.(\d+))?') {
+        throw "Could not determine Inno Setup version from $iscc."
     }
-    $innoVersion = [Version]::new(
-        [int]$Matches[1],
-        [int]$Matches[2],
-        $(if ($Matches[3]) { [int]$Matches[3] } else { 0 })
-    )
+    $patch = if ($Matches[3]) { [int]$Matches[3] } else { 0 }
+    $innoVersion = [Version]::new([int]$Matches[1], [int]$Matches[2], $patch)
     if ($innoVersion -lt [Version]'6.3.0') {
         throw "Inno Setup 6.3 or newer is required; found $innoVersion."
     }
