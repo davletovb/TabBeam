@@ -361,8 +361,8 @@ impl Provider for Claude {
         }
 
         let mut conversation_id = request.conversation_id;
-        let mut fallback_prompt =
-            (!request.history.is_empty()).then(|| provider_prompt(&request.history, None, &request.text));
+        let mut fallback_prompt = (!request.history.is_empty())
+            .then(|| provider_prompt(&request.history, None, &request.text));
         let mut prompt = request.text;
         let resume = match &conversation_id {
             None => None,
