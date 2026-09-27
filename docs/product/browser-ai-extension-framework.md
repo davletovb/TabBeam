@@ -518,7 +518,7 @@ Provider-specific continuation IDs should be treated as implementation metadata,
 
 ## 12. Search and Retrieval Framework
 
-Search should remain separate from model execution.
+Search should use the authenticated native capability of the selected AI provider rather than a separate API-key search service.
 
 Conceptually:
 
@@ -531,21 +531,21 @@ Need web search?
   ├─ No → provider
   └─ Yes
        ↓
-     search adapter
-       ↓
-     result normalization
+     selected provider native search
        ↓
      provider synthesis
        ↓
-     cited response
+     normalized sources + cited response
 ```
 
-This separation allows:
+This keeps:
 
-- provider-independent search;
-- multiple search engines later;
-- local/private providers to still use web search;
-- consistent citations regardless of model.
+- provider credentials and search access inside the provider runtime the user already authenticated;
+- search and synthesis in one provider turn;
+- the browser-facing source/citation model independent of provider-specific result formats;
+- the door open to add an external search adapter later only if the product explicitly decides it needs one.
+
+A provider that cannot perform native web search should fail the requested search mode explicitly rather than silently answering without search.
 
 Search is not required to block the first provider integration if it slows MVP delivery.
 
