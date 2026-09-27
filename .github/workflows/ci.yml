@@ -150,8 +150,19 @@ jobs:
           if (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'Pervue')) {
             throw "Pervue install directory still exists"
           }
-          $query = & reg.exe query 'HKCU\Software\Google\Chrome\NativeMessagingHosts\com.pervue.host' /ve /reg:64 2>&1
-          if ($LASTEXITCODE -eq 0) { throw "Native Messaging registry key still exists: $query" }
+          $hive = [Microsoft.Win32.RegistryHive]::CurrentUser
+          $view = [Microsoft.Win32.RegistryView]::Registry64
+          $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey($hive, $view)
+          try {
+            $key = $base.OpenSubKey('Software\Google\Chrome\NativeMessagingHosts\com.pervue.host')
+            if ($null -ne $key) {
+              $key.Dispose()
+              throw "Native Messaging registry key still exists after uninstall"
+            }
+          }
+          finally {
+            $base.Dispose()
+          }
 
   packaging-security:
     name: Packaged trust-boundary audit
