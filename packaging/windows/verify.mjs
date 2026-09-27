@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { spawn, spawnSync } from "node:child_process";
-import { once } from "node:events";
-import { frameNativeMessage, parseNativeFrames } from "../../scripts/protocol-support.mjs";
+import { spawnSync } from "node:child_process";
+import { probeInstalledHost } from "../../scripts/installed-host-probe.mjs";
 
 const extensionId = process.argv[2];
 assert.match(extensionId ?? "", /^[a-p]{32}$/);
 
-const appDir = path.join(process.env.LOCALAPPDATA ?? "", "Pervue");
-assert.ok(path.isAbsolute(appDir), "LOCALAPPDATA must be an absolute path");
+const localAppData = process.env.LOCALAPPDATA ?? "";
+assert.ok(path.isAbsolute(localAppData), "LOCALAPPDATA must be an absolute path");
+const appDir = path.join(localAppData, "Programs", "Pervue");
 const manifestPath = path.join(appDir, "com.pervue.host.json");
 const host = path.join(appDir, "pervue-host.exe");
 const buildPath = path.join(appDir, "build-info.json");
@@ -47,58 +47,19 @@ assert.match(build.package_version, /^\d+\.\d+\.\d+$/);
 assert.match(build.source_commit, /^[0-9a-f]{40}$/);
 assert.ok(fs.statSync(host).isFile());
 
-const child = spawn(
+const { code, signal, stderr, events } = await probeInstalledHost(
   host,
   [`chrome-extension://${extensionId}/`, "--parent-window=0"],
-  { stdio: ["pipe", "pipe", "pipe"], windowsHide: true }
+  { windowsHide: true }
 );
-const exit = once(child, "close");
-let stderr = "";
-child.stderr.setEncoding("utf8");
-child.stderr.on("data", chunk => { stderr += chunk; });
-const timer = setTimeout(() => child.kill(), 25_000);
-
-try {
-  const request = Buffer.from(JSON.stringify({
-    version: 1,
-    type: "request",
-    request_id: "package_status",
-    method: "provider.status",
-    payload: { provider_id: "codex" }
-  }));
-  child.stdin.write(frameNativeMessage(request));
-
-  let output = Buffer.alloc(0);
-  let events = [];
-  for await (const chunk of child.stdout) {
-    output = Buffer.concat([output, chunk]);
-    assert.ok(output.length < 1024 * 1024, "host output exceeded verification limit");
-    try {
-      events = parseNativeFrames(output);
-    } catch (error) {
-      if (!/partial frame (prefix|payload)/.test(String(error))) throw error;
-      continue;
-    }
-    if (events.some(event =>
-      event.request_id === "package_status" &&
-      ["response.completed", "response.failed"].includes(event.event)
-    )) break;
-  }
-
-  child.stdin.end();
-  const [code, signal] = await exit;
-  assert.equal(signal, null, stderr);
-  assert.equal(code, 0, stderr);
-  assert.equal(events[0]?.event, "host.ready");
-  assert.ok(events[0]?.payload?.protocol_versions?.includes(1));
-  const status = events.find(event =>
-    event.event === "provider.status" && event.request_id === "package_status"
-  );
-  assert.ok(status, "provider.status was not emitted");
-  assert.notEqual(status.payload?.availability, "not_found", stderr);
-  assert.equal(events.at(-1)?.event, "response.completed", stderr);
-  console.log("Installed Windows host, registry, protocol and provider discovery verified");
-} finally {
-  clearTimeout(timer);
-  child.kill();
-}
+assert.equal(signal, null, stderr);
+assert.equal(code, 0, stderr);
+assert.equal(events[0]?.event, "host.ready");
+assert.ok(events[0]?.payload?.protocol_versions?.includes(1));
+const status = events.find(event =>
+  event.event === "provider.status" && event.request_id === "package_status"
+);
+assert.ok(status, "provider.status was not emitted");
+assert.equal(status.payload?.status?.availability, "available", stderr);
+assert.equal(events.at(-1)?.event, "response.completed", stderr);
+console.log("Installed Windows host, registry, protocol and provider discovery verified");
