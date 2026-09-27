@@ -241,7 +241,10 @@ fn native_search_uses_claude_web_tools_and_emits_sources() {
         "{invocation}"
     );
     assert!(invocation.contains("--strict-mcp-config"), "{invocation}");
-    assert!(invocation.contains("--disallowedTools mcp__*"), "{invocation}");
+    assert!(
+        invocation.contains("--disallowedTools mcp__*"),
+        "{invocation}"
+    );
 }
 
 #[test]
