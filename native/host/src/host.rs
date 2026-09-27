@@ -900,9 +900,7 @@ fn forward<W: Write + ?Sized>(
             };
             write_event(output, raw, Event::ProviderStatus, &payload)
         }
-        Update::ResetTimeouts(_)
-        | Update::Activity
-        | Update::Completed
+        Update::Activity | Update::Completed
         | Update::Failed(_)
         | Update::Stopped => Ok(()),
     }
