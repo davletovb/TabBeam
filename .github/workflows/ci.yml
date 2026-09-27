@@ -102,6 +102,65 @@ jobs:
           test ! -e '/Library/Google/Chrome/NativeMessagingHosts/com.pervue.host.json'
           test ! -e '/Applications/Uninstall Pervue.app'
 
+  windows-package:
+    name: Windows package install and removal
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+      - name: Build unsigned test installer
+        shell: pwsh
+        run: packaging/windows/build.ps1 -ExtensionId abcdefghijklmnopabcdefghijklmnop
+      - name: Install and verify Chrome registration
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem out/windows/Pervue-*-windows-x64.exe | Select-Object -First 1
+          & $installer.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-
+          if ($LASTEXITCODE -ne 0) { throw "installer failed with exit code $LASTEXITCODE" }
+          $provider = Join-Path $env:RUNNER_TEMP 'provider-bin'
+          New-Item -ItemType Directory -Force -Path $provider | Out-Null
+          @'
+          @echo off
+          if "%1"=="--version" (
+            echo codex-cli 0.1.0
+            exit /b 0
+          )
+          echo Not logged in 1>&2
+          exit /b 1
+          '@ | Set-Content -LiteralPath (Join-Path $provider 'codex.cmd') -Encoding ascii
+          $env:PERVUE_PROVIDER_PATH = $provider
+          node packaging/windows/verify.mjs abcdefghijklmnopabcdefghijklmnop
+      - name: Uninstall and verify owned registration
+        shell: pwsh
+        run: |
+          $uninstaller = Join-Path $env:LOCALAPPDATA 'Pervue\unins000.exe'
+          if (-not (Test-Path -LiteralPath $uninstaller)) { throw "uninstaller not found" }
+          & $uninstaller /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+          if ($LASTEXITCODE -ne 0) { throw "uninstaller failed with exit code $LASTEXITCODE" }
+          if (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'Pervue')) {
+            throw "Pervue install directory still exists"
+          }
+          $query = & reg.exe query 'HKCU\Software\Google\Chrome\NativeMessagingHosts\com.pervue.host' /ve /reg:64 2>&1
+          if ($LASTEXITCODE -eq 0) { throw "Native Messaging registry key still exists: $query" }
+
+  packaging-security:
+    name: Packaged trust-boundary audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - name: Audit packaged trust boundaries and extension permissions
+        run: node packaging/security-audit.mjs
+
   protocol:
     name: Protocol fixtures
     runs-on: ubuntu-latest
