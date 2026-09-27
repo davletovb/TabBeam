@@ -663,7 +663,7 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                     }
                     None => (Box::new(Scripted::failed(PROVIDER_NOT_INSTALLED)), None),
                 };
-                if search_requested && matches!(timeouts, Some(_)) {
+                if search_requested && timeouts.is_some() {
                     Running::new_with_start_error(
                         id,
                         "conversation.send",
@@ -1552,9 +1552,9 @@ mod tests {
         let session = run_session_with_services(
             &providers,
             &searches,
-            framed(&[
+            Cursor::new(framed(&[
                 r#"{"version":1,"type":"request","request_id":"req_empty_search","method":"conversation.send","payload":{"provider_id":"model","input":{"text":"What changed?"},"search":{"backend_id":"brave","count":2}}}"#,
-            ]),
+            ])),
         );
         assert_eq!(session.result, Ok(()));
         assert_eq!(
@@ -1587,9 +1587,9 @@ mod tests {
         let session = run_session_with_services(
             &providers,
             &searches,
-            framed(&[
+            Cursor::new(framed(&[
                 r#"{"version":1,"type":"request","request_id":"req_preflight","method":"conversation.send","payload":{"provider_id":"model","input":{"text":"private query"},"search":{"backend_id":"brave","count":2}}}"#,
-            ]),
+            ])),
         );
         assert_eq!(session.result, Ok(()));
         assert!(search_calls.borrow().is_empty());
