@@ -441,7 +441,7 @@ fn parse_search(value: &[u8]) -> Result<SearchOptions, FailureKind> {
     ) {
         return Err(FailureKind::InvalidPayload);
     }
-    Ok(SearchOptions { backend_id })
+    Ok(SearchOptions)
 }
 
 fn parse_browser_context(context: &[u8]) -> Result<BrowserContext, FailureKind> {
@@ -716,9 +716,7 @@ mod tests {
         };
         assert_eq!(
             search,
-            Some(SearchOptions {
-                backend_id: "auto".to_owned(),
-            })
+            Some(SearchOptions)
         );
     }
 
@@ -735,9 +733,7 @@ mod tests {
         };
         assert_eq!(
             search,
-            Some(SearchOptions {
-                backend_id: "provider".to_owned(),
-            })
+            Some(SearchOptions)
         );
 
         for search in [
