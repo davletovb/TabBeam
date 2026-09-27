@@ -32,7 +32,7 @@ native/
 ## Requirements
 
 - Rust 1.85 or newer (install with [rustup](https://rustup.rs))
-- system `curl` for Brave-backed web search (`/usr/bin/curl` on macOS/Linux or `%SystemRoot%\\System32\\curl.exe` on Windows)
+- system `curl` only when using the optional Brave search backend (`/usr/bin/curl` on macOS/Linux or `%SystemRoot%\\System32\\curl.exe` on Windows)
 
 ## Development build
 
@@ -156,19 +156,18 @@ Command-line errors, such as a usage error or an invalid `--print-manifest` ID, 
 
 ## Web search
 
-Milestone H search is separate from AI-provider execution. A `conversation.send` can include:
+Pervue supports two execution models behind the same `conversation.send.search` contract and the same normalized `response.source` events.
 
-```json
-"search": {"backend_id": "brave", "count": 8}
-```
+- **Auto (default).** `"search": {}` or `"backend_id": "auto"` uses the selected provider's authenticated native web search when its adapter reports `web_search: true`. Codex and Claude both support this path. No search API key is needed beyond the provider sign-in the user already uses with Pervue.
+- **Provider native.** `"backend_id": "provider"` explicitly requires that same native path. Codex runs one `codex exec` turn with live web search enabled while shell/images/apps/plugins/hooks/MCP/subagents remain disabled. Claude runs one print-mode turn with only `WebSearch,WebFetch` allowed and MCP tools still blocked. Structured provider search results are normalized into Pervue sources and emitted as `response.source`.
+- **Brave independent retrieval.** `"backend_id": "brave"` runs the existing provider-independent Brave adapter first, normalizes its bounded sources, then gives that source set to the selected AI provider for synthesis. Auto falls back to this path for a future provider that does not support native search.
 
-The host retrieves and normalizes sources first, then gives the same bounded source set to the selected Codex or Claude adapter for synthesis. It emits those sources as `response.source` events, so source identity is independent of the model provider.
-
-Brave is the first search backend. For development, set `BRAVE_SEARCH_API_KEY` in the environment that launches Chrome/the native host. Pervue does not copy that key into extension storage or pass it to an AI provider. The Brave key and user query are supplied to the HTTPS client over stdin rather than command-line arguments. Search responses are capped at 2 MiB; at most 10 deduplicated HTTP(S) sources are retained, with bounded plain-text metadata.
+Brave is therefore optional for Codex/Claude users. To use it, set `BRAVE_SEARCH_API_KEY` in the environment that launches Chrome/the native host. Pervue does not copy that key into extension storage or pass it to an AI provider. The Brave key and user query are supplied to curl over stdin rather than command-line arguments. Search responses are capped at 2 MiB; at most 10 deduplicated HTTP(S) sources are retained, with bounded plain-text metadata.
 
 `PERVUE_CURL_PATH` may point to an absolute curl executable for a controlled installation/test environment. Otherwise the host uses only the operating system's fixed curl location: `/usr/bin/curl` on macOS/Linux or `%SystemRoot%\\System32\\curl.exe` on Windows. It never searches user-writable npm/nvm/PATH locations for the process that receives the Brave credential. Curl is launched with `--disable` as its first option so user `.curlrc` settings cannot alter the request or trace credentials.
 
-Search failures use `SEARCH_FAILED`, separately from model-provider failures. Missing configuration, backend authentication, rate limiting, search timeout, invalid query, transport failure, oversized output, and malformed backend responses therefore remain distinguishable from Codex/Claude synthesis failures.
+Independent retrieval failures use `SEARCH_FAILED`. Provider-native search is part of the provider turn, so provider execution/authentication/rate-limit failures keep the provider's normalized error category; forcing native search on an unsupported provider uses `SEARCH_FAILED / NATIVE_SEARCH_UNSUPPORTED`.
+
 
 ## Providers
 
@@ -204,7 +203,7 @@ Provider support is four layers, each with its own tests: the normalized adapter
 - **Conversations.** A new native session gets a random opaque `conv_` ID with 16 hex digits. The adapter saves its mapping to the Codex thread before announcing it, under the user's data directory (`$XDG_DATA_HOME/pervue/codex-sessions`, `~/.local/share/pervue/codex-sessions`, or `%LOCALAPPDATA%\\pervue\\codex-sessions`). Files are private to the user on Unix. A fresh host recovers the mapping and resumes the thread. If a mapping was lost but the request includes prior dialogue, Codex starts a new thread with that bounded history; the extension keeps its own stable conversation ID and updates the native session metadata. If neither is available, it fails with `UNKNOWN_CONVERSATION`. Session files for custom adapters live beside their Codex working directory; when no private user data directory can be found, the installed adapter refuses to persist new sessions.
 - **Deleting.** Forgetting a conversation removes its mapping and Codex's saved sessions of its thread: `rollout-…-<thread>.jsonl` files under `$CODEX_HOME/sessions` (by date) and `$CODEX_HOME/archived_sessions` whose `session_meta` names the thread and Pervue's `codex-workspace`. Codex's own state database is left untouched, so it may keep a reference to the thread.
 - **Limits.** Codex gets 60 seconds to start answering and 5 minutes without progress, because a model can think for minutes without any output. A stopped request's Codex gets 2 seconds to exit before it is killed. After the turn ends, Codex gets 5 seconds to save its session and exit before it is stopped; the answer stands either way. A line of output over 8 MiB ends the request.
-- **Capabilities.** `streaming`, `continuation`, `page_context`, and `cancellation` are `true`, and `web_search` is `"unknown"`. `attachments` and `model_selection` remain `false`. Selection/page context is validated at the native boundary and framed in the Codex prompt as untrusted reference data, separate from the user question. Context turns are answer-only: Pervue disables Codex shell/image/apps/plugins/hooks/web-search/orchestrator-MCP/subagent surfaces (`features.multi_agent=false` and `features.multi_agent_v2=false`). Normal plugin cache/install artifacts do not block context. Pervue refuses only user-level standalone `mcp_servers` configuration that it cannot yet deterministically disable (`PAGE_CONTEXT_TOOLS_ENABLED`).
+- **Capabilities.** `streaming`, `continuation`, `web_search`, `page_context`, and `cancellation` are `true`. `attachments` and `model_selection` remain `false`. Selection/page context is validated at the native boundary and framed in the Codex prompt as untrusted reference data, separate from the user question. Context turns are answer-only: Pervue disables Codex shell/image/apps/plugins/hooks/web-search/orchestrator-MCP/subagent surfaces (`features.multi_agent=false` and `features.multi_agent_v2=false`). Normal plugin cache/install artifacts do not block context. Pervue refuses only user-level standalone `mcp_servers` configuration that it cannot yet deterministically disable (`PAGE_CONTEXT_TOOLS_ENABLED`).
 
 Failures map to the normalized errors of `docs/protocol/errors-and-capabilities-v1.md`. Codex's own messages and stderr can hold URLs, account details, and masked keys, so they are never forwarded or logged: every failure carries a fixed message.
 
@@ -246,7 +245,7 @@ Unset, as in CI's usual runs, the test passes at once. Set to `1`, it is skipped
 - **Deleting.** Forgetting a conversation removes its mapping and Claude Code's saved files for its session, under `$CLAUDE_CONFIG_DIR` or `~/.claude`: `projects/<project>/<session>.jsonl` transcripts whose records name the session and Pervue's `claude-workspace`, the directory beside each, and the session's `session-env`, `tasks`, and `file-history` directories. A transcript Claude recorded elsewhere, even with the same session ID, is left alone.
 - **Hooks.** Claude Code runs the hooks in the user's own Claude settings for Pervue's questions too, just as it does in a terminal: a hook that logs or forwards prompts sees Pervue's questions, and a hook's output can add to what Claude sees. Pervue leaves hooks on deliberately; they are the user's own configuration, and organization-managed hooks can't be turned off from here anyway. Tool-use hooks never fire, since all tools and MCP servers are off.
 - **Cancellation and failures.** Cancellation uses the shared process/stream manager. Authentication, rate-limit, process-exit, malformed-output, and availability failures map into the same normalized error vocabulary as Codex.
-- **Capabilities.** `streaming`, `continuation`, and `cancellation` are `true`; `web_search` is `"unknown"`; `page_context`, `attachments`, and `model_selection` are `false`. Browser context is intentionally not sent to Claude yet, so the capability-aware extension disables those controls when Claude is selected rather than silently dropping context.
+- **Capabilities.** `streaming`, `continuation`, `web_search`, and `cancellation` are `true`; `page_context`, `attachments`, and `model_selection` are `false`. Browser context is intentionally not sent to Claude yet, so the capability-aware extension disables those controls when Claude is selected rather than silently dropping context.
 
 `test_provider/tests/claude_adapter.rs` runs the adapter against a fake `claude`, and `test_provider/tests/provider_contract.rs` runs the same provider-neutral status/ask/continue contract against both Codex and Claude (TST-10).
 
