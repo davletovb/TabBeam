@@ -5,6 +5,7 @@
     "PROVIDER_NOT_FOUND",
     "PROVIDER_NOT_AUTHENTICATED",
     "PROVIDER_FAILED",
+    "SEARCH_FAILED",
     "REQUEST_CANCELLED",
     "REQUEST_TIMEOUT",
     "CONTEXT_UNAVAILABLE",
@@ -41,6 +42,12 @@
       "metadata": {
         "provider_id": "fake"
       }
+    },
+    {
+      "code": "SEARCH_FAILED",
+      "reason": "SEARCH_RATE_LIMITED",
+      "message": "The search backend is temporarily rate limited.",
+      "retryable": true
     },
     {
       "code": "REQUEST_CANCELLED",
@@ -129,6 +136,12 @@
       "input": {"provider_failure": "rate_limited"},
       "error_code": "PROVIDER_FAILED",
       "reason": "PROVIDER_RATE_LIMITED",
+      "retryable": true
+    },
+    {
+      "input": {"search_failure": "rate_limited"},
+      "error_code": "SEARCH_FAILED",
+      "reason": "SEARCH_RATE_LIMITED",
       "retryable": true
     },
     {
