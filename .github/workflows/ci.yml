@@ -34,6 +34,8 @@ jobs:
         run: npm --prefix extension run build
       - name: Smoke tests
         run: npm --prefix extension test
+      - name: Audit packaged trust boundaries
+        run: node packaging/security-audit.mjs
 
   native-roundtrip:
     name: Extension to built host round trip
@@ -103,21 +105,51 @@ jobs:
           test ! -e '/Applications/Uninstall Pervue.app'
 
   windows-package:
-    name: Windows package install and removal
+    name: Windows package install, upgrade and removal
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
           node-version: "22"
-      - name: Install Inno Setup
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native/target
+          key: windows-package-cargo-${{ hashFiles('native/Cargo.lock') }}
+      - name: Install pinned Inno Setup
         shell: pwsh
-        run: choco install innosetup --no-progress -y
+        run: choco install innosetup --version 6.7.3 --no-progress -y
+      - name: Reject non-canonical extension IDs before building
+        shell: pwsh
+        run: |
+          $rejected = $false
+          try {
+            packaging/windows/build.ps1 -ExtensionId ABCDEFGHIJKLMNOPABCDEFGHIJKLMNOP
+          }
+          catch {
+            $rejected = $true
+          }
+          if (-not $rejected) { throw "uppercase extension ID was accepted" }
       - name: Build unsigned test installer
         shell: pwsh
         run: packaging/windows/build.ps1 -ExtensionId abcdefghijklmnopabcdefghijklmnop
-      - name: Install and verify Chrome registration
+      - name: Reject install-directory overrides
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem out/windows/Pervue-*-windows-x64.exe | Select-Object -First 1
+          $unsafe = Join-Path $env:RUNNER_TEMP 'pervue-unsafe-dir'
+          $setup = Start-Process -FilePath $installer.FullName `
+            -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',"/DIR=$unsafe" `
+            -Wait -PassThru
+          if ($setup.ExitCode -eq 0) { throw "/DIR override unexpectedly succeeded" }
+          if (Test-Path -LiteralPath (Join-Path $unsafe 'pervue-host.exe')) {
+            throw "installer wrote the host to the overridden directory"
+          }
+      - name: Install and verify Chrome registration and npm discovery
         shell: pwsh
         run: |
           $installer = Get-ChildItem out/windows/Pervue-*-windows-x64.exe | Select-Object -First 1
@@ -125,7 +157,11 @@ jobs:
             -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-' `
             -Wait -PassThru
           if ($setup.ExitCode -ne 0) { throw "installer failed with exit code $($setup.ExitCode)" }
-          $provider = Join-Path $env:RUNNER_TEMP 'provider-bin'
+
+          if (Get-Command codex -ErrorAction SilentlyContinue) {
+            throw "runner unexpectedly has codex on PATH; npm-location discovery would be ambiguous"
+          }
+          $provider = Join-Path $env:APPDATA 'npm'
           New-Item -ItemType Directory -Force -Path $provider | Out-Null
           @'
           @echo off
@@ -136,45 +172,75 @@ jobs:
           echo Not logged in 1>&2
           exit /b 1
           '@ | Set-Content -LiteralPath (Join-Path $provider 'codex.cmd') -Encoding ascii
-          $env:PERVUE_PROVIDER_PATH = $provider
+
           node packaging/windows/verify.mjs abcdefghijklmnopabcdefghijklmnop
+      - name: Upgrade while the native host is running
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem out/windows/Pervue-*-windows-x64.exe | Select-Object -First 1
+          $marker = Join-Path $env:RUNNER_TEMP 'pervue-host-ready'
+          Remove-Item $marker -Force -ErrorAction SilentlyContinue
+          $node = (Get-Command node).Source
+          $holder = Start-Process -FilePath $node `
+            -ArgumentList 'packaging/windows/hold-host.mjs','abcdefghijklmnopabcdefghijklmnop',$marker `
+            -PassThru
+          try {
+            $deadline = (Get-Date).AddSeconds(20)
+            while (-not (Test-Path -LiteralPath $marker)) {
+              if ((Get-Date) -ge $deadline) { throw "running host fixture did not become ready" }
+              Start-Sleep -Milliseconds 100
+            }
+            $setup = Start-Process -FilePath $installer.FullName `
+              -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-' `
+              -Wait -PassThru
+            if ($setup.ExitCode -ne 0) { throw "upgrade failed with exit code $($setup.ExitCode)" }
+            $holder.WaitForExit(15000)
+            if (-not $holder.HasExited) { throw "upgrade left the old native host running" }
+            node packaging/windows/verify.mjs abcdefghijklmnopabcdefghijklmnop
+          }
+          finally {
+            if (-not $holder.HasExited) { Stop-Process -Id $holder.Id -Force -ErrorAction SilentlyContinue }
+          }
       - name: Uninstall and verify owned registration
         shell: pwsh
         run: |
-          $uninstaller = Join-Path $env:LOCALAPPDATA 'Pervue\unins000.exe'
+          $installDir = Join-Path $env:LOCALAPPDATA 'Programs\Pervue'
+          $stateDir = Join-Path $env:LOCALAPPDATA 'Pervue'
+          New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
+          $sentinel = Join-Path $stateDir 'package-uninstall-must-preserve.txt'
+          Set-Content -LiteralPath $sentinel -Value 'preserve'
+
+          $uninstaller = Join-Path $installDir 'unins000.exe'
           if (-not (Test-Path -LiteralPath $uninstaller)) { throw "uninstaller not found" }
           $remove = Start-Process -FilePath $uninstaller `
             -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' `
             -Wait -PassThru
           if ($remove.ExitCode -ne 0) { throw "uninstaller failed with exit code $($remove.ExitCode)" }
-          if (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'Pervue')) {
+          if (Test-Path -LiteralPath $installDir) {
             throw "Pervue install directory still exists"
           }
+          if (-not (Test-Path -LiteralPath $sentinel)) {
+            throw "uninstall removed Pervue runtime state"
+          }
+
           $hive = [Microsoft.Win32.RegistryHive]::CurrentUser
           $view = [Microsoft.Win32.RegistryView]::Registry64
           $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey($hive, $view)
           try {
-            $key = $base.OpenSubKey('Software\Google\Chrome\NativeMessagingHosts\com.pervue.host')
-            if ($null -ne $key) {
-              $key.Dispose()
-              throw "Native Messaging registry key still exists after uninstall"
+            foreach ($subkey in @(
+              'Software\Google\Chrome\NativeMessagingHosts\com.pervue.host',
+              'Software\Microsoft\Windows\CurrentVersion\Uninstall\{D7A1D4E8-774F-4E2B-A745-04B43E51A93C}_is1'
+            )) {
+              $key = $base.OpenSubKey($subkey)
+              if ($null -ne $key) {
+                $key.Dispose()
+                throw "registry key still exists after uninstall: $subkey"
+              }
             }
           }
           finally {
             $base.Dispose()
           }
-
-  packaging-security:
-    name: Packaged trust-boundary audit
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
-        with:
-          node-version: "22"
-      - name: Audit packaged trust boundaries and extension permissions
-        run: node packaging/security-audit.mjs
 
   protocol:
     name: Protocol fixtures
@@ -238,7 +304,6 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Test
         run: cargo test --workspace --locked
-      # Packaged hosts ship the release profile, where overflow checks are off.
       - name: Test release profile
         if: matrix.os == 'ubuntu-latest'
         run: cargo test --workspace --locked --release
@@ -264,8 +329,6 @@ jobs:
           node fuzz/fuzz-support.mjs frame-corpus fuzz/corpus/frame_reader
           node fuzz/fuzz-support.mjs protocol-corpus fuzz/corpus/protocol
           node fuzz/fuzz-support.mjs stream-corpus fuzz/corpus/stream_lines
-      # fuzz-support.mjs derives -max_len from the shared frame limit in
-      # docs/protocol/native-messaging-v1.json.
       - name: Smoke-run frame fuzz target
         run: |
           max_len=$(node fuzz/fuzz-support.mjs max-len frame_reader)
