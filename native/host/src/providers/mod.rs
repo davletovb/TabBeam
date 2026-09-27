@@ -17,8 +17,8 @@ use std::time::{Duration, Instant};
 
 use crate::conversation::{BrowserContext, HistoryMessage};
 use crate::protocol::events::Capabilities;
-pub use pervue_core::stream::BUSY_LIMIT;
 use pervue_core::protocol::Source;
+pub use pervue_core::stream::BUSY_LIMIT;
 
 pub mod claude;
 pub mod codex;
@@ -104,10 +104,7 @@ impl Providers {
     }
 
     pub fn get(&self, id: &str) -> Option<Rc<dyn Provider>> {
-        self.0
-            .iter()
-            .find(|provider| provider.id() == id)
-            .cloned()
+        self.0.iter().find(|provider| provider.id() == id).cloned()
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &dyn Provider> {
