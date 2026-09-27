@@ -375,9 +375,8 @@ impl Provider for Codex {
         let reference_turn = request.context.is_some() || request.native_search;
 
         let mut conversation_id = request.conversation_id;
-        let mut fallback_prompt = (!request.history.is_empty()).then(|| {
-            provider_prompt(&request.history, request.context.as_ref(), &request.text)
-        });
+        let mut fallback_prompt = (!request.history.is_empty())
+            .then(|| provider_prompt(&request.history, request.context.as_ref(), &request.text));
         let mut prompt = if request.context.is_some() {
             provider_prompt(&[], request.context.as_ref(), &request.text)
         } else {
