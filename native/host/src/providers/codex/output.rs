@@ -177,7 +177,7 @@ mod tests {
 
     #[test]
     fn web_search_items_are_progress_without_fake_results() {
-        let line = r#"{\"type\":\"item.completed\",\"item\":{\"id\":\"search_1\",\"type\":\"web_search\",\"query\":\"rust\",\"action\":{\"type\":\"search\",\"query\":\"rust\"}}}"#;
+        let line = r#"{"type":"item.completed","item":{"id":"search_1","type":"web_search","query":"rust","action":{"type":"search","query":"rust"}}}"#;
         assert_eq!(parse(line), Ok(Line::Progress));
     }
     #[test]
