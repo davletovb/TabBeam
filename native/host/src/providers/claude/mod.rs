@@ -332,10 +332,29 @@ impl Provider for Claude {
         )
     }
 
+    fn preflight(&self, request: &SendRequest) -> Result<(), ErrorBody<'static>> {
+        if self.executable().is_none() {
+            return Err(NOT_INSTALLED);
+        }
+        if let Some(conversation_id) = request.conversation_id.as_deref() {
+            let known = self.conversations.borrow().contains_key(conversation_id)
+                || self
+                    .session_dir
+                    .as_deref()
+                    .and_then(|dir| read_session(dir, conversation_id))
+                    .is_some();
+            if !known && request.history.is_empty() {
+                return Err(UNKNOWN_CONVERSATION);
+            }
+        }
+        Ok(())
+    }
+
     fn send(&self, request: SendRequest) -> Box<dyn Exchange> {
-        let Some(executable) = self.executable() else {
-            return Box::new(Scripted::failed(NOT_INSTALLED));
-        };
+        if let Err(error) = self.preflight(&request) {
+            return Box::new(Scripted::failed(error));
+        }
+        let executable = self.executable().expect("preflight found Claude");
         // The host enforces page_context=false before this method is called.
         if request.context.is_some() {
             return Box::new(Scripted::failed(MALFORMED_OUTPUT));
@@ -346,14 +365,19 @@ impl Provider for Claude {
             provider_prompt_with_sources(
                 &request.history,
                 None,
-                &request.search_results,
+                request.search_results.as_deref(),
                 &request.text,
             )
         });
-        let mut prompt = if request.search_results.is_empty() {
+        let mut prompt = if request.search_results.is_none() {
             request.text
         } else {
-            provider_prompt_with_sources(&[], None, &request.search_results, &request.text)
+            provider_prompt_with_sources(
+                &[],
+                None,
+                request.search_results.as_deref(),
+                &request.text,
+            )
         };
         let resume = match &conversation_id {
             None => None,
