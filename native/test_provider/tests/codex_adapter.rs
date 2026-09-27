@@ -264,6 +264,24 @@ fn native_search_uses_codex_subscription_search_and_emits_sources() {
 }
 
 #[test]
+fn native_search_without_cited_urls_fails_instead_of_silently_completing() {
+    let codex = FakeCodex::install("search-no-links", "signed-in");
+    let adapter = context_adapter(&codex);
+    let updates = run_to_end(
+        adapter
+            .send(SendRequest {
+                native_search: true,
+                ..ask("Search without links")
+            })
+            .as_mut(),
+    );
+    assert_eq!(
+        failure(&updates),
+        (ErrorCode::SearchFailed, "NATIVE_SEARCH_NO_SOURCES")
+    );
+}
+
+#[test]
 fn page_context_reaches_codex_as_untrusted_reference_data() {
     let codex = FakeCodex::install("answers", "signed-in");
     let adapter = context_adapter(&codex);
@@ -300,6 +318,8 @@ fn page_context_reaches_codex_as_untrusted_reference_data() {
         "features.multi_agent=false",
         "features.multi_agent_v2=false",
         "features.standalone_web_search=false",
+        "features.web_search_request=false",
+        "features.web_search_cached=false",
         "web_search=\"disabled\"",
         "orchestrator.mcp.enabled=false",
     ] {
@@ -413,9 +433,37 @@ fn context_fails_closed_when_user_mcp_servers_are_configured() {
         failure(&updates),
         (ErrorCode::InvalidRequest, "PAGE_CONTEXT_TOOLS_ENABLED")
     );
+    assert_eq!(adapter.capabilities().page_context, Capability::Unsupported);
+    assert_eq!(adapter.capabilities().web_search, Capability::Unsupported);
+
+    let status_updates = run_to_end(adapter.status().as_mut());
+    let Update::Status { status, .. } = &status_updates[0] else {
+        panic!("expected status: {status_updates:?}");
+    };
+    assert_eq!(status.capabilities.page_context, Capability::Unsupported);
+    assert_eq!(status.capabilities.web_search, Capability::Unsupported);
+
+    let search = run_to_end(
+        adapter
+            .send(SendRequest {
+                native_search: true,
+                ..ask("Search")
+            })
+            .as_mut(),
+    );
+    assert_eq!(
+        failure(&search),
+        (
+            ErrorCode::SearchFailed,
+            "NATIVE_SEARCH_CONFIGURATION_UNSAFE"
+        )
+    );
     assert!(
-        codex.invocations().is_empty(),
-        "Codex ran with unsafe context tools"
+        codex
+            .invocations()
+            .iter()
+            .all(|invocation| !invocation.starts_with("exec ")),
+        "Codex exec ran with unsafe context/search tools"
     );
 }
 
