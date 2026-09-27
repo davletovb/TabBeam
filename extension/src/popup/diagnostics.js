@@ -1,10 +1,11 @@
-import { DIAGNOSTICS_MESSAGE } from "../shared/diagnostics.js";
+import { DIAGNOSTICS_MESSAGE, buildDiagnosticsExport } from "../shared/diagnostics.js";
 import { providerLabel } from "../shared/providers.js";
 
 /**
  * @param {{
  *   details: HTMLDetailsElement,
  *   refresh: HTMLButtonElement,
+ *   export: HTMLButtonElement,
  *   host: HTMLElement,
  *   protocol: HTMLElement,
  *   provider: HTMLElement,
@@ -34,6 +35,23 @@ export function bindDiagnostics(elements, runtime) {
   }
 
   elements.refresh.addEventListener("click", () => { void refresh(); });
+  elements.export.addEventListener("click", async () => {
+    if (pending) return;
+    pending = true;
+    elements.refresh.disabled = true;
+    elements.export.disabled = true;
+    try {
+      const summary = await runtime.sendMessage({ type: DIAGNOSTICS_MESSAGE });
+      renderDiagnostics(elements, summary);
+      downloadDiagnosticsExport(buildDiagnosticsExport(summary));
+    } catch {
+      elements.failure.textContent = "Diagnostics export could not be created.";
+    } finally {
+      pending = false;
+      elements.refresh.disabled = false;
+      elements.export.disabled = false;
+    }
+  });
   elements.details.addEventListener("toggle", () => {
     if (elements.details.open) void refresh();
   });
@@ -73,4 +91,20 @@ export function renderDiagnostics(elements, summary) {
   elements.failure.textContent = failure
     ? failure.code + " / " + failure.reason
     : "None";
+}
+
+
+/** @param {any} bundle */
+export function downloadDiagnosticsExport(bundle) {
+  const blob = new Blob([JSON.stringify(bundle, null, 2) + "\n"], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  try {
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "pervue-support-diagnostics.json";
+    link.rel = "noopener";
+    link.click();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
