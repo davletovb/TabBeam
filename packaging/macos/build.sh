@@ -49,6 +49,18 @@ chmod 644 "$manifest"
 install -m 755 "$root/packaging/macos/uninstall.sh" "$stage/Library/Application Support/Pervue/uninstall.sh"
 osacompile -o "$stage/Applications/Uninstall Pervue.app" \
   -e 'do shell script (quoted form of "/Library/Application Support/Pervue/uninstall.sh") with administrator privileges'
+# Give the applet a stable bundle identity before signing. Apple's pkgbuild
+# analyzer omits bare osacompile applets, so supply its component explicitly.
+python3 - "$stage/Applications/Uninstall Pervue.app/Contents/Info.plist" "$package_version" <<'PY'
+import plistlib, sys
+with open(sys.argv[1], 'rb') as source:
+    info = plistlib.load(source)
+info['CFBundleIdentifier'] = 'com.pervue.uninstaller'
+info['CFBundleVersion'] = sys.argv[2]
+info['CFBundleShortVersionString'] = sys.argv[2]
+with open(sys.argv[1], 'wb') as target:
+    plistlib.dump(info, target)
+PY
 if [[ -n "${PERVUE_APP_SIGN_IDENTITY:-}" ]]; then
   codesign --force --options runtime --timestamp --sign "$PERVUE_APP_SIGN_IDENTITY" "$host"
   codesign --force --options runtime --timestamp --sign "$PERVUE_APP_SIGN_IDENTITY" \
@@ -64,11 +76,20 @@ with open(sys.argv[1], 'w') as target:
     target.write('\n')
 PY
 
-pkgbuild --analyze --root "$stage" "$components"
-plutil -p "$components"
-/usr/libexec/PlistBuddy -c 'Print :0:RootRelativeBundlePath' "$components" | \
-  grep -Fx 'Applications/Uninstall Pervue.app' >/dev/null
-/usr/libexec/PlistBuddy -c 'Set :0:BundleIsRelocatable false' "$components"
+cat > "$components" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<array><dict>
+  <key>RootRelativeBundlePath</key><string>Applications/Uninstall Pervue.app</string>
+  <key>BundleIsRelocatable</key><false/>
+  <key>BundleIsVersionChecked</key><false/>
+  <key>BundleHasStrictIdentifier</key><true/>
+  <key>BundleOverwriteAction</key><string>upgrade</string>
+</dict></array>
+</plist>
+PLIST
+plutil -lint "$components"
 pkg="$output/Pervue-${host_version}-${source_commit:0:12}-macos-universal.pkg"
 if [[ -n "${PERVUE_INSTALLER_SIGN_IDENTITY:-}" && -z "${PERVUE_APP_SIGN_IDENTITY:-}" ]]; then
   echo 'Installer signing requires a signed host and uninstaller.' >&2

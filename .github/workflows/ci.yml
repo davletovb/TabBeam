@@ -79,6 +79,13 @@ jobs:
           SH
           chmod +x "$RUNNER_TEMP/provider-bin/codex"
           PERVUE_PROVIDER_PATH="$RUNNER_TEMP/provider-bin" node packaging/macos/verify.mjs abcdefghijklmnopabcdefghijklmnop
+      - name: Verify a moved applet does not redirect a reinstall
+        shell: bash
+        run: |
+          sudo mv '/Applications/Uninstall Pervue.app' "$RUNNER_TEMP/Uninstall Pervue.app"
+          sudo installer -pkg out/macos/*.pkg -target /
+          test -d '/Applications/Uninstall Pervue.app'
+          sudo rm -rf "$RUNNER_TEMP/Uninstall Pervue.app"
       - name: Remove and verify owned files
         shell: bash
         run: |
