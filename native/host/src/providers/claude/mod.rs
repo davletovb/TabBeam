@@ -266,6 +266,21 @@ impl Claude {
     fn executable(&self) -> Option<PathBuf> {
         self.search.find(EXECUTABLE)
     }
+
+    fn validate_request(&self, request: &SendRequest) -> Result<(), ErrorBody<'static>> {
+        if let Some(conversation_id) = request.conversation_id.as_deref() {
+            let known = self.conversations.borrow().contains_key(conversation_id)
+                || self
+                    .session_dir
+                    .as_deref()
+                    .and_then(|dir| read_session(dir, conversation_id))
+                    .is_some();
+            if !known && request.history.is_empty() {
+                return Err(UNKNOWN_CONVERSATION);
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Provider for Claude {
@@ -333,31 +348,13 @@ impl Provider for Claude {
         )
     }
 
-    fn preflight(&self, request: &SendRequest) -> Result<(), ErrorBody<'static>> {
-        if self.executable().is_none() {
-            return Err(NOT_INSTALLED);
-        }
-        if let Some(conversation_id) = request.conversation_id.as_deref() {
-            let known = self.conversations.borrow().contains_key(conversation_id)
-                || self
-                    .session_dir
-                    .as_deref()
-                    .and_then(|dir| read_session(dir, conversation_id))
-                    .is_some();
-            if !known && request.history.is_empty() {
-                return Err(UNKNOWN_CONVERSATION);
-            }
-        }
-        Ok(())
-    }
-
     fn send(&self, request: SendRequest) -> Box<dyn Exchange> {
-        if let Err(error) = self.preflight(&request) {
-            return Box::new(Scripted::failed(error));
-        }
         let Some(executable) = self.executable() else {
             return Box::new(Scripted::failed(NOT_INSTALLED));
         };
+        if let Err(error) = self.validate_request(&request) {
+            return Box::new(Scripted::failed(error));
+        }
         // The host enforces page_context=false before this method is called.
         if request.context.is_some() {
             return Box::new(Scripted::failed(MALFORMED_OUTPUT));
