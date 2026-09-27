@@ -118,17 +118,6 @@ try {
         throw 'Inno Setup 6.3 or newer compiler (ISCC.exe) is required.'
     }
 
-    $versionInfo = [Diagnostics.FileVersionInfo]::GetVersionInfo($iscc)
-    $innoVersionText = $versionInfo.ProductVersion
-    if (-not $innoVersionText -or $innoVersionText -notmatch '^(\d+)\.(\d+)(?:\.(\d+))?') {
-        throw "Could not determine Inno Setup version from $iscc."
-    }
-    $patch = if ($Matches[3]) { [int]$Matches[3] } else { 0 }
-    $innoVersion = [Version]::new([int]$Matches[1], [int]$Matches[2], $patch)
-    if ($innoVersion -lt [Version]'6.3.0') {
-        throw "Inno Setup 6.3 or newer is required; found $innoVersion."
-    }
-
     $iss = Join-Path $PSScriptRoot 'Pervue.iss'
     $compilerArgs = @(
         "/DStageDir=$stage",
