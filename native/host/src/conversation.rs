@@ -184,6 +184,33 @@ mod tests {
     }
 
     #[test]
+    fn search_source_unicode_separators_stay_escaped() {
+        let sources = [Source {
+            id: "src_search_1".to_owned(),
+            backend_id: "brave".to_owned(),
+            title: "a\u{0085}b".to_owned(),
+            url: "https://example.com/".to_owned(),
+            snippet: "c\u{2028}d\u{2029}e".to_owned(),
+            source_name: None,
+            age: None,
+        }];
+        let prompt = provider_prompt_with_sources(&[], None, Some(&sources), "Explain");
+        assert!(!prompt.contains('\u{0085}'));
+        assert!(!prompt.contains('\u{2028}'));
+        assert!(!prompt.contains('\u{2029}'));
+        assert!(prompt.contains(r#"a\u0085b"#));
+        assert!(prompt.contains(r#"c\u2028d\u2029e"#));
+    }
+
+    #[test]
+    fn empty_search_results_remain_an_explicit_search_turn() {
+        let prompt = provider_prompt_with_sources(&[], None, Some(&[]), "What changed?");
+        assert!(prompt.contains("Pervue searched the web for this turn"));
+        assert!(prompt.contains("No usable web search sources were returned"));
+        assert!(prompt.contains("Current user question:\nWhat changed?"));
+    }
+
+    #[test]
     fn context_and_history_keep_one_current_question_section() {
         let history = [HistoryMessage {
             role: Role::Assistant,
