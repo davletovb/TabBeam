@@ -30,10 +30,11 @@ use crate::diagnostics::{
 use crate::limits::MAX_FRAME_SIZE;
 use crate::protocol::events::{
     self, Capability, ConversationCreated, ErrorBody, ErrorCode, Event, ProviderStatus,
-    RequestCancelled, ResponseCompleted, ResponseDelta, ResponseStarted,
+    RequestCancelled, ResponseCompleted, ResponseDelta, ResponseSource, ResponseStarted,
 };
 use crate::protocol::request::{self, Method, RequestFailure, RequestId};
 use crate::providers::{Exchange, Providers, Scripted, SendRequest, StatusOfAll, Timeouts, Update};
+use crate::search::{SearchProviders, SearchRequest, SynthesisExchange};
 use pervue_core::framing::{self, FrameError};
 use pervue_core::stream::split_text;
 
@@ -111,6 +112,13 @@ const PROVIDER_NOT_INSTALLED: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::ProviderNotFound,
     reason: "PROVIDER_NOT_INSTALLED",
     message: "Pervue's companion app doesn't support this AI provider yet. Update it, then try again.",
+    retryable: false,
+};
+
+const SEARCH_BACKEND_NOT_FOUND: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::SearchFailed,
+    reason: "SEARCH_BACKEND_NOT_FOUND",
+    message: "Pervue's companion app doesn't support this search backend yet.",
     retryable: false,
 };
 
@@ -194,12 +202,32 @@ where
     W: Write + ?Sized,
     L: Write,
 {
-    run_with(&Providers::installed(), input, output, log)
+    let providers = Providers::installed();
+    let searches = SearchProviders::installed();
+    run_with_services(&providers, &searches, input, output, log)
 }
 
 /// Runs the host as [`run`] does, serving `providers`.
 pub fn run_with<R, W, L>(
     providers: &Providers,
+    input: &mut R,
+    output: &mut W,
+    log: &mut Diagnostics<L>,
+) -> Result<(), HostError>
+where
+    R: Read + Send + ?Sized,
+    W: Write + ?Sized,
+    L: Write,
+{
+    let searches = SearchProviders::installed();
+    run_with_services(providers, &searches, input, output, log)
+}
+
+/// Runs the host with explicit model and search registries. Tests use this to
+/// prove the search -> synthesis path without network access.
+pub fn run_with_services<R, W, L>(
+    providers: &Providers,
+    searches: &SearchProviders,
     input: &mut R,
     output: &mut W,
     log: &mut Diagnostics<L>,
@@ -223,6 +251,7 @@ where
         scope.spawn(move || read_frames(input, &sender));
         let mut session = Session {
             providers,
+            searches,
             output,
             log: &mut *log,
             counts: &mut counts,
@@ -434,6 +463,7 @@ fn logged(error: &ErrorBody<'static>) -> LoggedError {
 /// The state of one host session.
 struct Session<'a, W: ?Sized, L: Write> {
     providers: &'a Providers,
+    searches: &'a SearchProviders,
     output: &'a mut W,
     log: &'a mut Diagnostics<L>,
     counts: &'a mut Counts,
@@ -523,10 +553,13 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                 history,
                 context,
                 model,
+                search,
             } => {
                 let provider_id = provider_id.decode().into_owned();
                 let conversation_id = conversation_id.map(|id| id.decode().into_owned());
                 let provider = self.providers.get(&provider_id);
+                let provider_served = provider.is_some();
+                let question = text.decode().into_owned();
                 let (exchange, timeouts): (Box<dyn Exchange>, _) = match provider {
                     Some(provider)
                         if context.is_some()
@@ -548,22 +581,37 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                             Some(provider.timeouts()),
                         )
                     }
-                    Some(provider) => (
-                        provider.send(SendRequest {
-                            text: text.decode().into_owned(),
+                    Some(provider) => {
+                        let timeouts = Some(provider.timeouts());
+                        let request = SendRequest {
+                            text: question.clone(),
                             history,
                             conversation_id: conversation_id.clone(),
                             context,
                             model,
-                        }),
-                        Some(provider.timeouts()),
-                    ),
+                            search_results: Vec::new(),
+                        };
+                        let exchange: Box<dyn Exchange> = match search {
+                            Some(options) => match self.searches.get(&options.backend_id) {
+                                Some(search_provider) => {
+                                    let handle = search_provider.search(SearchRequest {
+                                        query: question,
+                                        count: options.count,
+                                    });
+                                    Box::new(SynthesisExchange::new(handle, provider, request))
+                                }
+                                None => Box::new(Scripted::failed(SEARCH_BACKEND_NOT_FOUND)),
+                            },
+                            None => provider.send(request),
+                        };
+                        (exchange, timeouts)
+                    }
                     None => (Box::new(Scripted::failed(PROVIDER_NOT_INSTALLED)), None),
                 };
                 Running::new(
                     id,
                     "conversation.send",
-                    Some((provider_id, provider.is_some())),
+                    Some((provider_id, provider_served)),
                     conversation_id,
                     timeouts,
                     exchange,
@@ -571,13 +619,14 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
             }
             Method::ProviderStatus { provider_id } => {
                 let provider_id = provider_id.map(|id| id.decode().into_owned());
-                let provider = provider_id.as_deref().map(|id| self.providers.get(id));
-                let exchange: Box<dyn Exchange> = match provider {
-                    None => Box::new(StatusOfAll::new(self.providers)),
-                    Some(Some(provider)) => provider.status(),
-                    Some(None) => Box::new(Scripted::failed(PROVIDER_NOT_INSTALLED)),
-                };
-                let served = matches!(provider, Some(Some(_)));
+                let (exchange, served): (Box<dyn Exchange>, bool) =
+                    match provider_id.as_deref() {
+                        None => (Box::new(StatusOfAll::new(self.providers)), false),
+                        Some(provider_id) => match self.providers.get(provider_id) {
+                            Some(provider) => (provider.status(), true),
+                            None => (Box::new(Scripted::failed(PROVIDER_NOT_INSTALLED)), false),
+                        },
+                    };
                 Running::new(
                     id,
                     "provider.status",
@@ -594,6 +643,7 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                 let provider_id = provider_id.decode().into_owned();
                 let conversation_id = conversation_id.decode().into_owned();
                 let provider = self.providers.get(&provider_id);
+                let served = provider.is_some();
                 let exchange: Box<dyn Exchange> = match provider {
                     Some(provider) => provider.forget(&conversation_id),
                     None => Box::new(Scripted::failed(PROVIDER_NOT_INSTALLED)),
@@ -601,7 +651,7 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                 Running::new(
                     id,
                     "conversation.forget",
-                    Some((provider_id, provider.is_some())),
+                    Some((provider_id, served)),
                     Some(conversation_id),
                     None,
                     exchange,
@@ -845,6 +895,13 @@ fn forward<W: Write + ?Sized>(
                 )?;
             }
             Ok(())
+        }
+        Update::Source(source) => {
+            let payload = ResponseSource {
+                source_id: &source.id,
+                data: &source,
+            };
+            write_event(output, raw, Event::ResponseSource, &payload)
         }
         Update::Status {
             provider_id,
