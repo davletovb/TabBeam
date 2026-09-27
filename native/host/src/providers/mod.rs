@@ -15,7 +15,7 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use crate::conversation::{BrowserContext, HistoryMessage};
-use crate::protocol::events::{Capabilities, ErrorBody};
+use crate::protocol::events::Capabilities;
 pub use pervue_core::stream::BUSY_LIMIT;
 
 pub mod claude;
@@ -57,13 +57,6 @@ pub trait Provider {
     /// Capabilities that are stable for this adapter implementation. The host
     /// uses these to reject requests that would otherwise be silently degraded.
     fn capabilities(&self) -> Capabilities;
-
-    /// Cheap, side-effect-free checks that must pass before a provider turn
-    /// starts. Adapters repeat the same checks in `send` because local
-    /// provider state may change between validation and execution.
-    fn preflight(&self, _request: &SendRequest) -> Result<(), ErrorBody<'static>> {
-        Ok(())
-    }
 
     /// Starts checking availability, authentication, and capabilities. The
     /// exchange reports one `Status` and then `Completed`.
