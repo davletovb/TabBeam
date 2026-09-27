@@ -275,6 +275,30 @@ impl Codex {
     fn executable(&self) -> Option<PathBuf> {
         self.search.find(EXECUTABLE)
     }
+
+    fn validate_request(&self, request: &SendRequest) -> Result<(), ErrorBody<'static>> {
+        let context_turn = request.context.is_some();
+        let reference_turn = context_turn || request.native_search;
+        if reference_turn && !context_configuration_is_safe(&self.launch) {
+            return Err(if context_turn {
+                CONTEXT_TOOLS_ENABLED
+            } else {
+                SEARCH_TOOLS_ENABLED
+            });
+        }
+        if let Some(conversation_id) = request.conversation_id.as_deref() {
+            let known = self.conversations.borrow().contains_key(conversation_id)
+                || self
+                    .session_dir
+                    .as_deref()
+                    .and_then(|dir| read_thread(dir, conversation_id))
+                    .is_some();
+            if !known && request.history.is_empty() {
+                return Err(UNKNOWN_CONVERSATION);
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Provider for Codex {
@@ -357,40 +381,13 @@ impl Provider for Codex {
         )
     }
 
-    fn preflight(&self, request: &SendRequest) -> Result<(), ErrorBody<'static>> {
-        if self.executable().is_none() {
-            return Err(NOT_INSTALLED);
-        }
-        let context_turn = request.context.is_some();
-        let reference_turn = context_turn || request.native_search;
-        if reference_turn && !context_configuration_is_safe(&self.launch) {
-            return Err(if request.context.is_some() {
-                CONTEXT_TOOLS_ENABLED
-            } else {
-                SEARCH_TOOLS_ENABLED
-            });
-        }
-        if let Some(conversation_id) = request.conversation_id.as_deref() {
-            let known = self.conversations.borrow().contains_key(conversation_id)
-                || self
-                    .session_dir
-                    .as_deref()
-                    .and_then(|dir| read_thread(dir, conversation_id))
-                    .is_some();
-            if !known && request.history.is_empty() {
-                return Err(UNKNOWN_CONVERSATION);
-            }
-        }
-        Ok(())
-    }
-
     fn send(&self, request: SendRequest) -> Box<dyn Exchange> {
-        if let Err(error) = self.preflight(&request) {
-            return Box::new(Scripted::failed(error));
-        }
         let Some(executable) = self.executable() else {
             return Box::new(Scripted::failed(NOT_INSTALLED));
         };
+        if let Err(error) = self.validate_request(&request) {
+            return Box::new(Scripted::failed(error));
+        }
         let context_turn = request.context.is_some();
         let reference_turn = context_turn || request.native_search;
 
