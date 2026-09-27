@@ -6,7 +6,7 @@
 //! adapter; the host and extension see only opaque Pervue conversation IDs.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::{OsStr, OsString};
 use std::hash::{BuildHasher, RandomState};
 use std::io::{self, Read, Write};
@@ -74,7 +74,7 @@ pub const LIMITS: Limits = Limits {
 pub const CAPABILITIES: Capabilities = Capabilities {
     streaming: Capability::Supported,
     continuation: Capability::Supported,
-    web_search: Capability::Unknown,
+    web_search: Capability::Supported,
     page_context: Capability::Unsupported,
     attachments: Capability::Unsupported,
     model_selection: Capability::Supported,
@@ -408,7 +408,10 @@ impl Provider for Claude {
             conversations: Rc::clone(&self.conversations),
             finish_grace: self.limits.finish,
             model: request.model,
+            native_search: request.native_search,
             queue: VecDeque::new(),
+            source_urls: HashSet::new(),
+            source_count: 0,
             cancelled: false,
             started: false,
             announced: false,
@@ -664,7 +667,11 @@ impl Exchange for StatusCheck {
 /// The `claude -p` command line for one turn; the question goes on stdin.
 /// A model is one `--model=<id>` argument, so the ID can never be read as an
 /// option of its own.
-fn claude_args(resume: Option<&str>, model: Option<&str>) -> Vec<OsString> {
+fn claude_args(
+    resume: Option<&str>,
+    model: Option<&str>,
+    native_search: bool,
+) -> Vec<OsString> {
     let mut args: Vec<OsString> = [
         "-p",
         "--output-format",
@@ -679,7 +686,7 @@ fn claude_args(resume: Option<&str>, model: Option<&str>) -> Vec<OsString> {
         // agent. Disable built-in tools, load none of the user's MCP
         // servers, and deny MCP tools explicitly as well.
         "--tools",
-        "",
+        if native_search { "WebSearch,WebFetch" } else { "" },
         "--strict-mcp-config",
         "--disallowedTools",
         "mcp__*",
@@ -709,7 +716,10 @@ struct Turn {
     finish_grace: Duration,
     /// The model to answer with, or `None` for Claude's own default.
     model: Option<String>,
+    native_search: bool,
     queue: VecDeque<Update>,
+    source_urls: HashSet<String>,
+    source_count: usize,
     cancelled: bool,
     /// This Claude run sent `init`.
     started: bool,
@@ -737,7 +747,11 @@ impl Turn {
         let Ok(workspace) = self.launch.workspace() else {
             return self.end(Update::Failed(NO_WORKSPACE));
         };
-        let args = claude_args(self.resume.as_deref(), self.model.as_deref());
+        let args = claude_args(
+            self.resume.as_deref(),
+            self.model.as_deref(),
+            self.native_search,
+        );
         let input = serde_json::json!({
             "type": "user",
             "message": {
@@ -805,6 +819,22 @@ impl Turn {
                     self.queue.push_back(Update::Started {
                         conversation_id: Some(conversation),
                     });
+                }
+            }
+            Ok(Line::WebSearch(results)) => {
+                for result in results {
+                    if self.source_urls.insert(result.url.clone()) {
+                        self.source_count += 1;
+                        self.queue.push_back(Update::Source(pervue_core::protocol::Source {
+                            id: format!("src_claude_{}", self.source_count),
+                            backend_id: ID.to_owned(),
+                            title: result.title,
+                            url: result.url,
+                            snippet: result.snippet,
+                            source_name: result.source_name,
+                            age: result.age,
+                        }));
+                    }
                 }
             }
             Ok(Line::MessageStart) => {
