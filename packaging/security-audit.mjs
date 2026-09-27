@@ -16,7 +16,7 @@ assert.deepEqual(extension.content_scripts?.map(script => script.matches), [
 const windows = fs.readFileSync("packaging/windows/Pervue.iss", "utf8");
 assert.match(windows, /DefaultDirName=\{localappdata\}\\Pervue/);
 assert.match(windows, /NativeMessagingHosts\\\{#HostName\}/);
-assert.match(windows, /Flags: uninsdeletekey 64bit/);
+assert.match(windows, /Root: HKCU64;/);\nassert.match(windows, /Flags: uninsdeletekey/);
 assert.doesNotMatch(windows, /\[Run\]|\[UninstallRun\]/i);
 assert.doesNotMatch(windows, /\{param:/i);
 
