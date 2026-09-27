@@ -320,7 +320,7 @@ fn exec(dir: &Path, args: &[String], behavior: &str) -> io::Result<ExitCode> {
             emit(&mut out, &agent_message("item_2", &text))?;
         }
         _ => {
-            let answer = if native_search {
+            let answer = if native_search && behavior != "search-no-links" {
                 format!(
                     "You asked: {prompt}\n\n[Codex search result](https://example.com/codex-search)"
                 )
