@@ -16,6 +16,7 @@ pub mod limits;
 pub mod manifest;
 pub mod protocol;
 pub mod providers;
+pub mod search;
 
 /// Host version reported by `--version` and in the `host.ready` event.
 pub const HOST_VERSION: &str = env!("CARGO_PKG_VERSION");
