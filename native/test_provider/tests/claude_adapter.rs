@@ -235,15 +235,73 @@ fn native_search_uses_claude_web_tools_and_emits_sources() {
         .into_iter()
         .find(|line| line.starts_with("-p "))
         .expect("Claude print mode ran");
+    assert!(invocation.contains("--tools WebSearch"), "{invocation}");
     assert!(
-        invocation.contains("--tools WebSearch,WebFetch"),
+        invocation.contains("--allowedTools WebSearch"),
         "{invocation}"
     );
+    assert!(!invocation.contains("WebFetch"), "{invocation}");
     assert!(invocation.contains("--strict-mcp-config"), "{invocation}");
     assert!(
         invocation.contains("--disallowedTools mcp__*"),
         "{invocation}"
     );
+}
+
+#[test]
+fn native_search_without_usable_sources_fails_instead_of_silently_completing() {
+    let claude = FakeClaude::install("search-no-links", "signed-in");
+    let adapter = claude.adapter();
+    let updates = run_to_end(
+        adapter
+            .send(SendRequest {
+                native_search: true,
+                ..ask("Find something")
+            })
+            .as_mut(),
+    );
+    assert_eq!(
+        failure(&updates),
+        (ErrorCode::SearchFailed, "NATIVE_SEARCH_NO_SOURCES")
+    );
+}
+
+#[test]
+fn search_then_plain_followup_resumes_with_plain_tool_policy() {
+    let claude = FakeClaude::install("answers", "signed-in");
+    let adapter = claude.adapter();
+    let first = visible(&run_to_end(
+        adapter
+            .send(SendRequest {
+                native_search: true,
+                ..ask("Search this")
+            })
+            .as_mut(),
+    ));
+    let Update::ConversationCreated(conversation) = first[0].clone() else {
+        panic!("missing conversation: {first:?}");
+    };
+    assert_eq!(first.last(), Some(&Update::Completed));
+
+    let second = visible(&run_to_end(
+        adapter
+            .send(SendRequest {
+                conversation_id: Some(conversation),
+                ..ask("Plain follow up")
+            })
+            .as_mut(),
+    ));
+    assert_eq!(second.last(), Some(&Update::Completed));
+
+    let invocations: Vec<_> = claude
+        .invocations()
+        .into_iter()
+        .filter(|line| line.starts_with("-p "))
+        .collect();
+    assert!(invocations[0].contains("--tools WebSearch"));
+    assert!(invocations[0].contains("--allowedTools WebSearch"));
+    assert!(invocations[1].contains("--tools  --strict-mcp-config"));
+    assert!(!invocations[1].contains("--allowedTools"));
 }
 
 #[test]
