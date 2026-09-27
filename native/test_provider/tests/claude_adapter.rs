@@ -21,6 +21,7 @@ fn ask(text: &str) -> SendRequest {
         conversation_id: None,
         context: None,
         model: None,
+        native_search: false,
         search_results: None,
     }
 }
