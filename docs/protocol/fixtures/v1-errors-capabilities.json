@@ -45,9 +45,9 @@
     },
     {
       "code": "SEARCH_FAILED",
-      "reason": "SEARCH_RATE_LIMITED",
-      "message": "The search backend is temporarily rate limited.",
-      "retryable": true
+      "reason": "NATIVE_SEARCH_UNSUPPORTED",
+      "message": "The selected AI provider does not support native web search.",
+      "retryable": false
     },
     {
       "code": "REQUEST_CANCELLED",
@@ -139,10 +139,10 @@
       "retryable": true
     },
     {
-      "input": {"search_failure": "rate_limited"},
+      "input": {"search_failure": "native_unsupported"},
       "error_code": "SEARCH_FAILED",
-      "reason": "SEARCH_RATE_LIMITED",
-      "retryable": true
+      "reason": "NATIVE_SEARCH_UNSUPPORTED",
+      "retryable": false
     },
     {
       "input": {"protocol_failure": "unknown_method"},
