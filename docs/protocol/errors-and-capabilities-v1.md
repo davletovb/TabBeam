@@ -102,8 +102,11 @@ The Codex adapter reports `WORKSPACE_UNAVAILABLE` when the directory it runs Cod
 ### `SEARCH_FAILED`
 The user requested web search, but Pervue could not start a supported native-search turn.
 
-Current reason:
+Current reasons:
 - `NATIVE_SEARCH_UNSUPPORTED` — the selected AI provider does not expose authenticated native web search.
+- `SEARCH_WITH_CONTEXT_UNSUPPORTED` — search was requested together with browser context. Pervue currently refuses that combination so attacker-controlled page text never gains live network access.
+- `NATIVE_SEARCH_CONFIGURATION_UNSAFE` — provider-local configuration would enable additional tool surfaces Pervue cannot safely bound for a native-search turn.
+- `NATIVE_SEARCH_NO_SOURCES` — the provider completed a search turn without any usable normalized sources. Pervue fails the turn instead of silently presenting an ungrounded answer.
 
 Provider-native search runs inside the selected provider turn. Authentication, rate-limit, timeout, cancellation, and provider-service failures therefore keep their ordinary provider/request error categories rather than being reclassified as search-backend failures.
 
@@ -152,7 +155,6 @@ Required v1 protocol reasons include:
 - `PAGE_CONTEXT_UNSUPPORTED`
 - `PAGE_CONTEXT_TOOLS_ENABLED`
 - `MODEL_SELECTION_UNSUPPORTED`
-- `SEARCH_REFERENCE_TOOLS_ENABLED`
 
 The extension also reports `REQUEST_TOO_LARGE` when it refuses to send a request that would exceed the Native Messaging frame limit (SEC-01, `docs/protocol/native-messaging-v1.json`). The host never receives such a request.
 
@@ -181,7 +183,7 @@ Default retryability: **false** unless the implementation explicitly knows the c
 3. Raw details MAY appear under sanitized `metadata`.
 4. The extension MUST NOT branch on `message` or raw provider metadata.
 5. Unknown provider failures map to `PROVIDER_FAILED`, not `INTERNAL_ERROR`.
-6. `SEARCH_FAILED` is reserved for search-mode setup/capability failures such as `NATIVE_SEARCH_UNSUPPORTED`; provider-native search execution failures keep their ordinary provider/request error categories.
+6. `SEARCH_FAILED` is reserved for search-mode capability/safety/grounding failures such as `NATIVE_SEARCH_UNSUPPORTED`, `SEARCH_WITH_CONTEXT_UNSUPPORTED`, `NATIVE_SEARCH_CONFIGURATION_UNSAFE`, or `NATIVE_SEARCH_NO_SOURCES`; provider service/authentication/rate-limit failures keep their ordinary provider/request categories.
 7. `INTERNAL_ERROR` is reserved for failures inside Pervue's own host/runtime where no more specific category applies.
 8. Cancellation of a target request MUST terminate that target with `REQUEST_CANCELLED`.
 9. Unsupported versions, methods, fields, or payload shape errors MUST map to `INVALID_REQUEST`.
