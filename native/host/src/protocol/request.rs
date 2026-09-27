@@ -11,7 +11,7 @@ use crate::limits::{
     MAX_CONTEXT_TITLE_BYTES, MAX_CONTEXT_URL_BYTES, MAX_HISTORY_BYTES, MAX_HISTORY_MESSAGES,
     MAX_PAGE_BYTES, MAX_REQUEST_ID_LENGTH, MAX_SELECTION_BYTES,
 };
-use crate::search::{DEFAULT_BACKEND_ID, DEFAULT_RESULT_COUNT, MAX_RESULT_COUNT, SearchOptions};
+use crate::search::{DEFAULT_BACKEND_ID, PROVIDER_BACKEND_ID, SearchOptions};
 
 /// A validated request ID, kept as the raw bytes of its JSON string token so
 /// events echo it byte-for-byte (v1 §4).
@@ -61,7 +61,7 @@ pub enum Method<'a> {
         /// The model to answer with, validated by [`is_model_id`]; `None`
         /// uses the provider's default.
         model: Option<String>,
-        /// Optional provider-independent web retrieval before synthesis.
+        /// Optional provider-native authenticated web search.
         search: Option<SearchOptions>,
     },
     ProviderStatus {
@@ -426,30 +426,19 @@ fn parse_input(input: &[u8]) -> Result<(JsonStr<'_>, Vec<HistoryMessage>), Failu
 
 fn parse_search(value: &[u8]) -> Result<SearchOptions, FailureKind> {
     #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct Wire {
         backend_id: Option<String>,
-        count: Option<usize>,
     }
 
     let wire: Wire = serde_json::from_slice(value).map_err(|_| FailureKind::InvalidPayload)?;
     let backend_id = wire
         .backend_id
         .unwrap_or_else(|| DEFAULT_BACKEND_ID.to_owned());
-    let count = wire.count.unwrap_or(DEFAULT_RESULT_COUNT);
-    if !is_search_backend_id(&backend_id) || !(1..=MAX_RESULT_COUNT).contains(&count) {
+    if !matches!(backend_id.as_str(), DEFAULT_BACKEND_ID | PROVIDER_BACKEND_ID) {
         return Err(FailureKind::InvalidPayload);
     }
-    Ok(SearchOptions { backend_id, count })
-}
-
-fn is_search_backend_id(id: &str) -> bool {
-    let bytes = id.as_bytes();
-    !bytes.is_empty()
-        && bytes.len() <= 32
-        && bytes[0].is_ascii_lowercase()
-        && bytes.iter().all(|byte| {
-            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
-        })
+    Ok(SearchOptions { backend_id })
 }
 
 fn parse_browser_context(context: &[u8]) -> Result<BrowserContext, FailureKind> {
@@ -726,7 +715,6 @@ mod tests {
             search,
             Some(SearchOptions {
                 backend_id: "auto".to_owned(),
-                count: DEFAULT_RESULT_COUNT,
             })
         );
     }
@@ -736,7 +724,7 @@ mod tests {
         let request = envelope(
             "req_search",
             "conversation.send",
-            r#"{"provider_id":"codex","input":{"text":"latest rust"},"search":{"backend_id":"brave","count":6}}"#,
+            r#"{"provider_id":"codex","input":{"text":"latest rust"},"search":{"backend_id":"provider"}}"#,
         );
         let parsed = parse_request(request.as_bytes()).unwrap();
         let Method::ConversationSend { search, .. } = parsed.method else {
@@ -745,8 +733,7 @@ mod tests {
         assert_eq!(
             search,
             Some(SearchOptions {
-                backend_id: "brave".to_owned(),
-                count: 6,
+                backend_id: "provider".to_owned(),
             })
         );
 
