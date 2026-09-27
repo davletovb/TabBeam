@@ -11,6 +11,7 @@ use crate::limits::{
     MAX_CONTEXT_TITLE_BYTES, MAX_CONTEXT_URL_BYTES, MAX_HISTORY_BYTES, MAX_HISTORY_MESSAGES,
     MAX_PAGE_BYTES, MAX_REQUEST_ID_LENGTH, MAX_SELECTION_BYTES,
 };
+use crate::search::{DEFAULT_BACKEND_ID, DEFAULT_RESULT_COUNT, MAX_RESULT_COUNT, SearchOptions};
 
 /// A validated request ID, kept as the raw bytes of its JSON string token so
 /// events echo it byte-for-byte (v1 §4).
@@ -60,6 +61,8 @@ pub enum Method<'a> {
         /// The model to answer with, validated by [`is_model_id`]; `None`
         /// uses the provider's default.
         model: Option<String>,
+        /// Optional provider-independent web retrieval before synthesis.
+        search: Option<SearchOptions>,
     },
     ProviderStatus {
         provider_id: Option<JsonStr<'a>>,
@@ -326,6 +329,7 @@ fn parse_conversation_payload(payload: &[u8]) -> Result<Method<'_>, FailureKind>
     let mut input_data = None;
     let mut context = None;
     let mut model = None;
+    let mut search = None;
     let mut invalid = false;
 
     let has_members = walk_payload_object(payload, |key, reader| {
@@ -346,6 +350,9 @@ fn parse_conversation_payload(payload: &[u8]) -> Result<Method<'_>, FailureKind>
         } else if key.equals_ascii("context") {
             context = read_object(reader)?.and_then(|value| parse_browser_context(value).ok());
             invalid |= context.is_none();
+        } else if key.equals_ascii("search") {
+            search = read_object(reader)?.and_then(|value| parse_search(value).ok());
+            invalid |= search.is_none();
         } else {
             reader.skip_value().map_err(payload_error)?;
         }
@@ -361,6 +368,7 @@ fn parse_conversation_payload(payload: &[u8]) -> Result<Method<'_>, FailureKind>
                 history,
                 context,
                 model,
+                search,
             })
         }
         _ => Err(FailureKind::InvalidPayload),
@@ -414,6 +422,34 @@ fn parse_input(input: &[u8]) -> Result<(JsonStr<'_>, Vec<HistoryMessage>), Failu
         Some(text) if has_members && !invalid => Ok((text, history.unwrap_or_default())),
         _ => Err(FailureKind::InvalidPayload),
     }
+}
+
+fn parse_search(value: &[u8]) -> Result<SearchOptions, FailureKind> {
+    #[derive(serde::Deserialize)]
+    struct Wire {
+        backend_id: Option<String>,
+        count: Option<usize>,
+    }
+
+    let wire: Wire = serde_json::from_slice(value).map_err(|_| FailureKind::InvalidPayload)?;
+    let backend_id = wire
+        .backend_id
+        .unwrap_or_else(|| DEFAULT_BACKEND_ID.to_owned());
+    let count = wire.count.unwrap_or(DEFAULT_RESULT_COUNT);
+    if !is_search_backend_id(&backend_id) || !(1..=MAX_RESULT_COUNT).contains(&count) {
+        return Err(FailureKind::InvalidPayload);
+    }
+    Ok(SearchOptions { backend_id, count })
+}
+
+fn is_search_backend_id(id: &str) -> bool {
+    let bytes = id.as_bytes();
+    !bytes.is_empty()
+        && bytes.len() <= 32
+        && bytes[0].is_ascii_lowercase()
+        && bytes
+            .iter()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-'))
 }
 
 fn parse_browser_context(context: &[u8]) -> Result<BrowserContext, FailureKind> {
@@ -661,6 +697,7 @@ mod tests {
             history,
             context,
             model,
+            search,
         } = request.method
         else {
             panic!("unexpected method");
@@ -671,6 +708,44 @@ mod tests {
         assert!(history.is_empty());
         assert!(context.is_none());
         assert!(model.is_none(), "no model means the provider's default");
+        assert!(search.is_none(), "search is opt-in");
+    }
+
+    #[test]
+    fn validates_search_options_independently_of_model_provider() {
+        let request = envelope(
+            "req_search",
+            "conversation.send",
+            r#"{"provider_id":"codex","input":{"text":"latest rust"},"search":{"backend_id":"brave","count":6}}"#,
+        );
+        let parsed = parse_request(request.as_bytes()).unwrap();
+        let Method::ConversationSend { search, .. } = parsed.method else {
+            panic!("expected conversation");
+        };
+        assert_eq!(
+            search,
+            Some(SearchOptions {
+                backend_id: "brave".to_owned(),
+                count: 6,
+            })
+        );
+
+        for search in [
+            r#"{"backend_id":"","count":5}"#,
+            r#"{"backend_id":"../brave","count":5}"#,
+            r#"{"backend_id":"brave","count":0}"#,
+            r#"{"backend_id":"brave","count":11}"#,
+            r#"[]"#,
+        ] {
+            let payload = format!(
+                r#"{{"provider_id":"codex","input":{{"text":"latest rust"}},"search":{search}}}"#
+            );
+            expect_failure(
+                &envelope("req_bad_search", "conversation.send", &payload),
+                FailureKind::InvalidPayload,
+                Some("req_bad_search"),
+            );
+        }
     }
 
     #[test]
