@@ -47,7 +47,7 @@ export const KIND_MESSAGES = Object.freeze({
   "provider-missing": "The AI provider isn't installed. Install it, then try again.",
   "provider-signed-out": "The AI provider isn't signed in. Sign in, then try again.",
   "provider-failed": "The AI provider couldn't answer. Try again.",
-  "search-failed": "Web search couldn't retrieve sources. Try again.",
+  "search-failed": "This AI provider can't use web search for that request.",
   timeout: "The answer took too long. Try again.",
   cancelled: "Stopped. You can ask again.",
   "context-unavailable": "Pervue couldn't use this page. Choose No context, then ask again.",
