@@ -5,14 +5,18 @@ import { bindThemeToggle } from "../shared/theme-toggle.js";
 
 const select = document.querySelector("#theme-select");
 const toggle = document.querySelector("#theme-toggle");
-const packageStep = document.querySelector("#macos-package");
-const uninstallNote = document.querySelector("#macos-uninstall");
+const macPackageStep = document.querySelector("#macos-package");
+const windowsPackageStep = document.querySelector("#windows-package");
+const macUninstallNote = document.querySelector("#macos-uninstall");
+const windowsUninstallNote = document.querySelector("#windows-uninstall");
 const manualSetup = document.querySelector("#manual-setup");
 if (manualSetup instanceof HTMLDetailsElement) {
   chrome.runtime.getPlatformInfo().then((/** @type {{os: string}} */ { os }) => {
-    if (packageStep instanceof HTMLElement) packageStep.hidden = os !== "mac";
-    if (uninstallNote instanceof HTMLElement) uninstallNote.hidden = os !== "mac";
-    manualSetup.open = os !== "mac";
+    if (macPackageStep instanceof HTMLElement) macPackageStep.hidden = os !== "mac";
+    if (windowsPackageStep instanceof HTMLElement) windowsPackageStep.hidden = os !== "win";
+    if (macUninstallNote instanceof HTMLElement) macUninstallNote.hidden = os !== "mac";
+    if (windowsUninstallNote instanceof HTMLElement) windowsUninstallNote.hidden = os !== "win";
+    manualSetup.open = os !== "mac" && os !== "win";
   }, () => { manualSetup.open = true; });
 }
 if (select instanceof HTMLSelectElement && toggle instanceof HTMLElement) {
