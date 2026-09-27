@@ -22,7 +22,6 @@ fn ask(text: &str) -> SendRequest {
         context: None,
         model: None,
         native_search: false,
-        search_results: None,
     }
 }
 
