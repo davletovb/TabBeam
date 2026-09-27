@@ -105,17 +105,31 @@ fn print_mode(dir: &Path, args: &[String], behavior: &str) -> io::Result<ExitCod
         return Ok(ExitCode::from(2));
     }
 
-    let tools = args
+    let Some(tools) = args
         .iter()
         .position(|arg| arg == "--tools")
         .and_then(|index| args.get(index + 1))
         .map(String::as_str)
-        .unwrap_or_default();
-    if !matches!(tools, "" | "WebSearch,WebFetch") {
-        let _ = writeln!(io::stderr(), "fake claude: unexpected tool allowlist");
+    else {
+        let _ = writeln!(io::stderr(), "fake claude: --tools is required");
         return Ok(ExitCode::from(2));
-    }
-    let native_search = tools == "WebSearch,WebFetch";
+    };
+    let allowed_tools = args
+        .iter()
+        .position(|arg| arg == "--allowedTools")
+        .and_then(|index| args.get(index + 1))
+        .map(String::as_str);
+    let native_search = match tools {
+        "" if allowed_tools.is_none() => false,
+        "WebSearch" if allowed_tools == Some("WebSearch") => true,
+        _ => {
+            let _ = writeln!(
+                io::stderr(),
+                "fake claude: expected --tools '' or --tools WebSearch --allowedTools WebSearch"
+            );
+            return Ok(ExitCode::from(2));
+        }
+    };
 
     let mut input = String::new();
     io::stdin().read_to_string(&mut input)?;
@@ -210,22 +224,31 @@ fn print_mode(dir: &Path, args: &[String], behavior: &str) -> io::Result<ExitCod
         emit(
             &mut out,
             &json!({
-                "type":"stream_event",
+                "type":"assistant",
                 "session_id":result_session,
-                "event":{
-                    "type":"content_block_start",
-                    "index":1,
-                    "content_block":{
-                        "type":"web_search_tool_result",
-                        "tool_use_id":"srvtoolu_test",
-                        "content":[{
-                            "type":"web_search_result",
-                            "title":"Claude search result",
-                            "url":"https://example.com/claude-search",
-                            "page_age":"today",
-                            "encrypted_content":"opaque"
-                        }]
-                    }
+                "message":{
+                    "role":"assistant",
+                    "content":[{
+                        "type":"tool_use",
+                        "id":"toolu_test",
+                        "name":"WebSearch",
+                        "input":{"query":prompt.trim()}
+                    }]
+                }
+            }),
+        )?;
+        emit(
+            &mut out,
+            &json!({
+                "type":"user",
+                "session_id":result_session,
+                "message":{
+                    "role":"user",
+                    "content":[{
+                        "tool_use_id":"toolu_test",
+                        "type":"tool_result",
+                        "content":"Web search results for query: \"test\"\n\nLinks: [{\"title\":\"Claude search result\",\"url\":\"https://example.com/claude-search\"}]"
+                    }]
                 }
             }),
         )?;
