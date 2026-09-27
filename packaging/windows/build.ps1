@@ -1,6 +1,8 @@
+#Requires -Version 7
+
 param(
     [Parameter(Mandatory = $true)]
-    [ValidatePattern('^[a-p]{32}$')]
+    [ValidatePattern('^[a-p]{32}$', Options = 'None')]
     [string] $ExtensionId,
 
     [string] $OutputDirectory
@@ -8,6 +10,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+if (Test-Path variable:PSNativeCommandUseErrorActionPreference) {
+    $PSNativeCommandUseErrorActionPreference = $false
+}
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 if (-not $OutputDirectory) {
@@ -16,12 +21,17 @@ if (-not $OutputDirectory) {
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
 $OutputDirectory = (Resolve-Path $OutputDirectory).Path
 
-& cargo build --manifest-path (Join-Path $root 'native\Cargo.toml') --release --locked -p pervue-host
+$target = 'x86_64-pc-windows-msvc'
+& rustup target add $target
+if ($LASTEXITCODE -ne 0) {
+    throw "rustup target add $target failed with exit code $LASTEXITCODE"
+}
+& cargo build --manifest-path (Join-Path $root 'native\Cargo.toml') --release --locked --target $target -p pervue-host
 if ($LASTEXITCODE -ne 0) {
     throw "cargo build failed with exit code $LASTEXITCODE"
 }
 
-$hostSource = Join-Path $root 'native\target\release\pervue-host.exe'
+$hostSource = Join-Path $root "native\target\$target\release\pervue-host.exe"
 if (-not (Test-Path -LiteralPath $hostSource -PathType Leaf)) {
     throw "Built host not found: $hostSource"
 }
@@ -41,22 +51,32 @@ $sourceCommitShort = $sourceCommit.Substring(0, 12)
 $stage = Join-Path ([IO.Path]::GetTempPath()) ("pervue-windows-" + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $stage | Out-Null
 try {
-    Copy-Item -LiteralPath $hostSource -Destination (Join-Path $stage 'pervue-host.exe')
+    $stagedHost = Join-Path $stage 'pervue-host.exe'
+    Copy-Item -LiteralPath $hostSource -Destination $stagedHost
 
-    # Let the host validate the extension ID and construct the allowlist. Chrome
-    # explicitly permits a host path relative to the manifest on Windows, so
-    # the installed manifest is independent of the user's profile directory.
+    # Let the exact built host validate the extension ID and construct the
+    # allowlist. Verify its complete identity before changing the one field
+    # Windows intentionally makes relative to the manifest.
     $manifestText = (& $hostSource --print-manifest $ExtensionId | Out-String)
     if ($LASTEXITCODE -ne 0) {
         throw "pervue-host --print-manifest failed with exit code $LASTEXITCODE"
     }
     $manifest = $manifestText | ConvertFrom-Json
+    $expectedOrigin = "chrome-extension://$ExtensionId/"
+    $generatedHost = [IO.Path]::GetFullPath([string]$manifest.path)
+    if ($manifest.name -ne 'com.pervue.host' -or
+        $manifest.type -ne 'stdio' -or
+        @($manifest.allowed_origins).Count -ne 1 -or
+        @($manifest.allowed_origins)[0] -cne $expectedOrigin -or
+        $generatedHost -ine [IO.Path]::GetFullPath($hostSource)) {
+        throw 'Unexpected Native Messaging manifest from pervue-host --print-manifest.'
+    }
     $manifest.path = 'pervue-host.exe'
-    $manifestJson = $manifest | ConvertTo-Json -Depth 8
+
     $utf8 = New-Object System.Text.UTF8Encoding($false)
     [IO.File]::WriteAllText(
         (Join-Path $stage 'com.pervue.host.json'),
-        $manifestJson + [Environment]::NewLine,
+        ($manifest | ConvertTo-Json -Depth 8) + [Environment]::NewLine,
         $utf8
     )
 
@@ -81,30 +101,55 @@ try {
     if (-not $iscc) {
         $programFilesX86 = [Environment]::GetFolderPath('ProgramFilesX86')
         $programFiles = [Environment]::GetFolderPath('ProgramFiles')
-        foreach ($candidate in @(
-            (Join-Path $programFilesX86 'Inno Setup 6\ISCC.exe'),
-            (Join-Path $programFiles 'Inno Setup 6\ISCC.exe')
-        )) {
-            if ($candidate -and (Test-Path -LiteralPath $candidate -PathType Leaf)) {
-                $iscc = $candidate
-                break
+        foreach ($version in @('7', '6')) {
+            foreach ($candidate in @(
+                (Join-Path $programFilesX86 "Inno Setup $version\ISCC.exe"),
+                (Join-Path $programFiles "Inno Setup $version\ISCC.exe")
+            )) {
+                if ($candidate -and (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+                    $iscc = $candidate
+                    break
+                }
             }
+            if ($iscc) { break }
         }
     }
     if (-not $iscc) {
-        throw 'Inno Setup 6 compiler (ISCC.exe) is required to build the Windows companion.'
+        throw 'Inno Setup 6.3 or newer compiler (ISCC.exe) is required.'
+    }
+
+    $innoVersionText = (& $iscc --version | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $innoVersionText -notmatch '(\d+)\.(\d+)(?:\.(\d+))?') {
+        throw "Could not determine Inno Setup version from: $innoVersionText"
+    }
+    $innoVersion = [Version]::new(
+        [int]$Matches[1],
+        [int]$Matches[2],
+        $(if ($Matches[3]) { [int]$Matches[3] } else { 0 })
+    )
+    if ($innoVersion -lt [Version]'6.3.0') {
+        throw "Inno Setup 6.3 or newer is required; found $innoVersion."
     }
 
     $iss = Join-Path $PSScriptRoot 'Pervue.iss'
-    $defines = @(
+    $compilerArgs = @(
         "/DStageDir=$stage",
         "/DOutputDir=$OutputDirectory",
-        "/DExtensionId=$ExtensionId",
         "/DHostVersion=$hostVersion",
         "/DPackageVersion=$packageVersion",
         "/DSourceCommitShort=$sourceCommitShort"
     )
-    & $iscc @defines $iss
+
+    $signCommand = [Environment]::GetEnvironmentVariable('PERVUE_WINDOWS_SIGN_COMMAND')
+    if ($signCommand) {
+        if (-not $signCommand.Contains('$f')) {
+            throw 'PERVUE_WINDOWS_SIGN_COMMAND must contain Inno Setup''s $f filename placeholder.'
+        }
+        $compilerArgs += '/DPervueSignTool=1'
+        $compilerArgs += "--signtool=pervue=$signCommand"
+    }
+
+    & $iscc @compilerArgs $iss
     if ($LASTEXITCODE -ne 0) {
         throw "Inno Setup failed with exit code $LASTEXITCODE"
     }
