@@ -1,6 +1,6 @@
 # Browser/Native Trust Boundary
 
-**Tracker items:** SEC-01, SEC-02  
+**Tracker items:** SEC-01, SEC-02, SEC-05  
 **Scope:** the controls between the Chrome extension and the native host, and between the host and the provider processes it starts. Framework §14 lists the requirements; this document records where each one is enforced and tested.
 
 ```text
@@ -68,7 +68,18 @@ Identifiers are redacted (SEC-02): a record copies only identifiers Pervue made 
 
 Tests: `diagnostics_never_copy_request_content` and `identifiers_pervue_did_not_issue_are_redacted_in_diagnostics` in `native/host/src/host.rs`; `request_ids_are_kept_only_in_the_extensions_shape`, `identifiers_are_kept_only_when_the_host_issued_them`, and `identifiers_can_neither_forge_nor_split_a_record` in `native/host/src/diagnostics.rs`; `diagnostics_go_to_stderr_and_never_into_the_frames` in `native/host/tests/cli.rs`; the hostile matrix (`native/test_provider/tests/hostile_matrix.rs`), whose fake Codex writes a fake key to stderr in every case; and the live smoke test, which checks its output for credentials before printing it (TST-05).
 
-## 6. Packaged trust boundaries and permissions (SEC-04)
+## 6. Search results (SEC-05)
+
+A web search turn (SRCH-01..04) brings text from pages Pervue never chose into the host and the browser: result titles, excerpts, and URLs are written by whoever runs those pages, and reach Pervue through the provider's output. They are handled as untrusted data from start to finish.
+
+- **Normalized once, in the host** (`native/host/src/search.rs`). A result is kept only with an `http`/`https` URL that has a host, no credentials, no whitespace or control characters, and at most 4096 bytes. Its title, excerpt, publisher, and age become single-line plain text (`display_text`): markup tags are removed, a few common HTML entities decoded, control, bidirectional-override, and zero-width characters dropped (so nothing can reorder or hide what's shown), and whitespace collapsed; at most 8× a field's limit is ever scanned. Titles are bounded to 512 bytes, excerpts to 4096, publisher and age to 256. A title that is only markup falls back to the URL's host. Each turn keeps at most 20 sources, one per URL, with IDs the host assigns (`src_<provider>_<n>`).
+- **Never part of a command or a later prompt.** Nothing from a result becomes a command-line argument: the provider's arguments are fixed per turn (Claude's search turns add only `--tools WebSearch --allowedTools WebSearch`; Codex's add only `-c web_search="live"`), and questions go on stdin. A follow-up continues the provider's own session and sends only the new question; when the session is gone, the rebuilt prompt holds the conversation's message text, never its sources. The extension never sends sources back to the host.
+- **Checked again in the extension** (`extension/src/shared/sources.js`). The service worker accepts a `response.source` only if its `source_id` names its data, its IDs match their grammar, and its URL parses as `http`/`https` with a host and no credentials. It bounds the text again by characters (title 300, excerpt 1000, publisher and age 120), removes control and invisible characters, drops repeats by ID or URL, keeps at most 20 per answer, and forwards to the page only the checked copy, which is also all it stores. Only a complete answer keeps its sources, so a failed or stopped one never looks grounded.
+- **Shown as text** (`extension/src/shared/source-list.js`). Pages check sources once more before showing them, set every field as a text node, and never parse them as HTML. A source link opens its checked URL in a new tab, with `rel="noopener noreferrer"`. Nothing is fetched to show a source: there are no favicons, previews, or thumbnails.
+
+Tests: `result_text_is_bounded_single_line_plain_text`, `display_text_keeps_ordinary_text_and_character_boundaries`, `a_markup_only_title_falls_back_to_the_host`, and `source_urls_require_http_authority_and_no_credentials` in `native/host/src/search.rs`; `hostile_search_results_are_plain_text_and_never_reach_a_command_line` in `native/test_provider/tests/claude_adapter.rs` and `hostile_cited_links_are_plain_text_and_never_reach_a_command_line` in `native/test_provider/tests/codex_adapter.rs` (option-, shell-, markup-, and instruction-shaped results, checked in every later command line and prompt); and `extension/tests/search-sources.mjs` (TST-14).
+
+## 7. Packaged trust boundaries and permissions (SEC-04)
 
 Packaging keeps the browser/native identity boundary explicit on both supported desktop platforms:
 
@@ -80,6 +91,6 @@ Packaging keeps the browser/native identity boundary explicit on both supported 
 - **Package regression audit.** `packaging/security-audit.mjs` is path-anchored to its own module and checks the packaging-specific invariants: fixed destination enforcement, exact registration identity, no recursive uninstall deletion or run-command sections, explicit x64 build target, case-sensitive extension-ID validation, generated-manifest verification, signing hook presence, and credential-free build inputs. Platform package jobs separately exercise installed registration and the exact extension allowlist.
 - **Windows release signing.** `packaging/windows/build.ps1` exposes only an optional Inno SignTool command, not certificate material. `.github/workflows/windows-release.yml` imports a PFX from CI secrets, signs the staged host, generated uninstaller, and installer, verifies the final Authenticode signature, and uploads the release candidate. Unsigned Windows artifacts are CI/internal mechanics builds only; TST-13 requires a signed candidate.
 
-## 7. Covered elsewhere
+## 8. Covered elsewhere
 
 - Page-context capture intent remains CTX-03/CTX-04; the shared byte limits are enforced on both sides of this boundary and recorded in `docs/protocol/native-messaging-v1.json`.

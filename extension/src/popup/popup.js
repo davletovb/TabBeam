@@ -9,6 +9,8 @@ import { CONVERSATIONS_KEY } from "../background/conversation-store.js";
 import { bindConversationList } from "../shared/conversation-list.js";
 import { renderMarkdown } from "../shared/markdown.js";
 import { followModelPreferences } from "../shared/models.js";
+import { bindSearchToggle } from "../shared/search-toggle.js";
+import { renderSources } from "../shared/source-list.js";
 import { createStreamReveal } from "../shared/stream-reveal.js";
 import { bindThemeSelect } from "../shared/theme.js";
 import { bindThemeToggle } from "../shared/theme-toggle.js";
@@ -43,7 +45,22 @@ const contextControls = bindContextControls(
   chrome.runtime
 );
 const fullView = requireElement("#open-full-page", HTMLButtonElement);
+const contextStatus = requireElement("#context-status", HTMLElement);
 let interacted = false;
+
+// Web search and page context don't combine (protocol v1): choosing one
+// turns the other off, and says so.
+const search = bindSearchToggle(requireElement("#search-toggle", HTMLButtonElement), {
+  onChange(on) {
+    if (on && (contextControls.getContext() || contextControls.isPending())) {
+      contextControls.clear();
+      contextStatus.textContent = "Web search doesn't share the page, so the page context was removed.";
+    }
+  }
+});
+for (const chip of ["#context-selection", "#context-page"]) {
+  requireElement(chip, HTMLButtonElement).addEventListener("click", () => search.set(false), { capture: true });
+}
 
 // The tab the popup was opened over, for resuming its conversation.
 /** @type {Promise<{id?: number, url?: string} | null>} */
@@ -71,6 +88,7 @@ const providerSelector = bindProviderSelector(
       providerState.follow(selection);
       models.observe(selection);
       const { label, status, providerChanged } = selection;
+      search.setSupported(status?.capabilities?.web_search, label);
       const pageContext = status?.capabilities?.page_context;
       // Until a provider's status says otherwise, the host decides: a
       // provider change never keeps the previous provider's answer.
@@ -87,6 +105,7 @@ const view = bindAskForm(
     status: requireElement("#status", HTMLElement),
     answer: requireElement("#answer", HTMLElement),
     history: requireElement("#conversation-history", HTMLElement),
+    sources: requireElement("#answer-sources", HTMLElement),
     cancel: requireElement("#ask-cancel", HTMLButtonElement),
     retry: requireElement("#ask-retry", HTMLButtonElement)
   },
@@ -96,6 +115,13 @@ const view = bindAskForm(
     onOutcome: (outcome) => providerState.update(outcome),
     getProviderId: () => providerSelector.getProviderId(),
     getModel: (providerId) => models.modelFor(providerId),
+    getSearch: () => search.isOn(),
+    // A few sources fit the popup; the full view lists them all.
+    renderSources: (container, sources) => renderSources(container, sources, {
+      variant: "compact",
+      limit: 4,
+      ...(view.getConversationId() ? { onMore: () => void openFullView() } : {})
+    }),
     onConversationLoaded(conversation) {
       if (conversation?.provider_id) providerSelector.lock(conversation.provider_id);
       else providerSelector.unlock();
@@ -301,17 +327,17 @@ void preloadMenuContext(chrome.runtime, contextControls, window.location.search)
   if (resume && !interacted && await view.loadConversation(resume)) thread.reveal();
 });
 
-fullView.addEventListener(
-  "click",
-  async () => {
-    const id = view.getConversationId();
-    if (!id) return;
-    const url = new URL(chrome.runtime.getURL("src/fullpage/index.html"));
-    url.searchParams.set("conversation", id);
-    await chrome.tabs.create({
-      url: url.toString()
-    });
-  }
-);
+/** Continues the conversation in the full view, with every source. */
+async function openFullView() {
+  const id = view.getConversationId();
+  if (!id) return;
+  const url = new URL(chrome.runtime.getURL("src/fullpage/index.html"));
+  url.searchParams.set("conversation", id);
+  await chrome.tabs.create({
+    url: url.toString()
+  });
+}
+
+fullView.addEventListener("click", () => void openFullView());
 
 export {};

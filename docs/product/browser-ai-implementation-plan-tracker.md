@@ -209,10 +209,10 @@ Reached after **Milestone H**:
 | SRCH-02 | Implement provider-native search execution | H | Search | SRCH-01 | IMPLEMENTED — VERIFY |
 | SRCH-03 | Normalize search results into source model | H | Search | SRCH-02, CON-01 | IMPLEMENTED — VERIFY |
 | SRCH-04 | Implement search + synthesis turn | H | Search | SRCH-03, PRO-07 | IMPLEMENTED — VERIFY |
-| EXT-16 | Add Search mode and compact citations to popup | H | Extension | SRCH-04, EXT-08 | BACKLOG |
-| EXT-17 | Add rich sources/citations to full-page view | H | Extension | SRCH-04, EXT-06 | BACKLOG |
-| SEC-05 | Sanitize/limit untrusted search-result content | H | Security | SRCH-02, SRCH-03 | BACKLOG |
-| TST-14 | Add citation/source grounding regression suite | H | Testing | SRCH-04, EXT-16, EXT-17 | BACKLOG |
+| EXT-16 | Add Search mode and compact citations to popup | H | Extension | SRCH-04, EXT-08 | IMPLEMENTED — VERIFY |
+| EXT-17 | Add rich sources/citations to full-page view | H | Extension | SRCH-04, EXT-06 | IMPLEMENTED — VERIFY |
+| SEC-05 | Sanitize/limit untrusted search-result content | H | Security | SRCH-02, SRCH-03 | IMPLEMENTED — VERIFY |
+| TST-14 | Add citation/source grounding regression suite | H | Testing | SRCH-04, EXT-16, EXT-17 | IMPLEMENTED — VERIFY |
 | OBS-03 | Add sanitized diagnostics export | Post-G | Observability | OBS-02, PKG-01 | BACKLOG |
 | PRO-08 | Add Gemini adapter | Post-E | Provider | PRO-07 | BACKLOG |
 | PRO-09 | Add Grok adapter | Post-E | Provider | PRO-07 | BACKLOG |
@@ -1648,7 +1648,12 @@ without terminal commands during the user journey.
 - Streaming answer shows compact source references without turning popup into a full research UI.
 - Long/deep workflow can hand off to full-page view.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- The composer's **Web** switch (`extension/src/shared/search-toggle.js`) asks the selected provider to search for the next questions; the ask port carries `search: true` and the worker sends `conversation.send.search: {}`. It stays on until turned off, is disabled for a provider whose status reports `web_search: false` (left to the host while unknown), and is mutually exclusive with page context in the popup, so the host's `SEARCH_WITH_CONTEXT_UNSUPPORTED` is never reached from the UI; the worker refuses that combination too, before anything is saved.
+- While a search answer streams the status reads "Searching the web…" and `response.source` events render at once as compact numbered chips under the answer (`extension/src/shared/source-list.js`); the saved answer keeps them. The popup shows up to four plus a **+N** chip that hands off to the full view for the same conversation. Search questions are stored with `search: true` and marked "Searched the web"; Retry repeats a question's search mode.
+- To fit the 400px popup, only the chosen context chip shows its name; the other context choices are icons with tooltips and keep their accessible names.
 
 ### EXT-17 — Add rich sources/citations to full-page view
 **Area:** Extension  
@@ -1659,7 +1664,12 @@ without terminal commands during the user journey.
 - Source identity remains consistent with popup.
 - Clicking/opening source uses safe URL handling.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- The full view renders each answer's sources as cards with number, title, site, publisher, age, and excerpt, and offers the same **Web search** switch.
+- Popup and full view render through one module (`renderSources`) from the same stored order, so each source carries the same number and `data-source-id` in both; `extension/tests/search-sources.mjs` renders one saved answer both ways and compares identities, numbers, and links.
+- Source links are re-checked at render time and open only `http`/`https` URLs in a new tab with `rel="noopener noreferrer"`; nothing is fetched to show a source (no favicons or previews).
 
 ### SEC-05 — Sanitize/limit untrusted search-result content
 **Area:** Security  
@@ -1670,7 +1680,12 @@ without terminal commands during the user journey.
 - HTML/script content is never trusted as UI.
 - Search result text cannot inject executable instructions into local process invocation.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- The host normalizes every result once (`native/host/src/search.rs`, `display_text`): single-line plain text with markup removed, common entities decoded, control/bidi/zero-width characters removed; title ≤512 bytes, snippet ≤4096, source name/age ≤256, URL ≤4096 `http`/`https` with a host and no credentials; ≤20 unique sources per turn.
+- The extension checks again (`extension/src/shared/sources.js`): the worker accepts a `response.source` only when `source_id` names valid data, bounds text by characters, drops repeats, keeps ≤20 per answer, and forwards and stores only the checked copy. Only complete answers keep sources. Pages check once more and render text nodes only.
+- Hostile fake-CLI results (option-, shell-, markup-, instruction-, credential-URL-, and `javascript:`-shaped) never appear in any later command line or prompt: `hostile_search_results_are_plain_text_and_never_reach_a_command_line` (Claude) and `hostile_cited_links_are_plain_text_and_never_reach_a_command_line` (Codex). Documented in `docs/security/trust-boundaries.md` §6 and protocol v1 `response.source`.
 
 ### TST-14 — Add citation/source grounding regression suite
 **Area:** Testing  
@@ -1682,7 +1697,11 @@ without terminal commands during the user journey.
 - Popup/full-page render the same source identities.
 - Search failure degrades to a clear error without corrupting the conversation.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- `extension/tests/search-sources.mjs` drives the real ask form, worker bridge, and conversation store with host events that mix valid, malformed, repeated, and hostile sources: an answer keeps exactly the checked sources its own turn retrieved, in order, identical to what the page was shown; the popup and full view render the same identities; a failed search (timeout after a source, or `NATIVE_SEARCH_NO_SOURCES`) shows the host's message, keeps no sources, leaves earlier answers and dialogue history intact, and a retry searches again and keeps only its own sources.
+- Native normalization is covered by the `search.rs` unit tests and the Claude/Codex adapter tests above; `extension/tests/native-roundtrip.mjs` sends a search question through the built host to a provider that can't search and gets `SEARCH_FAILED` / `NATIVE_SEARCH_UNSUPPORTED` with no sources or deltas, then keeps answering.
 
 ---
 

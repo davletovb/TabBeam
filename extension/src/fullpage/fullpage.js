@@ -6,6 +6,8 @@ import { bindProviderState } from "../popup/provider-state.js";
 import { bindProviderSelector } from "../shared/provider-selector.js";
 import { renderMarkdown } from "../shared/markdown.js";
 import { followModelPreferences } from "../shared/models.js";
+import { bindSearchToggle } from "../shared/search-toggle.js";
+import { renderSources } from "../shared/source-list.js";
 import { createStreamReveal } from "../shared/stream-reveal.js";
 import { bindThemeSelect } from "../shared/theme.js";
 import { bindThemeToggle } from "../shared/theme-toggle.js";
@@ -31,6 +33,7 @@ const providerState = bindProviderState(
 );
 // The provider and model are chosen on the setup page; this view follows.
 const models = followModelPreferences(chrome.storage.local, chrome.storage.onChanged);
+const search = bindSearchToggle(requireElement("#search-toggle", HTMLButtonElement));
 const providerSelector = bindProviderSelector(
   null,
   chrome.runtime,
@@ -40,6 +43,7 @@ const providerSelector = bindProviderSelector(
     onChange(selection) {
       providerState.follow(selection);
       models.observe(selection);
+      search.setSupported(selection.status?.capabilities?.web_search, selection.label);
     }
   }
 );
@@ -50,12 +54,16 @@ const view = bindAskForm({
   status: requireElement("#status", HTMLElement),
   answer: requireElement("#answer", HTMLElement),
   history: requireElement("#conversation-history", HTMLElement),
+  sources: requireElement("#answer-sources", HTMLElement),
   cancel: requireElement("#ask-cancel", HTMLButtonElement),
   retry: requireElement("#ask-retry", HTMLButtonElement)
 }, chrome.runtime, undefined, {
   onOutcome: (outcome) => providerState.update(outcome),
   getProviderId: () => providerSelector.getProviderId(),
   getModel: (providerId) => models.modelFor(providerId),
+  getSearch: () => search.isOn(),
+  // Every source, with its site, date, and excerpt.
+  renderSources: (container, sources) => renderSources(container, sources, { variant: "rich" }),
   onConversationLoaded(conversation) {
     if (conversation?.provider_id) providerSelector.lock(conversation.provider_id);
     else providerSelector.unlock();

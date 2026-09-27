@@ -406,6 +406,29 @@ body {
   gap: 8px;
 }
 
+.composer-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* Web search and page context don't combine: a hairline keeps them apart. */
+.composer-tools .search-toggle {
+  position: relative;
+  margin-left: 7px;
+  padding: 0 9px;
+}
+
+.composer-tools .search-toggle::before {
+  content: "";
+  position: absolute;
+  left: -6px;
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+}
+
 .context-choices {
   display: flex;
   gap: 4px;
@@ -440,6 +463,26 @@ body {
   border-color: color-mix(in srgb, var(--accent) 40%, transparent);
   background: var(--accent-soft);
   color: var(--accent-text);
+}
+
+/*
+ * Only the chosen context shows its name; the others are icons with a
+ * tooltip (their names stay for screen readers), so web search fits beside
+ * them in a 400px popup.
+ */
+.context-choices .chip:not([aria-pressed="true"]) {
+  justify-content: center;
+  width: 28px;
+  padding: 0;
+}
+
+.context-choices .chip:not([aria-pressed="true"]) > span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
 }
 
 /* "No context" is the resting state: pressed, but quiet. */
@@ -501,4 +544,14 @@ body {
   overflow: hidden;
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
+}
+
+/* ---------- Sources ---------- */
+
+.answer-sources {
+  margin-top: 10px;
+}
+
+.message-sources {
+  margin-top: 2px;
 }
