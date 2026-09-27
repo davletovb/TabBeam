@@ -1292,7 +1292,7 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 
 **Implementation evidence**
 - `native/host/src/providers/mod.rs` now documents the provider contract as the shared surface proven by two real adapters rather than a provisional Codex-only interface.
-- Codex and Claude share status/send/cancel/update semantics while observed differences stay in capabilities: both now report proven `web_search: true`; Claude reports `page_context: false` while Codex reports it true. Both adapters persist opaque native-session mappings across host restarts and can rebuild from bounded dialogue when a native session cannot be resumed; the provider-neutral contract does not expose either runtime's session IDs.
+- Codex and Claude share status/send/cancel/update semantics while observed differences stay in capabilities: both now report proven `web_search: true` and `page_context: true` (Claude's context turns are plain turns with no tools, the context framed as untrusted reference data). Both adapters persist opaque native-session mappings across host restarts and can rebuild from bounded dialogue when a native session cannot be resumed; the provider-neutral contract does not expose either runtime's session IDs.
 - No Claude-only method was added to the common `Provider` trait.
 
 
@@ -1651,7 +1651,7 @@ without terminal commands during the user journey.
 **Status:** IMPLEMENTED — VERIFY
 
 **Implementation evidence**
-- The composer's **Web** switch (`extension/src/shared/search-toggle.js`) asks the selected provider to search for the next questions; the ask port carries `search: true` and the worker sends `conversation.send.search: {}`. It stays on until turned off, is disabled for a provider whose status reports `web_search: false` (left to the host while unknown), and is mutually exclusive with page context in the popup, so the host's `SEARCH_WITH_CONTEXT_UNSUPPORTED` is never reached from the UI; the worker refuses that combination too, before anything is saved.
+- The composer's **Web** switch (`extension/src/shared/search-toggle.js`) asks the selected provider to search for the next questions; the ask port carries `search: true` and the worker sends `conversation.send.search: {}`. It's first in the composer and on by default, keeps the person's choice, is disabled for a provider whose status reports `web_search: false` (left to the host while unknown, and the choice returns with a provider that can search), and is mutually exclusive with page context in the popup (a successful capture turns it off), so the host's `SEARCH_WITH_CONTEXT_UNSUPPORTED` is never reached from the UI; the worker refuses that combination too, before anything is saved.
 - While a search answer streams the status reads "Searching the web…" and `response.source` events render at once as compact numbered chips under the answer (`extension/src/shared/source-list.js`); the saved answer keeps them. The popup shows up to four plus a **+N** chip that hands off to the full view for the same conversation. Search questions are stored with `search: true` and marked "Searched the web"; Retry repeats a question's search mode.
 - To fit the 400px popup, only the chosen context chip shows its name; the other context choices are icons with tooltips and keep their accessible names.
 

@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use pervue_host::conversation::{
     BrowserContext, BrowserContextMode, BrowserPageContext, HistoryMessage, Role,
+    SEARCH_INSTRUCTIONS,
 };
 use pervue_host::protocol::events::{Authentication, Availability, Capability, ErrorCode};
 use pervue_host::providers::codex::{CODEX_VARIABLES, Codex, LIMITS, Limits};
@@ -260,6 +261,38 @@ fn native_search_uses_codex_subscription_search_and_emits_sources() {
     assert!(
         !invocation.contains("web_search=\"disabled\""),
         "{invocation}"
+    );
+}
+
+#[test]
+fn a_search_turn_asks_for_a_cited_search_and_shows_the_answer_not_the_narration() {
+    let codex = FakeCodex::install("search-narrates", "signed-in");
+    let updates = visible(&run_to_end(
+        context_adapter(&codex)
+            .send(SendRequest {
+                native_search: true,
+                ..ask("what is muse?")
+            })
+            .as_mut(),
+    ));
+    assert_eq!(updates.last(), Some(&Update::Completed));
+    let answer: String = updates
+        .iter()
+        .filter_map(|update| match update {
+            Update::Delta(text) => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(!answer.contains("I'll search"), "{answer}");
+    assert!(answer.starts_with("You asked: "), "{answer}");
+    assert!(answer.contains("[Codex search result](https://example.com/codex-search)"));
+    assert!(updates.iter().any(|update| matches!(update, Update::Source(source) if source.url == "https://example.com/codex-search")));
+    // The question goes on stdin after instructions to search and cite.
+    let prompt = codex.prompts().last().cloned().unwrap();
+    assert!(prompt.starts_with(SEARCH_INSTRUCTIONS), "{prompt}");
+    assert!(
+        prompt.ends_with("Current user question:\nwhat is muse?"),
+        "{prompt}"
     );
 }
 

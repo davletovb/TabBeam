@@ -6,8 +6,10 @@ import { CONTEXT_CAPTURE_MESSAGE } from "../background/selection-capture.js";
  *
  * @param {{none: HTMLButtonElement, selection: HTMLButtonElement, page: HTMLButtonElement, status: HTMLElement, preview: HTMLElement}} elements
  * @param {{sendMessage(message: any): Promise<any>}} runtime
+ * @param {{onCapture?(context: any): void}} [options] `onCapture` hears of each
+ *   context attached, from a click, a suggestion, or a menu handoff
  */
-export function bindContextControls(elements, runtime) {
+export function bindContextControls(elements, runtime, options = {}) {
   const { none, selection, page, status, preview } = elements;
   /** @type {any | null} */
   let context = null;
@@ -57,6 +59,7 @@ export function bindContextControls(elements, runtime) {
     }
     context = result.context;
     setChoice(mode);
+    options.onCapture?.(context);
     const excerpt = [...context.text].slice(0, 240).join("");
     preview.textContent =
       `${context.page.title} • ${context.page.url}\n${excerpt}` +

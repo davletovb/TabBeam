@@ -205,6 +205,13 @@ fn exec(dir: &Path, args: &[String], behavior: &str) -> io::Result<ExitCode> {
     let native_search = args
         .windows(2)
         .any(|pair| pair == ["-c", "web_search=\"live\""]);
+    if native_search && behavior == "search-narrates" {
+        // Codex sometimes says what it's about to do before it searches.
+        emit(
+            &mut out,
+            &agent_message("item_narration", "I'll search the web for that."),
+        )?;
+    }
     if native_search {
         // Real Codex exec reports the search query/action here, not results.
         emit(

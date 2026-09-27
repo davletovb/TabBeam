@@ -413,17 +413,18 @@ body {
   min-width: 0;
 }
 
-/* Web search and page context don't combine: a hairline keeps them apart. */
+/* Web search comes first; it and page context don't combine, so a hairline
+   keeps them apart. */
 .composer-tools .search-toggle {
   position: relative;
-  margin-left: 7px;
+  margin-right: 7px;
   padding: 0 9px;
 }
 
-.composer-tools .search-toggle::before {
+.composer-tools .search-toggle::after {
   content: "";
   position: absolute;
-  left: -6px;
+  right: -6px;
   width: 1px;
   height: 16px;
   background: var(--border);

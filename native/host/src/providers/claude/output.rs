@@ -9,6 +9,10 @@ pub enum Line {
     Init(String),
     MessageStart,
     TextDelta(String),
+    /// A tool call starts in the message being streamed.
+    ToolUseStart,
+    /// The message being streamed ended.
+    MessageStop,
     ToolEvents(Vec<ToolEvent>),
     Progress,
     ResultSuccess {
@@ -87,7 +91,15 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
                         Line::Progress
                     }
                 }
-                "content_block_start" => Line::Progress,
+                "content_block_start"
+                    if nested
+                        .pointer("/content_block/type")
+                        .and_then(Value::as_str)
+                        == Some("tool_use") =>
+                {
+                    Line::ToolUseStart
+                }
+                "message_stop" => Line::MessageStop,
                 _ => Line::Progress,
             }
         }
@@ -288,6 +300,26 @@ mod tests {
                         if tool_use_id == "toolu_1" && content.contains("Links:")
                 )
         ));
+    }
+
+    #[test]
+    fn a_tool_call_starting_and_a_message_ending_are_told_apart() {
+        assert_eq!(
+            parse(
+                r#"{"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"WebSearch","input":{}}}}"#
+            ),
+            Ok(Line::ToolUseStart)
+        );
+        assert_eq!(
+            parse(
+                r#"{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}}"#
+            ),
+            Ok(Line::Progress)
+        );
+        assert_eq!(
+            parse(r#"{"type":"stream_event","event":{"type":"message_stop"}}"#),
+            Ok(Line::MessageStop)
+        );
     }
 
     #[test]
