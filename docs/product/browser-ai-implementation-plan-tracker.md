@@ -110,7 +110,7 @@ Reached after **Milestone G**:
 
 Reached after **Milestone H**:
 
-- provider-independent web search;
+- provider-native web search through the selected authenticated provider;
 - normalized sources;
 - cited answers;
 - consistent source rendering in popup and full-page view.
@@ -130,7 +130,7 @@ Reached after **Milestone H**:
 | E — Second provider | Claude works through the same normalized adapter contract and exposes capabilities without UI hard-coding. |
 | F — Reusable native core | Reused process/messaging/stream/provider primitives are extracted behind documented library APIs. |
 | G — Installable product | macOS and Windows packaging paths are implemented; clean-machine human release verification remains open on both platforms. |
-| H — Search/citations | Search is provider-independent and returns normalized, grounded, cited responses. |
+| H — Search/citations | Search uses provider-native authenticated retrieval and returns normalized, grounded, cited responses. |
 
 ---
 
@@ -205,10 +205,10 @@ Reached after **Milestone H**:
 | PKG-06 | Build Windows companion installer | G | Packaging | PKG-05, PRO-07 | IMPLEMENTED — VERIFY |
 | TST-13 | Verify Windows clean-machine install/use/uninstall journey | G | Testing | PKG-06, PKG-03 | BLOCKED |
 | SEC-04 | Security review of packaged trust boundaries and permissions | G | Security | PKG-04, PKG-06 | IMPLEMENTED — VERIFY |
-| SRCH-01 | Define provider-independent search adapter contract | H | Search | CON-01, PRO-07 | IMPLEMENTED — VERIFY |
-| SRCH-02 | Implement first search backend adapter | H | Search | SRCH-01 | IMPLEMENTED — VERIFY |
+| SRCH-01 | Define provider-neutral search contract | H | Search | CON-01, PRO-07 | IMPLEMENTED — VERIFY |
+| SRCH-02 | Implement provider-native search execution | H | Search | SRCH-01 | IMPLEMENTED — VERIFY |
 | SRCH-03 | Normalize search results into source model | H | Search | SRCH-02, CON-01 | IMPLEMENTED — VERIFY |
-| SRCH-04 | Implement search → synthesis pipeline | H | Search | SRCH-03, PRO-07 | IMPLEMENTED — VERIFY |
+| SRCH-04 | Implement search + synthesis turn | H | Search | SRCH-03, PRO-07 | IMPLEMENTED — VERIFY |
 | EXT-16 | Add Search mode and compact citations to popup | H | Extension | SRCH-04, EXT-08 | BACKLOG |
 | EXT-17 | Add rich sources/citations to full-page view | H | Extension | SRCH-04, EXT-06 | BACKLOG |
 | SEC-05 | Sanitize/limit untrusted search-result content | H | Security | SRCH-02, SRCH-03 | BACKLOG |
