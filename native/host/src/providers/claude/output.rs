@@ -177,7 +177,9 @@ fn search_result(value: &Value) -> Option<SearchResult> {
 fn safe_http_url(url: &str) -> bool {
     (url.starts_with("https://") || url.starts_with("http://"))
         && url.len() <= 4096
-        && !url.chars().any(|character| character.is_control() || character.is_whitespace())
+        && !url
+            .chars()
+            .any(|character| character.is_control() || character.is_whitespace())
 }
 
 fn bounded(value: &str, limit: usize) -> String {
