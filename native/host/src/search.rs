@@ -14,9 +14,9 @@ use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 
+use crate::protocol::events::{ErrorBody, ErrorCode};
 use crate::providers::environment;
 use crate::providers::{Exchange, Provider, SendRequest, Timeouts, Update};
-use crate::protocol::events::{ErrorBody, ErrorCode};
 use pervue_core::discovery::SearchPath;
 use pervue_core::process::{Event as ProcessEvent, Process, ProcessSpec};
 use pervue_core::protocol::Source;
@@ -437,7 +437,9 @@ impl Exchange for BraveExchange {
                     }
                     self.stdout.extend_from_slice(&bytes);
                 }
-                ProcessEvent::Stderr(bytes) => push_tail(&mut self.stderr, &bytes, STDERR_TAIL_BYTES),
+                ProcessEvent::Stderr(bytes) => {
+                    push_tail(&mut self.stderr, &bytes, STDERR_TAIL_BYTES)
+                }
                 ProcessEvent::Exited(exit) => {
                     self.process = None;
                     if !exit.status.is_some_and(|status| status.success()) {
@@ -484,7 +486,10 @@ fn push_tail(buffer: &mut Vec<u8>, bytes: &[u8], limit: usize) {
         buffer.extend_from_slice(&bytes[bytes.len() - limit..]);
         return;
     }
-    let needed = buffer.len().saturating_add(bytes.len()).saturating_sub(limit);
+    let needed = buffer
+        .len()
+        .saturating_add(bytes.len())
+        .saturating_sub(limit);
     if needed > 0 {
         buffer.drain(..needed.min(buffer.len()));
     }
@@ -493,7 +498,9 @@ fn push_tail(buffer: &mut Vec<u8>, bytes: &[u8], limit: usize) {
 
 fn split_http_status(stdout: &[u8]) -> Option<(&[u8], u16)> {
     let marker = HTTP_MARKER.as_bytes();
-    let position = stdout.windows(marker.len()).rposition(|window| window == marker)?;
+    let position = stdout
+        .windows(marker.len())
+        .rposition(|window| window == marker)?;
     let status = std::str::from_utf8(&stdout[position + marker.len()..])
         .ok()?
         .trim()
@@ -567,7 +574,9 @@ fn normalize_brave(body: &[u8]) -> Result<Vec<Source>, ()> {
 
 fn safe_http_url(url: &str) -> bool {
     (url.starts_with("https://") || url.starts_with("http://"))
-        && !url.chars().any(|character| character.is_control() || character.is_whitespace())
+        && !url
+            .chars()
+            .any(|character| character.is_control() || character.is_whitespace())
         && url.len() <= MAX_URL_BYTES
 }
 
@@ -636,7 +645,9 @@ mod tests {
 
     #[test]
     fn brave_query_obeys_api_word_and_character_bounds() {
-        let long = std::iter::repeat_n("abcdefghij", 100).collect::<Vec<_>>().join(" ");
+        let long = std::iter::repeat_n("abcdefghij", 100)
+            .collect::<Vec<_>>()
+            .join(" ");
         let query = bounded_brave_query(&long);
         assert!(query.split_whitespace().count() <= 75);
         assert!(query.chars().count() <= 600);
