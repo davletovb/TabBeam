@@ -202,6 +202,29 @@ fn exec(dir: &Path, args: &[String], behavior: &str) -> io::Result<ExitCode> {
         &json!({"type": "item.completed", "item": {"id": "item_0", "type": "error", "message": "Model metadata not found. Defaulting to fallback metadata."}}),
     )?;
     emit(&mut out, &json!({"type": "turn.started"}))?;
+    if args
+        .windows(2)
+        .any(|pair| pair == ["-c", "web_search=\"live\""])
+    {
+        emit(
+            &mut out,
+            &json!({
+                "type": "item.completed",
+                "item": {
+                    "id": "search_1",
+                    "type": "web_search",
+                    "query": prompt.trim(),
+                    "action": {"type": "search", "query": prompt.trim()},
+                    "results": [{
+                        "title": "Codex search result",
+                        "url": "https://example.com/codex-search",
+                        "snippet": "Found by authenticated Codex web search.",
+                        "domain": "example.com"
+                    }]
+                }
+            }),
+        )?;
+    }
 
     match behavior {
         "goes-quiet" | "ignores-cancel" => hang(),
