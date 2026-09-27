@@ -140,8 +140,6 @@ mod tests {
     }
 
 
-
-
     #[test]
     fn context_and_history_keep_one_current_question_section() {
         let history = [HistoryMessage {
