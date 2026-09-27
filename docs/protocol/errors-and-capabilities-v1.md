@@ -100,22 +100,12 @@ Retryability is reason-dependent:
 The Codex adapter reports `WORKSPACE_UNAVAILABLE` when the directory it runs Codex in can't be created, or other users could change it (SEC-02). It isn't retryable until the directory's owner or permissions change.
 
 ### `SEARCH_FAILED`
-Pervue's provider-independent web-search layer failed before or while retrieving sources. Search failures are separate from AI-provider failures so the UI can distinguish retrieval from synthesis.
+The user requested web search, but Pervue could not start a supported native-search turn.
 
-Typical reasons:
-- `SEARCH_NOT_CONFIGURED` — the selected search backend lacks required local configuration.
-- `SEARCH_BACKEND_NOT_FOUND` — the requested backend adapter is not installed in this companion build.
-- `NATIVE_SEARCH_UNSUPPORTED` — `backend_id: "provider"` was requested but the selected AI provider does not expose native web search.
-- `SEARCH_BACKEND_UNAVAILABLE` — the backend or HTTPS transport could not complete the request.
-- `SEARCH_TRANSPORT_NOT_FOUND` — the fixed local HTTPS transport executable is unavailable.
-- `SEARCH_AUTHENTICATION_FAILED` — the backend rejected its credential.
-- `SEARCH_RATE_LIMITED` — the backend rate-limited the request.
-- `SEARCH_TIMEOUT` — retrieval exceeded the selected search backend's start deadline.
-- `SEARCH_QUERY_INVALID` — the bounded query was empty or rejected as invalid; the user must change it.
-- `MALFORMED_SEARCH_OUTPUT` — the backend response could not be normalized safely.
-- `SEARCH_RESPONSE_TOO_LARGE` — retrieval exceeded Pervue's bounded response limit.
+Current reason:
+- `NATIVE_SEARCH_UNSUPPORTED` — the selected AI provider does not expose authenticated native web search.
 
-Retryability is reason-dependent. Missing configuration/authentication is not retryable until setup changes; transient availability/rate-limit failures are retryable. Search backend HTTP status, raw body, stderr, API keys, and queries MUST NOT be exposed as the normalized error message.
+Provider-native search runs inside the selected provider turn. Authentication, rate-limit, timeout, cancellation, and provider-service failures therefore keep their ordinary provider/request error categories rather than being reclassified as search-backend failures.
 
 ### `REQUEST_CANCELLED`
 The target request was cancelled intentionally.
