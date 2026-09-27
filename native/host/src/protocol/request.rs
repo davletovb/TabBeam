@@ -712,6 +712,26 @@ mod tests {
     }
 
     #[test]
+    fn empty_search_object_defaults_to_auto_provider_search() {
+        let request = envelope(
+            "req_search_auto",
+            "conversation.send",
+            r#"{"provider_id":"codex","input":{"text":"latest rust"},"search":{}}"#,
+        );
+        let parsed = parse_request(request.as_bytes()).unwrap();
+        let Method::ConversationSend { search, .. } = parsed.method else {
+            panic!("expected conversation");
+        };
+        assert_eq!(
+            search,
+            Some(SearchOptions {
+                backend_id: "auto".to_owned(),
+                count: DEFAULT_RESULT_COUNT,
+            })
+        );
+    }
+
+    #[test]
     fn validates_search_options_independently_of_model_provider() {
         let request = envelope(
             "req_search",
