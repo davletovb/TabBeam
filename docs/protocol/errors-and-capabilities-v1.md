@@ -99,6 +99,21 @@ Retryability is reason-dependent:
 
 The Codex adapter reports `WORKSPACE_UNAVAILABLE` when the directory it runs Codex in can't be created, or other users could change it (SEC-02). It isn't retryable until the directory's owner or permissions change.
 
+### `SEARCH_FAILED`
+Pervue's provider-independent web-search layer failed before or while retrieving sources. Search failures are separate from AI-provider failures so the UI can distinguish retrieval from synthesis.
+
+Typical reasons:
+- `SEARCH_NOT_CONFIGURED` — the selected search backend lacks required local configuration.
+- `SEARCH_BACKEND_NOT_FOUND` — the requested backend adapter is not installed in this companion build.
+- `SEARCH_BACKEND_UNAVAILABLE` — the backend or HTTPS transport could not complete the request.
+- `SEARCH_TRANSPORT_NOT_FOUND` — the fixed local HTTPS transport executable is unavailable.
+- `SEARCH_AUTHENTICATION_FAILED` — the backend rejected its credential.
+- `SEARCH_RATE_LIMITED` — the backend rate-limited the request.
+- `MALFORMED_SEARCH_OUTPUT` — the backend response could not be normalized safely.
+- `SEARCH_RESPONSE_TOO_LARGE` — retrieval exceeded Pervue's bounded response limit.
+
+Retryability is reason-dependent. Missing configuration/authentication is not retryable until setup changes; transient availability/rate-limit failures are retryable. Search backend HTTP status, raw body, stderr, API keys, and queries MUST NOT be exposed as the normalized error message.
+
 ### `REQUEST_CANCELLED`
 The target request was cancelled intentionally.
 
@@ -172,9 +187,10 @@ Default retryability: **false** unless the implementation explicitly knows the c
 3. Raw details MAY appear under sanitized `metadata`.
 4. The extension MUST NOT branch on `message` or raw provider metadata.
 5. Unknown provider failures map to `PROVIDER_FAILED`, not `INTERNAL_ERROR`.
-6. `INTERNAL_ERROR` is reserved for failures inside Pervue's own host/runtime where no more specific category applies.
-7. Cancellation of a target request MUST terminate that target with `REQUEST_CANCELLED`.
-8. Unsupported versions, methods, fields, or payload shape errors MUST map to `INVALID_REQUEST`.
+6. Search retrieval/configuration/backend failures map to `SEARCH_FAILED`, never `PROVIDER_FAILED`; synthesis failures after retrieval remain provider failures.
+7. `INTERNAL_ERROR` is reserved for failures inside Pervue's own host/runtime where no more specific category applies.
+8. Cancellation of a target request MUST terminate that target with `REQUEST_CANCELLED`.
+9. Unsupported versions, methods, fields, or payload shape errors MUST map to `INVALID_REQUEST`.
 
 ## 4. Provider status vocabulary
 
@@ -266,7 +282,7 @@ The UI should render normalized state without exposing provider internals:
 - `HOST_NOT_INSTALLED` → installation action
 - `PROVIDER_NOT_FOUND` → provider setup guidance
 - `PROVIDER_NOT_AUTHENTICATED` → authentication guidance
-- retryable `PROVIDER_FAILED` / `REQUEST_TIMEOUT` → retry action
+- retryable `PROVIDER_FAILED` / `SEARCH_FAILED` / `REQUEST_TIMEOUT` → retry action
 - `REQUEST_CANCELLED` → neutral cancelled state
 - `INVALID_REQUEST` / `INTERNAL_ERROR` → safe generic failure plus diagnostics identifier when available
 
