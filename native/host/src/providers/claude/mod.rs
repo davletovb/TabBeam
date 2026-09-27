@@ -6,7 +6,7 @@
 //! adapter; the host and extension see only opaque Pervue conversation IDs.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::{OsStr, OsString};
 use std::hash::{BuildHasher, RandomState};
 use std::io::{self, Read, Write};
@@ -24,6 +24,7 @@ use crate::protocol::events::{
     Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ModelOption,
     ProviderState,
 };
+use crate::search::{NATIVE_SEARCH_NO_SOURCES, SourceCollector, claude_tool_result_sources};
 use pervue_core::discovery::SearchPath;
 use pervue_core::process::{Event, Exit, Process, ProcessSpec};
 use pervue_core::stream::{BUSY_LIMIT, LineStream, Output};
@@ -74,7 +75,7 @@ pub const LIMITS: Limits = Limits {
 pub const CAPABILITIES: Capabilities = Capabilities {
     streaming: Capability::Supported,
     continuation: Capability::Supported,
-    web_search: Capability::Unknown,
+    web_search: Capability::Supported,
     page_context: Capability::Unsupported,
     attachments: Capability::Unsupported,
     model_selection: Capability::Supported,
@@ -265,6 +266,21 @@ impl Claude {
     fn executable(&self) -> Option<PathBuf> {
         self.search.find(EXECUTABLE)
     }
+
+    fn validate_request(&self, request: &SendRequest) -> Result<(), ErrorBody<'static>> {
+        if let Some(conversation_id) = request.conversation_id.as_deref() {
+            let known = self.conversations.borrow().contains_key(conversation_id)
+                || self
+                    .session_dir
+                    .as_deref()
+                    .and_then(|dir| read_session(dir, conversation_id))
+                    .is_some();
+            if !known && request.history.is_empty() {
+                return Err(UNKNOWN_CONVERSATION);
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Provider for Claude {
@@ -336,6 +352,9 @@ impl Provider for Claude {
         let Some(executable) = self.executable() else {
             return Box::new(Scripted::failed(NOT_INSTALLED));
         };
+        if let Err(error) = self.validate_request(&request) {
+            return Box::new(Scripted::failed(error));
+        }
         // The host enforces page_context=false before this method is called.
         if request.context.is_some() {
             return Box::new(Scripted::failed(MALFORMED_OUTPUT));
@@ -374,7 +393,10 @@ impl Provider for Claude {
             conversations: Rc::clone(&self.conversations),
             finish_grace: self.limits.finish,
             model: request.model,
+            native_search: request.native_search,
             queue: VecDeque::new(),
+            sources: SourceCollector::new(ID),
+            web_search_uses: HashSet::new(),
             cancelled: false,
             started: false,
             announced: false,
@@ -630,7 +652,7 @@ impl Exchange for StatusCheck {
 /// The `claude -p` command line for one turn; the question goes on stdin.
 /// A model is one `--model=<id>` argument, so the ID can never be read as an
 /// option of its own.
-fn claude_args(resume: Option<&str>, model: Option<&str>) -> Vec<OsString> {
+fn claude_args(resume: Option<&str>, model: Option<&str>, native_search: bool) -> Vec<OsString> {
     let mut args: Vec<OsString> = [
         "-p",
         "--output-format",
@@ -641,17 +663,21 @@ fn claude_args(resume: Option<&str>, model: Option<&str>) -> Vec<OsString> {
         "--include-partial-messages",
         "--permission-mode",
         "default",
-        // Pervue's Claude adapter is a conversational provider, not an
-        // agent. Disable built-in tools, load none of the user's MCP
-        // servers, and deny MCP tools explicitly as well.
+        // Pervue is conversational, not an agent. Plain turns expose no
+        // built-in tools. Search turns expose and auto-approve only WebSearch;
+        // WebFetch remains unavailable because it can fetch arbitrary URLs
+        // from the user's machine.
         "--tools",
-        "",
+        if native_search { "WebSearch" } else { "" },
         "--strict-mcp-config",
         "--disallowedTools",
         "mcp__*",
     ]
     .map(OsString::from)
     .into();
+    if native_search {
+        args.extend(["--allowedTools", "WebSearch"].map(OsString::from));
+    }
     if let Some(model) = model {
         args.push(format!("--model={model}").into());
     }
@@ -675,7 +701,12 @@ struct Turn {
     finish_grace: Duration,
     /// The model to answer with, or `None` for Claude's own default.
     model: Option<String>,
+    native_search: bool,
     queue: VecDeque<Update>,
+    sources: SourceCollector,
+    /// WebSearch tool-use IDs observed in this run. Only matching tool_result
+    /// blocks are allowed to create sources.
+    web_search_uses: HashSet<String>,
     cancelled: bool,
     /// This Claude run sent `init`.
     started: bool,
@@ -703,7 +734,11 @@ impl Turn {
         let Ok(workspace) = self.launch.workspace() else {
             return self.end(Update::Failed(NO_WORKSPACE));
         };
-        let args = claude_args(self.resume.as_deref(), self.model.as_deref());
+        let args = claude_args(
+            self.resume.as_deref(),
+            self.model.as_deref(),
+            self.native_search,
+        );
         let input = serde_json::json!({
             "type": "user",
             "message": {
@@ -773,6 +808,35 @@ impl Turn {
                     });
                 }
             }
+            Ok(Line::ToolEvents(events)) => {
+                if !self.started {
+                    return self.end(Update::Failed(MALFORMED_OUTPUT));
+                }
+                for event in events {
+                    match event {
+                        output::ToolEvent::WebSearchUse(id) => {
+                            if self.native_search {
+                                self.web_search_uses.insert(id);
+                            }
+                            self.queue.push_back(Update::Activity);
+                        }
+                        output::ToolEvent::ToolResult {
+                            tool_use_id,
+                            content,
+                        } if self.web_search_uses.remove(&tool_use_id) => {
+                            for result in claude_tool_result_sources(&content) {
+                                if let Some(source) = self.sources.push(result) {
+                                    self.queue.push_back(Update::Source(source));
+                                }
+                            }
+                            self.queue.push_back(Update::Activity);
+                        }
+                        output::ToolEvent::ToolResult { .. } => {
+                            self.queue.push_back(Update::Activity);
+                        }
+                    }
+                }
+            }
             Ok(Line::MessageStart) => {
                 if !self.started {
                     return self.end(Update::Failed(MALFORMED_OUTPUT));
@@ -812,7 +876,11 @@ impl Turn {
                     self.saw_delta = true;
                     self.queue.push_back(Update::Delta(text));
                 }
-                self.turn_ended(Ok(()));
+                self.turn_ended(if self.native_search && self.sources.count() == 0 {
+                    Err(NATIVE_SEARCH_NO_SOURCES)
+                } else {
+                    Ok(())
+                });
             }
             Ok(Line::ResultFailed(error)) => self.turn_ended(Err(error)),
             Ok(Line::Ignored) => {}
@@ -881,6 +949,8 @@ impl Turn {
         self.saw_delta = false;
         self.messages = 0;
         self.break_before_text = false;
+        self.sources.reset();
+        self.web_search_uses.clear();
         self.prompt = self
             .fallback_prompt
             .take()
@@ -1018,11 +1088,11 @@ mod tests {
 
     #[test]
     fn a_model_is_one_argument_before_the_session() {
-        let args = claude_args(Some("session-1"), Some("sonnet"));
+        let args = claude_args(Some("session-1"), Some("sonnet"), false);
         let args: Vec<&str> = args.iter().map(|arg| arg.to_str().unwrap()).collect();
         assert!(args.contains(&"--model=sonnet"));
         assert_eq!(&args[args.len() - 2..], ["--resume", "session-1"]);
-        let default = claude_args(None, None);
+        let default = claude_args(None, None, false);
         assert!(
             !default
                 .iter()

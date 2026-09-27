@@ -30,7 +30,7 @@ use crate::diagnostics::{
 use crate::limits::MAX_FRAME_SIZE;
 use crate::protocol::events::{
     self, Capability, ConversationCreated, ErrorBody, ErrorCode, Event, ProviderStatus,
-    RequestCancelled, ResponseCompleted, ResponseDelta, ResponseStarted,
+    RequestCancelled, ResponseCompleted, ResponseDelta, ResponseSource, ResponseStarted,
 };
 use crate::protocol::request::{self, Method, RequestFailure, RequestId};
 use crate::providers::{Exchange, Providers, Scripted, SendRequest, StatusOfAll, Timeouts, Update};
@@ -114,6 +114,20 @@ const PROVIDER_NOT_INSTALLED: ErrorBody<'static> = ErrorBody {
     retryable: false,
 };
 
+const NATIVE_SEARCH_UNSUPPORTED: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::SearchFailed,
+    reason: "NATIVE_SEARCH_UNSUPPORTED",
+    message: "The selected AI provider does not support native web search.",
+    retryable: false,
+};
+
+const SEARCH_WITH_CONTEXT_UNSUPPORTED: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::SearchFailed,
+    reason: "SEARCH_WITH_CONTEXT_UNSUPPORTED",
+    message: "Pervue won't combine web search with browser context yet. Choose No context or turn off Search.",
+    retryable: false,
+};
+
 const PAGE_CONTEXT_UNSUPPORTED: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::InvalidRequest,
     reason: "PAGE_CONTEXT_UNSUPPORTED",
@@ -194,7 +208,8 @@ where
     W: Write + ?Sized,
     L: Write,
 {
-    run_with(&Providers::installed(), input, output, log)
+    let providers = Providers::installed();
+    run_with(&providers, input, output, log)
 }
 
 /// Runs the host as [`run`] does, serving `providers`.
@@ -336,7 +351,7 @@ struct Running {
     /// Whether the host serves the provider the request names.
     provider_served: bool,
     conversation_id: Option<String>,
-    /// The provider's limits for a `conversation.send`; none for status checks.
+    /// The active phase's limits for a `conversation.send`; none for status checks.
     timeouts: Option<Timeouts>,
     stop_grace: Duration,
     started_at: Instant,
@@ -523,11 +538,22 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                 history,
                 context,
                 model,
+                search,
             } => {
                 let provider_id = provider_id.decode().into_owned();
                 let conversation_id = conversation_id.map(|id| id.decode().into_owned());
                 let provider = self.providers.get(&provider_id);
+                let provider_served = provider.is_some();
+                let question = text.decode().into_owned();
+                let native_search = search.is_some();
+                let native_supported = provider.as_ref().is_some_and(|provider| {
+                    provider.capabilities().web_search == Capability::Supported
+                });
                 let (exchange, timeouts): (Box<dyn Exchange>, _) = match provider {
+                    Some(provider) if context.is_some() && native_search => (
+                        Box::new(Scripted::failed(SEARCH_WITH_CONTEXT_UNSUPPORTED)),
+                        Some(provider.timeouts()),
+                    ),
                     Some(provider)
                         if context.is_some()
                             && provider.capabilities().page_context != Capability::Supported =>
@@ -548,22 +574,32 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                             Some(provider.timeouts()),
                         )
                     }
-                    Some(provider) => (
-                        provider.send(SendRequest {
-                            text: text.decode().into_owned(),
+                    Some(provider) => {
+                        let provider_timeouts = provider.timeouts();
+                        let request = SendRequest {
+                            text: question,
                             history,
                             conversation_id: conversation_id.clone(),
                             context,
                             model,
-                        }),
-                        Some(provider.timeouts()),
-                    ),
+                            native_search,
+                        };
+                        if native_search && !native_supported {
+                            (
+                                Box::new(Scripted::failed(NATIVE_SEARCH_UNSUPPORTED))
+                                    as Box<dyn Exchange>,
+                                Some(provider_timeouts),
+                            )
+                        } else {
+                            (provider.send(request), Some(provider_timeouts))
+                        }
+                    }
                     None => (Box::new(Scripted::failed(PROVIDER_NOT_INSTALLED)), None),
                 };
                 Running::new(
                     id,
                     "conversation.send",
-                    Some((provider_id, provider.is_some())),
+                    Some((provider_id, provider_served)),
                     conversation_id,
                     timeouts,
                     exchange,
@@ -571,13 +607,13 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
             }
             Method::ProviderStatus { provider_id } => {
                 let provider_id = provider_id.map(|id| id.decode().into_owned());
-                let provider = provider_id.as_deref().map(|id| self.providers.get(id));
-                let exchange: Box<dyn Exchange> = match provider {
-                    None => Box::new(StatusOfAll::new(self.providers)),
-                    Some(Some(provider)) => provider.status(),
-                    Some(None) => Box::new(Scripted::failed(PROVIDER_NOT_INSTALLED)),
+                let (exchange, served): (Box<dyn Exchange>, bool) = match provider_id.as_deref() {
+                    None => (Box::new(StatusOfAll::new(self.providers)), false),
+                    Some(provider_id) => match self.providers.get(provider_id) {
+                        Some(provider) => (provider.status(), true),
+                        None => (Box::new(Scripted::failed(PROVIDER_NOT_INSTALLED)), false),
+                    },
                 };
-                let served = matches!(provider, Some(Some(_)));
                 Running::new(
                     id,
                     "provider.status",
@@ -594,6 +630,7 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                 let provider_id = provider_id.decode().into_owned();
                 let conversation_id = conversation_id.decode().into_owned();
                 let provider = self.providers.get(&provider_id);
+                let served = provider.is_some();
                 let exchange: Box<dyn Exchange> = match provider {
                     Some(provider) => provider.forget(&conversation_id),
                     None => Box::new(Scripted::failed(PROVIDER_NOT_INSTALLED)),
@@ -601,7 +638,7 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                 Running::new(
                     id,
                     "conversation.forget",
-                    Some((provider_id, provider.is_some())),
+                    Some((provider_id, served)),
                     Some(conversation_id),
                     None,
                     exchange,
@@ -845,6 +882,13 @@ fn forward<W: Write + ?Sized>(
                 )?;
             }
             Ok(())
+        }
+        Update::Source(source) => {
+            let payload = ResponseSource {
+                source_id: &source.id,
+                data: &source,
+            };
+            write_event(output, raw, Event::ResponseSource, &payload)
         }
         Update::Status {
             provider_id,
@@ -1200,6 +1244,11 @@ mod tests {
                 calls: Rc::default(),
             }
         }
+
+        fn with_native_search(mut self) -> Self {
+            self.capabilities.web_search = Capability::Supported;
+            self
+        }
     }
 
     impl Provider for TestProvider {
@@ -1236,9 +1285,15 @@ mod tests {
                 .model
                 .map(|model| format!("+model={model}"))
                 .unwrap_or_default();
-            self.calls
-                .borrow_mut()
-                .push(format!("send:{}{context}{model}", request.text));
+            let native_search = if request.native_search {
+                "+native-search"
+            } else {
+                ""
+            };
+            self.calls.borrow_mut().push(format!(
+                "send:{}{context}{model}{native_search}",
+                request.text
+            ));
             Box::new(Controlled {
                 script: self.script,
                 started: false,
@@ -1252,6 +1307,74 @@ mod tests {
 
     fn with(provider: TestProvider) -> Providers {
         Providers::new(vec![Box::new(fake::Fake), Box::new(provider)])
+    }
+
+    #[test]
+    fn search_turn_uses_the_selected_providers_native_search() {
+        let provider = TestProvider::new("model", Script::answers("native search answer"))
+            .with_native_search();
+        let calls = Rc::clone(&provider.calls);
+        let providers = Providers::new(vec![Box::new(provider)]);
+        let session = run_session(
+            &providers,
+            Cursor::new(framed(&[
+                r#"{"version":1,"type":"request","request_id":"req_auto_search","method":"conversation.send","payload":{"provider_id":"model","input":{"text":"What changed?"},"search":{}}}"#,
+            ])),
+        );
+        assert_eq!(session.result, Ok(()));
+        assert_eq!(
+            calls.borrow().as_slice(),
+            &["send:What changed?+native-search"]
+        );
+    }
+    #[test]
+    fn search_with_browser_context_is_refused_before_provider_runs() {
+        let provider = TestProvider::new("model", Script::answers("unused")).with_native_search();
+        let calls = Rc::clone(&provider.calls);
+        let providers = Providers::new(vec![Box::new(provider)]);
+        let session = run_session(
+            &providers,
+            Cursor::new(framed(&[
+                r#"{"version":1,"type":"request","request_id":"req_context_search","method":"conversation.send","payload":{"provider_id":"model","input":{"text":"What changed?"},"context":{"mode":"selection","text":"private selection","truncated":false,"page":{"title":"Example","url":"https://example.com/"}},"search":{}}}"#,
+            ])),
+        );
+        assert_eq!(session.result, Ok(()));
+        assert!(calls.borrow().is_empty());
+        let failure = session
+            .events()
+            .into_iter()
+            .find(|event| event["request_id"] == "req_context_search")
+            .unwrap();
+        assert_eq!(failure["event"], "response.failed");
+        assert_eq!(failure["payload"]["error"]["code"], "SEARCH_FAILED");
+        assert_eq!(
+            failure["payload"]["error"]["reason"],
+            "SEARCH_WITH_CONTEXT_UNSUPPORTED"
+        );
+    }
+
+    #[test]
+    fn native_search_fails_cleanly_when_provider_does_not_support_it() {
+        let provider = TestProvider::new("model", Script::answers("unused"));
+        let providers = Providers::new(vec![Box::new(provider)]);
+        let session = run_session(
+            &providers,
+            Cursor::new(framed(&[
+                r#"{"version":1,"type":"request","request_id":"req_no_search","method":"conversation.send","payload":{"provider_id":"model","input":{"text":"What changed?"},"search":{}}}"#,
+            ])),
+        );
+        assert_eq!(session.result, Ok(()));
+        let failure = session
+            .events()
+            .into_iter()
+            .find(|event| event["request_id"] == "req_no_search")
+            .unwrap();
+        assert_eq!(failure["event"], "response.failed");
+        assert_eq!(failure["payload"]["error"]["code"], "SEARCH_FAILED");
+        assert_eq!(
+            failure["payload"]["error"]["reason"],
+            "NATIVE_SEARCH_UNSUPPORTED"
+        );
     }
 
     /// An exchange that always has another update ready, like a provider that

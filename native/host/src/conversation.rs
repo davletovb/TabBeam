@@ -68,15 +68,19 @@ pub fn is_javascript_trim_char(character: char) -> bool {
     )
 }
 
-fn encoded_context(context: &BrowserContext) -> String {
-    serde_json::to_string(context)
-        .expect("browser context serializes")
+fn encoded_json(value: &impl Serialize) -> String {
+    serde_json::to_string(value)
+        .expect("prompt reference data serializes")
         // JSON permits these Unicode separators literally, but models and
         // tokenizers can treat them as line boundaries. Keep them escaped so
-        // page data cannot visually forge one of Pervue's prompt sections.
+        // untrusted reference data cannot visually forge prompt sections.
         .replace('\u{0085}', "\\u0085")
         .replace('\u{2028}', "\\u2028")
         .replace('\u{2029}', "\\u2029")
+}
+
+fn encoded_context(context: &BrowserContext) -> String {
+    encoded_json(context)
 }
 
 /// Builds one provider prompt in a fixed order: optional bounded dialogue,

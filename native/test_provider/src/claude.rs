@@ -98,13 +98,38 @@ fn print_mode(dir: &Path, args: &[String], behavior: &str) -> io::Result<ExitCod
         || !has_pair(args, "--input-format", "stream-json")
         || !args.iter().any(|arg| arg == "--verbose")
         || !has_pair(args, "--permission-mode", "default")
-        || !has_pair(args, "--tools", "")
         || !args.iter().any(|arg| arg == "--strict-mcp-config")
         || !has_pair(args, "--disallowedTools", "mcp__*")
     {
         let _ = writeln!(io::stderr(), "fake claude: expected safe stream-json flags");
         return Ok(ExitCode::from(2));
     }
+
+    let Some(tools) = args
+        .iter()
+        .position(|arg| arg == "--tools")
+        .and_then(|index| args.get(index + 1))
+        .map(String::as_str)
+    else {
+        let _ = writeln!(io::stderr(), "fake claude: --tools is required");
+        return Ok(ExitCode::from(2));
+    };
+    let allowed_tools = args
+        .iter()
+        .position(|arg| arg == "--allowedTools")
+        .and_then(|index| args.get(index + 1))
+        .map(String::as_str);
+    let native_search = match tools {
+        "" if allowed_tools.is_none() => false,
+        "WebSearch" if allowed_tools == Some("WebSearch") => true,
+        _ => {
+            let _ = writeln!(
+                io::stderr(),
+                "fake claude: expected --tools '' or --tools WebSearch --allowedTools WebSearch"
+            );
+            return Ok(ExitCode::from(2));
+        }
+    };
 
     let mut input = String::new();
     io::stdin().read_to_string(&mut input)?;
@@ -193,6 +218,45 @@ fn print_mode(dir: &Path, args: &[String], behavior: &str) -> io::Result<ExitCod
             return Ok(ExitCode::SUCCESS);
         }
         _ => {}
+    }
+
+    if native_search {
+        emit(
+            &mut out,
+            &json!({
+                "type":"assistant",
+                "session_id":result_session,
+                "message":{
+                    "role":"assistant",
+                    "content":[{
+                        "type":"tool_use",
+                        "id":"toolu_test",
+                        "name":"WebSearch",
+                        "input":{"query":prompt.trim()}
+                    }]
+                }
+            }),
+        )?;
+        let links = if behavior == "search-no-links" {
+            "[]"
+        } else {
+            r#"[{"title":"Claude search result","url":"https://example.com/claude-search"}]"#
+        };
+        emit(
+            &mut out,
+            &json!({
+                "type":"user",
+                "session_id":result_session,
+                "message":{
+                    "role":"user",
+                    "content":[{
+                        "tool_use_id":"toolu_test",
+                        "type":"tool_result",
+                        "content":format!("Web search results for query: \"test\"\n\nLinks: {links}")
+                    }]
+                }
+            }),
+        )?;
     }
 
     let answer = format!("You asked: {prompt}");

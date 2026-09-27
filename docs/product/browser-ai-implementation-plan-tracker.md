@@ -110,7 +110,7 @@ Reached after **Milestone G**:
 
 Reached after **Milestone H**:
 
-- provider-independent web search;
+- provider-native web search through the selected authenticated provider;
 - normalized sources;
 - cited answers;
 - consistent source rendering in popup and full-page view.
@@ -130,7 +130,7 @@ Reached after **Milestone H**:
 | E — Second provider | Claude works through the same normalized adapter contract and exposes capabilities without UI hard-coding. |
 | F — Reusable native core | Reused process/messaging/stream/provider primitives are extracted behind documented library APIs. |
 | G — Installable product | macOS and Windows packaging paths are implemented; clean-machine human release verification remains open on both platforms. |
-| H — Search/citations | Search is provider-independent and returns normalized, grounded, cited responses. |
+| H — Search/citations | Search uses provider-native authenticated retrieval and returns normalized, grounded, cited responses. |
 
 ---
 
@@ -205,10 +205,10 @@ Reached after **Milestone H**:
 | PKG-06 | Build Windows companion installer | G | Packaging | PKG-05, PRO-07 | IMPLEMENTED — VERIFY |
 | TST-13 | Verify Windows clean-machine install/use/uninstall journey | G | Testing | PKG-06, PKG-03 | BLOCKED |
 | SEC-04 | Security review of packaged trust boundaries and permissions | G | Security | PKG-04, PKG-06 | IMPLEMENTED — VERIFY |
-| SRCH-01 | Define provider-independent search adapter contract | H | Search | CON-01, PRO-07 | BACKLOG |
-| SRCH-02 | Implement first search backend adapter | H | Search | SRCH-01 | BACKLOG |
-| SRCH-03 | Normalize search results into source model | H | Search | SRCH-02, CON-01 | BACKLOG |
-| SRCH-04 | Implement search → synthesis pipeline | H | Search | SRCH-03, PRO-07 | BACKLOG |
+| SRCH-01 | Define provider-neutral search contract | H | Search | CON-01, PRO-07 | IMPLEMENTED — VERIFY |
+| SRCH-02 | Implement provider-native search execution | H | Search | SRCH-01 | IMPLEMENTED — VERIFY |
+| SRCH-03 | Normalize search results into source model | H | Search | SRCH-02, CON-01 | IMPLEMENTED — VERIFY |
+| SRCH-04 | Implement search + synthesis turn | H | Search | SRCH-03, PRO-07 | IMPLEMENTED — VERIFY |
 | EXT-16 | Add Search mode and compact citations to popup | H | Extension | SRCH-04, EXT-08 | BACKLOG |
 | EXT-17 | Add rich sources/citations to full-page view | H | Extension | SRCH-04, EXT-06 | BACKLOG |
 | SEC-05 | Sanitize/limit untrusted search-result content | H | Security | SRCH-02, SRCH-03 | BACKLOG |
@@ -1292,7 +1292,7 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 
 **Implementation evidence**
 - `native/host/src/providers/mod.rs` now documents the provider contract as the shared surface proven by two real adapters rather than a provisional Codex-only interface.
-- Codex and Claude share status/send/cancel/update semantics while observed differences stay in capabilities: Claude initially reports `page_context: false`; Codex reports it true. Both adapters persist opaque native-session mappings across host restarts and can rebuild from bounded dialogue when a native session cannot be resumed; the provider-neutral contract does not expose either runtime's session IDs.
+- Codex and Claude share status/send/cancel/update semantics while observed differences stay in capabilities: both now report proven `web_search: true`; Claude reports `page_context: false` while Codex reports it true. Both adapters persist opaque native-session mappings across host restarts and can rebuild from bounded dialogue when a native session cannot be resumed; the provider-neutral contract does not expose either runtime's session IDs.
 - No Claude-only method was added to the common `Provider` trait.
 
 
@@ -1570,53 +1570,74 @@ without terminal commands during the user journey.
 
 ## Milestone H — Search & Citations
 
-### SRCH-01 — Define provider-independent search adapter contract
+### SRCH-01 — Define provider-neutral search contract
 **Area:** Search  
 **Dependencies:** CON-01, PRO-07
 
 **Acceptance criteria**
-- Search request/result interface is independent of model provider.
-- Normalized result includes enough data for title, URL, snippet/content excerpt, and source identity.
-- Search errors do not masquerade as provider errors.
+- Search intent is represented independently of any provider-specific CLI syntax.
+- Normalized source events include enough data for title, URL, snippet/content excerpt, and source identity.
+- A provider that cannot perform native search fails explicitly rather than silently answering without search.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
 
-### SRCH-02 — Implement first search backend adapter
+**Implementation evidence**
+- `conversation.send.search` is a provider-neutral opt-in contract validated independently of `provider_id`. `search: {}` defaults to `auto`; `backend_id: "provider"` is an explicit alias for the same current behavior.
+- `SendRequest.native_search` is the only execution signal passed into AI adapters. No external search-provider registry, credentials, or retrieval transport exists.
+- `NATIVE_SEARCH_UNSUPPORTED` uses the normalized `SEARCH_FAILED` category when the selected provider does not advertise `web_search: true`.
+
+### SRCH-02 — Implement provider-native search execution
 **Area:** Search  
 **Dependencies:** SRCH-01
 
 **Implementation notes**
-- Choose one supported search mechanism during implementation.
-- Keep search execution separate from model execution.
-- Do not couple the adapter to Codex/Claude.
+- Search uses the authenticated provider runtime the user already selected.
+- Do not add a separate API-key search provider unless the product direction changes later.
+- Provider-specific tool invocation remains inside each provider adapter.
 
 **Acceptance criteria**
-- Query returns normalized raw search results.
-- Timeout/error behavior is bounded and normalized.
+- Codex and Claude can perform authenticated native web search in the same answer turn.
+- Unrelated provider tools remain disabled/bounded.
+- Provider auth, rate-limit, cancellation, and timeout behavior stay normalized through the provider contract.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- Codex enables live web search for a native-search turn while shell, image, apps/plugins/hooks, MCP/orchestrator, and subagent surfaces remain disabled.
+- Claude exposes and auto-approves only `WebSearch` for a native-search turn; `WebFetch` remains unavailable and MCP configuration/use remains blocked.
+- Both paths reuse the provider's existing authenticated local runtime; Pervue stores no search API key and starts no separate network search process.
 
 ### SRCH-03 — Normalize search results into source model
 **Area:** Search  
 **Dependencies:** SRCH-02, CON-01
 
 **Acceptance criteria**
-- Search results map into the conversation/source model used by popup/full-page UI.
+- Provider-native search results map into the conversation/source model used by popup/full-page UI.
 - Duplicate sources can be collapsed deterministically.
 - Source URL/title remain untrusted data and are safely rendered.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
 
-### SRCH-04 — Implement search → synthesis pipeline
+**Implementation evidence**
+- `pervue-core::protocol::Source` is the normalized source shape: stable `id`, `backend_id`, title, URL, bounded snippet, and optional source/age metadata.
+- Real CLI formats are normalized rather than simulated API shapes: Claude correlates `WebSearch` tool-use IDs with ordinary `tool_result` records and parses their `Links:` JSON array; Codex treats `web_search` items as progress and extracts cited HTTP(S) links from completed agent messages because current exec JSON exposes no result rows. Unsafe/hostless URLs are dropped, duplicates collapse deterministically, and each turn is capped at 20 sources.
+- The host carries sources as `Update::Source` and emits protocol-v1 `response.source`, so popup/full-page rendering is independent of either provider's native result format.
+
+### SRCH-04 — Implement search + synthesis turn
 **Area:** Search  
 **Dependencies:** SRCH-03, PRO-07
 
 **Acceptance criteria**
-- Search results are passed to selected provider for synthesis.
+- Search and synthesis complete in one selected-provider turn.
 - Response can emit source references independently of provider-specific citation formats.
-- Search can work with either supported provider.
+- Search works with either supported provider without a second model request.
 
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- Provider-native retrieval and synthesis happen in the same authenticated Codex or Claude turn; there is no independent retrieval → second synthesis pipeline.
+- Search turns fail with `NATIVE_SEARCH_NO_SOURCES` if the provider completes without at least one usable source, preventing silent degradation to an ungrounded answer. Search+browser-context is refused before the provider runs.
+- Adapter parsers normalize provider-native search evidence while answer deltas continue through the ordinary provider-neutral stream. Tests cover exact Claude permission flags, real-shaped Claude/Codex search transcripts, source ordering/deduplication/caps, zero-source failure, and an opt-in live Claude search→plain-resume journey plus live Codex source emission.
 
 ### EXT-16 — Add Search mode and compact citations to popup
 **Area:** Extension  
@@ -1801,9 +1822,9 @@ Update this section whenever item statuses change.
 | E — Second provider | 5 | 0 | 5 | 0 | 0 | 0 | 0 | 0 |
 | F — Reusable native core | 7 | 0 | 7 | 0 | 0 | 0 | 0 | 0 |
 | G — Installable product | 9 | 0 | 7 | 0 | 0 | 0 | 2 | 0 |
-| H — Search/citations | 8 | 0 | 0 | 0 | 0 | 8 | 0 | 0 |
+| H — Search/citations | 8 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
 | Post-milestone | 6 | 0 | 0 | 0 | 0 | 4 | 0 | 2 |
-| **Total** | **81** | **46** | **19** | **0** | **0** | **12** | **2** | **2** |
+| **Total** | **81** | **46** | **23** | **0** | **0** | **8** | **2** | **2** |
 
 ### Milestone completion rule
 

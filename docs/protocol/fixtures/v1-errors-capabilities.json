@@ -5,6 +5,7 @@
     "PROVIDER_NOT_FOUND",
     "PROVIDER_NOT_AUTHENTICATED",
     "PROVIDER_FAILED",
+    "SEARCH_FAILED",
     "REQUEST_CANCELLED",
     "REQUEST_TIMEOUT",
     "CONTEXT_UNAVAILABLE",
@@ -43,6 +44,12 @@
       }
     },
     {
+      "code": "SEARCH_FAILED",
+      "reason": "NATIVE_SEARCH_UNSUPPORTED",
+      "message": "The selected AI provider does not support native web search.",
+      "retryable": false
+    },
+    {
       "code": "REQUEST_CANCELLED",
       "reason": "USER_CANCELLED",
       "message": "The request was cancelled.",
@@ -70,7 +77,7 @@
         "capabilities": {
           "streaming": true,
           "continuation": true,
-          "web_search": "unknown",
+          "web_search": true,
           "page_context": true,
           "attachments": false,
           "model_selection": true,
@@ -102,7 +109,7 @@
         "capabilities": {
           "streaming": true,
           "continuation": true,
-          "web_search": "unknown",
+          "web_search": true,
           "page_context": false,
           "attachments": false,
           "model_selection": true,
@@ -130,6 +137,12 @@
       "error_code": "PROVIDER_FAILED",
       "reason": "PROVIDER_RATE_LIMITED",
       "retryable": true
+    },
+    {
+      "input": {"search_failure": "native_unsupported"},
+      "error_code": "SEARCH_FAILED",
+      "reason": "NATIVE_SEARCH_UNSUPPORTED",
+      "retryable": false
     },
     {
       "input": {"protocol_failure": "unknown_method"},

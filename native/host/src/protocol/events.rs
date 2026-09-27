@@ -50,7 +50,7 @@ pub enum EventError {
 
 pub use pervue_core::protocol::{
     Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ModelOption,
-    ProviderState,
+    ProviderState, Source,
 };
 
 /// Payload of a `provider.status` event.
@@ -79,6 +79,13 @@ pub struct ResponseStarted<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct ResponseDelta<'a> {
     pub text: &'a str,
+}
+
+/// Payload of a `response.source` event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct ResponseSource<'a> {
+    pub source_id: &'a str,
+    pub data: &'a Source,
 }
 
 /// Payload of a `response.completed` event.

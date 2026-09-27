@@ -37,9 +37,12 @@ const ANSWER_TIMEOUT: Duration = Duration::from_secs(300);
 /// host's diagnostics keep.
 const STATUS_ID: &str = "req_5a7a0000-0000-4000-8000-000000000001";
 const ASK_ID: &str = "req_5a7a0000-0000-4000-8000-000000000002";
+const SEARCH_ID: &str = "req_5a7a0000-0000-4000-8000-000000000003";
 const STATUS: &str = r#"{"version":1,"type":"request","request_id":"req_5a7a0000-0000-4000-8000-000000000001","method":"provider.status","payload":{"provider_id":"codex"}}"#;
 const QUESTION: &str = "Reply with the single word: pong";
 const ASK: &str = r#"{"version":1,"type":"request","request_id":"req_5a7a0000-0000-4000-8000-000000000002","method":"conversation.send","payload":{"provider_id":"codex","input":{"text":"Reply with the single word: pong"}}}"#;
+const SEARCH_QUESTION: &str = "Search the official Rust blog for a recent Rust release. Answer in one short sentence and include at least one full source URL as a Markdown link.";
+const SEARCH: &str = r#"{"version":1,"type":"request","request_id":"req_5a7a0000-0000-4000-8000-000000000003","method":"conversation.send","payload":{"provider_id":"codex","input":{"text":"Search the official Rust blog for a recent Rust release. Answer in one short sentence and include at least one full source URL as a Markdown link."},"search":{}}}"#;
 
 /// Environment variables that may hold a credential in a CI job.
 const CREDENTIAL_VARIABLES: &[&str] = &["OPENAI_API_KEY", "CODEX_API_KEY"];
@@ -233,16 +236,11 @@ fn live_codex_answers_a_question() {
     {
         return skip_or_fail(mode, "Codex isn't signed in");
     }
-    let diagnostics = host.finish();
-
     let kinds: Vec<&str> = answer
         .iter()
         .map(|event| event["event"].as_str().unwrap())
         .collect();
-    let printed = format!("{answer:?}{diagnostics}");
-    assert_no_credentials("the events and diagnostics", &printed);
     eprintln!("events: {kinds:?}");
-    eprintln!("diagnostics:\n{diagnostics}");
 
     assert_eq!(kinds.first(), Some(&"conversation.created"), "{last}");
     assert_eq!(kinds.get(1), Some(&"response.started"), "{last}");
@@ -257,7 +255,27 @@ fn live_codex_answers_a_question() {
     eprintln!("Codex answered in {took:.1?}: {text}");
     assert!(text.to_lowercase().contains("pong"), "unexpected answer");
 
+    host.send(SEARCH);
+    let searched = host.until_end(SEARCH_ID, ANSWER_TIMEOUT);
+    let search_last = searched.last().unwrap();
+    assert_eq!(
+        search_last["event"], "response.completed",
+        "native search failed: {search_last}"
+    );
+    assert!(
+        searched
+            .iter()
+            .any(|event| event["event"] == "response.source"),
+        "Codex search silently completed without normalized sources: {searched:?}"
+    );
+
+    let diagnostics = host.finish();
+    let printed = format!("{answer:?}{searched:?}{diagnostics}");
+    assert_no_credentials("the events and diagnostics", &printed);
+    eprintln!("diagnostics:\n{diagnostics}");
+
     // The host's own records name the request, never its content.
     assert!(!diagnostics.contains(QUESTION));
+    assert!(!diagnostics.contains(SEARCH_QUESTION));
     assert!(!diagnostics.to_lowercase().contains("pong"));
 }

@@ -34,6 +34,7 @@ use crate::conversation::provider_prompt;
 use crate::protocol::events::{
     Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ProviderState,
 };
+use crate::search::{NATIVE_SEARCH_NO_SOURCES, SourceCollector, codex_message_sources};
 use pervue_core::discovery::SearchPath;
 use pervue_core::process::{Event, Exit, Process, ProcessSpec};
 use pervue_core::stream::{BUSY_LIMIT, LineStream, Output};
@@ -89,7 +90,7 @@ pub const LIMITS: Limits = Limits {
 pub const CAPABILITIES: Capabilities = Capabilities {
     streaming: Capability::Supported,
     continuation: Capability::Supported,
-    web_search: Capability::Unknown,
+    web_search: Capability::Supported,
     page_context: Capability::Supported,
     attachments: Capability::Unsupported,
     model_selection: Capability::Supported,
@@ -114,6 +115,13 @@ const CONTEXT_TOOLS_ENABLED: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::InvalidRequest,
     reason: "PAGE_CONTEXT_TOOLS_ENABLED",
     message: "Pervue won't send browser context to Codex while user-configured MCP servers are enabled. Disable them or choose No context.",
+    retryable: false,
+};
+
+const SEARCH_TOOLS_ENABLED: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::SearchFailed,
+    reason: "NATIVE_SEARCH_CONFIGURATION_UNSAFE",
+    message: "Pervue won't enable Codex web search while user-configured MCP servers are enabled. Disable them or use a plain Ask turn.",
     retryable: false,
 };
 
@@ -267,6 +275,30 @@ impl Codex {
     fn executable(&self) -> Option<PathBuf> {
         self.search.find(EXECUTABLE)
     }
+
+    fn validate_request(&self, request: &SendRequest) -> Result<(), ErrorBody<'static>> {
+        let context_turn = request.context.is_some();
+        let reference_turn = context_turn || request.native_search;
+        if reference_turn && !context_configuration_is_safe(&self.launch) {
+            return Err(if context_turn {
+                CONTEXT_TOOLS_ENABLED
+            } else {
+                SEARCH_TOOLS_ENABLED
+            });
+        }
+        if let Some(conversation_id) = request.conversation_id.as_deref() {
+            let known = self.conversations.borrow().contains_key(conversation_id)
+                || self
+                    .session_dir
+                    .as_deref()
+                    .and_then(|dir| read_thread(dir, conversation_id))
+                    .is_some();
+            if !known && request.history.is_empty() {
+                return Err(UNKNOWN_CONVERSATION);
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Provider for Codex {
@@ -275,7 +307,12 @@ impl Provider for Codex {
     }
 
     fn capabilities(&self) -> Capabilities {
-        CAPABILITIES
+        let mut capabilities = CAPABILITIES;
+        if !context_configuration_is_safe(&self.launch) {
+            capabilities.web_search = Capability::Unsupported;
+            capabilities.page_context = Capability::Unsupported;
+        }
+        capabilities
     }
 
     fn timeouts(&self) -> Timeouts {
@@ -283,9 +320,14 @@ impl Provider for Codex {
     }
 
     fn status(&self) -> Box<dyn Exchange> {
+        let capabilities = self.capabilities();
         let Some(executable) = self.executable() else {
             return Box::new(Scripted::new([
-                status_update(Availability::NotFound, Authentication::Unknown),
+                status_update(
+                    Availability::NotFound,
+                    Authentication::Unknown,
+                    capabilities,
+                ),
                 Update::Completed,
             ]));
         };
@@ -293,9 +335,14 @@ impl Provider for Codex {
             Ok(process) => StatusCheck::Probing {
                 process,
                 give_up: after(self.limits.probe),
+                capabilities,
             },
             Err(_) => StatusCheck::Done(VecDeque::from([
-                status_update(Availability::Unavailable, Authentication::Unknown),
+                status_update(
+                    Availability::Unavailable,
+                    Authentication::Unknown,
+                    capabilities,
+                ),
                 Update::Completed,
             ])),
         })
@@ -338,17 +385,19 @@ impl Provider for Codex {
         let Some(executable) = self.executable() else {
             return Box::new(Scripted::failed(NOT_INSTALLED));
         };
-        let context_turn = request.context.is_some();
-        if context_turn && !context_configuration_is_safe(&self.launch) {
-            return Box::new(Scripted::failed(CONTEXT_TOOLS_ENABLED));
+        if let Err(error) = self.validate_request(&request) {
+            return Box::new(Scripted::failed(error));
         }
+        let context_turn = request.context.is_some();
+        let reference_turn = context_turn || request.native_search;
 
         let mut conversation_id = request.conversation_id;
         let mut fallback_prompt = (!request.history.is_empty())
             .then(|| provider_prompt(&request.history, request.context.as_ref(), &request.text));
-        let mut prompt = match request.context.as_ref() {
-            Some(context) => provider_prompt(&[], Some(context), &request.text),
-            None => request.text,
+        let mut prompt = if request.context.is_some() {
+            provider_prompt(&[], request.context.as_ref(), &request.text)
+        } else {
+            request.text
         };
         let resume = match &conversation_id {
             None => None,
@@ -384,9 +433,12 @@ impl Provider for Codex {
             conversation_id,
             conversations: Rc::clone(&self.conversations),
             finish_grace: self.limits.finish,
-            restrict_tools: context_turn,
+            restrict_tools: reference_turn,
+            context_turn,
+            native_search: request.native_search,
             model: request.model,
             queue: VecDeque::new(),
+            sources: SourceCollector::new(ID),
             cancelled: false,
             thread_id: None,
             started: false,
@@ -453,13 +505,17 @@ fn context_configuration_is_safe(launch: &Launch) -> bool {
     })
 }
 
-fn status_update(availability: Availability, authentication: Authentication) -> Update {
+fn status_update(
+    availability: Availability,
+    authentication: Authentication,
+    capabilities: Capabilities,
+) -> Update {
     Update::Status {
         provider_id: ID.to_owned(),
         status: ProviderState {
             availability,
             authentication,
-            capabilities: CAPABILITIES,
+            capabilities,
             models: &[],
         },
     }
@@ -635,6 +691,8 @@ fn save_thread(dir: &Path, id: &str, thread: &str) -> io::Result<()> {
 fn exec_args(
     workspace: &Path,
     restrict_tools: bool,
+    context_turn: bool,
+    native_search: bool,
     resume: Option<&str>,
     model: Option<&str>,
 ) -> Vec<OsString> {
@@ -661,15 +719,32 @@ fn exec_args(
             "features.hooks=false",
             "features.multi_agent=false",
             "features.multi_agent_v2=false",
-            "features.web_search_request=false",
-            "features.web_search_cached=false",
             "features.standalone_web_search=false",
-            "web_search=\"disabled\"",
             "orchestrator.mcp.enabled=false",
         ] {
             args.extend(["-c".into(), setting.into()]);
         }
+        if context_turn {
+            // Older Codex builds also honor these gates. Keep them for
+            // attacker-controlled page-context turns as defense in depth.
+            for setting in [
+                "features.web_search_request=false",
+                "features.web_search_cached=false",
+            ] {
+                args.extend(["-c".into(), setting.into()]);
+            }
+        }
     }
+    // Search is explicit in Pervue. Plain and context turns never inherit
+    // Codex's cached-search default.
+    args.extend([
+        "-c".into(),
+        if native_search && !context_turn {
+            "web_search=\"live\"".into()
+        } else {
+            "web_search=\"disabled\"".into()
+        },
+    ]);
     if let Some(model) = model {
         args.push(format!("--model={model}").into());
     }
@@ -698,7 +773,11 @@ fn new_conversation_id(conversations: &HashMap<String, String>) -> String {
 
 /// The `provider.status` check.
 enum StatusCheck {
-    Probing { process: Process, give_up: Instant },
+    Probing {
+        process: Process,
+        give_up: Instant,
+        capabilities: Capabilities,
+    },
     Done(VecDeque<Update>),
 }
 
@@ -709,11 +788,19 @@ impl Exchange for StatusCheck {
             let authentication = match self {
                 Self::Done(updates) => return updates.pop_front(),
                 // Checked first, so output that keeps coming can't put it off.
-                Self::Probing { process, give_up } if Instant::now() >= *give_up => {
+                Self::Probing {
+                    process,
+                    give_up,
+                    capabilities: _,
+                } if Instant::now() >= *give_up => {
                     process.kill();
                     Authentication::Unknown
                 }
-                Self::Probing { process, give_up } => {
+                Self::Probing {
+                    process,
+                    give_up,
+                    capabilities: _,
+                } => {
                     match process.next_event(deadline.min(*give_up)) {
                         Some(Event::Exited(exit)) => signed_in(&exit),
                         // The probe's output names the account: never read.
@@ -728,8 +815,12 @@ impl Exchange for StatusCheck {
                     }
                 }
             };
+            let capabilities = match self {
+                Self::Probing { capabilities, .. } => *capabilities,
+                Self::Done(_) => unreachable!("handled above"),
+            };
             *self = Self::Done(VecDeque::from([
-                status_update(Availability::Available, authentication),
+                status_update(Availability::Available, authentication, capabilities),
                 Update::Completed,
             ]));
         }
@@ -754,13 +845,18 @@ struct Turn {
     conversation_id: Option<String>,
     conversations: Conversations,
     finish_grace: Duration,
-    /// Browser context is untrusted, so context turns run with Codex's
-    /// interactive/tool surfaces disabled.
+    /// Browser context or native search requires all unrelated Codex tool
+    /// surfaces to be disabled.
     restrict_tools: bool,
+    /// Whether untrusted browser context is attached to this turn.
+    context_turn: bool,
+    /// Whether this same Codex turn may use its authenticated web search.
+    native_search: bool,
     /// The model to answer with, or `None` for Codex's own default.
     model: Option<String>,
     /// Updates produced but not yet returned.
     queue: VecDeque<Update>,
+    sources: SourceCollector,
     cancelled: bool,
     thread_id: Option<String>,
     started: bool,
@@ -790,6 +886,8 @@ impl Turn {
         let args = exec_args(
             &workspace,
             self.restrict_tools,
+            self.context_turn,
+            self.native_search,
             self.resume.as_deref(),
             self.model.as_deref(),
         );
@@ -826,6 +924,13 @@ impl Turn {
             Ok(Line::AgentMessage(text)) => {
                 if !self.started {
                     return self.end(Update::Failed(MALFORMED_OUTPUT));
+                }
+                if self.native_search {
+                    for result in codex_message_sources(&text) {
+                        if let Some(source) = self.sources.push(result) {
+                            self.queue.push_back(Update::Source(source));
+                        }
+                    }
                 }
                 if !text.is_empty() {
                     // Later messages continue the answer after a blank line.
@@ -879,6 +984,11 @@ impl Turn {
     }
 
     fn turn_ended(&mut self, outcome: Result<(), ErrorBody<'static>>) {
+        let outcome = if outcome.is_ok() && self.native_search && self.sources.count() == 0 {
+            Err(NATIVE_SEARCH_NO_SOURCES)
+        } else {
+            outcome
+        };
         self.outcome = Some(outcome);
         self.finish_by = Some(after(self.finish_grace));
     }
@@ -947,6 +1057,7 @@ impl Exchange for Turn {
                             self.conversation_id = None;
                             self.thread_id = None;
                             self.outcome = None;
+                            self.sources.reset();
                             self.finish_by = None;
                             self.prompt = self.fallback_prompt.take().expect("checked above");
                             self.start();
@@ -1005,7 +1116,14 @@ mod tests {
     #[test]
     fn a_model_is_one_argument_that_applies_to_resumed_threads_too() {
         let workspace = Path::new("/tmp/pervue-workspace");
-        let args = exec_args(workspace, false, Some("thread-1"), Some("gpt-5-codex"));
+        let args = exec_args(
+            workspace,
+            false,
+            false,
+            false,
+            Some("thread-1"),
+            Some("gpt-5-codex"),
+        );
         let args: Vec<&str> = args.iter().map(|arg| arg.to_str().unwrap()).collect();
         let model = args
             .iter()
@@ -1015,7 +1133,7 @@ mod tests {
         assert!(model < resume, "--model is an exec option: {args:?}");
         assert_eq!(&args[resume..], ["resume", "thread-1", "-"]);
 
-        let default = exec_args(workspace, true, None, None);
+        let default = exec_args(workspace, true, false, false, None, None);
         assert!(
             !default
                 .iter()

@@ -89,6 +89,7 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
                         .ok_or(Malformed)?
                         .to_owned(),
                 ),
+                ("item.completed", "web_search") => Line::Progress,
                 _ => Line::Progress,
             }
         }
@@ -174,6 +175,11 @@ mod tests {
         );
     }
 
+    #[test]
+    fn web_search_items_are_progress_without_fake_results() {
+        let line = r#"{"type":"item.completed","item":{"id":"search_1","type":"web_search","query":"rust","action":{"type":"search","query":"rust"}}}"#;
+        assert_eq!(parse(line), Ok(Line::Progress));
+    }
     #[test]
     fn a_resumed_turn_reports_the_same_thread() {
         let (first, resumed) = (parse_all(SUCCESS), parse_all(RESUMED));

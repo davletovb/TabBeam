@@ -40,6 +40,9 @@ pub struct SendRequest {
     /// The model to answer with, already a valid model ID; `None` for the
     /// provider's default. Only sent to adapters with `model_selection`.
     pub model: Option<String>,
+    /// Whether the selected AI provider should perform its own authenticated
+    /// native web search during this same turn.
+    pub native_search: bool,
 }
 
 pub use pervue_core::exchange::{Exchange, Scripted, Timeouts, Update};
@@ -99,11 +102,14 @@ impl Providers {
     }
 
     pub fn get(&self, id: &str) -> Option<&dyn Provider> {
-        self.iter().find(|provider| provider.id() == id)
+        self.0
+            .iter()
+            .map(Box::as_ref)
+            .find(|provider| provider.id() == id)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &dyn Provider> {
-        self.0.iter().map(AsRef::as_ref)
+        self.0.iter().map(Box::as_ref)
     }
 }
 

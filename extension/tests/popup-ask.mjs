@@ -572,6 +572,7 @@ function hostEvent(event, payload = {}) {
   assert.equal(shown.get("PROVIDER_NOT_FOUND"), "provider-missing");
   assert.equal(shown.get("PROVIDER_NOT_AUTHENTICATED"), "provider-signed-out");
   assert.equal(shown.get("PROVIDER_FAILED"), "provider-failed");
+  assert.equal(shown.get("SEARCH_FAILED"), "search-failed");
   assert.equal(shown.get("REQUEST_TIMEOUT"), "timeout");
   assert.equal(shown.get("REQUEST_CANCELLED"), "cancelled");
 }

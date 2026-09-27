@@ -29,6 +29,7 @@ fn ask(text: &str) -> SendRequest {
         conversation_id: None,
         context: None,
         model: None,
+        native_search: false,
     }
 }
 
@@ -210,6 +211,77 @@ fn context_adapter(codex: &FakeCodex) -> Codex {
 }
 
 #[test]
+fn native_search_uses_codex_subscription_search_and_emits_sources() {
+    let codex = FakeCodex::install("answers", "signed-in");
+    let adapter = context_adapter(&codex);
+    assert_eq!(adapter.capabilities().web_search, Capability::Supported);
+    let updates = visible(&run_to_end(
+        adapter
+            .send(SendRequest {
+                native_search: true,
+                ..ask("What is new in Rust?")
+            })
+            .as_mut(),
+    ));
+    assert!(updates.iter().any(|update| matches!(
+        update,
+        Update::Source(source)
+            if source.backend_id == "codex"
+                && source.url == "https://example.com/codex-search"
+                && source.title == "Codex search result"
+    )));
+    assert_eq!(updates.last(), Some(&Update::Completed));
+
+    let invocation = codex
+        .invocations()
+        .into_iter()
+        .find(|line| line.starts_with("exec "))
+        .expect("Codex exec ran");
+    assert!(
+        invocation.contains("-c web_search=\"live\""),
+        "{invocation}"
+    );
+    for setting in [
+        "features.shell_tool=false",
+        "features.view_image=false",
+        "features.apps=false",
+        "features.plugins=false",
+        "features.hooks=false",
+        "features.multi_agent=false",
+        "features.multi_agent_v2=false",
+        "features.standalone_web_search=false",
+        "orchestrator.mcp.enabled=false",
+    ] {
+        assert!(
+            invocation.contains(&format!("-c {setting}")),
+            "{invocation}"
+        );
+    }
+    assert!(
+        !invocation.contains("web_search=\"disabled\""),
+        "{invocation}"
+    );
+}
+
+#[test]
+fn native_search_without_cited_urls_fails_instead_of_silently_completing() {
+    let codex = FakeCodex::install("search-no-links", "signed-in");
+    let adapter = context_adapter(&codex);
+    let updates = run_to_end(
+        adapter
+            .send(SendRequest {
+                native_search: true,
+                ..ask("Search without links")
+            })
+            .as_mut(),
+    );
+    assert_eq!(
+        failure(&updates),
+        (ErrorCode::SearchFailed, "NATIVE_SEARCH_NO_SOURCES")
+    );
+}
+
+#[test]
 fn page_context_reaches_codex_as_untrusted_reference_data() {
     let codex = FakeCodex::install("answers", "signed-in");
     let adapter = context_adapter(&codex);
@@ -245,9 +317,9 @@ fn page_context_reaches_codex_as_untrusted_reference_data() {
         "features.hooks=false",
         "features.multi_agent=false",
         "features.multi_agent_v2=false",
+        "features.standalone_web_search=false",
         "features.web_search_request=false",
         "features.web_search_cached=false",
-        "features.standalone_web_search=false",
         "web_search=\"disabled\"",
         "orchestrator.mcp.enabled=false",
     ] {
@@ -361,9 +433,37 @@ fn context_fails_closed_when_user_mcp_servers_are_configured() {
         failure(&updates),
         (ErrorCode::InvalidRequest, "PAGE_CONTEXT_TOOLS_ENABLED")
     );
+    assert_eq!(adapter.capabilities().page_context, Capability::Unsupported);
+    assert_eq!(adapter.capabilities().web_search, Capability::Unsupported);
+
+    let status_updates = run_to_end(adapter.status().as_mut());
+    let Update::Status { status, .. } = &status_updates[0] else {
+        panic!("expected status: {status_updates:?}");
+    };
+    assert_eq!(status.capabilities.page_context, Capability::Unsupported);
+    assert_eq!(status.capabilities.web_search, Capability::Unsupported);
+
+    let search = run_to_end(
+        adapter
+            .send(SendRequest {
+                native_search: true,
+                ..ask("Search")
+            })
+            .as_mut(),
+    );
+    assert_eq!(
+        failure(&search),
+        (
+            ErrorCode::SearchFailed,
+            "NATIVE_SEARCH_CONFIGURATION_UNSAFE"
+        )
+    );
     assert!(
-        codex.invocations().is_empty(),
-        "Codex ran with unsafe context tools"
+        codex
+            .invocations()
+            .iter()
+            .all(|invocation| !invocation.starts_with("exec ")),
+        "Codex exec ran with unsafe context/search tools"
     );
 }
 
@@ -415,7 +515,7 @@ fn a_question_streams_its_answer_and_opens_a_conversation() {
     assert_eq!(
         command,
         format!(
-            "exec --json --skip-git-repo-check --sandbox read-only -C {} -",
+            "exec --json --skip-git-repo-check --sandbox read-only -c web_search=\"disabled\" -C {} -",
             workspace(&codex).display()
         )
     );
@@ -449,7 +549,7 @@ fn a_chosen_model_goes_to_codex_as_one_argument() {
     assert_eq!(
         command,
         format!(
-            "exec --json --skip-git-repo-check --sandbox read-only --model=gpt-5-codex -C {} -",
+            "exec --json --skip-git-repo-check --sandbox read-only -c web_search=\"disabled\" --model=gpt-5-codex -C {} -",
             workspace(&codex).display()
         )
     );

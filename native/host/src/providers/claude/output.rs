@@ -9,6 +9,7 @@ pub enum Line {
     Init(String),
     MessageStart,
     TextDelta(String),
+    ToolEvents(Vec<ToolEvent>),
     Progress,
     ResultSuccess {
         session_id: Option<String>,
@@ -16,6 +17,15 @@ pub enum Line {
     },
     ResultFailed(ErrorBody<'static>),
     Ignored,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ToolEvent {
+    WebSearchUse(String),
+    ToolResult {
+        tool_use_id: String,
+        content: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,10 +87,17 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
                         Line::Progress
                     }
                 }
+                "content_block_start" => Line::Progress,
                 _ => Line::Progress,
             }
         }
-        "assistant" | "user" => Line::Progress,
+        "assistant" | "user" => event
+            .pointer("/message/content")
+            .and_then(Value::as_array)
+            .map(|blocks| blocks.iter().filter_map(tool_event).collect::<Vec<_>>())
+            .filter(|events| !events.is_empty())
+            .map(Line::ToolEvents)
+            .unwrap_or(Line::Progress),
         "result" => {
             let failed = event
                 .get("is_error")
@@ -111,6 +128,24 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
         }
         _ => Line::Ignored,
     })
+}
+
+fn tool_event(block: &Value) -> Option<ToolEvent> {
+    match block.get("type").and_then(Value::as_str)? {
+        "tool_use" if block.get("name").and_then(Value::as_str) == Some("WebSearch") => {
+            let id = block.get("id").and_then(Value::as_str)?;
+            (!id.is_empty()).then(|| ToolEvent::WebSearchUse(id.to_owned()))
+        }
+        "tool_result" => {
+            let tool_use_id = block.get("tool_use_id").and_then(Value::as_str)?;
+            let content = block.get("content").and_then(Value::as_str)?;
+            Some(ToolEvent::ToolResult {
+                tool_use_id: tool_use_id.to_owned(),
+                content: content.to_owned(),
+            })
+        }
+        _ => None,
+    }
 }
 
 const AUTH_REJECTED: ErrorBody<'static> = ErrorBody {
@@ -232,6 +267,27 @@ mod tests {
                 text: "done".to_owned()
             })
         );
+    }
+    #[test]
+    fn parses_real_claude_websearch_tool_use_and_result_shapes() {
+        let use_line = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"WebSearch","input":{"query":"rust"}}]}}"#;
+        assert_eq!(
+            parse(use_line),
+            Ok(Line::ToolEvents(vec![ToolEvent::WebSearchUse(
+                "toolu_1".to_owned()
+            )]))
+        );
+
+        let result_line = r#"{"type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_1","type":"tool_result","content":"Web search results for query: \"rust\"\n\nLinks: [{\"title\":\"Rust\",\"url\":\"https://www.rust-lang.org/\"}]"}]}}"#;
+        assert!(matches!(
+            parse(result_line),
+            Ok(Line::ToolEvents(events))
+                if matches!(
+                    events.as_slice(),
+                    [ToolEvent::ToolResult { tool_use_id, content }]
+                        if tool_use_id == "toolu_1" && content.contains("Links:")
+                )
+        ));
     }
 
     #[test]

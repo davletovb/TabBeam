@@ -11,11 +11,28 @@ pub enum ErrorCode {
     ProviderNotFound,
     ProviderNotAuthenticated,
     ProviderFailed,
+    SearchFailed,
     RequestCancelled,
     RequestTimeout,
     ContextUnavailable,
     InvalidRequest,
     InternalError,
+}
+
+/// A normalized source attached to an answer. Provider adapters fill this
+/// provider-neutral shape from their native search results, and the host emits
+/// it through `response.source`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Source {
+    pub id: String,
+    pub backend_id: String,
+    pub title: String,
+    pub url: String,
+    pub snippet: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub age: Option<String>,
 }
 
 /// The `error` object of a `response.failed` event (DOC-02 §1).

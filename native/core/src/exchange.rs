@@ -5,7 +5,7 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use crate::protocol::{ErrorBody, ProviderState};
+use crate::protocol::{ErrorBody, ProviderState, Source};
 
 /// What an exchange reports, in protocol order. After a terminal update
 /// (`Completed`, `Failed`, or `Stopped`), the exchange is finished.
@@ -18,6 +18,8 @@ pub enum Update {
     Started { conversation_id: Option<String> },
     /// The next piece of the answer (`response.delta`).
     Delta(String),
+    /// A normalized source attached to the answer (`response.source`).
+    Source(Source),
     /// One provider's status (`provider.status`).
     Status {
         provider_id: String,

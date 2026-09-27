@@ -38,9 +38,13 @@ const ANSWER_TIMEOUT: Duration = Duration::from_secs(300);
 /// host's diagnostics keep.
 const STATUS_ID: &str = "req_5a7a0000-0000-4000-8000-000000000001";
 const ASK_ID: &str = "req_5a7a0000-0000-4000-8000-000000000002";
+const SEARCH_ID: &str = "req_5a7a0000-0000-4000-8000-000000000003";
+const FOLLOW_ID: &str = "req_5a7a0000-0000-4000-8000-000000000004";
 const STATUS: &str = r#"{"version":1,"type":"request","request_id":"req_5a7a0000-0000-4000-8000-000000000001","method":"provider.status","payload":{"provider_id":"claude"}}"#;
 const QUESTION: &str = "Reply with the single word: pong";
 const ASK: &str = r#"{"version":1,"type":"request","request_id":"req_5a7a0000-0000-4000-8000-000000000002","method":"conversation.send","payload":{"provider_id":"claude","input":{"text":"Reply with the single word: pong"}}}"#;
+const SEARCH_QUESTION: &str = "Search the web for the official Rust language website and answer in one short sentence with a source.";
+const SEARCH: &str = r#"{"version":1,"type":"request","request_id":"req_5a7a0000-0000-4000-8000-000000000003","method":"conversation.send","payload":{"provider_id":"claude","input":{"text":"Search the web for the official Rust language website and answer in one short sentence with a source."},"search":{}}}"#;
 
 /// Environment variables that may hold a credential in a CI job.
 const CREDENTIAL_VARIABLES: &[&str] = &["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"];
@@ -249,16 +253,11 @@ fn live_claude_answers_a_question() {
     {
         return skip_or_fail(mode, "Claude isn't signed in");
     }
-    let diagnostics = host.finish();
-
     let kinds: Vec<&str> = answer
         .iter()
         .map(|event| event["event"].as_str().unwrap())
         .collect();
-    let printed = format!("{answer:?}{diagnostics}");
-    assert_no_credentials("the events and diagnostics", &printed);
     eprintln!("events: {kinds:?}");
-    eprintln!("diagnostics:\n{diagnostics}");
 
     assert_eq!(kinds.first(), Some(&"conversation.created"), "{last}");
     assert_eq!(kinds.get(1), Some(&"response.started"), "{last}");
@@ -273,7 +272,52 @@ fn live_claude_answers_a_question() {
     eprintln!("Claude answered in {took:.1?}: {text}");
     assert!(text.to_lowercase().contains("pong"), "unexpected answer");
 
+    // A native WebSearch turn must return structured sources, then the same
+    // Claude session must still accept a plain follow-up with tools disabled.
+    host.send(SEARCH);
+    let searched = host.until_end(SEARCH_ID, ANSWER_TIMEOUT);
+    let search_last = searched.last().unwrap();
+    assert_eq!(
+        search_last["event"], "response.completed",
+        "native search failed: {search_last}"
+    );
+    assert!(
+        searched
+            .iter()
+            .any(|event| event["event"] == "response.source"),
+        "native search silently completed without sources: {searched:?}"
+    );
+    let conversation = searched
+        .iter()
+        .find(|event| event["event"] == "conversation.created")
+        .and_then(|event| event["payload"]["conversation_id"].as_str())
+        .expect("search opens a conversation")
+        .to_owned();
+    let follow = format!(
+        r#"{{"version":1,"type":"request","request_id":"{FOLLOW_ID}","method":"conversation.send","payload":{{"provider_id":"claude","conversation_id":"{conversation}","input":{{"text":"Reply with the single word: followup"}}}}}}"#
+    );
+    host.send(&follow);
+    let followed = host.until_end(FOLLOW_ID, ANSWER_TIMEOUT);
+    let follow_last = followed.last().unwrap();
+    assert_eq!(
+        follow_last["event"], "response.completed",
+        "plain follow-up after search failed: {follow_last}"
+    );
+    assert!(
+        followed
+            .iter()
+            .any(|event| event["event"] == "response.delta"),
+        "plain follow-up returned no answer"
+    );
+
+    let diagnostics = host.finish();
+    let printed = format!("{answer:?}{searched:?}{followed:?}{diagnostics}");
+    assert_no_credentials("the events and diagnostics", &printed);
+    eprintln!("diagnostics:\n{diagnostics}");
+
     // The host's own records name the request, never its content.
     assert!(!diagnostics.contains(QUESTION));
+    assert!(!diagnostics.contains(SEARCH_QUESTION));
     assert!(!diagnostics.to_lowercase().contains("pong"));
+    assert!(!diagnostics.to_lowercase().contains("followup"));
 }
