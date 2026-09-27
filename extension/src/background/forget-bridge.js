@@ -1,4 +1,5 @@
 import { createRequestId } from "./ask-bridge.js";
+import { HOST_PROTOCOL_MISMATCH, HOST_READY_TIMEOUT } from "./native-connection.js";
 
 /** Provider sessions still to forget, kept across service-worker restarts. */
 export const PENDING_FORGETS_KEY = "pervue.pendingForgets";
@@ -65,7 +66,7 @@ export function forgetProviderSession(options) {
             if (event?.event === "response.completed") settle("forgotten");
             else if (event?.event === "response.failed") {
               const reason = event.payload?.error?.reason;
-              settle(reason === "HOST_PROTOCOL_MISMATCH" || reason === "HOST_READY_TIMEOUT"
+              settle(reason === HOST_PROTOCOL_MISMATCH.reason || reason === HOST_READY_TIMEOUT.reason
                 ? "unreachable" : "failed");
             }
           },

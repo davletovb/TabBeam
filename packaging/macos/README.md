@@ -6,7 +6,7 @@ The package installs the release host at `/Library/Application Support/Pervue/pe
 
 The Chrome extension ID is an input to the package, not a guessed value. Use the ID of the exact published extension build. Chrome only connects a native host when its manifest allowlist contains that ID. If an unpacked development extension has another ID, build a separate development package.
 
-On a Mac with Rust (including `rustup`), Xcode command line tools, and Python 3 (the standard JSON library is sufficient):
+On a Mac with Rust (including `rustup`), Xcode command line tools, and Python 3 for JSON processing (standard library only):
 
 ```sh
 packaging/macos/build.sh <32-character-extension-id>
@@ -18,7 +18,7 @@ The `macos-release.yml` manual workflow builds a signed, notarized, stapled pack
 
 ## macOS package gate
 
-CI installs an unsigned universal package on Apple silicon and Intel macOS runners, verifies the manifest's exact Chrome origin and absolute host path, launches the installed host with a provider tool present on the search path, checks `host.ready` and a `provider.status` round trip while stdin stays open, runs the uninstaller script, and checks removal of its files. This exercises the actual `pkgbuild` payload and system registration. The extension-to-real-host round trip exercises the protocol gate before any queued request reaches an incompatible host.
+CI installs an unsigned universal package on Apple silicon and Intel macOS runners, checks the applet's ad hoc signature and the package's nonrelocatable metadata, verifies the manifest's exact Chrome origin and absolute host path, launches the installed host with a provider tool present on the search path, checks `host.ready` and a `provider.status` round trip while stdin stays open, runs the uninstaller script, and checks removal of its files. This exercises the actual `pkgbuild` payload and system registration. The extension-to-real-host round trip exercises the protocol gate before any queued request reaches an incompatible host.
 
 For **TST-12**, additionally record an actual clean Mac run with a signed/notarized release candidate, matching Chrome extension, and a signed-in supported provider:
 

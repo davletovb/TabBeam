@@ -51,21 +51,19 @@ osacompile -o "$stage/Applications/Uninstall Pervue.app" \
   -e 'do shell script (quoted form of "/Library/Application Support/Pervue/uninstall.sh") with administrator privileges'
 # Give the applet a stable bundle identity before signing. Apple's pkgbuild
 # analyzer omits bare osacompile applets, so supply its component explicitly.
-python3 - "$stage/Applications/Uninstall Pervue.app/Contents/Info.plist" "$package_version" <<'PY'
-import plistlib, sys
-with open(sys.argv[1], 'rb') as source:
-    info = plistlib.load(source)
-info['CFBundleIdentifier'] = 'com.pervue.uninstaller'
-info['CFBundleVersion'] = sys.argv[2]
-info['CFBundleShortVersionString'] = sys.argv[2]
-with open(sys.argv[1], 'wb') as target:
-    plistlib.dump(info, target)
-PY
+applet="$stage/Applications/Uninstall Pervue.app"
+info="$applet/Contents/Info.plist"
+plutil -replace CFBundleIdentifier -string com.pervue.uninstaller "$info"
+plutil -replace CFBundleVersion -string "$package_version" "$info"
+plutil -replace CFBundleShortVersionString -string "$package_version" "$info"
 if [[ -n "${PERVUE_APP_SIGN_IDENTITY:-}" ]]; then
   codesign --force --options runtime --timestamp --sign "$PERVUE_APP_SIGN_IDENTITY" "$host"
-  codesign --force --options runtime --timestamp --sign "$PERVUE_APP_SIGN_IDENTITY" \
-    "$stage/Applications/Uninstall Pervue.app"
+  codesign --force --options runtime --timestamp --sign "$PERVUE_APP_SIGN_IDENTITY" "$applet"
+else
+  # osacompile signs the applet ad hoc; editing Info.plist invalidates that seal.
+  codesign --force --sign - "$applet"
 fi
+codesign --verify --strict "$applet"
 
 python3 - "$stage/Library/Application Support/Pervue/build-info.json" "$host_version" "$package_version" "$extension_id" "$source_commit" <<'PY'
 import json, sys

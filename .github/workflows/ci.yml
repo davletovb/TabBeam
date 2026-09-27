@@ -79,9 +79,17 @@ jobs:
           SH
           chmod +x "$RUNNER_TEMP/provider-bin/codex"
           PERVUE_PROVIDER_PATH="$RUNNER_TEMP/provider-bin" node packaging/macos/verify.mjs abcdefghijklmnopabcdefghijklmnop
-      - name: Verify a moved applet does not redirect a reinstall
+          codesign --verify --strict '/Applications/Uninstall Pervue.app'
+      - name: Verify fixed applet destination and reinstall
         shell: bash
         run: |
+          pkgutil --expand out/macos/*.pkg "$RUNNER_TEMP/pervue-expanded"
+          python3 - "$RUNNER_TEMP/pervue-expanded/PackageInfo" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+          relocate = ET.parse(sys.argv[1]).getroot().find('relocate')
+          assert relocate is None or len(relocate) == 0, 'uninstaller bundle is relocatable'
+          PY
           sudo mv '/Applications/Uninstall Pervue.app' "$RUNNER_TEMP/Uninstall Pervue.app"
           sudo installer -pkg out/macos/*.pkg -target /
           test -d '/Applications/Uninstall Pervue.app'
