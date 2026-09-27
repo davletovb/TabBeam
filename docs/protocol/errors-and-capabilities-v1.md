@@ -105,6 +105,7 @@ Pervue's provider-independent web-search layer failed before or while retrieving
 Typical reasons:
 - `SEARCH_NOT_CONFIGURED` — the selected search backend lacks required local configuration.
 - `SEARCH_BACKEND_NOT_FOUND` — the requested backend adapter is not installed in this companion build.
+- `NATIVE_SEARCH_UNSUPPORTED` — `backend_id: "provider"` was requested but the selected AI provider does not expose native web search.
 - `SEARCH_BACKEND_UNAVAILABLE` — the backend or HTTPS transport could not complete the request.
 - `SEARCH_TRANSPORT_NOT_FOUND` — the fixed local HTTPS transport executable is unavailable.
 - `SEARCH_AUTHENTICATION_FAILED` — the backend rejected its credential.
