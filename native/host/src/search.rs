@@ -471,7 +471,7 @@ impl Exchange for BraveExchange {
                     self.stopping_at = None;
                     return Some(Update::Stopped);
                 }
-                match process.next_event(busy_until.min(kill_at)) {
+                match process.next_event(deadline.min(kill_at)) {
                     Some(ProcessEvent::Exited(_)) => {
                         self.process = None;
                         self.stopping_at = None;
@@ -487,7 +487,7 @@ impl Exchange for BraveExchange {
                 continue;
             }
 
-            match process.next_event(busy_until)? {
+            match process.next_event(deadline)? {
                 ProcessEvent::Stdout(bytes) => {
                     if self.stdout.len().saturating_add(bytes.len()) > MAX_RESPONSE_BYTES {
                         process.kill();
@@ -636,30 +636,10 @@ fn safe_http_url(url: &str) -> bool {
 }
 
 fn plain_text(value: &str) -> String {
-    decode_entities(&strip_decorations(value))
-}
-
-fn strip_decorations(value: &str) -> String {
-    let mut output = String::with_capacity(value.len());
-    let mut offset = 0;
-    while offset < value.len() {
-        let rest = &value[offset..];
-        if rest.as_bytes().first() == Some(&b'<') {
-            let next = rest.as_bytes().get(1).copied();
-            let looks_like_tag =
-                next.is_some_and(|byte| byte.is_ascii_alphabetic() || matches!(byte, b'/' | b'!'));
-            if looks_like_tag {
-                if let Some(end) = rest.find('>') {
-                    offset += end + 1;
-                    continue;
-                }
-            }
-        }
-        let character = rest.chars().next().expect("offset is in bounds");
-        output.push(character);
-        offset += character.len_utf8();
-    }
-    output
+    // Brave is requested with text_decorations=false, so angle brackets are
+    // content, not highlighting markup. Decode entities once and preserve
+    // code-like text such as Vec<String> verbatim.
+    decode_entities(value)
 }
 
 fn decode_entities(value: &str) -> String {
@@ -708,7 +688,7 @@ mod tests {
     fn brave_results_are_normalized_bounded_and_deduplicated() {
         let body = br#"{
           "web":{"results":[
-            {"title":"One <strong>result</strong>","url":"https://example.com/a","description":"A &amp; B","page_age":"2 days ago","profile":{"long_name":"example.com"}},
+            {"title":"One result","url":"https://example.com/a","description":"A &amp; B","page_age":"2 days ago","profile":{"long_name":"example.com"}},
             {"title":"Duplicate","url":"https://example.com/a","description":"ignored"},
             {"title":"Unsafe","url":"javascript:alert(1)","description":"ignored"},
             {"title":"Two","url":"http://example.org/b","description":null}
@@ -756,7 +736,10 @@ mod tests {
             plain_text("Rust 1.80 < 1.81 adds X"),
             "Rust 1.80 < 1.81 adds X"
         );
-        assert_eq!(plain_text("A <strong>B</strong> &amp; C"), "A B & C");
+        assert_eq!(
+            plain_text("Use Vec<String> &amp; HashMap<K, V>"),
+            "Use Vec<String> & HashMap<K, V>"
+        );
         assert_eq!(plain_text("&amp;lt;script&amp;gt;"), "&lt;script&gt;");
     }
 
