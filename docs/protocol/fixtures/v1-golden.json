@@ -203,7 +203,7 @@
           "source_id": "src_search_1",
           "data": {
             "id": "src_search_1",
-            "backend_id": "brave",
+            "backend_id": "codex",
             "title": "Example result",
             "url": "https://example.com/article",
             "snippet": "Bounded result excerpt.",
