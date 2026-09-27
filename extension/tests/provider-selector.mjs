@@ -122,7 +122,7 @@ async function tick() {
   );
   await selector.ready;
 
-  assert.deepEqual(select.options.map((option) => option.value), ["codex", "claude"]);
+  assert.deepEqual(select.options.map((option) => option.value), ["codex", "claude", "gemini"]);
   assert.equal(selector.getProviderId(), "claude");
   assert.equal(changes.at(-1)?.status?.capabilities?.page_context, false);
 
