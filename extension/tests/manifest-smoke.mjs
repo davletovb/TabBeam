@@ -22,10 +22,12 @@ assert.equal(manifest.action.default_popup, "src/popup/index.html");
 assert.ok(Number(manifest.minimum_chrome_version) >= 123);
 assert.equal(manifest.background.service_worker, "src/background/service-worker.js");
 assert.equal(manifest.background.type, "module");
-assert.ok(manifest.permissions.includes("contextMenus"));
-assert.ok(manifest.permissions.includes("nativeMessaging"));
-assert.ok(manifest.permissions.includes("storage"));
-assert.ok(manifest.permissions.includes("activeTab"));
+assert.deepEqual([...manifest.permissions].sort(), [
+  "activeTab", "contextMenus", "nativeMessaging", "storage"
+]);
+assert.equal("host_permissions" in manifest, false);
+assert.equal("optional_host_permissions" in manifest, false);
+assert.equal("externally_connectable" in manifest, false);
 assert.ok(manifest.commands._execute_action?.suggested_key);
 assert.equal(manifest.commands["open-pervue-full-page"], undefined);
 const popupMarkup = fs.readFileSync(path.join(root, manifest.action.default_popup), "utf8");
