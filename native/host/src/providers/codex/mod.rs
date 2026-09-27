@@ -1081,7 +1081,13 @@ mod tests {
     #[test]
     fn a_model_is_one_argument_that_applies_to_resumed_threads_too() {
         let workspace = Path::new("/tmp/pervue-workspace");
-        let args = exec_args(workspace, false, false, Some("thread-1"), Some("gpt-5-codex"));
+        let args = exec_args(
+            workspace,
+            false,
+            false,
+            Some("thread-1"),
+            Some("gpt-5-codex"),
+        );
         let args: Vec<&str> = args.iter().map(|arg| arg.to_str().unwrap()).collect();
         let model = args
             .iter()
