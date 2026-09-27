@@ -30,7 +30,7 @@ use super::discovery;
 use super::environment;
 use super::forget;
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
-use crate::conversation::provider_prompt;
+use crate::conversation::provider_prompt_with_sources;
 use crate::protocol::events::{
     Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ProviderState,
 };
@@ -110,9 +110,9 @@ const NOT_SIGNED_IN: ErrorBody<'static> = ErrorBody {
     retryable: false,
 };
 
-const CONTEXT_TOOLS_ENABLED: ErrorBody<'static> = ErrorBody {
+const REFERENCE_TOOLS_ENABLED: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::InvalidRequest,
-    reason: "PAGE_CONTEXT_TOOLS_ENABLED",
+    reason: "PAGE_REFERENCE_TOOLS_ENABLED",
     message: "Pervue won't send browser context to Codex while user-configured MCP servers are enabled. Disable them or choose No context.",
     retryable: false,
 };
@@ -338,17 +338,29 @@ impl Provider for Codex {
         let Some(executable) = self.executable() else {
             return Box::new(Scripted::failed(NOT_INSTALLED));
         };
-        let context_turn = request.context.is_some();
-        if context_turn && !context_configuration_is_safe(&self.launch) {
-            return Box::new(Scripted::failed(CONTEXT_TOOLS_ENABLED));
+        let reference_turn = request.context.is_some() || !request.search_results.is_empty();
+        if reference_turn && !context_configuration_is_safe(&self.launch) {
+            return Box::new(Scripted::failed(REFERENCE_TOOLS_ENABLED));
         }
 
         let mut conversation_id = request.conversation_id;
-        let mut fallback_prompt = (!request.history.is_empty())
-            .then(|| provider_prompt(&request.history, request.context.as_ref(), &request.text));
-        let mut prompt = match request.context.as_ref() {
-            Some(context) => provider_prompt(&[], Some(context), &request.text),
-            None => request.text,
+        let mut fallback_prompt = (!request.history.is_empty()).then(|| {
+            provider_prompt_with_sources(
+                &request.history,
+                request.context.as_ref(),
+                &request.search_results,
+                &request.text,
+            )
+        });
+        let mut prompt = if request.context.is_some() || !request.search_results.is_empty() {
+            provider_prompt_with_sources(
+                &[],
+                request.context.as_ref(),
+                &request.search_results,
+                &request.text,
+            )
+        } else {
+            request.text
         };
         let resume = match &conversation_id {
             None => None,
@@ -384,7 +396,7 @@ impl Provider for Codex {
             conversation_id,
             conversations: Rc::clone(&self.conversations),
             finish_grace: self.limits.finish,
-            restrict_tools: context_turn,
+            restrict_tools: reference_turn,
             model: request.model,
             queue: VecDeque::new(),
             cancelled: false,
