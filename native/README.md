@@ -21,7 +21,7 @@ native/
 │   │   ├── manifest.rs  caller-origin checks and the Native Messaging manifest
 │   │   ├── providers/   adapter contract, host discovery policy, fake, Codex, Claude
 │   │   ├── protocol/    strict request validation and event emission
-│   │   ├── search.rs    provider-independent search + Brave adapter/synthesis bridge
+│   │   ├── search.rs    provider-native search request options
 │   │   ├── host.rs      request loop: requests side by side, cancellation, timeouts
 │   │   └── main.rs      command-line entry point
 │   └── tests/       command-line tests and the opt-in live Codex test
@@ -32,7 +32,6 @@ native/
 ## Requirements
 
 - Rust 1.85 or newer (install with [rustup](https://rustup.rs))
-- system `curl` only when using the optional Brave search backend (`/usr/bin/curl` on macOS/Linux or `%SystemRoot%\\System32\\curl.exe` on Windows)
 
 ## Development build
 
@@ -156,17 +155,14 @@ Command-line errors, such as a usage error or an invalid `--print-manifest` ID, 
 
 ## Web search
 
-Pervue supports two execution models behind the same `conversation.send.search` contract and the same normalized `response.source` events.
+Pervue uses the selected AI provider's own authenticated native web-search capability. There is no separate search API key, search HTTP client, or external search-provider process.
 
-- **Auto (default).** `"search": {}` or `"backend_id": "auto"` uses the selected provider's authenticated native web search when its adapter reports `web_search: true`. Codex and Claude both support this path. No search API key is needed beyond the provider sign-in the user already uses with Pervue.
-- **Provider native.** `"backend_id": "provider"` explicitly requires that same native path. Codex runs one `codex exec` turn with live web search enabled while shell/images/apps/plugins/hooks/MCP/subagents remain disabled. Claude runs one print-mode turn with only `WebSearch,WebFetch` allowed and MCP tools still blocked. Structured provider search results are normalized into Pervue sources and emitted as `response.source`.
-- **Brave independent retrieval.** `"backend_id": "brave"` runs the existing provider-independent Brave adapter first, normalizes its bounded sources, then gives that source set to the selected AI provider for synthesis. Auto falls back to this path for a future provider that does not support native search.
+- **Auto (default).** `"search": {}` or `"backend_id": "auto"` asks the selected provider to perform native web search in the same answer turn.
+- **Provider native.** `"backend_id": "provider"` is an explicit alias for the same behavior. If the provider does not advertise `web_search: true`, the host returns `SEARCH_FAILED / NATIVE_SEARCH_UNSUPPORTED`.
+- **Codex.** A native-search turn enables live web search while shell, images, apps/plugins/hooks, MCP/orchestrator, and subagents remain disabled.
+- **Claude.** A native-search turn allows only `WebSearch,WebFetch`; MCP loading/use remains blocked.
 
-Brave is therefore optional for Codex/Claude users. To use it, set `BRAVE_SEARCH_API_KEY` in the environment that launches Chrome/the native host. Pervue does not copy that key into extension storage or pass it to an AI provider. The Brave key and user query are supplied to curl over stdin rather than command-line arguments. Search responses are capped at 2 MiB; at most 10 deduplicated HTTP(S) sources are retained, with bounded plain-text metadata.
-
-`PERVUE_CURL_PATH` may point to an absolute curl executable for a controlled installation/test environment. Otherwise the host uses only the operating system's fixed curl location: `/usr/bin/curl` on macOS/Linux or `%SystemRoot%\\System32\\curl.exe` on Windows. It never searches user-writable npm/nvm/PATH locations for the process that receives the Brave credential. Curl is launched with `--disable` as its first option so user `.curlrc` settings cannot alter the request or trace credentials.
-
-Independent retrieval failures use `SEARCH_FAILED`. Provider-native search is part of the provider turn, so provider execution/authentication/rate-limit failures keep the provider's normalized error category; forcing native search on an unsupported provider uses `SEARCH_FAILED / NATIVE_SEARCH_UNSUPPORTED`.
+Codex and Claude structured search-result events are normalized into the same `response.source` shape. Provider authentication, rate limits, cancellation, and timeouts stay in the existing provider/request error categories because retrieval and synthesis are one provider turn.
 
 
 ## Providers
