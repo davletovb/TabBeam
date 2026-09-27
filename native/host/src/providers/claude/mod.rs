@@ -667,11 +667,7 @@ impl Exchange for StatusCheck {
 /// The `claude -p` command line for one turn; the question goes on stdin.
 /// A model is one `--model=<id>` argument, so the ID can never be read as an
 /// option of its own.
-fn claude_args(
-    resume: Option<&str>,
-    model: Option<&str>,
-    native_search: bool,
-) -> Vec<OsString> {
+fn claude_args(resume: Option<&str>, model: Option<&str>, native_search: bool) -> Vec<OsString> {
     let mut args: Vec<OsString> = [
         "-p",
         "--output-format",
@@ -686,7 +682,11 @@ fn claude_args(
         // agent. Disable built-in tools, load none of the user's MCP
         // servers, and deny MCP tools explicitly as well.
         "--tools",
-        if native_search { "WebSearch,WebFetch" } else { "" },
+        if native_search {
+            "WebSearch,WebFetch"
+        } else {
+            ""
+        },
         "--strict-mcp-config",
         "--disallowedTools",
         "mcp__*",
@@ -825,15 +825,16 @@ impl Turn {
                 for result in results {
                     if self.source_urls.insert(result.url.clone()) {
                         self.source_count += 1;
-                        self.queue.push_back(Update::Source(pervue_core::protocol::Source {
-                            id: format!("src_claude_{}", self.source_count),
-                            backend_id: ID.to_owned(),
-                            title: result.title,
-                            url: result.url,
-                            snippet: result.snippet,
-                            source_name: result.source_name,
-                            age: result.age,
-                        }));
+                        self.queue
+                            .push_back(Update::Source(pervue_core::protocol::Source {
+                                id: format!("src_claude_{}", self.source_count),
+                                backend_id: ID.to_owned(),
+                                title: result.title,
+                                url: result.url,
+                                snippet: result.snippet,
+                                source_name: result.source_name,
+                                age: result.age,
+                            }));
                     }
                 }
             }
