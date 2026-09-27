@@ -94,7 +94,13 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
   let submittedProvider;
   /** @type {any} */
   let submittedContext = null;
-  /** @typedef {{text: string, conversationId: string | null, search: boolean}} Attempt */
+  /**
+   * A question as it was asked. Retry repeats its search mode. A search
+   * question is retried without page context, as it was asked (the two never
+   * combine); any other question re-reads the current context choice, so
+   * context removed since is never sent again.
+   * @typedef {{text: string, conversationId: string | null, search: boolean}} Attempt
+   */
   /** @type {Attempt | null} */
   let lastAttempt = null;
   let requestStartedAt = 0;
@@ -300,7 +306,8 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
     if (active !== null || loadPending) {
       return;
     }
-    if (contextControls?.isPending()) {
+    // A search retry doesn't use what's being captured now.
+    if (!attempt?.search && contextControls?.isPending()) {
       setStatus("Wait for context capture to finish.", "notice");
       return;
     }
@@ -331,9 +338,9 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
     submittedText = text;
     submittedProvider = options.getProviderId?.();
     const submittedModel = options.getModel?.(submittedProvider);
-    submittedContext = contextControls?.getContext();
-    // A retry repeats the question as it was asked.
+    // A retry repeats the question's search mode (see Attempt).
     submittedSearch = attempt ? attempt.search : options.getSearch?.() === true;
+    submittedContext = attempt?.search ? null : contextControls?.getContext();
     lastAttempt = { text, conversationId, search: submittedSearch };
     requestStartedAt = globalThis.performance?.now?.() ?? 0;
     firstChunkRecorded = false;

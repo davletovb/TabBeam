@@ -369,6 +369,29 @@ const HOSTILE: [&str; 11] = [
 ];
 
 #[test]
+fn a_search_whose_only_links_a_browser_would_refuse_fails_instead_of_completing() {
+    let claude = FakeClaude::install("search-bad-urls", "signed-in");
+    let updates = run_to_end(
+        claude
+            .adapter()
+            .send(SendRequest {
+                native_search: true,
+                ..ask("Find something")
+            })
+            .as_mut(),
+    );
+    assert!(
+        !updates
+            .iter()
+            .any(|update| matches!(update, Update::Source(_)))
+    );
+    assert_eq!(
+        failure(&updates),
+        (ErrorCode::SearchFailed, "NATIVE_SEARCH_NO_SOURCES")
+    );
+}
+
+#[test]
 fn search_then_plain_followup_resumes_with_plain_tool_policy() {
     let claude = FakeClaude::install("answers", "signed-in");
     let adapter = claude.adapter();

@@ -239,6 +239,14 @@ fn print_mode(dir: &Path, args: &[String], behavior: &str) -> io::Result<ExitCod
         )?;
         let links = match behavior {
             "search-no-links" => "[]".to_owned(),
+            // Links the browser would refuse: the host mustn't count them
+            // toward grounding.
+            "search-bad-urls" => json!([
+                {"title":"Hostless","url":"https://:443/path"},
+                {"title":"Bad port","url":"https://example.com:99999/"},
+                {"title":"Bad address","url":"https://999.1.1.1/"}
+            ])
+            .to_string(),
             // Untrusted result text that tries to look like command-line
             // options, shell, markup, or instructions (SEC-05).
             "search-hostile" => json!([
@@ -261,7 +269,9 @@ fn print_mode(dir: &Path, args: &[String], behavior: &str) -> io::Result<ExitCod
                     "content":[{
                         "tool_use_id":"toolu_test",
                         "type":"tool_result",
-                        "content":format!("Web search results for query: \"test\"\n\nLinks: {links}")
+                        // Claude Code 2.1.236 follows the array with prose and a
+                        // reminder, which can mention links again.
+                        "content":format!("Web search results for query: \"test\"\n\nLinks: {links}\n\nThe Links: above answer the question.\n\nREMINDER: You MUST include the sources above in your response to the user using markdown hyperlinks.")
                     }]
                 }
             }),

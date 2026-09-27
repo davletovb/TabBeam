@@ -115,8 +115,9 @@ impl SourceCollector {
     }
 }
 
-/// Claude Code 2.1.x returns WebSearch results as a text `tool_result` ending
-/// in `Links: [{...}]`. Parse only that JSON array; the prose before it stays
+/// Claude Code 2.1.x returns WebSearch results as a text `tool_result` with
+/// `Links: [{...}]`, followed by prose about the results and a reminder to
+/// cite them. Parse only that first JSON array; the prose around it stays
 /// provider output and is never treated as data.
 pub fn claude_tool_result_sources(content: &str) -> Vec<SearchResult> {
     #[derive(Deserialize)]
@@ -127,11 +128,15 @@ pub fn claude_tool_result_sources(content: &str) -> Vec<SearchResult> {
         snippet: String,
     }
 
-    let Some(marker) = content.rfind("Links:") else {
-        return Vec::new();
-    };
-    let json = content[marker + "Links:".len()..].trim();
-    let Ok(links) = serde_json::from_str::<Vec<Link>>(json) else {
+    // The first `Links:` followed by a JSON array: the prose after it may
+    // mention links too.
+    let Some(links) = content.match_indices("Links:").find_map(|(marker, _)| {
+        let json = content[marker + "Links:".len()..].trim_start();
+        serde_json::Deserializer::from_str(json)
+            .into_iter::<Vec<Link>>()
+            .next()
+            .and_then(Result::ok)
+    }) else {
         return Vec::new();
     };
     links
@@ -200,28 +205,106 @@ pub fn codex_message_sources(text: &str) -> Vec<SearchResult> {
     results
 }
 
+/// Whether `url` is a source link every browser surface accepts (SEC-05).
+///
+/// This is a strict subset of what the WHATWG URL parser accepts: the
+/// extension parses each source again with the browser's `new URL`, and a
+/// source counted here toward grounding (`NATIVE_SEARCH_NO_SOURCES`) must
+/// never be one the extension then drops. So the host is an ASCII domain name
+/// without punycode labels, or a dotted-quad IPv4 address; the port, if any,
+/// is a valid one; there are no credentials; and the URL stays within
+/// MAX_URL_BYTES after the browser percent-encodes it.
+/// `docs/protocol/fixtures/v1-source-urls.json` pins both sides.
 fn valid_source_url(url: &str) -> bool {
     if url.len() > MAX_URL_BYTES
-        || url
-            .chars()
-            .any(|character| character.is_control() || character.is_whitespace())
+        || url.chars().any(|character| {
+            character.is_control() || character.is_whitespace() || is_invisible(character)
+        })
     {
         return false;
     }
     let Some((scheme, rest)) = url.split_once("://") else {
         return false;
     };
-    if !matches!(scheme, "http" | "https") || rest.is_empty() {
+    if !matches!(scheme, "http" | "https") {
         return false;
     }
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
-    !authority.is_empty() && !authority.contains('@')
+    let (host, port) = split_authority(rest);
+    valid_host(host) && port.is_none_or(valid_port) && serialized_len(url) <= MAX_URL_BYTES
+}
+
+/// The host and port of what follows `scheme://`. A backslash ends the
+/// authority, as it does in the browser for `http` and `https`.
+fn split_authority(rest: &str) -> (&str, Option<&str>) {
+    let end = rest.find(['/', '?', '#', '\\']).unwrap_or(rest.len());
+    let authority = &rest[..end];
+    match authority.split_once(':') {
+        Some((host, port)) => (host, Some(port)),
+        None => (authority, None),
+    }
+}
+
+fn valid_host(host: &str) -> bool {
+    // One trailing dot is allowed, as in `example.com.`.
+    let name = host.strip_suffix('.').unwrap_or(host);
+    let labels: Vec<&str> = name.split('.').collect();
+    let well_formed = labels.iter().all(|label| {
+        !label.is_empty()
+            && label
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+            && !label
+                .get(..4)
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case("xn--"))
+    });
+    if !well_formed {
+        return false;
+    }
+    // A host whose last label is a number is an IPv4 address to the browser,
+    // which refuses one that doesn't parse. Only the dotted-quad form passes.
+    let last = labels[labels.len() - 1];
+    let numeric = last.bytes().all(|byte| byte.is_ascii_digit())
+        || (last
+            .get(..2)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("0x"))
+            && last[2..].bytes().all(|byte| byte.is_ascii_hexdigit()));
+    !numeric
+        || (name.len() == host.len()
+            && labels.len() == 4
+            && labels.iter().all(|label| {
+                (label.len() == 1 || !label.starts_with('0'))
+                    && label.bytes().all(|byte| byte.is_ascii_digit())
+                    && label.parse::<u8>().is_ok()
+            }))
+}
+
+fn valid_port(port: &str) -> bool {
+    port.is_empty()
+        || (port.len() <= 5
+            && port.bytes().all(|byte| byte.is_ascii_digit())
+            && port.parse::<u16>().is_ok())
+}
+
+/// At most how long the browser's serialization of `url` is: it adds a `/`
+/// to an empty path and percent-encodes every non-ASCII byte and a few ASCII
+/// characters, each as three characters.
+fn serialized_len(url: &str) -> usize {
+    1 + url
+        .bytes()
+        .map(|byte| {
+            if !byte.is_ascii() || b"\"<>`{}'^".contains(&byte) {
+                3
+            } else {
+                1
+            }
+        })
+        .sum::<usize>()
 }
 
 /// The host of a URL `valid_source_url` accepted.
 fn url_host(url: &str) -> &str {
     let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
-    rest.split(['/', '?', '#']).next().unwrap_or_default()
+    split_authority(rest).0
 }
 
 /// Untrusted text as bounded, single-line plain text: markup tags are
@@ -427,6 +510,56 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result.title, "news.example.org");
+    }
+
+    /// The host accepts only what the browser also accepts, so a source it
+    /// counts toward grounding is one the extension keeps.
+    #[test]
+    fn source_urls_match_the_shared_fixture() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../docs/protocol/fixtures/v1-source-urls.json"
+        ))
+        .unwrap();
+        for url in fixture["accepted"].as_array().unwrap() {
+            let url = url.as_str().unwrap();
+            assert!(valid_source_url(url), "{url}");
+        }
+        for url in fixture["rejected"].as_array().unwrap() {
+            let url = url.as_str().unwrap();
+            assert!(!valid_source_url(url), "{url}");
+        }
+    }
+
+    #[test]
+    fn a_url_the_browser_would_encode_past_the_limit_is_refused() {
+        // 2 bytes each, 6 once the browser percent-encodes them.
+        let long = format!("https://example.com/{}", "\u{00fc}".repeat(700));
+        assert!(long.len() <= MAX_URL_BYTES);
+        assert!(!valid_source_url(&long));
+        let fits = format!("https://example.com/{}", "\u{00fc}".repeat(600));
+        assert!(valid_source_url(&fits));
+    }
+
+    #[test]
+    fn a_search_with_only_malformed_urls_has_no_sources() {
+        let results = claude_tool_result_sources(
+            "Links: [{\"title\":\"A\",\"url\":\"https://:443/path\"},{\"title\":\"B\",\"url\":\"https://example.com:99999/\"},{\"title\":\"C\",\"url\":\"https://999.1.1.1/\"}]",
+        );
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn claude_links_are_read_before_the_prose_that_follows_them() {
+        // The shape Claude Code 2.1.236 prints: prose and a reminder after
+        // the array, which may mention links again.
+        let results = claude_tool_result_sources(
+            "Web search results for query: \"rust release\"\n\nLinks: [{\"title\":\"Rust\",\"url\":\"https://www.rust-lang.org/\"},{\"title\":\"Blog\",\"url\":\"https://blog.rust-lang.org/\"}]\n\nRust 1.90 was released with these Links: see above.\n\nREMINDER: You MUST include the sources above in your response to the user using markdown hyperlinks.",
+        );
+        let urls: Vec<_> = results.iter().map(|result| result.url.as_str()).collect();
+        assert_eq!(
+            urls,
+            ["https://www.rust-lang.org/", "https://blog.rust-lang.org/"]
+        );
     }
 
     #[test]

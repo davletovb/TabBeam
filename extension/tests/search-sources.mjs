@@ -12,6 +12,7 @@
  *   conversation usable.
  */
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import { bindAskForm } from "../src/popup/ask-form.js";
 import { serveConversationAskPort } from "../src/background/conversation-bridge.js";
 import { createConversationStore } from "../src/background/conversation-store.js";
@@ -123,6 +124,17 @@ for (const url of [
   assert.equal(sourceUrl(url), null, String(url));
 }
 assert.equal(sourceHost("https://www.example.com/a"), "example.com");
+
+// Every URL the host accepts (and so counts toward grounding) is one the
+// extension keeps: docs/protocol/fixtures/v1-source-urls.json pins both.
+{
+  const fixture = JSON.parse(fs.readFileSync(new URL("../../docs/protocol/fixtures/v1-source-urls.json", import.meta.url), "utf8"));
+  assert.ok(fixture.accepted.length > 0);
+  for (const url of fixture.accepted) assert.equal(typeof sourceUrl(url), "string", url);
+  // Beyond the limit once the browser encodes it: refused on both sides.
+  assert.equal(sourceUrl(`https://example.com/${"\u00fc".repeat(700)}`), null);
+  assert.equal(typeof sourceUrl(`https://example.com/${"\u00fc".repeat(600)}`), "string");
+}
 
 assert.equal(sourceText("  Rust\u202E 1.90\n\treleased\u0007 \u200B ", 64), "Rust 1.90 released");
 assert.equal(sourceText("x".repeat(400), MAX_SOURCE_TITLE_LENGTH).length, MAX_SOURCE_TITLE_LENGTH);
@@ -560,6 +572,66 @@ assert.deepEqual(emptyConversation.sources, []);
   assert.deepEqual(shown(elements.sources).map((item) => item.id), ["s3"]);
   assert.deepEqual(handed, [[{ id: "s3", backend_id: "claude", title: "ok", url: "https://example.com/" }]],
     "the renderer is only handed checked sources");
+}
+
+// ---------- Retry repeats a question exactly as it was asked ----------
+
+{
+  // Web search and page context never go together, not even after the
+  // choice changed between a failure and its retry.
+  /** @type {MockPort[]} */
+  const ports = [];
+  /** @type {any} */
+  let chosenContext = null;
+  let searchOn = true;
+  const page = { mode: "page", text: "Page text", truncated: false, page: { title: "Page", url: "https://example.com/" } };
+  const elements = {
+    form: new Element("form"), input: new Element("textarea"), submit: new Element("button"),
+    status: new Element("p"), answer: new Element("section"), retry: new Element("button")
+  };
+  bindAskForm(/** @type {any} */ (elements), {
+    connect() {
+      const port = new MockPort(ASK_PORT_NAME);
+      ports.push(port);
+      return /** @type {any} */ (port);
+    }
+  }, { getContext: () => chosenContext, isPending: () => false, consume() {} }, { getSearch: () => searchOn });
+  const failRetryably = () => ports.at(-1)?.emitMessage({
+    event: "response.failed",
+    payload: { error: { code: "REQUEST_TIMEOUT", reason: "PROVIDER_TIMEOUT", message: "Too long.", retryable: true } }
+  });
+
+  elements.input.value = "What's new?";
+  elements.form.fire("submit");
+  assert.equal(ports[0].messages[0].search, true);
+  assert.equal("context" in ports[0].messages[0], false);
+  failRetryably();
+  // The page is shared next, which turns Web search off.
+  chosenContext = page;
+  searchOn = false;
+  elements.retry.click();
+  assert.equal(ports.length, 2);
+  assert.equal(ports[1].messages[0].search, true, "the retry searches, as the question did");
+  assert.equal("context" in ports[1].messages[0], false, "and doesn't add the page chosen since");
+
+  // The other way round: a question about the page, retried after Web
+  // search was turned on, still shares the page and doesn't search.
+  failRetryably();
+  elements.input.value = "Summarize this page";
+  elements.form.fire("submit");
+  assert.deepEqual(ports[2].messages[0].context, page);
+  assert.equal("search" in ports[2].messages[0], false);
+  failRetryably();
+  searchOn = true;
+  elements.retry.click();
+  assert.deepEqual(ports[3].messages[0].context, page);
+  assert.equal("search" in ports[3].messages[0], false);
+  // Context removed since is never sent again (popup-ask.mjs covers more).
+  failRetryably();
+  chosenContext = null;
+  elements.retry.click();
+  assert.equal("context" in ports[4].messages[0], false);
+  assert.equal("search" in ports[4].messages[0], false);
 }
 
 console.log("TST-14 search, source grounding, and SEC-05 source tests passed");
