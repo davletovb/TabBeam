@@ -157,7 +157,11 @@ fn search_result(value: &Value) -> Option<SearchResult> {
     if !safe_http_url(url) {
         return None;
     }
-    let title = value.get("title").and_then(Value::as_str).unwrap_or(url).trim();
+    let title = value
+        .get("title")
+        .and_then(Value::as_str)
+        .unwrap_or(url)
+        .trim();
     if title.is_empty() {
         return None;
     }
