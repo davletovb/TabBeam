@@ -18,7 +18,7 @@
 //! starts with Codex's directory.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::ffi::{OsStr, OsString};
 use std::hash::{BuildHasher, RandomState};
 use std::io::{self, Read, Write};
@@ -1120,6 +1120,7 @@ mod tests {
             workspace,
             false,
             false,
+            false,
             Some("thread-1"),
             Some("gpt-5-codex"),
         );
@@ -1132,7 +1133,7 @@ mod tests {
         assert!(model < resume, "--model is an exec option: {args:?}");
         assert_eq!(&args[resume..], ["resume", "thread-1", "-"]);
 
-        let default = exec_args(workspace, true, false, None, None);
+        let default = exec_args(workspace, true, false, false, None, None);
         assert!(
             !default
                 .iter()
