@@ -9,6 +9,7 @@ pub enum Line {
     Init(String),
     MessageStart,
     TextDelta(String),
+    WebSearch(Vec<SearchResult>),
     Progress,
     ResultSuccess {
         session_id: Option<String>,
@@ -16,6 +17,15 @@ pub enum Line {
     },
     ResultFailed(ErrorBody<'static>),
     Ignored,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SearchResult {
+    pub title: String,
+    pub url: String,
+    pub snippet: String,
+    pub source_name: Option<String>,
+    pub age: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,10 +87,28 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
                         Line::Progress
                     }
                 }
+                "content_block_start" => nested
+                    .get("content_block")
+                    .and_then(search_results)
+                    .map(Line::WebSearch)
+                    .unwrap_or(Line::Progress),
                 _ => Line::Progress,
             }
         }
-        "assistant" | "user" => Line::Progress,
+        "assistant" => event
+            .pointer("/message/content")
+            .and_then(Value::as_array)
+            .map(|blocks| {
+                blocks
+                    .iter()
+                    .filter_map(search_results)
+                    .flatten()
+                    .collect::<Vec<_>>()
+            })
+            .filter(|results| !results.is_empty())
+            .map(Line::WebSearch)
+            .unwrap_or(Line::Progress),
+        "user" => Line::Progress,
         "result" => {
             let failed = event
                 .get("is_error")
@@ -111,6 +139,56 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
         }
         _ => Line::Ignored,
     })
+}
+
+fn search_results(block: &Value) -> Option<Vec<SearchResult>> {
+    if block.get("type").and_then(Value::as_str) != Some("web_search_tool_result") {
+        return None;
+    }
+    let content = block.get("content")?.as_array()?;
+    Some(content.iter().filter_map(search_result).collect())
+}
+
+fn search_result(value: &Value) -> Option<SearchResult> {
+    if value.get("type").and_then(Value::as_str) != Some("web_search_result") {
+        return None;
+    }
+    let url = value.get("url").and_then(Value::as_str)?;
+    if !safe_http_url(url) {
+        return None;
+    }
+    let title = value.get("title").and_then(Value::as_str).unwrap_or(url).trim();
+    if title.is_empty() {
+        return None;
+    }
+    Some(SearchResult {
+        title: bounded(title, 512),
+        url: bounded(url, 4096),
+        snippet: String::new(),
+        source_name: None,
+        age: value
+            .get("page_age")
+            .and_then(Value::as_str)
+            .map(|value| bounded(value, 256))
+            .filter(|value| !value.is_empty()),
+    })
+}
+
+fn safe_http_url(url: &str) -> bool {
+    (url.starts_with("https://") || url.starts_with("http://"))
+        && url.len() <= 4096
+        && !url.chars().any(|character| character.is_control() || character.is_whitespace())
+}
+
+fn bounded(value: &str, limit: usize) -> String {
+    if value.len() <= limit {
+        return value.to_owned();
+    }
+    let mut end = limit;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_owned()
 }
 
 const AUTH_REJECTED: ErrorBody<'static> = ErrorBody {
@@ -231,6 +309,21 @@ mod tests {
                 session_id: Some("abc-123".to_owned()),
                 text: "done".to_owned()
             })
+        );
+    }
+
+    #[test]
+    fn parses_web_search_tool_results() {
+        let line = r#"{"type":"stream_event","event":{"type":"content_block_start","index":2,"content_block":{"type":"web_search_tool_result","tool_use_id":"srvtoolu_1","content":[{"type":"web_search_result","title":"Example","url":"https://example.com/","page_age":"1 day ago"},{"type":"web_search_result","title":"Unsafe","url":"javascript:alert(1)"}]}}}"#;
+        assert_eq!(
+            parse(line),
+            Ok(Line::WebSearch(vec![SearchResult {
+                title: "Example".to_owned(),
+                url: "https://example.com/".to_owned(),
+                snippet: String::new(),
+                source_name: None,
+                age: Some("1 day ago".to_owned()),
+            }]))
         );
     }
 
