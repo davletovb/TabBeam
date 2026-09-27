@@ -110,10 +110,17 @@ const NOT_SIGNED_IN: ErrorBody<'static> = ErrorBody {
     retryable: false,
 };
 
-const REFERENCE_TOOLS_ENABLED: ErrorBody<'static> = ErrorBody {
+const CONTEXT_TOOLS_ENABLED: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::InvalidRequest,
-    reason: "PAGE_REFERENCE_TOOLS_ENABLED",
+    reason: "PAGE_CONTEXT_TOOLS_ENABLED",
     message: "Pervue won't send browser context to Codex while user-configured MCP servers are enabled. Disable them or choose No context.",
+    retryable: false,
+};
+
+const SEARCH_TOOLS_ENABLED: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::InvalidRequest,
+    reason: "SEARCH_REFERENCE_TOOLS_ENABLED",
+    message: "Pervue won't send web-search sources to Codex while user-configured MCP servers are enabled. Disable them or use a plain Ask turn.",
     retryable: false,
 };
 
@@ -340,7 +347,12 @@ impl Provider for Codex {
         };
         let reference_turn = request.context.is_some() || !request.search_results.is_empty();
         if reference_turn && !context_configuration_is_safe(&self.launch) {
-            return Box::new(Scripted::failed(REFERENCE_TOOLS_ENABLED));
+            let error = if request.context.is_some() {
+                CONTEXT_TOOLS_ENABLED
+            } else {
+                SEARCH_TOOLS_ENABLED
+            };
+            return Box::new(Scripted::failed(error));
         }
 
         let mut conversation_id = request.conversation_id;
