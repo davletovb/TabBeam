@@ -1142,10 +1142,14 @@ mod tests {
         }
     }
 
-    fn run_session<R: Read + Send>(providers: &Providers, mut input: R) -> Session {
+    fn run_session_with_services<R: Read + Send>(
+        providers: &Providers,
+        searches: &SearchProviders,
+        mut input: R,
+    ) -> Session {
         let mut output = Vec::new();
         let mut log = Diagnostics::new(Vec::new());
-        let result = run_with(providers, &mut input, &mut output, &mut log);
+        let result = run_with_services(providers, searches, &mut input, &mut output, &mut log);
 
         let mut wire = output.as_slice();
         let mut frames = Vec::new();
@@ -1162,6 +1166,11 @@ mod tests {
             frames,
             records,
         }
+    }
+
+    fn run_session<R: Read + Send>(providers: &Providers, input: R) -> Session {
+        let searches = SearchProviders::new(Vec::new());
+        run_session_with_services(providers, &searches, input)
     }
 
     fn run_host(input: &[u8]) -> Session {
@@ -1318,6 +1327,7 @@ mod tests {
         script: Script,
         timeouts: Timeouts,
         capabilities: Capabilities,
+        preflight_error: Option<ErrorBody<'static>>,
         calls: Rc<RefCell<Vec<String>>>,
     }
 
@@ -1332,8 +1342,14 @@ mod tests {
                     stop_grace: Duration::ZERO,
                 },
                 capabilities: fake::STATUS.capabilities,
+                preflight_error: None,
                 calls: Rc::default(),
             }
+        }
+
+        fn rejecting_preflight(mut self, error: ErrorBody<'static>) -> Self {
+            self.preflight_error = Some(error);
+            self
         }
     }
 
@@ -1348,6 +1364,10 @@ mod tests {
 
         fn capabilities(&self) -> Capabilities {
             self.capabilities
+        }
+
+        fn preflight(&self, _request: &SendRequest) -> Result<(), ErrorBody<'static>> {
+            self.preflight_error.map_or(Ok(()), Err)
         }
 
         fn status(&self) -> Box<dyn Exchange> {
@@ -1493,6 +1513,152 @@ mod tests {
             provider_calls.borrow().as_slice(),
             &["send:What changed?+sources=2"]
         );
+    }
+
+    struct EmptySearch;
+
+    impl SearchProvider for EmptySearch {
+        fn id(&self) -> &str {
+            "brave"
+        }
+
+        fn timeouts(&self) -> Timeouts {
+            Timeouts {
+                start: Duration::from_secs(1),
+                idle: Duration::from_secs(1),
+                stop_grace: Duration::ZERO,
+            }
+        }
+
+        fn search(&self, _request: SearchRequest) -> SearchHandle {
+            let results = Rc::new(RefCell::new(Some(Vec::new())));
+            SearchHandle {
+                exchange: Box::new(Scripted::new([Update::Completed])),
+                results,
+            }
+        }
+    }
+
+    #[test]
+    fn zero_search_results_still_reach_provider_as_search_turn() {
+        let provider = TestProvider::new("model", Script::answers("no grounded sources"));
+        let calls = Rc::clone(&provider.calls);
+        let providers = Providers::new(vec![Box::new(provider)]);
+        let searches = SearchProviders::new(vec![Box::new(EmptySearch)]);
+        let session = run_session_with_services(
+            &providers,
+            &searches,
+            framed(&[
+                r#"{"version":1,"type":"request","request_id":"req_empty_search","method":"conversation.send","payload":{"provider_id":"model","input":{"text":"What changed?"},"search":{"backend_id":"brave","count":2}}}"#,
+            ]),
+        );
+        assert_eq!(session.result, Ok(()));
+        assert_eq!(
+            calls.borrow().as_slice(),
+            &["send:What changed?+sources=0"]
+        );
+        assert!(
+            session
+                .events()
+                .iter()
+                .all(|event| event["event"] != "response.source")
+        );
+    }
+
+    #[test]
+    fn provider_preflight_blocks_search_before_query_leaves_host() {
+        const BLOCKED: ErrorBody<'static> = ErrorBody {
+            code: ErrorCode::InvalidRequest,
+            reason: "PREFLIGHT_BLOCKED",
+            message: "Blocked before search.",
+            retryable: false,
+        };
+        let provider =
+            TestProvider::new("model", Script::answers("unused")).rejecting_preflight(BLOCKED);
+        let providers = Providers::new(vec![Box::new(provider)]);
+        let search_calls = Rc::new(RefCell::new(Vec::new()));
+        let searches = SearchProviders::new(vec![Box::new(TestSearch {
+            calls: Rc::clone(&search_calls),
+        })]);
+        let session = run_session_with_services(
+            &providers,
+            &searches,
+            framed(&[
+                r#"{"version":1,"type":"request","request_id":"req_preflight","method":"conversation.send","payload":{"provider_id":"model","input":{"text":"private query"},"search":{"backend_id":"brave","count":2}}}"#,
+            ]),
+        );
+        assert_eq!(session.result, Ok(()));
+        assert!(search_calls.borrow().is_empty());
+        let failure = session
+            .events()
+            .into_iter()
+            .find(|event| event["request_id"] == "req_preflight")
+            .unwrap();
+        assert_eq!(failure["event"], "response.failed");
+        assert_eq!(failure["payload"]["error"]["reason"], "PREFLIGHT_BLOCKED");
+    }
+
+    struct StalledSearch;
+
+    struct StalledSearchExchange {
+        stopped: bool,
+    }
+
+    impl Exchange for StalledSearchExchange {
+        fn next(&mut self, _deadline: Instant) -> Option<Update> {
+            self.stopped.then_some(Update::Stopped)
+        }
+
+        fn cancel(&mut self, _grace: Duration) {
+            self.stopped = true;
+        }
+    }
+
+    impl SearchProvider for StalledSearch {
+        fn id(&self) -> &str {
+            "brave"
+        }
+
+        fn timeouts(&self) -> Timeouts {
+            Timeouts {
+                start: Duration::from_millis(20),
+                idle: Duration::from_millis(20),
+                stop_grace: Duration::ZERO,
+            }
+        }
+
+        fn search(&self, _request: SearchRequest) -> SearchHandle {
+            SearchHandle {
+                exchange: Box::new(StalledSearchExchange { stopped: false }),
+                results: Rc::new(RefCell::new(None)),
+            }
+        }
+    }
+
+    #[test]
+    fn search_timeout_is_search_failure_not_provider_start_timeout() {
+        let provider = TestProvider::new("model", Script::answers("unused"));
+        let providers = Providers::new(vec![Box::new(provider)]);
+        let searches = SearchProviders::new(vec![Box::new(StalledSearch)]);
+        let session = run_session_with_services(
+            &providers,
+            &searches,
+            lingering(
+                &[
+                    r#"{"version":1,"type":"request","request_id":"req_search_timeout","method":"conversation.send","payload":{"provider_id":"model","input":{"text":"slow"},"search":{"backend_id":"brave","count":2}}}"#,
+                ],
+                Duration::from_millis(100),
+            ),
+        );
+        assert_eq!(session.result, Ok(()));
+        let failure = session
+            .events()
+            .into_iter()
+            .find(|event| event["request_id"] == "req_search_timeout")
+            .unwrap();
+        assert_eq!(failure["event"], "response.failed");
+        assert_eq!(failure["payload"]["error"]["code"], "SEARCH_FAILED");
+        assert_eq!(failure["payload"]["error"]["reason"], "SEARCH_TIMEOUT");
     }
 
     /// An exchange that always has another update ready, like a provider that
