@@ -1557,10 +1557,7 @@ mod tests {
             ])),
         );
         assert_eq!(session.result, Ok(()));
-        assert_eq!(
-            calls.borrow().as_slice(),
-            &["send:What changed?+sources=0"]
-        );
+        assert_eq!(calls.borrow().as_slice(), &["send:What changed?+sources=0"]);
         assert!(
             session
                 .events()
