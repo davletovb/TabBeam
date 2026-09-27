@@ -12,11 +12,13 @@
 //! protocol terms, and the popup sees only protocol events.
 
 use std::collections::VecDeque;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use crate::conversation::{BrowserContext, HistoryMessage};
 use crate::protocol::events::Capabilities;
 pub use pervue_core::stream::BUSY_LIMIT;
+use pervue_core::protocol::Source;
 
 pub mod claude;
 pub mod codex;
@@ -40,6 +42,9 @@ pub struct SendRequest {
     /// The model to answer with, already a valid model ID; `None` for the
     /// provider's default. Only sent to adapters with `model_selection`.
     pub model: Option<String>,
+    /// Normalized web sources retrieved before this turn. These are
+    /// provider-independent, bounded, untrusted reference data.
+    pub search_results: Vec<Source>,
 }
 
 pub use pervue_core::exchange::{Exchange, Scripted, Timeouts, Update};
@@ -74,11 +79,11 @@ pub trait Provider {
 }
 
 /// The providers a host serves, in the order `provider.status` reports them.
-pub struct Providers(Vec<Box<dyn Provider>>);
+pub struct Providers(Vec<Rc<dyn Provider>>);
 
 impl Providers {
     pub fn new(providers: Vec<Box<dyn Provider>>) -> Self {
-        Self(providers)
+        Self(providers.into_iter().map(Rc::from).collect())
     }
 
     /// The providers of an installed host. The fake scaffold stays registered
@@ -86,24 +91,27 @@ impl Providers {
     /// platform discovery rules.
     pub fn installed() -> Self {
         Self(vec![
-            Box::new(fake::Fake),
-            Box::new(codex::Codex::installed()),
-            Box::new(claude::Claude::installed()),
+            Rc::new(fake::Fake),
+            Rc::new(codex::Codex::installed()),
+            Rc::new(claude::Claude::installed()),
         ])
     }
 
     /// Only the deterministic fake scaffold, which starts no processes: for
     /// fuzzing and protocol tests.
     pub fn scaffold() -> Self {
-        Self(vec![Box::new(fake::Fake)])
+        Self(vec![Rc::new(fake::Fake)])
     }
 
-    pub fn get(&self, id: &str) -> Option<&dyn Provider> {
-        self.iter().find(|provider| provider.id() == id)
+    pub fn get(&self, id: &str) -> Option<Rc<dyn Provider>> {
+        self.0
+            .iter()
+            .find(|provider| provider.id() == id)
+            .cloned()
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &dyn Provider> {
-        self.0.iter().map(AsRef::as_ref)
+        self.0.iter().map(Rc::as_ref)
     }
 }
 
