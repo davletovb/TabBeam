@@ -1522,7 +1522,7 @@ without terminal commands during the user journey.
 **Status:** IMPLEMENTED — VERIFY
 
 **Implementation evidence**
-- The existing native core/host already builds and tests on `windows-latest`, with Windows-specific provider discovery (`.exe` then npm `.cmd`), environment handling, Chrome's `--parent-window` launch shape, and the same Native Messaging framing/protocol interfaces used on macOS/Linux. `packaging/windows/build.ps1` now builds the release host for packaging, and the package gate launches the installed binary through the real protocol path.
+- The existing native core/host builds and tests on `windows-latest`, with Windows-specific provider discovery (`.exe` then npm `.cmd`), environment handling, Chrome's `--parent-window` launch shape, and the same Native Messaging framing/protocol interfaces used on macOS/Linux. `packaging/windows/build.ps1` explicitly builds `x86_64-pc-windows-msvc` regardless of build-host architecture, validates the exact generated Native Messaging manifest before staging it, and the package gate launches the installed binary through the real protocol path.
 
 ### PKG-06 — Build Windows companion installer
 **Area:** Packaging  
@@ -1536,7 +1536,7 @@ without terminal commands during the user journey.
 **Status:** IMPLEMENTED — VERIFY
 
 **Implementation evidence**
-- `packaging/windows/Pervue.iss` builds a per-user Inno Setup companion under `%LOCALAPPDATA%\\Pervue`, registers `com.pervue.host` in HKCU automatically, and removes its owned registry/files on uninstall. `packaging/windows/verify.mjs` verifies the installed registration, exact extension allowlist, Chrome Windows launch arguments, protocol v1 handshake, and provider status with an npm-style `codex.cmd`. CI builds, installs, verifies, and uninstalls the real installer artifact.
+- `packaging/windows/Pervue.iss` builds a per-user Inno Setup companion under `%LOCALAPPDATA%\\Programs\\Pervue`, separate from runtime/session state under `%LOCALAPPDATA%\\Pervue`; it registers `com.pervue.host` in HKCU automatically and relies on the Inno uninstall log rather than recursive directory deletion. CI rejects directory overrides, discovers an npm-style `codex.cmd` from the real `%APPDATA%\\npm` default, verifies the exact allowlist/protocol round trip, reinstalls while the native host is running, and proves runtime-state data survives clean uninstall. `packaging/windows/build.ps1` and `.github/workflows/windows-release.yml` also provide Authenticode-signing support for release candidates.
 
 ### TST-13 — Verify Windows clean-machine install/use/uninstall journey
 **Area:** Testing  
@@ -1549,7 +1549,7 @@ without terminal commands during the user journey.
 **Status:** BLOCKED
 
 **Implementation evidence / remaining gate**
-- `packaging/windows/README.md` records the no-terminal clean-machine checklist and required evidence, while the Windows CI job covers package mechanics, registration, protocol startup, provider discovery, and clean removal. The full gate still requires a matching released Chrome extension, the Windows installer on an actual clean Windows machine, and a signed-in real provider; automated CI cannot prove the browser/provider/no-terminal human journey.
+- `packaging/windows/README.md` records the no-terminal clean-machine checklist and required evidence, while the Windows CI job covers package mechanics, fixed-location enforcement, registration, protocol startup, real default npm discovery, running-host upgrade, and state-preserving removal. The full gate still requires a matching released Chrome extension, a signed Authenticode release candidate on an actual clean Windows machine, and a signed-in real provider; automated CI cannot prove the browser/provider/publisher/no-terminal human journey.
 
 ### SEC-04 — Security review of packaged trust boundaries and permissions
 **Area:** Security  
@@ -1564,7 +1564,7 @@ without terminal commands during the user journey.
 **Status:** IMPLEMENTED — VERIFY
 
 **Implementation evidence**
-- `docs/security/trust-boundaries.md` now records the package-level review for macOS and Windows. `packaging/security-audit.mjs` gates the exact MV3 permission set, absence of broad host/external-connect permissions, fixed installer locations/registry identity, extension-ID validation, and credential-free package build inputs. Platform package verification additionally checks the generated Native Messaging allowlist and installed registration.
+- `docs/security/trust-boundaries.md` records the package-level review for macOS and Windows. Exact extension-permission invariants live in `extension/tests/manifest-smoke.mjs`; the path-anchored `packaging/security-audit.mjs` gates packaging-specific location/registration, no-recursive-delete/no-run-command policy, case-sensitive extension-ID validation, explicit x64 target, generated-manifest validation, signing hook presence, and credential-free build inputs. Platform package verification additionally checks the generated Native Messaging allowlist and installed registration.
 
 ---
 
