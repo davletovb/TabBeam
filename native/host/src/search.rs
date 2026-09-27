@@ -20,7 +20,10 @@ use crate::providers::{BUSY_LIMIT, Exchange, Provider, SendRequest, Timeouts, Up
 use pervue_core::process::{Event as ProcessEvent, Process, ProcessSpec};
 use pervue_core::protocol::Source;
 
-pub const DEFAULT_BACKEND_ID: &str = "brave";
+/// Pseudo-backend routes used by the host before independent adapters.
+pub const DEFAULT_BACKEND_ID: &str = "auto";
+pub const PROVIDER_BACKEND_ID: &str = "provider";
+pub const BRAVE_BACKEND_ID: &str = "brave";
 pub const DEFAULT_RESULT_COUNT: usize = 8;
 pub const MAX_RESULT_COUNT: usize = 10;
 
@@ -100,7 +103,7 @@ pub struct SearchOptions {
 impl Default for SearchOptions {
     fn default() -> Self {
         Self {
-            backend_id: DEFAULT_BACKEND_ID.to_owned(),
+            backend_id: BRAVE_BACKEND_ID.to_owned(),
             count: DEFAULT_RESULT_COUNT,
         }
     }
@@ -299,7 +302,7 @@ impl Brave {
 
 impl SearchProvider for Brave {
     fn id(&self) -> &str {
-        DEFAULT_BACKEND_ID
+        BRAVE_BACKEND_ID
     }
 
     fn timeouts(&self) -> Timeouts {
@@ -610,7 +613,7 @@ fn normalize_brave(body: &[u8]) -> Result<Vec<Source>, ()> {
             .filter(|value| !value.is_empty());
         normalized.push(Source {
             id: format!("src_search_{}", normalized.len() + 1),
-            backend_id: DEFAULT_BACKEND_ID.to_owned(),
+            backend_id: BRAVE_BACKEND_ID.to_owned(),
             title: bounded(&plain_text(title), MAX_TITLE_BYTES),
             url,
             snippet: bounded(
