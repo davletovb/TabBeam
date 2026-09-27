@@ -602,6 +602,22 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                 let provider_served = provider.is_some();
                 let question = text.decode().into_owned();
                 let search_requested = search.is_some();
+                let native_supported = provider
+                    .as_ref()
+                    .is_some_and(|provider| provider.capabilities().web_search == Capability::Supported);
+                let search_route = search.as_ref().map(|options| {
+                    if options.backend_id == DEFAULT_BACKEND_ID {
+                        if native_supported {
+                            PROVIDER_BACKEND_ID.to_owned()
+                        } else {
+                            BRAVE_BACKEND_ID.to_owned()
+                        }
+                    } else {
+                        options.backend_id.clone()
+                    }
+                });
+                let independent_search =
+                    search_requested && search_route.as_deref() != Some(PROVIDER_BACKEND_ID);
                 let (exchange, timeouts): (Box<dyn Exchange>, _) = match provider {
                     Some(provider)
                         if context.is_some()
@@ -625,21 +641,7 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                     }
                     Some(provider) => {
                         let provider_timeouts = provider.timeouts();
-                        let native_supported =
-                            provider.capabilities().web_search == Capability::Supported;
-                        let route = search.as_ref().map(|options| {
-                            if options.backend_id == DEFAULT_BACKEND_ID {
-                                if native_supported {
-                                    PROVIDER_BACKEND_ID
-                                } else {
-                                    BRAVE_BACKEND_ID
-                                }
-                            } else {
-                                options.backend_id.as_str()
-                            }
-                        });
-                        let native_search = route == Some(PROVIDER_BACKEND_ID);
-                        let independent_search = search.is_some() && !native_search;
+                        let native_search = search_route.as_deref() == Some(PROVIDER_BACKEND_ID);
                         let request = SendRequest {
                             text: question.clone(),
                             history,
@@ -649,7 +651,7 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                             native_search,
                             search_results: independent_search.then(Vec::new),
                         };
-                        match (search, route) {
+                        match (search, search_route.as_deref()) {
                             (Some(_), Some(PROVIDER_BACKEND_ID)) if !native_supported => (
                                 Box::new(Scripted::failed(NATIVE_SEARCH_UNSUPPORTED))
                                     as Box<dyn Exchange>,
@@ -697,20 +699,6 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                     }
                     None => (Box::new(Scripted::failed(PROVIDER_NOT_INSTALLED)), None),
                 };
-                let independent_search = search_requested
-                    && !matches!(
-                        self.providers.get(&provider_id),
-                        Some(provider)
-                            if provider.capabilities().web_search == Capability::Supported
-                                && search
-                                    .as_ref()
-                                    .is_some_and(|options| {
-                                        matches!(
-                                            options.backend_id.as_str(),
-                                            DEFAULT_BACKEND_ID | PROVIDER_BACKEND_ID
-                                        )
-                                    })
-                    );
                 if independent_search && timeouts.is_some() {
                     Running::new_with_start_error(
                         id,
