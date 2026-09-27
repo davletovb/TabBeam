@@ -180,8 +180,6 @@ mod tests {
         let line = r#"{\"type\":\"item.completed\",\"item\":{\"id\":\"search_1\",\"type\":\"web_search\",\"query\":\"rust\",\"action\":{\"type\":\"search\",\"query\":\"rust\"}}}"#;
         assert_eq!(parse(line), Ok(Line::Progress));
     }
-
-
     #[test]
     fn a_resumed_turn_reports_the_same_thread() {
         let (first, resumed) = (parse_all(SUCCESS), parse_all(RESUMED));
