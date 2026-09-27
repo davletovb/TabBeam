@@ -20,6 +20,9 @@ pub enum Update {
     Delta(String),
     /// A normalized source attached to the answer (`response.source`).
     Source(Source),
+    /// Internal phase boundary: replace the host timeout policy and restart
+    /// the pre-response start clock. Never emitted on the wire.
+    ResetTimeouts(Timeouts),
     /// One provider's status (`provider.status`).
     Status {
         provider_id: String,
