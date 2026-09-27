@@ -6,7 +6,7 @@ AppName=Pervue Companion
 AppVersion={#HostVersion}
 AppVerName=Pervue Companion {#HostVersion}
 AppPublisher=Pervue
-DefaultDirName={localappdata}\Pervue
+DefaultDirName={userpf}\Pervue
 DisableDirPage=yes
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
@@ -18,14 +18,22 @@ SolidCompression=yes
 WizardStyle=modern
 SetupLogging=yes
 UsePreviousAppDir=no
-CloseApplications=no
+CloseApplications=yes
+CloseApplicationsFilter=pervue-host.exe
 RestartApplications=no
 UninstallDisplayName=Pervue Companion
-UninstallFilesDir={app}
 VersionInfoVersion={#PackageVersion}.0
+#ifdef PervueSignTool
+SignTool=pervue
+SignedUninstaller=yes
+#endif
 
 [Files]
+#ifdef PervueSignTool
+Source: "{#StageDir}\pervue-host.exe"; DestDir: "{app}"; Flags: ignoreversion signonce
+#else
 Source: "{#StageDir}\pervue-host.exe"; DestDir: "{app}"; Flags: ignoreversion
+#endif
 Source: "{#StageDir}\com.pervue.host.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\build-info.json"; DestDir: "{app}"; Flags: ignoreversion
 
@@ -34,7 +42,14 @@ Source: "{#StageDir}\build-info.json"; DestDir: "{app}"; Flags: ignoreversion
 ; supported x64-compatible Windows and removes only its own key on uninstall.
 Root: HKCU64; Subkey: "Software\Google\Chrome\NativeMessagingHosts\{#HostName}"; ValueType: string; ValueName: ""; ValueData: "{app}\com.pervue.host.json"; Flags: uninsdeletekey
 
-[UninstallDelete]
-Type: files; Name: "{app}\com.pervue.host.json"
-Type: files; Name: "{app}\build-info.json"
-Type: filesandordirs; Name: "{app}"
+[Code]
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ExpectedDir: String;
+begin
+  ExpectedDir := ExpandConstant('{userpf}\Pervue');
+  if CompareText(WizardDirValue, ExpectedDir) <> 0 then
+    Result := 'Pervue Companion uses a fixed per-user install location. Remove /DIR or /LOADINF overrides and run Setup again.'
+  else
+    Result := '';
+end;
