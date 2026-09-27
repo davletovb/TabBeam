@@ -1439,10 +1439,11 @@ mod tests {
                 .model
                 .map(|model| format!("+model={model}"))
                 .unwrap_or_default();
-            let native_search = request
-                .native_search
-                .then_some("+native-search")
-                .unwrap_or("");
+            let native_search = if request.native_search {
+                "+native-search"
+            } else {
+                ""
+            };
             let sources = match request.search_results.as_ref() {
                 None => String::new(),
                 Some(sources) => format!("+sources={}", sources.len()),
