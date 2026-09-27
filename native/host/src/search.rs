@@ -210,10 +210,7 @@ fn valid_source_url(url: &str) -> bool {
     if !matches!(scheme, "http" | "https") || rest.is_empty() {
         return false;
     }
-    let authority = rest
-        .split(['/', '?', '#'])
-        .next()
-        .unwrap_or_default();
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
     !authority.is_empty() && !authority.contains('@')
 }
 
@@ -234,10 +231,7 @@ mod tests {
 
     #[test]
     fn source_urls_require_http_authority_and_no_credentials() {
-        for valid in [
-            "https://example.com/",
-            "http://example.test/path?q=1#x",
-        ] {
+        for valid in ["https://example.com/", "http://example.test/path?q=1#x"] {
             assert!(valid_source_url(valid), "{valid}");
         }
         for invalid in [
@@ -286,9 +280,11 @@ mod tests {
             let _ = collector.push(result);
         }
         assert_eq!(collector.count(), MAX_SOURCES_PER_TURN);
-        assert!(collector
-            .push(SearchResult::new("Again", "https://example.com/1", "", None, None).unwrap())
-            .is_none());
+        assert!(
+            collector
+                .push(SearchResult::new("Again", "https://example.com/1", "", None, None).unwrap())
+                .is_none()
+        );
         collector.reset();
         assert_eq!(collector.count(), 0);
     }
