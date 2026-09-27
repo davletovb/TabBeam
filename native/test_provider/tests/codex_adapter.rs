@@ -29,6 +29,7 @@ fn ask(text: &str) -> SendRequest {
         conversation_id: None,
         context: None,
         model: None,
+        search_results: Vec::new(),
     }
 }
 
