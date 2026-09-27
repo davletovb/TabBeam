@@ -159,6 +159,7 @@ Required v1 protocol reasons include:
 - `PAGE_CONTEXT_UNSUPPORTED`
 - `PAGE_CONTEXT_TOOLS_ENABLED`
 - `MODEL_SELECTION_UNSUPPORTED`
+- `SEARCH_REFERENCE_TOOLS_ENABLED`
 
 The extension also reports `REQUEST_TOO_LARGE` when it refuses to send a request that would exceed the Native Messaging frame limit (SEC-01, `docs/protocol/native-messaging-v1.json`). The host never receives such a request.
 
