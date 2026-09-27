@@ -17,7 +17,6 @@ use std::time::{Duration, Instant};
 
 use crate::conversation::{BrowserContext, HistoryMessage};
 use crate::protocol::events::{Capabilities, ErrorBody};
-use pervue_core::protocol::Source;
 pub use pervue_core::stream::BUSY_LIMIT;
 
 pub mod claude;
@@ -45,10 +44,6 @@ pub struct SendRequest {
     /// Whether the selected AI provider should perform its own authenticated
     /// native web search during this same turn.
     pub native_search: bool,
-    /// Normalized web sources retrieved by an independent search backend
-    /// before this turn. `None` means no independent retrieval;
-    /// `Some([])` preserves a retrieval that returned no usable sources.
-    pub search_results: Option<Vec<Source>>,
 }
 
 pub use pervue_core::exchange::{Exchange, Scripted, Timeouts, Update};
@@ -64,9 +59,9 @@ pub trait Provider {
     /// uses these to reject requests that would otherwise be silently degraded.
     fn capabilities(&self) -> Capabilities;
 
-    /// Cheap, side-effect-free checks that must pass before Pervue sends a
-    /// search query off-device. Adapters repeat the same checks in `send`
-    /// because local provider state may change between retrieval and synthesis.
+    /// Cheap, side-effect-free checks that must pass before a provider turn
+    /// starts. Adapters repeat the same checks in `send` because local
+    /// provider state may change between validation and execution.
     fn preflight(&self, _request: &SendRequest) -> Result<(), ErrorBody<'static>> {
         Ok(())
     }
