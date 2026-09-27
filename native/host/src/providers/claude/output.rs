@@ -9,7 +9,7 @@ pub enum Line {
     Init(String),
     MessageStart,
     TextDelta(String),
-    WebSearch(Vec<SearchResult>),
+    ToolEvents(Vec<ToolEvent>),
     Progress,
     ResultSuccess {
         session_id: Option<String>,
@@ -20,12 +20,9 @@ pub enum Line {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SearchResult {
-    pub title: String,
-    pub url: String,
-    pub snippet: String,
-    pub source_name: Option<String>,
-    pub age: Option<String>,
+pub enum ToolEvent {
+    WebSearchUse(String),
+    ToolResult { tool_use_id: String, content: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,26 +84,16 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
                         Line::Progress
                     }
                 }
-                "content_block_start" => nested
-                    .get("content_block")
-                    .and_then(search_results)
-                    .map(Line::WebSearch)
-                    .unwrap_or(Line::Progress),
+                "content_block_start" => Line::Progress,
                 _ => Line::Progress,
             }
         }
         "assistant" | "user" => event
             .pointer("/message/content")
             .and_then(Value::as_array)
-            .map(|blocks| {
-                blocks
-                    .iter()
-                    .filter_map(search_results)
-                    .flatten()
-                    .collect::<Vec<_>>()
-            })
-            .filter(|results| !results.is_empty())
-            .map(Line::WebSearch)
+            .map(|blocks| blocks.iter().filter_map(tool_event).collect::<Vec<_>>())
+            .filter(|events| !events.is_empty())
+            .map(Line::ToolEvents)
             .unwrap_or(Line::Progress),
         "result" => {
             let failed = event
@@ -140,60 +127,22 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
     })
 }
 
-fn search_results(block: &Value) -> Option<Vec<SearchResult>> {
-    if block.get("type").and_then(Value::as_str) != Some("web_search_tool_result") {
-        return None;
+fn tool_event(block: &Value) -> Option<ToolEvent> {
+    match block.get("type").and_then(Value::as_str)? {
+        "tool_use" if block.get("name").and_then(Value::as_str) == Some("WebSearch") => {
+            let id = block.get("id").and_then(Value::as_str)?;
+            (!id.is_empty()).then(|| ToolEvent::WebSearchUse(id.to_owned()))
+        }
+        "tool_result" => {
+            let tool_use_id = block.get("tool_use_id").and_then(Value::as_str)?;
+            let content = block.get("content").and_then(Value::as_str)?;
+            Some(ToolEvent::ToolResult {
+                tool_use_id: tool_use_id.to_owned(),
+                content: content.to_owned(),
+            })
+        }
+        _ => None,
     }
-    let content = block.get("content")?.as_array()?;
-    Some(content.iter().filter_map(search_result).collect())
-}
-
-fn search_result(value: &Value) -> Option<SearchResult> {
-    if value.get("type").and_then(Value::as_str) != Some("web_search_result") {
-        return None;
-    }
-    let url = value.get("url").and_then(Value::as_str)?;
-    if !safe_http_url(url) {
-        return None;
-    }
-    let title = value
-        .get("title")
-        .and_then(Value::as_str)
-        .unwrap_or(url)
-        .trim();
-    if title.is_empty() {
-        return None;
-    }
-    Some(SearchResult {
-        title: bounded(title, 512),
-        url: bounded(url, 4096),
-        snippet: String::new(),
-        source_name: None,
-        age: value
-            .get("page_age")
-            .and_then(Value::as_str)
-            .map(|value| bounded(value, 256))
-            .filter(|value| !value.is_empty()),
-    })
-}
-
-fn safe_http_url(url: &str) -> bool {
-    (url.starts_with("https://") || url.starts_with("http://"))
-        && url.len() <= 4096
-        && !url
-            .chars()
-            .any(|character| character.is_control() || character.is_whitespace())
-}
-
-fn bounded(value: &str, limit: usize) -> String {
-    if value.len() <= limit {
-        return value.to_owned();
-    }
-    let mut end = limit;
-    while !value.is_char_boundary(end) {
-        end -= 1;
-    }
-    value[..end].to_owned()
 }
 
 const AUTH_REJECTED: ErrorBody<'static> = ErrorBody {
@@ -317,33 +266,28 @@ mod tests {
         );
     }
 
-    #[test]
-    fn parses_web_search_tool_results() {
-        let line = r#"{"type":"stream_event","event":{"type":"content_block_start","index":2,"content_block":{"type":"web_search_tool_result","tool_use_id":"srvtoolu_1","content":[{"type":"web_search_result","title":"Example","url":"https://example.com/","page_age":"1 day ago"},{"type":"web_search_result","title":"Unsafe","url":"javascript:alert(1)"}]}}}"#;
-        assert_eq!(
-            parse(line),
-            Ok(Line::WebSearch(vec![SearchResult {
-                title: "Example".to_owned(),
-                url: "https://example.com/".to_owned(),
-                snippet: String::new(),
-                source_name: None,
-                age: Some("1 day ago".to_owned()),
-            }]))
-        );
-    }
+
 
     #[test]
-    fn parses_top_level_tool_result_message_from_either_role() {
-        for role in ["assistant", "user"] {
-            let line = format!(
-                r#"{{"type":"{role}","message":{{"content":[{{"type":"web_search_tool_result","content":[{{"type":"web_search_result","title":"Result","url":"https://example.org/"}}]}}]}}}}"#
-            );
-            assert!(matches!(
-                parse(&line),
-                Ok(Line::WebSearch(results))
-                    if results.len() == 1 && results[0].url == "https://example.org/"
-            ));
-        }
+    fn parses_real_claude_websearch_tool_use_and_result_shapes() {
+        let use_line = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"WebSearch","input":{"query":"rust"}}]}}"#;
+        assert_eq!(
+            parse(use_line),
+            Ok(Line::ToolEvents(vec![ToolEvent::WebSearchUse(
+                "toolu_1".to_owned()
+            )]))
+        );
+
+        let result_line = r#"{"type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_1","type":"tool_result","content":"Web search results for query: \"rust\"\n\nLinks: [{\"title\":\"Rust\",\"url\":\"https://www.rust-lang.org/\"}]"}]}}"#;
+        assert!(matches!(
+            parse(result_line),
+            Ok(Line::ToolEvents(events))
+                if matches!(
+                    events.as_slice(),
+                    [ToolEvent::ToolResult { tool_use_id, content }]
+                        if tool_use_id == "toolu_1" && content.contains("Links:")
+                )
+        ));
     }
 
     #[test]
