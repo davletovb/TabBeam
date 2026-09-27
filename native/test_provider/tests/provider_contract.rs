@@ -59,6 +59,7 @@ fn common_contract(provider: &dyn Provider) {
     assert_eq!(state.authentication, Authentication::Authenticated);
     assert_eq!(state.capabilities.streaming, Capability::Supported);
     assert_eq!(state.capabilities.continuation, Capability::Supported);
+    assert_eq!(state.capabilities.web_search, Capability::Supported);
     assert_eq!(state.capabilities.cancellation, Capability::Supported);
 
     let first = visible(&run_to_end(provider.send(ask("first")).as_mut()));
