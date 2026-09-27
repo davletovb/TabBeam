@@ -19,7 +19,7 @@ use super::discovery;
 use super::environment;
 use super::forget;
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
-use crate::conversation::provider_prompt;
+use crate::conversation::provider_prompt_with_sources;
 use crate::protocol::events::{
     Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ModelOption,
     ProviderState,
@@ -342,9 +342,19 @@ impl Provider for Claude {
         }
 
         let mut conversation_id = request.conversation_id;
-        let mut fallback_prompt = (!request.history.is_empty())
-            .then(|| provider_prompt(&request.history, None, &request.text));
-        let mut prompt = request.text;
+        let mut fallback_prompt = (!request.history.is_empty()).then(|| {
+            provider_prompt_with_sources(
+                &request.history,
+                None,
+                &request.search_results,
+                &request.text,
+            )
+        });
+        let mut prompt = if request.search_results.is_empty() {
+            request.text
+        } else {
+            provider_prompt_with_sources(&[], None, &request.search_results, &request.text)
+        };
         let resume = match &conversation_id {
             None => None,
             Some(id) => match self.conversations.borrow().get(id).cloned().or_else(|| {
