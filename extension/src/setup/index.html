@@ -30,7 +30,7 @@
       <section class="hero">
         <span class="badge">
           <svg class="icon icon-xs" aria-hidden="true"><use href="../shared/icons.svg#terminal"/></svg>
-          macOS companion
+          Companion setup
         </span>
         <h1>Provider &amp; setup</h1>
         <p class="lede">Choose which AI Pervue asks, and connect the small companion app it talks to on this computer.</p>
@@ -56,10 +56,10 @@
       </section>
 
       <h2 class="section-title">Connect the companion</h2>
-      <p class="section-lede">Pervue checks the companion and each provider above. Install the package paired with this extension, then follow the provider's own sign-in flow.</p>
+      <p class="section-lede">Pervue checks the companion and each provider above. Connect a companion compatible with this extension, then follow your provider's own sign-in flow.</p>
 
       <ol class="steps">
-        <li class="step">
+        <li class="step" id="macos-package" hidden>
           <div class="step-body">
             <h2>Install the macOS companion</h2>
             <p>Download the Pervue companion package from the <a href="https://github.com/davletovb/pervue/releases" target="_blank" rel="noopener noreferrer">Pervue releases</a> and open it in Finder. The installer registers the host with Chrome automatically. If the popup says the companion needs an update, install the matching newer package.</p>
@@ -85,7 +85,22 @@
         </li>
       </ol>
 
-      <aside class="note">
+      <details id="manual-setup" class="manual-setup">
+        <summary>Other platforms or development build</summary>
+        <p>For Windows, Linux, or an unpacked extension with its own ID, build the native host from a checkout and register it for the exact ID shown on Pervue's card at <code>chrome://extensions</code>.</p>
+        <div class="command">
+          <code>cargo build --manifest-path native/Cargo.toml</code>
+          <button class="copy-command" type="button" aria-label="Copy command" title="Copy"><svg class="icon icon-sm" aria-hidden="true"><use href="../shared/icons.svg#copy"/></svg><svg class="icon icon-sm icon-copied" aria-hidden="true"><use href="../shared/icons.svg#check"/></svg></button>
+        </div>
+        <p>Print the manifest with the built host, using the extension ID from Chrome:</p>
+        <div class="command">
+          <code>native/target/debug/pervue-host --print-manifest &lt;extension-id&gt;</code>
+          <button class="copy-command" type="button" aria-label="Copy command" title="Copy"><svg class="icon icon-sm" aria-hidden="true"><use href="../shared/icons.svg#copy"/></svg><svg class="icon icon-sm icon-copied" aria-hidden="true"><use href="../shared/icons.svg#check"/></svg></button>
+        </div>
+        <p>Save the resulting JSON as <code>com.pervue.host.json</code> in Chrome's NativeMessagingHosts directory: <code>~/.config/google-chrome/NativeMessagingHosts</code> on Linux or <code>~/Library/Application Support/Google/Chrome/NativeMessagingHosts</code> on macOS. On Windows, save it at a stable path and set the default value of <code>HKCU\Software\Google\Chrome\NativeMessagingHosts\com.pervue.host</code> to that full path. The manifest's host path must be absolute.</p>
+      </details>
+
+      <aside class="note" id="macos-uninstall" hidden>
         <svg class="icon" aria-hidden="true"><use href="../shared/icons.svg#shield"/></svg>
         <p>To remove the companion on macOS, open <strong>Applications → Pervue → Uninstall Pervue</strong>. Remove the extension separately in Chrome. Provider credentials stay with the provider tool.</p>
       </aside>

@@ -5,6 +5,16 @@ import { bindThemeToggle } from "../shared/theme-toggle.js";
 
 const select = document.querySelector("#theme-select");
 const toggle = document.querySelector("#theme-toggle");
+const packageStep = document.querySelector("#macos-package");
+const uninstallNote = document.querySelector("#macos-uninstall");
+const manualSetup = document.querySelector("#manual-setup");
+if (manualSetup instanceof HTMLDetailsElement) {
+  chrome.runtime.getPlatformInfo().then((/** @type {{os: string}} */ { os }) => {
+    if (packageStep instanceof HTMLElement) packageStep.hidden = os !== "mac";
+    if (uninstallNote instanceof HTMLElement) uninstallNote.hidden = os !== "mac";
+    manualSetup.open = os !== "mac";
+  }, () => { manualSetup.open = true; });
+}
 if (select instanceof HTMLSelectElement && toggle instanceof HTMLElement) {
   void bindThemeSelect(select, chrome.storage.local, document.documentElement, chrome.storage.onChanged);
   bindThemeToggle(toggle, select, document.documentElement);

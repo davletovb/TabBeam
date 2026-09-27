@@ -63,7 +63,11 @@ export function forgetProviderSession(options) {
         {
           onEvent(event) {
             if (event?.event === "response.completed") settle("forgotten");
-            else if (event?.event === "response.failed") settle("failed");
+            else if (event?.event === "response.failed") {
+              const reason = event.payload?.error?.reason;
+              settle(reason === "HOST_PROTOCOL_MISMATCH" || reason === "HOST_READY_TIMEOUT"
+                ? "unreachable" : "failed");
+            }
           },
           onDisconnect: () => settle("unreachable")
         }

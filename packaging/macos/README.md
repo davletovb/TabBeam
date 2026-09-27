@@ -6,19 +6,19 @@ The package installs the release host at `/Library/Application Support/Pervue/pe
 
 The Chrome extension ID is an input to the package, not a guessed value. Use the ID of the exact published extension build. Chrome only connects a native host when its manifest allowlist contains that ID. If an unpacked development extension has another ID, build a separate development package.
 
-On a Mac with Rust and Xcode command line tools:
+On a Mac with Rust (including `rustup`), Xcode command line tools, and Python 3 (the standard JSON library is sufficient):
 
 ```sh
 packaging/macos/build.sh <32-character-extension-id>
 ```
 
-The output is `out/macos/Pervue-<version>-macos-<architecture>.pkg`. The package embeds its version, extension ID, and source commit in `build-info.json`. It contains no provider session or API credential. Builds are per architecture; make and verify both `arm64` and `x86_64` if both are distributed. The unsigned package is for CI and internal testing; release packages need Developer ID signatures and notarization.
+The output is `out/macos/Pervue-<host-version>-<commit-prefix>-macos-universal.pkg`. The package contains both Apple silicon and Intel host slices and embeds the full host version, numeric Installer version, architecture, extension ID, and source commit in `build-info.json`. It contains no provider session or API credential. The unsigned package is for CI and internal testing; release packages need Developer ID signatures and notarization.
 
 The `macos-release.yml` manual workflow builds a signed, notarized, stapled package for an explicit extension ID. Configure these repository secrets: `MACOS_DEVELOPER_ID_APP_P12` and `MACOS_DEVELOPER_ID_INSTALLER_P12` (base64 PKCS#12), `MACOS_CERT_PASSWORD`, `MACOS_DEVELOPER_ID_APP_IDENTITY`, `MACOS_DEVELOPER_ID_INSTALLER_IDENTITY`, and `MACOS_NOTARY_KEY_P8`, `MACOS_NOTARY_KEY_ID`, `MACOS_NOTARY_ISSUER` (App Store Connect API key). The workflow publishes an artifact for review; publishing a release remains a separate action. Signing identities and notary keys are read only from CI secrets and removed from temporary files after use.
 
 ## macOS package gate
 
-CI installs an unsigned test package on a macOS runner, verifies the manifest's exact Chrome origin and absolute host path, launches the installed host using the Chrome origin, checks `host.ready` and a `provider.status` round trip, runs the uninstaller script, and checks removal of its files. This exercises the actual `pkgbuild` payload and system registration. The extension suite separately checks the protocol gate before any queued request reaches an incompatible host.
+CI installs an unsigned universal package on Apple silicon and Intel macOS runners, verifies the manifest's exact Chrome origin and absolute host path, launches the installed host with a provider tool present on the search path, checks `host.ready` and a `provider.status` round trip while stdin stays open, runs the uninstaller script, and checks removal of its files. This exercises the actual `pkgbuild` payload and system registration. The extension-to-real-host round trip exercises the protocol gate before any queued request reaches an incompatible host.
 
 For **TST-12**, additionally record an actual clean Mac run with a signed/notarized release candidate, matching Chrome extension, and a signed-in supported provider:
 

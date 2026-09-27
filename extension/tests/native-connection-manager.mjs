@@ -88,6 +88,7 @@ function makeHarness({ failingConnects = 0 } = {}) {
   const reportedErrors = [];
 
   const manager = createNativeConnectionManager({
+    requireHandshake: false, // Legacy routing tests supply events without host.ready.
     /** @param {string} hostName */
     connectNative(hostName) {
       hostNames.push(hostName);
@@ -146,6 +147,8 @@ function request(id, method = "provider.status") {
   const ports = [];
   /** @type {any[]} */
   const failures = [];
+  /** @type {any[]} */
+  const lifecycle = [];
   const manager = createNativeConnectionManager({
     requireHandshake: true,
     connectNative() {
@@ -154,18 +157,36 @@ function request(id, method = "provider.status") {
       return port;
     }
   });
+  manager.onLifecycleEvent(event => lifecycle.push(event));
   manager.send(request("queued"), { onEvent: (event) => failures.push(event) });
   assert.equal(ports[0].messages.length, 0);
   ports[0].emitMessage({ version: 2, type: "event", request_id: null,
     event: "host.ready", payload: { host_version: "2", protocol_versions: [2] } });
   assert.equal(ports[0].messages.length, 0);
   assert.equal(failures[0].payload.error.reason, "HOST_PROTOCOL_MISMATCH");
+  assert.equal(lifecycle[0].payload.host_version, "2");
+  assert.equal(ports[0].disconnectCalls, 1);
   assert.equal(manager.pendingRequestCount, 0);
   manager.send(request("compatible"));
   assert.equal(ports[1].messages.length, 0);
   ports[1].emitMessage({ version: 1, type: "event", request_id: null,
     event: "host.ready", payload: { host_version: "1", protocol_versions: [1, 2] } });
   assert.deepEqual(ports[1].messages, [request("compatible")]);
+}
+
+{
+  const port = new MockPort("flush-throws");
+  /** @type {string[]} */
+  const disconnects = [];
+  const manager = createNativeConnectionManager({ connectNative: () => port });
+  manager.send(request("pending_a"), { onDisconnect: ({ message }) => disconnects.push(message ?? "") });
+  manager.send(request("pending_b"), { onDisconnect: ({ message }) => disconnects.push(message ?? "") });
+  port.throwOnPost = true;
+  port.emitMessage({ version: 1, type: "event", request_id: null,
+    event: "host.ready", payload: { host_version: "1", protocol_versions: [1] } });
+  assert.deepEqual(disconnects, ["mock post failure", "mock post failure"]);
+  assert.equal(port.disconnectCalls, 1);
+  assert.equal(manager.pendingRequestCount, 0);
 }
 
 {

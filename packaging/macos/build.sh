@@ -11,20 +11,28 @@ fi
 output="${2:-$root/out/macos}"
 output="$(mkdir -p "$output" && cd "$output" && pwd)"
 stage="$(mktemp -d)"
-trap 'rm -rf "$stage"' EXIT
+components="$(mktemp)"
+trap 'rm -rf "$stage"; rm -f "$components"' EXIT
 
-version="$(python3 - "$root/native/Cargo.toml" <<'PY'
-import sys, tomllib
-with open(sys.argv[1], 'rb') as source:
-    print(tomllib.load(source)['workspace']['package']['version'].split('-')[0])
-PY
-)"
-
-cargo build --manifest-path "$root/native/Cargo.toml" --release --locked -p pervue-host
+# Ship one universal host so Installer cannot put the wrong architecture on a Mac.
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+for target in aarch64-apple-darwin x86_64-apple-darwin; do
+  cargo build --manifest-path "$root/native/Cargo.toml" --release --locked \
+    --target "$target" -p pervue-host
+done
 host="$stage/Library/Application Support/Pervue/pervue-host"
 manifest="$stage/Library/Google/Chrome/NativeMessagingHosts/com.pervue.host.json"
 mkdir -p "$(dirname "$host")" "$(dirname "$manifest")" "$stage/Applications/Pervue"
-install -m 755 "$root/native/target/release/pervue-host" "$host"
+lipo -create "$root/native/target/aarch64-apple-darwin/release/pervue-host" \
+  "$root/native/target/x86_64-apple-darwin/release/pervue-host" -output "$host"
+chmod 755 "$host"
+host_version="$("$host" --version)"
+package_version="${host_version%%-*}"
+if [[ ! "$package_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "Unsupported package version: $host_version" >&2
+  exit 64
+fi
+source_commit="$(git -C "$root" rev-parse HEAD)"
 
 # The host validates the Chrome ID and prints the exact allowlist. Only its
 # build-time staging path is replaced with its final, system-wide path.
@@ -43,26 +51,36 @@ osacompile -o "$stage/Applications/Pervue/Uninstall Pervue.app" \
   -e 'do shell script (quoted form of "/Library/Application Support/Pervue/uninstall.sh") with administrator privileges'
 if [[ -n "${PERVUE_APP_SIGN_IDENTITY:-}" ]]; then
   codesign --force --options runtime --timestamp --sign "$PERVUE_APP_SIGN_IDENTITY" "$host"
-  codesign --force --timestamp --sign "$PERVUE_APP_SIGN_IDENTITY" \
+  codesign --force --options runtime --timestamp --sign "$PERVUE_APP_SIGN_IDENTITY" \
     "$stage/Applications/Pervue/Uninstall Pervue.app"
 fi
 
-python3 - "$stage/Library/Application Support/Pervue/build-info.json" "$version" "$extension_id" "$(git -C "$root" rev-parse HEAD)" <<'PY'
+python3 - "$stage/Library/Application Support/Pervue/build-info.json" "$host_version" "$package_version" "$extension_id" "$source_commit" <<'PY'
 import json, sys
 with open(sys.argv[1], 'w') as target:
-    json.dump(dict(version=sys.argv[2], extension_id=sys.argv[3],
-                   source_commit=sys.argv[4]), target, indent=2)
+    json.dump(dict(version=sys.argv[2], package_version=sys.argv[3],
+                   architecture='universal2', extension_id=sys.argv[4],
+                   source_commit=sys.argv[5]), target, indent=2)
     target.write('\n')
 PY
 
-arch="$(uname -m)"
-pkg="$output/Pervue-${version}-macos-${arch}.pkg"
+pkgbuild --analyze --root "$stage" "$components"
+/usr/libexec/PlistBuddy -c 'Print :0:RootRelativeBundlePath' "$components" | \
+  grep -F 'Applications/Pervue/Uninstall Pervue.app' >/dev/null
+/usr/libexec/PlistBuddy -c 'Set :0:BundleIsRelocatable false' "$components"
+pkg="$output/Pervue-${host_version}-${source_commit:0:12}-macos-universal.pkg"
+if [[ -n "${PERVUE_INSTALLER_SIGN_IDENTITY:-}" && -z "${PERVUE_APP_SIGN_IDENTITY:-}" ]]; then
+  echo 'Installer signing requires a signed host and uninstaller.' >&2
+  exit 64
+fi
 if [[ -n "${PERVUE_INSTALLER_SIGN_IDENTITY:-}" ]]; then
   pkgbuild --root "$stage" --identifier com.pervue.companion \
-    --version "$version" --install-location / --ownership recommended \
+    --version "$package_version" --install-location / --ownership recommended \
+    --component-plist "$components" \
     --sign "$PERVUE_INSTALLER_SIGN_IDENTITY" "$pkg"
 else
   pkgbuild --root "$stage" --identifier com.pervue.companion \
-    --version "$version" --install-location / --ownership recommended "$pkg"
+    --version "$package_version" --install-location / --ownership recommended \
+    --component-plist "$components" "$pkg"
 fi
 echo "$pkg"

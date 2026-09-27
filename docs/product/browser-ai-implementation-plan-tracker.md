@@ -1449,7 +1449,7 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 **Status:** IMPLEMENTED — VERIFY
 
 **Implementation evidence**
-- `packaging/macos/build.sh` builds a release host and `.pkg` with a system Chrome manifest limited to the supplied extension ID, a stable binary path, build provenance, and a Finder uninstaller. `packaging/macos/verify.py` and the macOS CI job verify installed registration and clean removal.
+- `packaging/macos/build.sh` builds a universal release host and `.pkg` with a system Chrome manifest limited to the supplied extension ID, a stable binary path, build provenance, and a Finder uninstaller. `packaging/macos/verify.mjs` and the macOS CI job verify installed registration and clean removal.
 
 ### PKG-02 — Add macOS provider discovery/setup guidance
 **Area:** Packaging  
@@ -1788,10 +1788,10 @@ Update this section whenever item statuses change.
 | MVP closure | 7 | 7 | 0 | 0 | 0 | 0 | 0 | 0 |
 | E — Second provider | 5 | 0 | 5 | 0 | 0 | 0 | 0 | 0 |
 | F — Reusable native core | 7 | 0 | 7 | 0 | 0 | 0 | 0 | 0 |
-| G — Installable product | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 |
+| G — Installable product | 9 | 0 | 4 | 0 | 0 | 4 | 1 | 0 |
 | H — Search/citations | 8 | 0 | 0 | 0 | 0 | 8 | 0 | 0 |
 | Post-milestone | 6 | 0 | 0 | 0 | 0 | 4 | 0 | 2 |
-| **Total** | **81** | **46** | **12** | **0** | **0** | **21** | **0** | **2** |
+| **Total** | **81** | **46** | **16** | **0** | **0** | **16** | **1** | **2** |
 
 ### Milestone completion rule
 

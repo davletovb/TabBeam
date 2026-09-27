@@ -63,6 +63,7 @@ assert.equal(
 // the first real host message, which is host.ready in production.
 const nativePort = new MockPort();
 const manager = createNativeConnectionManager({
+  requireHandshake: false, // The synthetic port has no host.ready event.
   connectNative() { return nativePort; }
 });
 manager.ensurePort();

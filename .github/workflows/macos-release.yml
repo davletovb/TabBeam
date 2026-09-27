@@ -13,12 +13,8 @@ permissions:
 
 jobs:
   package:
-    runs-on: ${{ matrix.os }}
+    runs-on: macos-15
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-15, macos-15-intel]
     steps:
       - uses: actions/checkout@v5
       - name: Import Developer ID certificates
@@ -28,7 +24,7 @@ jobs:
           CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
         run: |
           set -euo pipefail
-          test -n "$APP_P12" && test -n "$INSTALLER_P12" && test -n "$CERT_PASSWORD"
+          : "${APP_P12:?}" "${INSTALLER_P12:?}" "${CERT_PASSWORD:?}"
           keychain="$RUNNER_TEMP/pervue.keychain-db"
           security create-keychain -p "$CERT_PASSWORD" "$keychain"
           security unlock-keychain -p "$CERT_PASSWORD" "$keychain"
@@ -45,7 +41,8 @@ jobs:
           PERVUE_INSTALLER_SIGN_IDENTITY: ${{ secrets.MACOS_DEVELOPER_ID_INSTALLER_IDENTITY }}
           EXTENSION_ID: ${{ inputs.extension_id }}
         run: |
-          test -n "$PERVUE_APP_SIGN_IDENTITY" && test -n "$PERVUE_INSTALLER_SIGN_IDENTITY"
+          set -euo pipefail
+          : "${PERVUE_APP_SIGN_IDENTITY:?}" "${PERVUE_INSTALLER_SIGN_IDENTITY:?}"
           packaging/macos/build.sh "$EXTENSION_ID"
           pkgutil --check-signature out/macos/*.pkg
       - name: Notarize and staple
@@ -55,7 +52,7 @@ jobs:
           NOTARY_ISSUER: ${{ secrets.MACOS_NOTARY_ISSUER }}
         run: |
           set -euo pipefail
-          test -n "$NOTARY_KEY" && test -n "$NOTARY_KEY_ID" && test -n "$NOTARY_ISSUER"
+          : "${NOTARY_KEY:?}" "${NOTARY_KEY_ID:?}" "${NOTARY_ISSUER:?}"
           printf '%s' "$NOTARY_KEY" > "$RUNNER_TEMP/notary.p8"
           xcrun notarytool submit out/macos/*.pkg --key "$RUNNER_TEMP/notary.p8" \
             --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER" --wait
@@ -64,6 +61,6 @@ jobs:
           xcrun stapler validate out/macos/*.pkg
       - uses: actions/upload-artifact@v4
         with:
-          name: pervue-macos-${{ runner.arch }}-${{ github.sha }}
+          name: pervue-macos-universal-${{ github.sha }}
           path: out/macos/*.pkg
           if-no-files-found: error
