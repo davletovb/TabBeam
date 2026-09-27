@@ -202,10 +202,11 @@ fn exec(dir: &Path, args: &[String], behavior: &str) -> io::Result<ExitCode> {
         &json!({"type": "item.completed", "item": {"id": "item_0", "type": "error", "message": "Model metadata not found. Defaulting to fallback metadata."}}),
     )?;
     emit(&mut out, &json!({"type": "turn.started"}))?;
-    if args
+    let native_search = args
         .windows(2)
-        .any(|pair| pair == ["-c", "web_search=\"live\""])
-    {
+        .any(|pair| pair == ["-c", "web_search=\"live\""]);
+    if native_search {
+        // Real Codex exec reports the search query/action here, not results.
         emit(
             &mut out,
             &json!({
@@ -214,13 +215,7 @@ fn exec(dir: &Path, args: &[String], behavior: &str) -> io::Result<ExitCode> {
                     "id": "search_1",
                     "type": "web_search",
                     "query": prompt.trim(),
-                    "action": {"type": "search", "query": prompt.trim()},
-                    "results": [{
-                        "title": "Codex search result",
-                        "url": "https://example.com/codex-search",
-                        "snippet": "Found by authenticated Codex web search.",
-                        "domain": "example.com"
-                    }]
+                    "action": {"type": "search", "query": prompt.trim()}
                 }
             }),
         )?;
@@ -324,10 +319,16 @@ fn exec(dir: &Path, args: &[String], behavior: &str) -> io::Result<ExitCode> {
             let text = "é✓😀 ".repeat(30_000);
             emit(&mut out, &agent_message("item_2", &text))?;
         }
-        _ => emit(
-            &mut out,
-            &agent_message("item_2", &format!("You asked: {prompt}")),
-        )?,
+        _ => {
+            let answer = if native_search {
+                format!(
+                    "You asked: {prompt}\n\n[Codex search result](https://example.com/codex-search)"
+                )
+            } else {
+                format!("You asked: {prompt}")
+            };
+            emit(&mut out, &agent_message("item_2", &answer))?;
+        }
     }
     emit(
         &mut out,
