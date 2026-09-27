@@ -282,7 +282,9 @@ fn live_claude_answers_a_question() {
         "native search failed: {search_last}"
     );
     assert!(
-        searched.iter().any(|event| event["event"] == "response.source"),
+        searched
+            .iter()
+            .any(|event| event["event"] == "response.source"),
         "native search silently completed without sources: {searched:?}"
     );
     let conversation = searched
@@ -302,7 +304,9 @@ fn live_claude_answers_a_question() {
         "plain follow-up after search failed: {follow_last}"
     );
     assert!(
-        followed.iter().any(|event| event["event"] == "response.delta"),
+        followed
+            .iter()
+            .any(|event| event["event"] == "response.delta"),
         "plain follow-up returned no answer"
     );
 
