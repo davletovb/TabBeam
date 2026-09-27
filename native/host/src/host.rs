@@ -34,7 +34,10 @@ use crate::protocol::events::{
 };
 use crate::protocol::request::{self, Method, RequestFailure, RequestId};
 use crate::providers::{Exchange, Providers, Scripted, SendRequest, StatusOfAll, Timeouts, Update};
-use crate::search::{SearchProviders, SearchRequest, SynthesisExchange};
+use crate::search::{
+    BRAVE_BACKEND_ID, DEFAULT_BACKEND_ID, PROVIDER_BACKEND_ID, SearchProviders, SearchRequest,
+    SynthesisExchange,
+};
 use pervue_core::framing::{self, FrameError};
 use pervue_core::stream::split_text;
 
@@ -119,6 +122,13 @@ const SEARCH_BACKEND_NOT_FOUND: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::SearchFailed,
     reason: "SEARCH_BACKEND_NOT_FOUND",
     message: "Pervue's companion app doesn't support this search backend yet.",
+    retryable: false,
+};
+
+const NATIVE_SEARCH_UNSUPPORTED: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::SearchFailed,
+    reason: "NATIVE_SEARCH_UNSUPPORTED",
+    message: "The selected AI provider does not support native web search.",
     retryable: false,
 };
 
@@ -615,25 +625,49 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                     }
                     Some(provider) => {
                         let provider_timeouts = provider.timeouts();
+                        let native_supported =
+                            provider.capabilities().web_search == Capability::Supported;
+                        let route = search.as_ref().map(|options| {
+                            if options.backend_id == DEFAULT_BACKEND_ID {
+                                if native_supported {
+                                    PROVIDER_BACKEND_ID
+                                } else {
+                                    BRAVE_BACKEND_ID
+                                }
+                            } else {
+                                options.backend_id.as_str()
+                            }
+                        });
+                        let native_search = route == Some(PROVIDER_BACKEND_ID);
+                        let independent_search = search.is_some() && !native_search;
                         let request = SendRequest {
                             text: question.clone(),
                             history,
                             conversation_id: conversation_id.clone(),
                             context,
                             model,
-                            search_results: if search_requested {
-                                Some(Vec::new())
-                            } else {
-                                None
-                            },
+                            native_search,
+                            search_results: independent_search.then(Vec::new),
                         };
-                        match search {
-                            Some(options) => match provider.preflight(&request) {
+                        match (search, route) {
+                            (Some(_), Some(PROVIDER_BACKEND_ID)) if !native_supported => (
+                                Box::new(Scripted::failed(NATIVE_SEARCH_UNSUPPORTED))
+                                    as Box<dyn Exchange>,
+                                Some(provider_timeouts),
+                            ),
+                            (Some(_), Some(PROVIDER_BACKEND_ID)) => match provider.preflight(&request) {
                                 Err(error) => (
                                     Box::new(Scripted::failed(error)) as Box<dyn Exchange>,
                                     Some(provider_timeouts),
                                 ),
-                                Ok(()) => match self.searches.get(&options.backend_id) {
+                                Ok(()) => (provider.send(request), Some(provider_timeouts)),
+                            },
+                            (Some(options), Some(backend_id)) => match provider.preflight(&request) {
+                                Err(error) => (
+                                    Box::new(Scripted::failed(error)) as Box<dyn Exchange>,
+                                    Some(provider_timeouts),
+                                ),
+                                Ok(()) => match self.searches.get(backend_id) {
                                     Some(search_provider) => {
                                         let search_timeouts = search_provider.timeouts();
                                         let handle = search_provider.search(SearchRequest {
@@ -658,12 +692,26 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                                     ),
                                 },
                             },
-                            None => (provider.send(request), Some(provider_timeouts)),
+                            _ => (provider.send(request), Some(provider_timeouts)),
                         }
                     }
                     None => (Box::new(Scripted::failed(PROVIDER_NOT_INSTALLED)), None),
                 };
-                if search_requested && timeouts.is_some() {
+                let independent_search = search_requested
+                    && !matches!(
+                        self.providers.get(&provider_id),
+                        Some(provider)
+                            if provider.capabilities().web_search == Capability::Supported
+                                && search
+                                    .as_ref()
+                                    .is_some_and(|options| {
+                                        matches!(
+                                            options.backend_id.as_str(),
+                                            DEFAULT_BACKEND_ID | PROVIDER_BACKEND_ID
+                                        )
+                                    })
+                    );
+                if independent_search && timeouts.is_some() {
                     Running::new_with_start_error(
                         id,
                         "conversation.send",
