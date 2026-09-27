@@ -1604,7 +1604,7 @@ without terminal commands during the user journey.
 
 **Implementation evidence**
 - Codex enables live web search for a native-search turn while shell, image, apps/plugins/hooks, MCP/orchestrator, and subagent surfaces remain disabled.
-- Claude allows only `WebSearch,WebFetch` for a native-search turn while MCP configuration/use remains blocked.
+- Claude exposes and auto-approves only `WebSearch` for a native-search turn; `WebFetch` remains unavailable and MCP configuration/use remains blocked.
 - Both paths reuse the provider's existing authenticated local runtime; Pervue stores no search API key and starts no separate network search process.
 
 ### SRCH-03 — Normalize search results into source model
@@ -1620,7 +1620,7 @@ without terminal commands during the user journey.
 
 **Implementation evidence**
 - `pervue-core::protocol::Source` is the normalized source shape: stable `id`, `backend_id`, title, URL, bounded snippet, and optional source/age metadata.
-- Codex structured `web_search` results and Claude `web_search_tool_result` blocks both map into that shape; unsafe URL schemes are dropped and duplicate provider-native sources are collapsed by URL.
+- Real CLI formats are normalized rather than simulated API shapes: Claude correlates `WebSearch` tool-use IDs with ordinary `tool_result` records and parses their `Links:` JSON array; Codex treats `web_search` items as progress and extracts cited HTTP(S) links from completed agent messages because current exec JSON exposes no result rows. Unsafe/hostless URLs are dropped, duplicates collapse deterministically, and each turn is capped at 20 sources.
 - The host carries sources as `Update::Source` and emits protocol-v1 `response.source`, so popup/full-page rendering is independent of either provider's native result format.
 
 ### SRCH-04 — Implement search + synthesis turn
@@ -1636,8 +1636,8 @@ without terminal commands during the user journey.
 
 **Implementation evidence**
 - Provider-native retrieval and synthesis happen in the same authenticated Codex or Claude turn; there is no independent retrieval → second synthesis pipeline.
-- Adapter parsers normalize structured search-result events while answer deltas continue through the ordinary provider-neutral stream.
-- Host and adapter regression tests prove `search: {}` sets the native-search flag, unsupported providers fail explicitly, provider preflight still runs, and both Codex and Claude emit normalized sources.
+- Search turns fail with `NATIVE_SEARCH_NO_SOURCES` if the provider completes without at least one usable source, preventing silent degradation to an ungrounded answer. Search+browser-context is refused before the provider runs.
+- Adapter parsers normalize provider-native search evidence while answer deltas continue through the ordinary provider-neutral stream. Tests cover exact Claude permission flags, real-shaped Claude/Codex search transcripts, source ordering/deduplication/caps, zero-source failure, and an opt-in live Claude search→plain-resume journey plus live Codex source emission.
 
 ### EXT-16 — Add Search mode and compact citations to popup
 **Area:** Extension  
