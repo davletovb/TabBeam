@@ -16,8 +16,7 @@ use serde::Deserialize;
 
 use crate::protocol::events::{ErrorBody, ErrorCode};
 use crate::providers::environment;
-use crate::providers::{Exchange, Provider, SendRequest, Timeouts, Update};
-use pervue_core::discovery::SearchPath;
+use crate::providers::{Exchange, Provider, SendRequest, Timeouts, Update, BUSY_LIMIT};
 use pervue_core::process::{Event as ProcessEvent, Process, ProcessSpec};
 use pervue_core::protocol::Source;
 
@@ -31,8 +30,9 @@ const MAX_TITLE_BYTES: usize = 512;
 const MAX_URL_BYTES: usize = 4096;
 const MAX_SNIPPET_BYTES: usize = 4096;
 const MAX_META_BYTES: usize = 256;
-const STDERR_TAIL_BYTES: usize = 4096;
 const HTTP_MARKER: &str = "\nPERVUE_HTTP_STATUS:";
+const MAX_QUERY_CHARS: usize = 600;
+const MAX_QUERY_WORDS: usize = 75;
 
 const SEARCH_NOT_CONFIGURED: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::SearchFailed,
@@ -81,6 +81,13 @@ const SEARCH_RESPONSE_TOO_LARGE: ErrorBody<'static> = ErrorBody {
     reason: "SEARCH_RESPONSE_TOO_LARGE",
     message: "The search response exceeded Pervue's safety limit.",
     retryable: true,
+};
+
+const SEARCH_QUERY_INVALID: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::SearchFailed,
+    reason: "SEARCH_QUERY_INVALID",
+    message: "The search query could not be accepted. Change the query and try again.",
+    retryable: false,
 };
 
 /// Search settings carried by `conversation.send`.
@@ -157,19 +164,26 @@ enum SynthesisStage {
 pub struct SynthesisExchange {
     stage: SynthesisStage,
     provider: Option<Rc<dyn Provider>>,
+    provider_timeouts: Timeouts,
     request: Option<SendRequest>,
     sources: VecDeque<Source>,
     announce_sources: bool,
 }
 
 impl SynthesisExchange {
-    pub fn new(handle: SearchHandle, provider: Rc<dyn Provider>, request: SendRequest) -> Self {
+    pub fn new(
+        handle: SearchHandle,
+        provider: Rc<dyn Provider>,
+        provider_timeouts: Timeouts,
+        request: SendRequest,
+    ) -> Self {
         Self {
             stage: SynthesisStage::Searching {
                 exchange: handle.exchange,
                 results: handle.results,
             },
             provider: Some(provider),
+            provider_timeouts,
             request: Some(request),
             sources: VecDeque::new(),
             announce_sources: false,
@@ -195,9 +209,10 @@ impl Exchange for SynthesisExchange {
                             let found = results.borrow_mut().take().unwrap_or_default();
                             self.sources = found.iter().cloned().collect();
                             let mut request = self.request.take().expect("search request exists");
-                            request.search_results = found;
+                            request.search_results = Some(found);
                             let provider = self.provider.take().expect("provider exists");
                             self.stage = SynthesisStage::Answering(provider.send(request));
+                            return Some(Update::ResetTimeouts(self.provider_timeouts));
                         }
                         Update::Failed(error) => {
                             self.stage = SynthesisStage::Done;
@@ -304,7 +319,7 @@ impl SearchProvider for Brave {
 
         let query = bounded_brave_query(&request.query);
         if query.is_empty() {
-            return failed_handle(results, SEARCH_REQUEST_FAILED);
+            return failed_handle(results, SEARCH_QUERY_INVALID);
         }
         let count = request.count.clamp(1, MAX_RESULT_COUNT);
         // Neither the API key nor the user's query is placed in argv. They go
@@ -312,6 +327,7 @@ impl SearchProvider for Brave {
         // either value.
         let spec = ProcessSpec::new(curl)
             .args([
+                "--disable",
                 "--silent",
                 "--show-error",
                 "--get",
@@ -347,9 +363,8 @@ impl SearchProvider for Brave {
             exchange: Box::new(BraveExchange {
                 process: Some(process),
                 stdout: Vec::new(),
-                stderr: Vec::new(),
                 results: Rc::clone(&results),
-                terminal: None,
+                stopping_at: None,
             }),
             results,
         }
@@ -368,7 +383,20 @@ fn configured_curl() -> Option<PathBuf> {
         let path = PathBuf::from(configured);
         return (path.is_absolute() && path.is_file()).then_some(path);
     }
-    SearchPath::from_env("PERVUE_SEARCH_PATH").find("curl")
+    system_curl()
+}
+
+#[cfg(unix)]
+fn system_curl() -> Option<PathBuf> {
+    let path = PathBuf::from("/usr/bin/curl");
+    path.is_file().then_some(path)
+}
+
+#[cfg(not(unix))]
+fn system_curl() -> Option<PathBuf> {
+    let root = std::env::var_os("SystemRoot")?;
+    let path = PathBuf::from(root).join("System32").join("curl.exe");
+    path.is_file().then_some(path)
 }
 
 fn curl_config_escape(value: &str) -> String {
@@ -377,7 +405,7 @@ fn curl_config_escape(value: &str) -> String {
 
 fn brave_url(query: &str, count: usize) -> String {
     format!(
-        "{BRAVE_URL}?q={}&count={}",
+        "{BRAVE_URL}?q={}&count={}&text_decorations=false",
         percent_encode(query.as_bytes()),
         count.clamp(1, MAX_RESULT_COUNT)
     )
@@ -400,15 +428,21 @@ fn percent_encode(bytes: &[u8]) -> String {
 
 fn bounded_brave_query(query: &str) -> String {
     let mut out = String::new();
-    for word in query.split_whitespace().take(75) {
+    for word in query.split_whitespace().take(MAX_QUERY_WORDS) {
+        let used = out.chars().count();
         let separator = usize::from(!out.is_empty());
-        if out.chars().count() + separator + word.chars().count() > 600 {
+        let remaining = MAX_QUERY_CHARS.saturating_sub(used + separator);
+        if remaining == 0 {
             break;
         }
         if !out.is_empty() {
             out.push(' ');
         }
-        out.push_str(word);
+        let mut chars = word.chars();
+        out.extend(chars.by_ref().take(remaining));
+        if chars.next().is_some() {
+            break;
+        }
     }
     out
 }
@@ -416,19 +450,43 @@ fn bounded_brave_query(query: &str) -> String {
 struct BraveExchange {
     process: Option<Process>,
     stdout: Vec<u8>,
-    stderr: Vec<u8>,
     results: SharedResults,
-    terminal: Option<Update>,
+    stopping_at: Option<Instant>,
 }
 
 impl Exchange for BraveExchange {
     fn next(&mut self, deadline: Instant) -> Option<Update> {
-        if let Some(update) = self.terminal.take() {
-            return Some(update);
-        }
-        let process = self.process.as_mut()?;
+        let busy_until = deadline.max(
+            Instant::now()
+                .checked_add(BUSY_LIMIT)
+                .unwrap_or_else(Instant::now),
+        );
         loop {
-            match process.next_event(deadline)? {
+            let process = self.process.as_mut()?;
+            if let Some(kill_at) = self.stopping_at {
+                if Instant::now() >= kill_at {
+                    process.kill();
+                    self.process = None;
+                    self.stopping_at = None;
+                    return Some(Update::Stopped);
+                }
+                match process.next_event(busy_until.min(kill_at)) {
+                    Some(ProcessEvent::Exited(_)) => {
+                        self.process = None;
+                        self.stopping_at = None;
+                        return Some(Update::Stopped);
+                    }
+                    Some(_) => {}
+                    None if Instant::now() >= kill_at => continue,
+                    None => return None,
+                }
+                if Instant::now() >= busy_until {
+                    return None;
+                }
+                continue;
+            }
+
+            match process.next_event(busy_until)? {
                 ProcessEvent::Stdout(bytes) => {
                     if self.stdout.len().saturating_add(bytes.len()) > MAX_RESPONSE_BYTES {
                         process.kill();
@@ -437,9 +495,7 @@ impl Exchange for BraveExchange {
                     }
                     self.stdout.extend_from_slice(&bytes);
                 }
-                ProcessEvent::Stderr(bytes) => {
-                    push_tail(&mut self.stderr, &bytes, STDERR_TAIL_BYTES)
-                }
+                ProcessEvent::Stderr(_) => {}
                 ProcessEvent::Exited(exit) => {
                     self.process = None;
                     if !exit.status.is_some_and(|status| status.success()) {
@@ -455,6 +511,9 @@ impl Exchange for BraveExchange {
                     if matches!(status, 401 | 403) {
                         return Some(Update::Failed(SEARCH_AUTH_FAILED));
                     }
+                    if status == 422 {
+                        return Some(Update::Failed(SEARCH_QUERY_INVALID));
+                    }
                     if !(200..300).contains(&status) {
                         return Some(Update::Failed(SEARCH_REQUEST_FAILED));
                     }
@@ -466,34 +525,23 @@ impl Exchange for BraveExchange {
                     return Some(Update::Completed);
                 }
             }
-            if Instant::now() >= deadline {
+            if Instant::now() >= busy_until {
                 return None;
             }
         }
     }
 
     fn cancel(&mut self, grace: Duration) {
-        if let Some(mut process) = self.process.take() {
-            process.terminate(grace);
+        if self.stopping_at.is_some() {
+            return;
         }
-        self.terminal = Some(Update::Stopped);
+        let Some(process) = self.process.as_mut() else {
+            return;
+        };
+        process.request_stop();
+        let now = Instant::now();
+        self.stopping_at = Some(now.checked_add(grace).unwrap_or(now));
     }
-}
-
-fn push_tail(buffer: &mut Vec<u8>, bytes: &[u8], limit: usize) {
-    if bytes.len() >= limit {
-        buffer.clear();
-        buffer.extend_from_slice(&bytes[bytes.len() - limit..]);
-        return;
-    }
-    let needed = buffer
-        .len()
-        .saturating_add(bytes.len())
-        .saturating_sub(limit);
-    if needed > 0 {
-        buffer.drain(..needed.min(buffer.len()));
-    }
-    buffer.extend_from_slice(bytes);
 }
 
 fn split_http_status(stdout: &[u8]) -> Option<(&[u8], u16)> {
@@ -522,8 +570,8 @@ struct BraveWeb {
 
 #[derive(Deserialize)]
 struct BraveItem {
-    title: String,
-    url: String,
+    title: Option<String>,
+    url: Option<String>,
     description: Option<String>,
     page_age: Option<String>,
     profile: Option<BraveProfile>,
@@ -540,10 +588,16 @@ fn normalize_brave(body: &[u8]) -> Result<Vec<Source>, ()> {
     let mut seen = HashSet::new();
     let mut normalized = Vec::new();
     for item in response.web.map_or_else(Vec::new, |web| web.results) {
-        if normalized.len() >= MAX_RESULT_COUNT || !safe_http_url(&item.url) {
+        if normalized.len() >= MAX_RESULT_COUNT {
+            break;
+        }
+        let (Some(title), Some(url)) = (item.title.as_deref(), item.url.as_deref()) else {
+            continue;
+        };
+        if title.trim().is_empty() || !safe_http_url(url) {
             continue;
         }
-        let url = bounded(&item.url, MAX_URL_BYTES);
+        let url = bounded(url, MAX_URL_BYTES);
         if !seen.insert(url.clone()) {
             continue;
         }
@@ -559,7 +613,7 @@ fn normalize_brave(body: &[u8]) -> Result<Vec<Source>, ()> {
         normalized.push(Source {
             id: format!("src_search_{}", normalized.len() + 1),
             backend_id: DEFAULT_BACKEND_ID.to_owned(),
-            title: bounded(&plain_text(&item.title), MAX_TITLE_BYTES),
+            title: bounded(&plain_text(title), MAX_TITLE_BYTES),
             url,
             snippet: bounded(
                 &plain_text(item.description.as_deref().unwrap_or_default()),
@@ -581,22 +635,58 @@ fn safe_http_url(url: &str) -> bool {
 }
 
 fn plain_text(value: &str) -> String {
+    decode_entities(&strip_decorations(value))
+}
+
+fn strip_decorations(value: &str) -> String {
     let mut output = String::with_capacity(value.len());
-    let mut in_tag = false;
-    for character in value.chars() {
-        match character {
-            '<' => in_tag = true,
-            '>' if in_tag => in_tag = false,
-            _ if !in_tag => output.push(character),
-            _ => {}
+    let mut offset = 0;
+    while offset < value.len() {
+        let rest = &value[offset..];
+        if rest.as_bytes().first() == Some(&b'<') {
+            let next = rest.as_bytes().get(1).copied();
+            let looks_like_tag = next.is_some_and(|byte| {
+                byte.is_ascii_alphabetic() || matches!(byte, b'/' | b'!')
+            });
+            if looks_like_tag {
+                if let Some(end) = rest.find('>') {
+                    offset += end + 1;
+                    continue;
+                }
+            }
         }
+        let character = rest.chars().next().expect("offset is in bounds");
+        output.push(character);
+        offset += character.len_utf8();
     }
     output
-        .replace("&amp;", "&")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
+}
+
+fn decode_entities(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut offset = 0;
+    while offset < value.len() {
+        let rest = &value[offset..];
+        let entity = [
+            ("&quot;", "\""),
+            ("&#39;", "'"),
+            ("&#x27;", "'"),
+            ("&lt;", "<"),
+            ("&gt;", ">"),
+            ("&amp;", "&"),
+        ]
+        .into_iter()
+        .find(|(encoded, _)| rest.starts_with(encoded));
+        if let Some((encoded, decoded)) = entity {
+            output.push_str(decoded);
+            offset += encoded.len();
+            continue;
+        }
+        let character = rest.chars().next().expect("offset is in bounds");
+        output.push(character);
+        offset += character.len_utf8();
+    }
+    output
 }
 
 fn bounded(value: &str, limit: usize) -> String {
@@ -638,7 +728,7 @@ mod tests {
         let url = brave_url("rust & café?", 8);
         assert_eq!(
             url,
-            "https://api.search.brave.com/res/v1/web/search?q=rust%20%26%20caf%C3%A9%3F&count=8"
+            "https://api.search.brave.com/res/v1/web/search?q=rust%20%26%20caf%C3%A9%3F&count=8&text_decorations=false"
         );
         assert!(!url.contains(' '));
     }
@@ -651,6 +741,32 @@ mod tests {
         let query = bounded_brave_query(&long);
         assert!(query.split_whitespace().count() <= 75);
         assert!(query.chars().count() <= 600);
+    }
+
+    #[test]
+    fn long_first_token_is_truncated_instead_of_dropped() {
+        let query = bounded_brave_query(&"界".repeat(700));
+        assert_eq!(query.chars().count(), MAX_QUERY_CHARS);
+        assert!(!query.is_empty());
+    }
+
+    #[test]
+    fn plain_text_keeps_comparisons_and_decodes_entities_once() {
+        assert_eq!(plain_text("Rust 1.80 < 1.81 adds X"), "Rust 1.80 < 1.81 adds X");
+        assert_eq!(plain_text("A <strong>B</strong> &amp; C"), "A B & C");
+        assert_eq!(plain_text("&amp;lt;script&amp;gt;"), "&lt;script&gt;");
+    }
+
+    #[test]
+    fn incomplete_brave_items_are_skipped_not_fatal() {
+        let body = br#"{"web":{"results":[
+            {"title":null,"url":"https://bad.example/","description":"skip"},
+            {"title":"No URL","description":"skip"},
+            {"title":"Good","url":"https://example.com/","description":"ok"}
+        ]}}"#;
+        let results = normalize_brave(body).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Good");
     }
 
     #[test]
