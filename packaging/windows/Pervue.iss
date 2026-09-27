@@ -32,7 +32,7 @@ Source: "{#StageDir}\build-info.json"; DestDir: "{app}"; Flags: ignoreversion
 [Registry]
 ; Chrome accepts either registry view. Pervue writes the 64-bit HKCU view on
 ; supported x64-compatible Windows and removes only its own key on uninstall.
-Root: HKCU; Subkey: "Software\Google\Chrome\NativeMessagingHosts\{#HostName}"; ValueType: string; ValueName: ""; ValueData: "{app}\com.pervue.host.json"; Flags: uninsdeletekey 64bit
+Root: HKCU64; Subkey: "Software\Google\Chrome\NativeMessagingHosts\{#HostName}"; ValueType: string; ValueName: ""; ValueData: "{app}\com.pervue.host.json"; Flags: uninsdeletekey
 
 [UninstallDelete]
 Type: files; Name: "{app}\com.pervue.host.json"
