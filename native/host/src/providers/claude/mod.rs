@@ -24,6 +24,7 @@ use crate::protocol::events::{
     Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ModelOption,
     ProviderState,
 };
+use crate::search::{NATIVE_SEARCH_NO_SOURCES, SourceCollector, claude_tool_result_sources};
 use pervue_core::discovery::SearchPath;
 use pervue_core::process::{Event, Exit, Process, ProcessSpec};
 use pervue_core::stream::{BUSY_LIMIT, LineStream, Output};
@@ -354,7 +355,9 @@ impl Provider for Claude {
         if let Err(error) = self.preflight(&request) {
             return Box::new(Scripted::failed(error));
         }
-        let executable = self.executable().expect("preflight found Claude");
+        let Some(executable) = self.executable() else {
+            return Box::new(Scripted::failed(NOT_INSTALLED));
+        };
         // The host enforces page_context=false before this method is called.
         if request.context.is_some() {
             return Box::new(Scripted::failed(MALFORMED_OUTPUT));
@@ -395,8 +398,8 @@ impl Provider for Claude {
             model: request.model,
             native_search: request.native_search,
             queue: VecDeque::new(),
-            source_urls: HashSet::new(),
-            source_count: 0,
+            sources: SourceCollector::new(ID),
+            web_search_uses: HashSet::new(),
             cancelled: false,
             started: false,
             announced: false,
@@ -663,21 +666,21 @@ fn claude_args(resume: Option<&str>, model: Option<&str>, native_search: bool) -
         "--include-partial-messages",
         "--permission-mode",
         "default",
-        // Pervue's Claude adapter is a conversational provider, not an
-        // agent. Disable built-in tools, load none of the user's MCP
-        // servers, and deny MCP tools explicitly as well.
+        // Pervue is conversational, not an agent. Plain turns expose no
+        // built-in tools. Search turns expose and auto-approve only WebSearch;
+        // WebFetch remains unavailable because it can fetch arbitrary URLs
+        // from the user's machine.
         "--tools",
-        if native_search {
-            "WebSearch,WebFetch"
-        } else {
-            ""
-        },
+        if native_search { "WebSearch" } else { "" },
         "--strict-mcp-config",
         "--disallowedTools",
         "mcp__*",
     ]
     .map(OsString::from)
     .into();
+    if native_search {
+        args.extend(["--allowedTools", "WebSearch"].map(OsString::from));
+    }
     if let Some(model) = model {
         args.push(format!("--model={model}").into());
     }
@@ -703,8 +706,10 @@ struct Turn {
     model: Option<String>,
     native_search: bool,
     queue: VecDeque<Update>,
-    source_urls: HashSet<String>,
-    source_count: usize,
+    sources: SourceCollector,
+    /// WebSearch tool-use IDs observed in this run. Only matching tool_result
+    /// blocks are allowed to create sources.
+    web_search_uses: HashSet<String>,
     cancelled: bool,
     /// This Claude run sent `init`.
     started: bool,
@@ -806,20 +811,32 @@ impl Turn {
                     });
                 }
             }
-            Ok(Line::WebSearch(results)) => {
-                for result in results {
-                    if self.source_urls.insert(result.url.clone()) {
-                        self.source_count += 1;
-                        self.queue
-                            .push_back(Update::Source(pervue_core::protocol::Source {
-                                id: format!("src_claude_{}", self.source_count),
-                                backend_id: ID.to_owned(),
-                                title: result.title,
-                                url: result.url,
-                                snippet: result.snippet,
-                                source_name: result.source_name,
-                                age: result.age,
-                            }));
+            Ok(Line::ToolEvents(events)) => {
+                if !self.started {
+                    return self.end(Update::Failed(MALFORMED_OUTPUT));
+                }
+                for event in events {
+                    match event {
+                        output::ToolEvent::WebSearchUse(id) => {
+                            if self.native_search {
+                                self.web_search_uses.insert(id);
+                            }
+                            self.queue.push_back(Update::Activity);
+                        }
+                        output::ToolEvent::ToolResult {
+                            tool_use_id,
+                            content,
+                        } if self.web_search_uses.remove(&tool_use_id) => {
+                            for result in claude_tool_result_sources(&content) {
+                                if let Some(source) = self.sources.push(result) {
+                                    self.queue.push_back(Update::Source(source));
+                                }
+                            }
+                            self.queue.push_back(Update::Activity);
+                        }
+                        output::ToolEvent::ToolResult { .. } => {
+                            self.queue.push_back(Update::Activity);
+                        }
                     }
                 }
             }
@@ -862,7 +879,11 @@ impl Turn {
                     self.saw_delta = true;
                     self.queue.push_back(Update::Delta(text));
                 }
-                self.turn_ended(Ok(()));
+                self.turn_ended(if self.native_search && self.sources.count() == 0 {
+                    Err(NATIVE_SEARCH_NO_SOURCES)
+                } else {
+                    Ok(())
+                });
             }
             Ok(Line::ResultFailed(error)) => self.turn_ended(Err(error)),
             Ok(Line::Ignored) => {}
@@ -931,6 +952,8 @@ impl Turn {
         self.saw_delta = false;
         self.messages = 0;
         self.break_before_text = false;
+        self.sources.reset();
+        self.web_search_uses.clear();
         self.prompt = self
             .fallback_prompt
             .take()
