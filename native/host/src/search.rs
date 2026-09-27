@@ -193,56 +193,54 @@ impl SynthesisExchange {
 
 impl Exchange for SynthesisExchange {
     fn next(&mut self, deadline: Instant) -> Option<Update> {
-        loop {
-            if self.announce_sources {
-                if let Some(source) = self.sources.pop_front() {
-                    return Some(Update::Source(source));
-                }
-                self.announce_sources = false;
+        if self.announce_sources {
+            if let Some(source) = self.sources.pop_front() {
+                return Some(Update::Source(source));
             }
+            self.announce_sources = false;
+        }
 
-            match &mut self.stage {
-                SynthesisStage::Searching { exchange, results } => {
-                    let update = exchange.next(deadline)?;
-                    match update {
-                        Update::Completed => {
-                            let found = results.borrow_mut().take().unwrap_or_default();
-                            self.sources = found.iter().cloned().collect();
-                            let mut request = self.request.take().expect("search request exists");
-                            request.search_results = Some(found);
-                            let provider = self.provider.take().expect("provider exists");
-                            self.stage = SynthesisStage::Answering(provider.send(request));
-                            return Some(Update::ResetTimeouts(self.provider_timeouts));
-                        }
-                        Update::Failed(error) => {
-                            self.stage = SynthesisStage::Done;
-                            return Some(Update::Failed(error));
-                        }
-                        Update::Stopped => {
-                            self.stage = SynthesisStage::Done;
-                            return Some(Update::Stopped);
-                        }
-                        Update::Activity => return Some(Update::Activity),
-                        // A search backend produces sources in its result slot,
-                        // not provider/conversation events.
-                        _ => {
-                            self.stage = SynthesisStage::Done;
-                            return Some(Update::Failed(SEARCH_RESPONSE_INVALID));
-                        }
+        match &mut self.stage {
+            SynthesisStage::Searching { exchange, results } => {
+                let update = exchange.next(deadline)?;
+                match update {
+                    Update::Completed => {
+                        let found = results.borrow_mut().take().unwrap_or_default();
+                        self.sources = found.iter().cloned().collect();
+                        let mut request = self.request.take().expect("search request exists");
+                        request.search_results = Some(found);
+                        let provider = self.provider.take().expect("provider exists");
+                        self.stage = SynthesisStage::Answering(provider.send(request));
+                        Some(Update::ResetTimeouts(self.provider_timeouts))
                     }
-                }
-                SynthesisStage::Answering(exchange) => {
-                    let update = exchange.next(deadline)?;
-                    if matches!(update, Update::Started { .. }) {
-                        self.announce_sources = true;
-                    }
-                    if update.is_terminal() {
+                    Update::Failed(error) => {
                         self.stage = SynthesisStage::Done;
+                        Some(Update::Failed(error))
                     }
-                    return Some(update);
+                    Update::Stopped => {
+                        self.stage = SynthesisStage::Done;
+                        Some(Update::Stopped)
+                    }
+                    Update::Activity => Some(Update::Activity),
+                    // A search backend produces sources in its result slot,
+                    // not provider/conversation events.
+                    _ => {
+                        self.stage = SynthesisStage::Done;
+                        Some(Update::Failed(SEARCH_RESPONSE_INVALID))
+                    }
                 }
-                SynthesisStage::Done => return None,
             }
+            SynthesisStage::Answering(exchange) => {
+                let update = exchange.next(deadline)?;
+                if matches!(update, Update::Started { .. }) {
+                    self.announce_sources = true;
+                }
+                if update.is_terminal() {
+                    self.stage = SynthesisStage::Done;
+                }
+                Some(update)
+            }
+            SynthesisStage::Done => None,
         }
     }
 
