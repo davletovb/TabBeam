@@ -300,8 +300,6 @@ fn page_context_reaches_codex_as_untrusted_reference_data() {
         "features.hooks=false",
         "features.multi_agent=false",
         "features.multi_agent_v2=false",
-        "features.web_search_request=false",
-        "features.web_search_cached=false",
         "features.standalone_web_search=false",
         "web_search=\"disabled\"",
         "orchestrator.mcp.enabled=false",
