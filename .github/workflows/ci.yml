@@ -121,8 +121,10 @@ jobs:
         shell: pwsh
         run: |
           $installer = Get-ChildItem out/windows/Pervue-*-windows-x64.exe | Select-Object -First 1
-          & $installer.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-
-          if ($LASTEXITCODE -ne 0) { throw "installer failed with exit code $LASTEXITCODE" }
+          $setup = Start-Process -FilePath $installer.FullName `
+            -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-' `
+            -Wait -PassThru
+          if ($setup.ExitCode -ne 0) { throw "installer failed with exit code $($setup.ExitCode)" }
           $provider = Join-Path $env:RUNNER_TEMP 'provider-bin'
           New-Item -ItemType Directory -Force -Path $provider | Out-Null
           @'
@@ -141,8 +143,10 @@ jobs:
         run: |
           $uninstaller = Join-Path $env:LOCALAPPDATA 'Pervue\unins000.exe'
           if (-not (Test-Path -LiteralPath $uninstaller)) { throw "uninstaller not found" }
-          & $uninstaller /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
-          if ($LASTEXITCODE -ne 0) { throw "uninstaller failed with exit code $LASTEXITCODE" }
+          $remove = Start-Process -FilePath $uninstaller `
+            -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' `
+            -Wait -PassThru
+          if ($remove.ExitCode -ne 0) { throw "uninstaller failed with exit code $($remove.ExitCode)" }
           if (Test-Path -LiteralPath (Join-Path $env:LOCALAPPDATA 'Pervue')) {
             throw "Pervue install directory still exists"
           }
