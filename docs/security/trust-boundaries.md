@@ -68,7 +68,18 @@ Identifiers are redacted (SEC-02): a record copies only identifiers Pervue made 
 
 Tests: `diagnostics_never_copy_request_content` and `identifiers_pervue_did_not_issue_are_redacted_in_diagnostics` in `native/host/src/host.rs`; `request_ids_are_kept_only_in_the_extensions_shape`, `identifiers_are_kept_only_when_the_host_issued_them`, and `identifiers_can_neither_forge_nor_split_a_record` in `native/host/src/diagnostics.rs`; `diagnostics_go_to_stderr_and_never_into_the_frames` in `native/host/tests/cli.rs`; the hostile matrix (`native/test_provider/tests/hostile_matrix.rs`), whose fake Codex writes a fake key to stderr in every case; and the live smoke test, which checks its output for credentials before printing it (TST-05).
 
-## 6. Covered elsewhere
+## 6. Packaged trust boundaries and permissions (SEC-04)
+
+Packaging keeps the browser/native identity boundary explicit on both supported desktop platforms:
+
+- **Exact extension identity.** Both package builders accept only one 32-character Chrome extension ID using the browser's `a`–`p` alphabet. The native host generates the manifest allowlist itself, so installers do not construct arbitrary origins. macOS installs that generated manifest at Chrome's fixed system location. Windows installs it under `%LOCALAPPDATA%\\Pervue` and registers only `HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\com.pervue.host`; its host path is the fixed relative filename `pervue-host.exe`, which Chrome resolves relative to the manifest.
+- **No webpage-controlled installer paths.** Install destinations, host names, manifest names, and registry keys are package constants. Neither installer has a post-install command surface that consumes browser/page input. A provider ID from a request still selects only a compiled adapter; provider executable discovery remains platform-controlled as described above.
+- **Credential-free release metadata.** macOS and Windows `build-info.json` contain only version/package version, architecture, paired extension ID, and source commit. Provider credentials remain in provider-owned stores. Package build scripts contain no provider API-key inputs, and uninstall removes only Pervue-owned host/manifest/registration files.
+- **Minimum extension permissions.** The MV3 manifest currently requests `activeTab`, `contextMenus`, `nativeMessaging`, and `storage`. It declares no `host_permissions`, `optional_host_permissions`, or `externally_connectable` entry. HTTP/HTTPS content scripts are present to implement explicit selection/current-page capture; CTX-03/CTX-04 constrain when content is actually collected and sent.
+- **Regression audit.** `packaging/security-audit.mjs` asserts the permission set and both package definitions on every CI run. The macOS and Windows package jobs separately exercise the installed Native Messaging registration and exact extension allowlist.
+
+The remaining release-signing trust decision for Windows is distribution policy rather than an SEC-04 boundary requirement; a future Windows signing/reputation task can add Authenticode without changing these registration invariants.
+
+## 7. Covered elsewhere
 
 - Page-context capture intent remains CTX-03/CTX-04; the shared byte limits are enforced on both sides of this boundary and recorded in `docs/protocol/native-messaging-v1.json`.
-- Packaged registration, installer inputs, and extension permissions: SEC-04.
