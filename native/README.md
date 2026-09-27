@@ -166,9 +166,9 @@ The host retrieves and normalizes sources first, then gives the same bounded sou
 
 Brave is the first search backend. For development, set `BRAVE_SEARCH_API_KEY` in the environment that launches Chrome/the native host. Pervue does not copy that key into extension storage or pass it to an AI provider. The Brave key and user query are supplied to the HTTPS client over stdin rather than command-line arguments. Search responses are capped at 2 MiB; at most 10 deduplicated HTTP(S) sources are retained, with bounded plain-text metadata.
 
-`PERVUE_CURL_PATH` may point to an absolute curl executable for a controlled installation/test environment. Otherwise the host discovers the fixed executable name `curl` through platform-controlled search paths; webpage/request input cannot select a program. `PERVUE_SEARCH_PATH` is the hermetic search-path override used by tests/unusual installations.
+`PERVUE_CURL_PATH` may point to an absolute curl executable for a controlled installation/test environment. Otherwise the host uses only the operating system's fixed curl location: `/usr/bin/curl` on macOS/Linux or `%SystemRoot%\\System32\\curl.exe` on Windows. It never searches user-writable npm/nvm/PATH locations for the process that receives the Brave credential. Curl is launched with `--disable` as its first option so user `.curlrc` settings cannot alter the request or trace credentials.
 
-Search failures use `SEARCH_FAILED`, separately from model-provider failures. Missing configuration, backend authentication, rate limiting, transport failure, oversized output, and malformed backend responses therefore remain distinguishable from Codex/Claude synthesis failures.
+Search failures use `SEARCH_FAILED`, separately from model-provider failures. Missing configuration, backend authentication, rate limiting, search timeout, invalid query, transport failure, oversized output, and malformed backend responses therefore remain distinguishable from Codex/Claude synthesis failures.
 
 ## Providers
 
