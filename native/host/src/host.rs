@@ -619,14 +619,13 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
             }
             Method::ProviderStatus { provider_id } => {
                 let provider_id = provider_id.map(|id| id.decode().into_owned());
-                let (exchange, served): (Box<dyn Exchange>, bool) =
-                    match provider_id.as_deref() {
-                        None => (Box::new(StatusOfAll::new(self.providers)), false),
-                        Some(provider_id) => match self.providers.get(provider_id) {
-                            Some(provider) => (provider.status(), true),
-                            None => (Box::new(Scripted::failed(PROVIDER_NOT_INSTALLED)), false),
-                        },
-                    };
+                let (exchange, served): (Box<dyn Exchange>, bool) = match provider_id.as_deref() {
+                    None => (Box::new(StatusOfAll::new(self.providers)), false),
+                    Some(provider_id) => match self.providers.get(provider_id) {
+                        Some(provider) => (provider.status(), true),
+                        None => (Box::new(Scripted::failed(PROVIDER_NOT_INSTALLED)), false),
+                    },
+                };
                 Running::new(
                     id,
                     "provider.status",
@@ -1295,9 +1294,11 @@ mod tests {
                 .model
                 .map(|model| format!("+model={model}"))
                 .unwrap_or_default();
-            let sources = (!request.search_results.is_empty())
-                .then(|| format!("+sources={}", request.search_results.len()))
-                .unwrap_or_default();
+            let sources = if request.search_results.is_empty() {
+                String::new()
+            } else {
+                format!("+sources={}", request.search_results.len())
+            };
             self.calls
                 .borrow_mut()
                 .push(format!("send:{}{context}{model}{sources}", request.text));
@@ -1372,7 +1373,9 @@ mod tests {
             calls: Rc::clone(&search_calls),
         })]);
 
-        let input = framed(&[r#"{"version":1,"type":"request","request_id":"req_search","method":"conversation.send","payload":{"provider_id":"model","input":{"text":"What changed?"},"search":{"backend_id":"brave","count":2}}}"#]);
+        let input = framed(&[
+            r#"{"version":1,"type":"request","request_id":"req_search","method":"conversation.send","payload":{"provider_id":"model","input":{"text":"What changed?"},"search":{"backend_id":"brave","count":2}}}"#,
+        ]);
         let mut output = Vec::new();
         let mut log = Diagnostics::new(Vec::new());
         let mut wire = input.as_slice();
