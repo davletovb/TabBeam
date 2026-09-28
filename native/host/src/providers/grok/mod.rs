@@ -867,51 +867,6 @@ fn age_at_least(path: &Path, age: Duration) -> bool {
         .is_some_and(|elapsed| elapsed >= age)
 }
 
-fn private_fs::unique_child(base: &Path, prefix: &str) -> PathBuf {
-    base.join(format!(
-        "{prefix}-{:016x}",
-        RandomState::new().hash_one((SystemTime::now(), std::process::id()))
-    ))
-}
-
-fn private_fs::create_private_dir(path: &Path) -> io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
-        fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(path)?;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700))
-    }
-    #[cfg(not(unix))]
-    {
-        fs::create_dir_all(path)
-    }
-}
-
-fn private_fs::write_private_file(path: &Path, contents: &[u8]) -> io::Result<()> {
-    fs::write(path, contents)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-    }
-    Ok(())
-}
-
-fn private_fs::is_conversation_id(id: &str) -> bool {
-    id.len() == 21
-        && id.starts_with("conv_")
-        && id[5..].bytes().all(|byte| byte.is_ascii_hexdigit())
-}
-
-fn private_fs::new_conversation_id() -> String {
-    format!(
-        "conv_{:016x}",
-        RandomState::new().hash_one((SystemTime::now(), std::process::id()))
-    )
-}
 
 fn keep_head(head: &mut Vec<u8>, bytes: &[u8], limit: usize) {
     if head.len() >= limit {
@@ -921,17 +876,6 @@ fn keep_head(head: &mut Vec<u8>, bytes: &[u8], limit: usize) {
     head.extend_from_slice(&bytes[..bytes.len().min(remaining)]);
 }
 
-fn private_fs::keep_tail(tail: &mut Vec<u8>, bytes: &[u8], limit: usize) {
-    let bytes = &bytes[bytes.len().saturating_sub(limit)..];
-    let excess = (tail.len() + bytes.len()).saturating_sub(limit);
-    tail.drain(..excess);
-    tail.extend_from_slice(bytes);
-}
-
-fn private_fs::after(duration: Duration) -> Instant {
-    let now = Instant::now();
-    now.checked_add(duration).unwrap_or(now)
-}
 
 #[cfg(test)]
 mod tests {
