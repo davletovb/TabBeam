@@ -11,10 +11,13 @@ pub enum Line {
         permission_mode: String,
         agent: String,
     },
-    AgentDelta(String),
+    AgentDelta {
+        text: String,
+        done: bool,
+    },
     Tool(String),
     Subagent,
-    Progress,
+    UnexpectedStep,
     ResultSuccess {
         conversation_id: Option<String>,
         response: String,
@@ -90,12 +93,20 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
                         .to_owned(),
                 )
             } else if update.get("step_type").and_then(Value::as_str) == Some("agent_response") {
-                match update.get("text_delta").and_then(Value::as_str) {
-                    Some(text) => Line::AgentDelta(text.to_owned()),
-                    None => Line::Progress,
+                let text = update
+                    .get("text_delta")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned();
+                Line::AgentDelta {
+                    text,
+                    done: update.get("state").and_then(Value::as_str) == Some("DONE"),
                 }
             } else {
-                Line::Progress
+                // Antigravity is an execution-capable runtime. Unknown step
+                // types fail closed at the adapter boundary rather than being
+                // treated as harmless progress.
+                Line::UnexpectedStep
             }
         }
         "result" => {
@@ -178,10 +189,13 @@ pub fn provider_failure(message: &str) -> ErrorBody<'static> {
         AUTH_REJECTED
     } else if [
         "rate limit",
-        "quota",
+        "quota exceeded",
         "resource_exhausted",
         "too many requests",
-        "429",
+        "http 429",
+        "status 429",
+        "code 429",
+        "api error: 429",
         "usage limit",
     ]
     .iter()
@@ -213,7 +227,10 @@ mod tests {
             parse(
                 r#"{"event":"step_update","step_update":{"step_type":"agent_response","state":"ACTIVE","text_delta":"hi"}}"#
             ),
-            Ok(Line::AgentDelta("hi".to_owned()))
+            Ok(Line::AgentDelta {
+                text: "hi".to_owned(),
+                done: false,
+            })
         );
         assert_eq!(
             parse(
@@ -249,12 +266,27 @@ mod tests {
     fn failures_are_normalized_without_forwarding_provider_text() {
         for (message, reason) in [
             ("authentication required", "AUTH_REJECTED"),
-            ("429 RESOURCE_EXHAUSTED quota", "PROVIDER_RATE_LIMITED"),
+            ("http 429 RESOURCE_EXHAUSTED quota exceeded", "PROVIDER_RATE_LIMITED"),
             ("secret provider detail", "PROVIDER_UNAVAILABLE"),
         ] {
             let failure = provider_failure(message);
             assert_eq!(failure.reason, reason);
             assert!(!failure.message.contains("secret"));
         }
+    }
+
+    #[test]
+    fn unrelated_numbers_are_not_rate_limits() {
+        for message in ["server.go:4291 crashed", "pid 14290 exited", "quota note only"] {
+            assert_eq!(provider_failure(message).reason, "PROVIDER_UNAVAILABLE");
+        }
+    }
+
+    #[test]
+    fn unknown_step_types_fail_closed() {
+        assert_eq!(
+            parse(r#"{"event":"step_update","step_update":{"step_type":"command","state":"ACTIVE"}}"#),
+            Ok(Line::UnexpectedStep)
+        );
     }
 }
