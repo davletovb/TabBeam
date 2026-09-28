@@ -48,6 +48,7 @@ Conclave has decided to adopt a shared runtime for all four providers at once, i
   - diagnostics and all user-facing wording.
 - The library returns failures as a code, a reason, and a `retryable` flag. Each application writes its own messages, so protocol v1 doesn't change.
 - Resumable providers take and report native sessions as opaque handles.
+- A search turn in Pervue never resumes a native Claude or Codex session. It starts a new one from the bounded dialogue history, which never includes page context, so the protection needs no stored metadata.
 - Applications depend only on the library's crates, never on Pervue's. An application's own adapters build on `runtime-core`.
 
 **3. In-process consumption.**
@@ -58,6 +59,11 @@ Conclave has decided to adopt a shared runtime for all four providers at once, i
 
 **4. Execution rules.**
 - **One process per turn,** for every shared adapter. The library adopts no long-lived provider server.
+- **Every turn states a session policy.**
+  - `Ephemeral`: nothing the provider saves outlives the turn, using a CLI flag where one exists and per-turn cleanup otherwise.
+  - `Persistent`: the provider keeps its native session and reports it. Only modes that can resume (Claude, Codex) accept it, and a turn that carries a continuation handle is always `Persistent`.
+
+  Conclave's turns are always `Ephemeral`.
 - **Sign-in checks** that an application requests finish before a turn's provider process starts, and never run alongside it. The library doesn't cache them. Caching is an explicit policy of the application, and any authentication or provider failure invalidates it.
 - **Each application's namespace is fixed when it starts the runtime.** Its workspaces and cleanup records live under that namespace.
 - **The environment allowlist** can be extended only through trusted configuration read at startup. It never takes names from per-turn input: requests, pages, prompts, or model output.
@@ -72,7 +78,7 @@ Conclave has decided to adopt a shared runtime for all four providers at once, i
 - **Native sessions.** A provider that can resume (Claude, Codex) reports its native session as an opaque handle in a `Session` event.
   - The event comes before `Started`, so the application can store its mapping before announcing the conversation.
   - It comes again if the provider reports a different session later.
-  - Stateless providers never send it.
+  - Only `Persistent` turns send it.
 - **Cancellation.** Cancelling a running turn is idempotent, and cancelling a turn that has ended does nothing.
 - **Supervision.** One supervisor sits beneath both entry points: `pervue-host`'s loop and the `service` thread. It owns the table of running turns, outside the frames that can unwind.
   - **Adapter panics.** Every entry into provider-controlled code runs behind `catch_unwind`. That covers constructing a provider; `status`, `send`, and `forget`; every `Exchange::next` and `Exchange::cancel`; and dropping an exchange. A panic there ends only the affected turn.

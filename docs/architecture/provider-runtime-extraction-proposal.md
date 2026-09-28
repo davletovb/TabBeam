@@ -205,11 +205,12 @@ A second application (Conclave: see its adoption proposal)
   - `pervue-host` keeps the map, its `conv_` IDs, and the retry-once-with-history policy.
   - Claude's session IDs will then cross a crate boundary they don't cross today, but only as opaque values.
   - Gemini and Grok keep no sessions, so they need no hook.
+  - Whether a turn keeps its native session at all is set by its session policy (§5), not guessed from whether it has a continuation handle.
 - **Cleanup has two scopes.**
   - **Per-turn cleanup is execution**, so it moves with the provider:
     - Gemini's Antigravity transcript.
     - Grok's private workspace, with heartbeat markers and recovery of stale directories at startup.
-    - For stateless `codex-exec` turns, the session file `exec` saves for each turn, deleted using the ownership check in `forget_rollouts`. Whether `exec` has a flag to skip saving hasn't been checked.
+    - For `Ephemeral` `codex-exec` turns (§5), the session file `exec` saves for each turn, deleted using the ownership check in `forget_rollouts`. Whether `exec` has a flag to skip saving hasn't been checked.
   - **Cleanup when a conversation is deleted is policy**, so it stays with the application. In Pervue, that means Claude's and Codex's transcripts.
   - **Retrying failed deletions.** The runtime keeps its own record of failed per-turn deletions, per namespace. It retries them when it starts and on request, so a consumer without conversations still gets retries. Pervue's `conversation.forget` can trigger the same retry.
 - **Environment construction.**
@@ -244,8 +245,17 @@ A second application (Conclave: see its adoption proposal)
 
 **Requests**
 - Today: `SendRequest` has `text`, `history`, browser `context`, and `native_search`.
-- Needed: a neutral turn with `system`, `messages`, `model`, a tool policy (`None` or `NativeWebSearch`), and an optional continuation handle (§4).
+- Needed: a neutral turn with `system`, `messages`, `model`, a tool policy (`None` or `NativeWebSearch`), a session policy (below), and an optional continuation handle (§4).
 - Why: Conclave needs a system prompt and runs every call statelessly. Pervue frames its browser context into messages before it calls the runtime.
+
+**Session policy**
+- Today: each adapter decides for itself whether the provider keeps its native session.
+- Needed: every turn states `Ephemeral` or `Persistent`.
+  - **`Ephemeral`:** nothing the provider saves outlives the turn. Where the CLI has a flag for this, the adapter uses it, such as Claude's `--no-session-persistence`. Otherwise per-turn cleanup removes what the CLI saved: `codex exec`'s session file, Antigravity's transcript, or Grok's workspace. No `Session` event is sent.
+  - **`Persistent`:** the provider keeps its native session and reports it through `Session` (§6). Only execution modes that can resume (Claude and Codex) accept it; `start_turn` rejects it for the others. A turn that carries a `continuation` handle is always `Persistent`.
+- Why: the same start, with no continuation handle, needs opposite behavior from the two applications. Pervue's first turn with Claude or Codex must keep the new session and report it, so the conversation can resume. Every Conclave call must leave nothing behind. A default either way would break one of them.
+  - **Conclave:** always `Ephemeral`.
+  - **Pervue:** `Persistent` for Claude and Codex, and `Ephemeral` for Gemini and Grok, as today. Search turns follow the Stage 1 rule (§7).
 
 **Namespace**
 - Today: paths and thread names are hard-coded under `pervue`.
@@ -299,6 +309,7 @@ let mut turn = runtime.start_turn(Turn {
     system: Some(system_prompt),
     messages,
     tools: ToolPolicy::None,
+    session: SessionPolicy::Ephemeral,
     continuation: None,
 })?; // registered, with an ID the runtime generates, before this returns
 
@@ -321,7 +332,7 @@ while let Some(event) = turn.next().await {
 
 **Events.**
 - **`Launched`**: the provider process started successfully. It feeds the run inspector and the §8 timeline, and doesn't affect any limit.
-- **`Session(handle)`**: the opaque native session the provider is running, for providers that can resume (Claude and Codex). Stateless providers never send it.
+- **`Session(handle)`**: the opaque native session the provider is running. Only `Persistent` turns send it (§5), and only execution modes that can resume (Claude and Codex) accept those.
   - It arrives before `Started`, so an application that keeps a conversation→session map can store the mapping before it announces the conversation. Pervue's Codex adapter works that way today.
   - It arrives again if the provider later reports a different session. For example, Claude's final `result` can name a session other than the one in `init`. The application then rewrites its mapping.
   - Pervue passes the handle back as the turn's `continuation` to resume. Conclave never uses it.
@@ -425,7 +436,11 @@ The native code is reshaped into the future library while it still lives in Perv
    - sign-in classification, including classifying the output of `codex login status`;
    - per-turn cleanup with the runtime's own retry record, for Gemini, Grok, and the session files `codex exec` saves for stateless turns;
    - moving Claude and Codex onto the shared private-file helpers, replacing their copies;
-   - in `pervue-host`: a search turn must not resume a Claude or Codex session that carried page context in an earlier turn. Today the rule against combining page context with search is checked per turn only, so a resumed session gives earlier page text live search access.
+   - in `pervue-host`: **a search turn never resumes a native Claude or Codex session.**
+     - The problem: the rule against combining page context with search is checked per turn only, so resuming a session that saw page context earlier gives that page text live search access.
+     - The rule: a search turn starts a new `Persistent` session from the bounded dialogue history, which never includes page context. The host then replaces the conversation's mapping with that new session.
+     - It holds across host restarts without any stored metadata, because it doesn't depend on remembering which sessions saw page context.
+     - The replayed history can still hold earlier answers that quoted a page, just as Gemini's and Grok's history does. The rule keeps raw page text out.
 6. **Add live smoke tests for Gemini and Grok.** Today only Codex and Claude have them.
 
 **Stage 1 exit bar:**
@@ -581,6 +596,10 @@ Long-lived provider processes stay out of scope (§4) unless the measurements sh
 **2026-09-28, PR review (davletovb/pervue#40).**
 - **Session event.** A new `Session(handle)` event carries a resumable provider's native session. It comes before `Started`, and again if the session changes, so `pervue-host` can keep its conversation→session map (§4, §6).
 - **One supervisor for both entry points.** The same supervisor now sits beneath both `pervue-host`'s loop and the `service` thread. Every scheduler step runs behind `catch_unwind`, so a scheduler panic no longer unwinds the loop that owns Native Messaging. A turn handle whose channel closes before `Ended` reports `Ended` itself (§6).
+
+**2026-09-28, second PR review (davletovb/pervue#40).**
+- **Session policy.** Every turn now states `Ephemeral` or `Persistent`, so a shared adapter knows whether to keep the provider's native session. Pervue's first Claude or Codex turn keeps it, and every Conclave call leaves nothing behind (§5, §6).
+- **Search turns.** A search turn never resumes a native Claude or Codex session. It starts a new one from the bounded dialogue history, which never includes page context, and the host replaces its mapping. The protection survives host restarts without stored metadata (§7).
 
 [p-claude]: ../../native/host/src/providers/claude/mod.rs
 [p-claude-output]: ../../native/host/src/providers/claude/output.rs
