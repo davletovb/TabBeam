@@ -249,7 +249,7 @@ impl Provider for Gemini {
             cancelled: false,
             native_search: request.native_search,
             answer: String::new(),
-            sources: SourceCollector::new("provider"),
+            sources: SourceCollector::new(ID),
             outcome: None,
         })
     }
