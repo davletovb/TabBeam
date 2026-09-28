@@ -7,11 +7,11 @@
 //! Antigravity transcript once the child has exited.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::hash::{BuildHasher, RandomState};
-use std::io;
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime};
@@ -183,7 +183,7 @@ impl Launch {
         ProcessSpec::new(executable)
             .args(args)
             .envs(self.inherited.iter().cloned())
-            .env("PATH", search_path_for(executable, self.path.as_deref()))
+            .env("PATH", environment::search_path_for(executable, self.path.as_deref()))
             .env("AGY_CLI_DISABLE_AUTO_UPDATE", "true")
             .current_dir(cwd)
     }
@@ -192,6 +192,8 @@ impl Launch {
 pub struct Gemini {
     search: SearchPath,
     launch: Rc<Launch>,
+    /// Pervue-owned cleanup records kept across host restarts.
+    cleanup_dir: Option<PathBuf>,
     timeouts: Timeouts,
     pending_cleanups: PendingCleanups,
 }
@@ -199,16 +201,20 @@ pub struct Gemini {
 impl Gemini {
     pub fn installed() -> Self {
         let host: Vec<_> = std::env::vars_os().collect();
-        Self::new(
+        let mut gemini = Self::new(
             discovery::installed(),
             workspace::default_for(&host, "antigravity"),
-        )
+        );
+        gemini.cleanup_dir = installed_cleanup_dir();
+        gemini
     }
 
     pub fn new(search: SearchPath, work_dir: PathBuf) -> Self {
+        let cleanup_dir = Some(work_dir.with_extension("cleanups"));
         Self {
             search,
             launch: Rc::new(Launch::new(work_dir, std::env::vars_os().collect())),
+            cleanup_dir,
             timeouts: TIMEOUTS,
             pending_cleanups: Rc::new(RefCell::new(HashMap::new())),
         }
@@ -229,6 +235,13 @@ impl Gemini {
     #[must_use]
     pub fn with_timeouts(mut self, timeouts: Timeouts) -> Self {
         self.timeouts = timeouts;
+        self
+    }
+
+    /// Overrides the durable cleanup-record directory (used by isolated tests).
+    #[must_use]
+    pub fn with_cleanup_dir(mut self, cleanup_dir: PathBuf) -> Self {
+        self.cleanup_dir = Some(cleanup_dir);
         self
     }
 
@@ -267,11 +280,14 @@ impl Provider for Gemini {
             .launch
             .command(&workspace, &executable, vec![OsString::from("models")]);
         Box::new(match Process::spawn(&spec) {
-            Ok(process) => StatusCheck::Probing {
-                process,
-                give_up: after(STATUS_PROBE),
-                stderr_tail: Vec::new(),
-            },
+            Ok(mut process) => {
+                process.close_stdin();
+                StatusCheck::Probing {
+                    process,
+                    give_up: after(STATUS_PROBE),
+                    stderr_tail: Vec::new(),
+                }
+            }
             Err(_) => StatusCheck::Done(VecDeque::from([
                 status_update(Availability::Unavailable, Authentication::Unknown),
                 Update::Completed,
@@ -287,7 +303,11 @@ impl Provider for Gemini {
         {
             return Box::new(Scripted::failed(MODEL_NOT_SUPPORTED));
         }
-        if request.conversation_id.is_some() && request.history.is_empty() {
+        if request
+            .conversation_id
+            .as_deref()
+            .is_some_and(|id| !is_pervue_conversation_id(id))
+        {
             return Box::new(Scripted::failed(UNKNOWN_CONVERSATION));
         }
         let Some(executable) = self.executable() else {
@@ -334,6 +354,7 @@ impl Provider for Gemini {
             stream: LineStream::new(process, MAX_LINE_BYTES).keeping_stderr_tail(STDERR_TAIL_BYTES),
             workspace: Some(workspace),
             home: self.launch.home.clone(),
+            cleanup_dir: self.cleanup_dir.clone(),
             pending_cleanups: Rc::clone(&self.pending_cleanups),
             queue: VecDeque::new(),
             conversation_id,
@@ -346,6 +367,9 @@ impl Provider for Gemini {
             searched: false,
             saw_delta: false,
             answer: String::new(),
+            held: String::new(),
+            held_step_done: false,
+            messages: 0,
             sources: SourceCollector::new(ID),
             outcome: None,
             finish_by: None,
@@ -354,24 +378,41 @@ impl Provider for Gemini {
     }
 
     fn forget(&self, conversation_id: &str) -> Box<dyn Exchange> {
-        let ids = self
+        if !is_pervue_conversation_id(conversation_id) {
+            return Box::new(Scripted::new([Update::Completed]));
+        }
+        let memory_ids = self
             .pending_cleanups
             .borrow()
             .get(conversation_id)
             .cloned()
             .unwrap_or_default();
-        if ids.is_empty() {
-            return Box::new(Scripted::new([Update::Completed]));
-        }
-        let Some(home) = self.launch.home.clone() else {
-            return Box::new(Scripted::failed(forget::SESSION_FORGET_FAILED));
-        };
+        let home = self.launch.home.clone();
+        let cleanup_dir = self.cleanup_dir.clone();
         let pending = Rc::clone(&self.pending_cleanups);
         let conversation = conversation_id.to_owned();
+        let work_conversation = conversation.clone();
         forget::in_background(
             move || {
-                for id in &ids {
-                    remove_antigravity_transcript(&home, id)?;
+                let mut ids = memory_ids;
+                if let Some(dir) = cleanup_dir.as_deref() {
+                    ids.extend(read_pending_cleanup_ids(dir, &work_conversation)?);
+                }
+                ids.sort();
+                ids.dedup();
+                if !ids.is_empty() {
+                    let home = home.as_deref().ok_or_else(|| {
+                        io::Error::new(
+                            io::ErrorKind::NotFound,
+                            "home directory unavailable for Antigravity transcript cleanup",
+                        )
+                    })?;
+                    for id in &ids {
+                        remove_antigravity_transcript(home, id)?;
+                    }
+                }
+                if let Some(dir) = cleanup_dir.as_deref() {
+                    forget_cleanup_record(dir, &work_conversation)?;
                 }
                 Ok(())
             },
