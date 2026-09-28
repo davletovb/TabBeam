@@ -36,8 +36,8 @@ Conclave has decided to adopt a shared runtime for all four providers at once, i
 - `runtime-core`: process, stream, and discovery code, plus neutral turn, error, and usage types. It is today's `pervue-core`, minus framing and Pervue's protocol vocabulary.
 - `platform`: environment construction, private files and workspaces, and per-turn cleanup with its retry record.
 - `providers`: one shared adapter per supported execution mode. Today those are `codex exec`, Claude's print mode, Antigravity's one-shot mode, and Grok's one-shot headless mode.
-- `scheduler`: concurrent turns; start, idle, and absolute limits; cancel → stop → kill; fairness; delta splitting.
-- `service`: an in-process API for async servers, with a supervisor.
+- `scheduler`: concurrent turns; start, idle, and absolute limits; cancel → stop → kill; fairness; delta splitting. It also holds the supervisor that both entry points use.
+- `service`: an in-process API for async servers, which runs the supervisor on a thread of its own.
 
 **2. The boundary.** The library owns provider execution mechanics. Each application keeps its conversation and product policy.
 - `pervue-host` keeps:
@@ -51,7 +51,7 @@ Conclave has decided to adopt a shared runtime for all four providers at once, i
 - Applications depend only on the library's crates, never on Pervue's. An application's own adapters build on `runtime-core`.
 
 **3. In-process consumption.**
-- `pervue-host` drives the scheduler from its existing synchronous loop.
+- `pervue-host` drives the supervisor, and through it the scheduler, from its existing synchronous loop.
 - Async servers use the `service` API.
 - If a non-Rust application ever needs the library, it gets a sidecar executable that wraps the `service` API and speaks a versioned protocol over stdio.
 - There is no C ABI and no Node addon.
@@ -69,11 +69,15 @@ Conclave has decided to adopt a shared runtime for all four providers at once, i
 - **`Launched` and `Started`.**
   - `Launched` means the provider process started.
   - `Started` means the provider accepted the turn and, where the adapter checks one, its `init` boundary passed. No answer text comes before it, and the start limit runs until it arrives.
+- **Native sessions.** A provider that can resume (Claude, Codex) reports its native session as an opaque handle in a `Session` event.
+  - The event comes before `Started`, so the application can store its mapping before announcing the conversation.
+  - It comes again if the provider reports a different session later.
+  - Stateless providers never send it.
 - **Cancellation.** Cancelling a running turn is idempotent, and cancelling a turn that has ended does nothing.
-- **Supervision.** A supervisor outside the scheduler thread owns the table of running turns.
-  - Every entry into provider-controlled code runs behind `catch_unwind`. That covers constructing a provider; `status`, `send`, and `forget`; every `Exchange::next` and `Exchange::cancel`; and dropping an exchange.
-  - A panic ends only the affected turn.
-  - If the scheduler itself panics, the supervisor ends every turn it holds. A turn is marked `not_started` only if it never reached the scheduler, and `maybe_started` otherwise. The supervisor then starts a new scheduler.
+- **Supervision.** One supervisor sits beneath both entry points: `pervue-host`'s loop and the `service` thread. It owns the table of running turns, outside the frames that can unwind.
+  - **Adapter panics.** Every entry into provider-controlled code runs behind `catch_unwind`. That covers constructing a provider; `status`, `send`, and `forget`; every `Exchange::next` and `Exchange::cancel`; and dropping an exchange. A panic there ends only the affected turn.
+  - **Scheduler panics.** Every scheduler step also runs behind `catch_unwind`. If one panics, the supervisor drops the scheduler, which kills its processes, and ends every turn it holds. A turn is marked `not_started` only if it never reached the scheduler, and `maybe_started` otherwise. The supervisor then starts a new scheduler. In `pervue-host`, the loop that owns Native Messaging keeps running.
+  - **Supervisor panics.** A panic in the supervisor itself on the `service` thread closes its channels. A turn handle whose channel closes before `Ended` then reports `Ended` itself, marked `maybe_started`.
   - All of this relies on `panic = "unwind"`.
 
 **6. The promotion rule.**

@@ -16,8 +16,9 @@
   - The runtime owns one shared adapter per supported execution mode: `codex exec`, Claude's print mode, Antigravity's one-shot mode, and Grok's one-shot headless mode.
   - An application can keep a different mode of the same CLI outside the shared set, such as Codex app-server or Grok ACP, when that mode's capabilities differ materially. It builds that adapter on `runtime-core`.
 - **The runtime is a Rust crate workspace that applications use in-process.**
-  - `pervue-host` drives its scheduler directly.
-  - Async servers use a small service API, which includes a supervisor.
+  - A single supervisor owns the scheduler.
+  - `pervue-host` drives that supervisor from its own loop.
+  - Async servers use a small service API, which runs the supervisor on a thread of its own.
   - If a non-Rust application ever needs the runtime, it gets a sidecar that wraps the service API.
   - There's no C ABI and no Node addon. ADR-0002 records this.
 - **Conclave is the second consumer.**
@@ -130,7 +131,7 @@ In order of impact:
 
 ## 3. How the runtime is consumed
 
-- **`pervue-host`** links the runtime crates and drives the scheduler from its existing synchronous loop.
+- **`pervue-host`** links the runtime crates and drives the supervisor, and through it the scheduler, from its existing synchronous loop.
 - **Async Rust servers** use the in-process service API (§6).
 - **A non-Rust application** would get a sidecar executable: a thin wrapper around the service API that speaks a versioned protocol over stdio. It is built only if a consumer needs it.
 - **Not planned:** a C ABI or a Node addon.
@@ -159,8 +160,10 @@ provider-runtime workspace (working name)
 │                 per-turn cleanup with its retry record
 ├─ providers      gemini, grok, claude, codex-exec
 ├─ scheduler      concurrent turns, start/idle/absolute limits,
-│                 cancel → stop → kill, fairness, delta splitting
-└─ service        in-process API for async servers, with a supervisor (§6)
+│                 cancel → stop → kill, fairness, delta splitting,
+│                 and the supervisor under both entry points (§6)
+└─ service        in-process API for async servers: runs the supervisor
+                  on a thread of its own
 
 pervue-host
 ├─ provider-runtime crates
@@ -197,7 +200,7 @@ A second application (Conclave: see its adoption proposal)
   - Pervue's host lives only as long as the extension's service worker keeps its connection ([native-connection.js][p-native-connection]), so a warm provider process wouldn't stay warm.
   - Speed is handled separately (§8).
 - **Continuation.**
-  - The runtime's Claude provider accepts an opaque native-session handle to resume, and reports the native session it ran.
+  - The runtime's Claude provider accepts an opaque native-session handle to resume. It reports the native session it ran through the `Session` event (§6), before `Started`, and again if the session changes.
   - When that session no longer exists, it fails with a reason of its own before producing any output.
   - `pervue-host` keeps the map, its `conv_` IDs, and the retry-once-with-history policy.
   - Claude's session IDs will then cross a crate boundary they don't cross today, but only as opaque values.
@@ -275,11 +278,11 @@ A second application (Conclave: see its adoption proposal)
 
 ## 6. The in-process runtime API
 
-The runtime stays synchronous and needs no async runtime of its own.
-- **`pervue-host`** drives the scheduler directly from its existing loop.
+The runtime stays synchronous and needs no async runtime of its own. Both ways in go through the same supervisor, which owns the scheduler (see Supervision below):
+- **`pervue-host`** drives the supervisor from its existing synchronous loop.
 - **Async servers** use the `service` API:
-  - The scheduler runs on its own thread, under a supervisor.
-  - Each turn's events arrive on a channel that works from both blocking and async code.
+  - it runs the supervisor on a thread of its own;
+  - each turn's events arrive on a channel that works from both blocking and async code.
 
 A sketch, not a final API:
 
@@ -305,6 +308,7 @@ let cancel = turn.canceller(); // cloneable, usable from another task
 while let Some(event) = turn.next().await {
     match event {
         TurnEvent::Launched => { /* the provider process started */ }
+        TurnEvent::Session(handle) => { /* resumable providers only: store it */ }
         TurnEvent::Started => { /* the provider accepted the turn */ }
         TurnEvent::Activity => {}
         TurnEvent::Delta(text) => { /* answer text */ }
@@ -317,6 +321,10 @@ while let Some(event) = turn.next().await {
 
 **Events.**
 - **`Launched`**: the provider process started successfully. It feeds the run inspector and the §8 timeline, and doesn't affect any limit.
+- **`Session(handle)`**: the opaque native session the provider is running, for providers that can resume (Claude and Codex). Stateless providers never send it.
+  - It arrives before `Started`, so an application that keeps a conversation→session map can store the mapping before it announces the conversation. Pervue's Codex adapter works that way today.
+  - It arrives again if the provider later reports a different session. For example, Claude's final `result` can name a session other than the one in `init`. The application then rewrites its mapping.
+  - Pervue passes the handle back as the turn's `continuation` to resume. Conclave never uses it.
 - **`Started`**: the provider accepted the turn. Its own start-of-turn event arrived and, where the adapter checks one, the `init` boundary passed: the tool set, agent, permission mode, model, and working directory.
   - No answer text comes before it.
   - The start limit runs until it arrives, which catches a CLI that launches and then hangs, such as a signed-out `codex exec` that keeps retrying.
@@ -339,23 +347,26 @@ start_turn accepts the turn
  ├─ launch fails, or cancelled before launch ─────────────→ Ended
  └─ Launched
      ├─ init fails, start limit passes, or cancelled ─────→ Ended
+     ├─ Session (resumable providers, before Started)
      └─ Started
-         ├─ Activity, Delta, Source, Usage (any number)
+         ├─ Activity, Delta, Source, Usage, Session (any number)
          └─ completes, fails, hits a limit, or cancelled ─→ Ended
 ```
 
 A runtime loss can end a turn at any point on this diagram (see Supervision below). It still produces exactly one `Ended`.
 
-**Supervision.** The failure outcomes are produced by code that survives the failure: a supervisor outside the scheduler thread, and a catch boundary around each adapter.
+**Supervision.** Failure outcomes come from code that survives the failure. One supervisor sits beneath both entry points, and a catch boundary surrounds each adapter.
 
 ```text
-Runtime handle (owned by the application)
-├─ supervisor (outside the scheduler thread)
-│   ├─ running turns: ID → event sender, and whether the scheduler received the turn
-│   ├─ ID counter
-│   └─ scheduler generation
-└─ scheduler thread (one generation at a time)
-    └─ provider exchanges, which own their processes
+Supervisor (the same one under both entry points)
+├─ running turns: ID → event sender, and whether the scheduler received the turn
+├─ ID counter
+├─ scheduler generation
+└─ scheduler: every step runs behind catch_unwind
+    └─ provider exchanges: every call runs behind catch_unwind; each owns its process
+
+pervue-host   drives the supervisor from its own synchronous loop
+service API   runs the supervisor on a thread of its own, for async servers
 ```
 
 - **A panic in one adapter.**
@@ -366,13 +377,22 @@ Runtime handle (owned by the application)
     - dropping an exchange.
   - A panic in any of these ends only the affected turn, with a runtime error marked `maybe_started`, or fails only the affected status check.
   - The exchange is dropped, which kills and reaps its process.
-- **A panic in the scheduler itself.** A watcher joins the scheduler thread, and the supervisor ends every turn it still holds.
-  - A turn is marked `not_started` only if it was never handed to the scheduler, for example because it was queued during a restart. Every other turn is marked `maybe_started`, because a provider may have started, or even finished, before the panic.
-  - Unwinding drops the scheduler's exchanges, which kills and reaps their processes.
+- **A panic in the scheduler itself.**
+  - Every scheduler step also runs behind `catch_unwind`, called by the supervisor. The supervisor's turn table lives outside the frame that unwinds, so it survives. In `pervue-host`, the loop that owns Native Messaging survives too.
+  - After a panic, the supervisor drops the scheduler, which kills and reaps every provider process it owned. It then ends every turn it still holds.
+    - A turn is marked `not_started` only if it never reached the scheduler. Every other turn is marked `maybe_started`, because a provider may have started, or even finished, before the panic.
+    - The supervisor removes a turn from its table before sending that turn's `Ended`, so no turn ends twice.
   - The supervisor then starts a new scheduler generation.
-  - The turn table is shared behind a mutex. If a panic poisons it, the supervisor recovers the data from the poisoned lock.
+- **A panic in the supervisor's own code** has no survivor inside the runtime, so each entry point handles it:
+  - **Through the `service` API:** the thread's channels close. A turn handle whose channel closes before `Ended` reports `Ended` itself, as a runtime error marked `maybe_started`, so the caller still sees exactly one ending.
+  - **In `pervue-host`:** the host process ends, and the extension sees the host disconnect, as it does today.
 - **Aborts.** All of this relies on the default `panic = "unwind"`. With `panic = "abort"`, or an abort such as running out of memory, the whole process ends, and the application's own recovery applies. Conclave marks unfinished runs `interrupted` at startup, and Pervue's extension sees the host disconnect.
-- **Tests.** Two tests prove this. One uses a fake-provider persona that makes its adapter panic; the other uses a test hook that panics the scheduler. Each asserts that every turn ends exactly once with the right marker, and that no provider process survives.
+- **Tests.** Three tests prove this:
+  - a fake-provider persona that makes its adapter panic;
+  - a test hook that panics a scheduler step, driven both through `pervue-host`'s loop and through the `service` API;
+  - a test hook that panics the `service` thread's supervisor.
+
+  Each asserts that every turn ends exactly once with the right marker, and that no provider process survives. For the `pervue-host` case, it also asserts that the host keeps serving new requests.
 
 **Other rules.**
 - **Dropping the runtime** cancels every turn, waits out the stop grace, and kills what remains, as Pervue does with `INPUT_CLOSED`.
@@ -557,6 +577,10 @@ Long-lived provider processes stay out of scope (§4) unless the measurements sh
 - **Repository.** The library moves to its own repository in Stage 2 (Summary, §7).
 - **Host-side hardening.** Stage 1 now includes a fix in `pervue-host`. A search turn must not resume a Claude or Codex session that carried page context in an earlier turn (§7).
 - **Conclave's proposal.** It moved to the Conclave repository, where it belongs.
+
+**2026-09-28, PR review (davletovb/pervue#40).**
+- **Session event.** A new `Session(handle)` event carries a resumable provider's native session. It comes before `Started`, and again if the session changes, so `pervue-host` can keep its conversation→session map (§4, §6).
+- **One supervisor for both entry points.** The same supervisor now sits beneath both `pervue-host`'s loop and the `service` thread. Every scheduler step runs behind `catch_unwind`, so a scheduler panic no longer unwinds the loop that owns Native Messaging. A turn handle whose channel closes before `Ended` reports `Ended` itself (§6).
 
 [p-claude]: ../../native/host/src/providers/claude/mod.rs
 [p-claude-output]: ../../native/host/src/providers/claude/output.rs
