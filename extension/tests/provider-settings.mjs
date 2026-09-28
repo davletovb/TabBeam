@@ -112,7 +112,7 @@ const doc = {
   assert.equal(settings.getProviderId(), "claude");
   // Every provider is checked, and the page never overwrites the popup's
   // diagnostics.
-  assert.deepEqual(checks.map((check) => [check.provider_id, check.record_diagnostics]), [["codex", false], ["claude", false]]);
+  assert.deepEqual(checks.map((check) => [check.provider_id, check.record_diagnostics]), [["codex", false], ["claude", false], ["gemini", false]]);
   assert.equal(line(0).textContent, "Codex is ready.");
   assert.equal(line(0).getAttribute("data-state"), "ready");
   assert.equal(line(1).getAttribute("data-kind"), "provider-missing", "what's left to set up shows per provider");
