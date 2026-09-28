@@ -92,7 +92,19 @@ const MALFORMED_OUTPUT: ErrorBody<'static> = ErrorBody {
 const BOUNDARY_VIOLATION: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROVIDER_BOUNDARY_VIOLATION",
-    message: "Antigravity tried to use a capability Pervue did not allow. The turn was stopped.",
+    message: "Antigravity tried to use a tool or step Pervue doesn't allow, so the turn was stopped.",
+    retryable: false,
+};
+const AGENT_NOT_USED: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::ProviderFailed,
+    reason: "PROVIDER_AGENT_NOT_USED",
+    message: "Antigravity didn't use Pervue's restricted agent, so the turn was stopped. Update Antigravity CLI, then try again.",
+    retryable: false,
+};
+const PERMISSIONS_TOO_OPEN: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::ProviderFailed,
+    reason: "PROVIDER_PERMISSIONS_TOO_OPEN",
+    message: "Antigravity is set to run tools without asking, so Pervue stopped the turn. Set Antigravity's tool permission to review requests, then try again.",
     retryable: false,
 };
 const UNKNOWN_CONVERSATION: ErrorBody<'static> = ErrorBody {
@@ -366,6 +378,9 @@ impl Provider for Gemini {
             answer: String::new(),
             held: String::new(),
             held_step_done: false,
+            answer_steps: HashSet::new(),
+            answer_step: None,
+            step_text: String::new(),
             messages: 0,
             sources: SourceCollector::new(ID),
             outcome: None,
@@ -599,6 +614,12 @@ struct Turn {
     /// whether it was search narration.
     held: String,
     held_step_done: bool,
+    /// Indices of the agent-response steps seen, so a later update that
+    /// doesn't name its type still counts as answer text only for them.
+    answer_steps: HashSet<u64>,
+    /// The agent-response step being written, and its text so far.
+    answer_step: Option<u64>,
+    step_text: String,
     messages: usize,
     sources: SourceCollector,
     outcome: Option<Result<(), ErrorBody<'static>>>,
@@ -674,13 +695,14 @@ impl Turn {
                 self.antigravity_conversation = Some(conversation_id.clone());
                 self.register_cleanup_id(conversation_id);
 
-                if agent != self.expected_agent
-                    || !matches!(
-                        permission_mode.as_str(),
-                        "request-review" | "proceed-in-sandbox" | "strict"
-                    )
-                {
-                    return self.fail(BOUNDARY_VIOLATION);
+                if agent != self.expected_agent {
+                    return self.fail(AGENT_NOT_USED);
+                }
+                if !matches!(
+                    permission_mode.as_str(),
+                    "request-review" | "proceed-in-sandbox" | "strict"
+                ) {
+                    return self.fail(PERMISSIONS_TOO_OPEN);
                 }
                 self.initialized = true;
                 if self.announce_conversation {
@@ -691,22 +713,26 @@ impl Turn {
                     conversation_id: Some(self.conversation_id.clone()),
                 });
             }
-            Ok(Line::AgentDelta { text, done }) => {
-                if !self.initialized {
-                    return self.fail(MALFORMED_OUTPUT);
+            Ok(Line::AgentDelta { index, text, done }) => {
+                if let Some(index) = index {
+                    self.answer_steps.insert(index);
                 }
-                if !self.native_search {
-                    self.show_text(text);
+                self.answer_delta(index, text, done);
+            }
+            Ok(Line::Untyped { index, text, done }) => {
+                if index.is_some_and(|index| self.answer_steps.contains(&index)) {
+                    self.answer_delta(index, text, done);
+                } else if !self.initialized {
+                    self.fail(MALFORMED_OUTPUT);
                 } else {
-                    // Each response step is held until the next step. If a
-                    // search follows, it was narration and is dropped. If a
-                    // second response starts, the previous one was answer text.
-                    if self.held_step_done {
-                        self.flush_held();
-                    }
-                    self.held.push_str(&text);
-                    self.held_step_done = done;
+                    self.queue.push_back(Update::Activity);
                 }
+            }
+            Ok(Line::OtherStep { .. }) => {
+                // The prompt echoed back, a system message, or an unclassified
+                // step: not answer text, and nothing Pervue lets act. The
+                // prompt is echoed before or after `init`, so either is fine.
+                self.queue.push_back(Update::Activity);
             }
             Ok(Line::Tool(tool)) => {
                 if !self.initialized {
@@ -766,6 +792,42 @@ impl Turn {
             }
             Ok(Line::ResultFailed(error)) => self.fail(error),
             Ok(Line::Ignored) => {}
+        }
+    }
+
+    /// Answer text from agent-response step `index`.
+    fn answer_delta(&mut self, index: Option<u64>, text: String, done: bool) {
+        if !self.initialized {
+            return self.fail(MALFORMED_OUTPUT);
+        }
+        if index != self.answer_step {
+            self.answer_step = index;
+            self.step_text.clear();
+        }
+        // A DONE update normally carries the last fragment; one that repeats
+        // the step's whole text shows only what's new, never a second copy.
+        let text = if done && !self.step_text.is_empty() && text.starts_with(&self.step_text) {
+            text[self.step_text.len()..].to_owned()
+        } else {
+            text
+        };
+        if done {
+            self.answer_step = None;
+            self.step_text.clear();
+        } else {
+            self.step_text.push_str(&text);
+        }
+        if !self.native_search {
+            self.show_text(text);
+        } else {
+            // Each response step is held until the next step. If a search
+            // follows, it was narration and is dropped. If a second response
+            // starts, the previous one was answer text.
+            if self.held_step_done {
+                self.flush_held();
+            }
+            self.held.push_str(&text);
+            self.held_step_done = done;
         }
     }
 

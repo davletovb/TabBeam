@@ -148,11 +148,7 @@ fn one_shot_turns_continue_from_bounded_pervue_history() {
             _ => None,
         })
         .expect("conversation created");
-    assert!(
-        first
-            .iter()
-            .any(|update| matches!(update, Update::Delta(text) if text == "Gemini answer"))
-    );
+    assert_eq!(answer_text(&first), "Gemini answer");
     assert!(matches!(first.last(), Some(Update::Completed)));
 
     let second = collect(adapter.send(request(Some(conversation.clone()), false)));
@@ -162,11 +158,7 @@ fn one_shot_turns_continue_from_bounded_pervue_history() {
             .any(|update| matches!(update, Update::ConversationCreated(_)))
     );
     assert!(second.iter().any(|update| matches!(update, Update::Started { conversation_id: Some(id) } if id == &conversation)));
-    assert!(
-        second.iter().any(
-            |update| matches!(update, Update::Delta(text) if text == "Gemini continued answer")
-        )
-    );
+    assert_eq!(answer_text(&second), "Gemini continued answer");
     assert!(matches!(second.last(), Some(Update::Completed)));
 }
 
@@ -266,7 +258,7 @@ fn unsafe_init_still_cleans_the_transcript_it_already_created() {
     let updates = collect(fake.adapter().send(request));
     assert!(matches!(
         updates.last(),
-        Some(Update::Failed(error)) if error.reason == "PROVIDER_BOUNDARY_VIOLATION"
+        Some(Update::Failed(error)) if error.reason == "PROVIDER_AGENT_NOT_USED"
     ));
     let remaining = std::fs::read_dir(fake.brain())
         .map(|entries| entries.count())
@@ -334,6 +326,45 @@ fn persisted_cleanup_records_survive_adapter_restart_and_forget_retries_them() {
     assert!(matches!(updates.as_slice(), [Update::Completed]));
     assert!(!fake.brain().join(agy_id).exists());
     assert!(!record.exists());
+}
+
+fn answer_text(updates: &[Update]) -> String {
+    updates
+        .iter()
+        .filter_map(|update| match update {
+            Update::Delta(text) => Some(text.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Real `agy` echoes the prompt as a `user_input` step and can add
+/// `system_message` steps; neither is answer text or an action, and the
+/// answer's DONE update names only its step.
+#[test]
+fn the_echoed_prompt_and_system_messages_are_not_answer_or_violations() {
+    let fake = FakeGemini::install();
+    let updates = collect(fake.adapter().send(request(None, false)));
+    assert!(
+        matches!(updates.last(), Some(Update::Completed)),
+        "{updates:?}"
+    );
+    let answer = answer_text(&updates);
+    assert_eq!(answer, "Gemini answer");
+    assert!(!answer.contains("Session ready"));
+}
+
+#[test]
+fn a_done_update_that_repeats_the_answer_does_not_double_it() {
+    let fake = FakeGemini::install();
+    let mut request = request(None, false);
+    request.model = Some("gemini-cumulative-done".to_owned());
+    let updates = collect(fake.adapter().send(request));
+    assert!(
+        matches!(updates.last(), Some(Update::Completed)),
+        "{updates:?}"
+    );
+    assert_eq!(answer_text(&updates), "Gemini answer");
 }
 
 #[test]

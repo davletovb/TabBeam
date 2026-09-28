@@ -11,12 +11,29 @@ pub enum Line {
         permission_mode: String,
         agent: String,
     },
+    /// Text of the answer being written: fragments while the step is
+    /// ACTIVE, and the last one when it is DONE.
     AgentDelta {
+        index: Option<u64>,
         text: String,
         done: bool,
     },
     Tool(String),
     Subagent,
+    /// A step Antigravity documents that is neither answer nor action: the
+    /// prompt echoed back (`user_input`), a `system_message`, or a step it
+    /// doesn't classify (`unknown`). Its text is never shown.
+    OtherStep {
+        index: Option<u64>,
+    },
+    /// An update that doesn't name its step type, such as a later update of
+    /// a step already seen; `index` says which.
+    Untyped {
+        index: Option<u64>,
+        text: String,
+        done: bool,
+    },
+    /// A step type Antigravity doesn't document. It fails closed.
     UnexpectedStep,
     ResultSuccess {
         conversation_id: Option<String>,
@@ -92,21 +109,27 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
                         .unwrap_or_default()
                         .to_owned(),
                 )
-            } else if update.get("step_type").and_then(Value::as_str) == Some("agent_response") {
+            } else {
+                let index = update.get("step_index").and_then(Value::as_u64);
                 let text = update
                     .get("text_delta")
                     .and_then(Value::as_str)
                     .unwrap_or_default()
                     .to_owned();
-                Line::AgentDelta {
-                    text,
-                    done: update.get("state").and_then(Value::as_str) == Some("DONE"),
+                let done = update.get("state").and_then(Value::as_str) == Some("DONE");
+                match update.get("step_type") {
+                    None | Some(Value::Null) => Line::Untyped { index, text, done },
+                    Some(kind) => match kind.as_str() {
+                        Some("agent_response") => Line::AgentDelta { index, text, done },
+                        Some("user_input" | "system_message" | "unknown") => {
+                            Line::OtherStep { index }
+                        }
+                        // Antigravity is an execution-capable runtime. A step
+                        // type it doesn't document fails closed at the
+                        // adapter boundary rather than counting as progress.
+                        _ => Line::UnexpectedStep,
+                    },
                 }
-            } else {
-                // Antigravity is an execution-capable runtime. Unknown step
-                // types fail closed at the adapter boundary rather than being
-                // treated as harmless progress.
-                Line::UnexpectedStep
             }
         }
         "result" => {
@@ -228,6 +251,7 @@ mod tests {
                 r#"{"event":"step_update","step_update":{"step_type":"agent_response","state":"ACTIVE","text_delta":"hi"}}"#
             ),
             Ok(Line::AgentDelta {
+                index: None,
                 text: "hi".to_owned(),
                 done: false,
             })
@@ -287,6 +311,44 @@ mod tests {
         ] {
             assert_eq!(provider_failure(message).reason, "PROVIDER_UNAVAILABLE");
         }
+    }
+
+    /// Every real run starts with the prompt echoed back as a `user_input`
+    /// step (seen in `agy` 1.2.x output); `system_message` and `unknown` steps
+    /// are documented too. None of them is answer text or an action.
+    #[test]
+    fn documented_non_answer_steps_are_not_answers_or_actions() {
+        for (kind, index) in [("user_input", 0), ("system_message", 1), ("unknown", 2)] {
+            let line = serde_json::json!({
+                "event":"step_update",
+                "step_update":{"conversation_id":"agy-1","step_index":index,"state":"DONE","step_type":kind,"text_delta":"not answer"}
+            });
+            assert_eq!(
+                parse(&line.to_string()),
+                Ok(Line::OtherStep { index: Some(index) }),
+                "{kind}"
+            );
+        }
+        assert_eq!(
+            parse(
+                r#"{"event":"step_update","step_update":{"step_index":3,"state":"DONE","text_delta":"\n"}}"#
+            ),
+            Ok(Line::Untyped {
+                index: Some(3),
+                text: "\n".to_owned(),
+                done: true
+            })
+        );
+        assert_eq!(
+            parse(
+                r#"{"event":"step_update","step_update":{"step_index":3,"state":"ACTIVE","step_type":"agent_response","text_delta":"PONG"}}"#
+            ),
+            Ok(Line::AgentDelta {
+                index: Some(3),
+                text: "PONG".to_owned(),
+                done: false
+            })
+        );
     }
 
     #[test]
