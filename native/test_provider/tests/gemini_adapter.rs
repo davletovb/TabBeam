@@ -271,7 +271,10 @@ fn unsafe_init_still_cleans_the_transcript_it_already_created() {
     let remaining = std::fs::read_dir(fake.brain())
         .map(|entries| entries.count())
         .unwrap_or(0);
-    assert_eq!(remaining, 0, "unsafe init leaked its Antigravity transcript");
+    assert_eq!(
+        remaining, 0,
+        "unsafe init leaked its Antigravity transcript"
+    );
 }
 
 #[test]
