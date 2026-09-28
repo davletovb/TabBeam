@@ -1,4 +1,4 @@
-//! Gemini CLI stream-json output reduced to Pervue's provider-neutral events.
+//! Antigravity CLI stream-json output reduced to Pervue's provider-neutral events.
 
 use serde_json::Value;
 
@@ -6,11 +6,19 @@ use crate::protocol::events::{ErrorBody, ErrorCode};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Line {
-    Init(String),
-    AssistantDelta(String),
-    WebSearch,
+    Init {
+        conversation_id: String,
+        permission_mode: String,
+        agent: String,
+    },
+    AgentDelta(String),
+    Tool(String),
+    Subagent,
     Progress,
-    ResultSuccess,
+    ResultSuccess {
+        conversation_id: Option<String>,
+        response: String,
+    },
     ResultFailed(ErrorBody<'static>),
     Ignored,
 }
@@ -18,12 +26,14 @@ pub enum Line {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Malformed;
 
-const MAX_SESSION_ID_LENGTH: usize = 128;
+const MAX_CONVERSATION_ID_LENGTH: usize = 128;
 
-pub fn is_session_id(id: &str) -> bool {
+pub fn is_conversation_id(id: &str) -> bool {
     !id.is_empty()
-        && id.len() <= MAX_SESSION_ID_LENGTH
+        && id.len() <= MAX_CONVERSATION_ID_LENGTH
         && !id.starts_with('-')
+        && id != "."
+        && id != ".."
         && id
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
@@ -34,68 +44,86 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
         return Ok(Line::Ignored);
     }
     let event: Value = serde_json::from_str(line).map_err(|_| Malformed)?;
-    let kind = event.get("type").and_then(Value::as_str).ok_or(Malformed)?;
+    let kind = event.get("event").and_then(Value::as_str).ok_or(Malformed)?;
     Ok(match kind {
         "init" => {
-            let id = event
-                .get("session_id")
+            let conversation_id = event
+                .get("conversation_id")
                 .and_then(Value::as_str)
                 .ok_or(Malformed)?;
-            if !is_session_id(id) {
+            if !is_conversation_id(conversation_id) {
                 return Err(Malformed);
             }
-            Line::Init(id.to_owned())
-        }
-        "message" => {
-            let role = event.get("role").and_then(Value::as_str).ok_or(Malformed)?;
-            let content = event
-                .get("content")
+            let init = event.get("init").ok_or(Malformed)?;
+            let permission_mode = init
+                .get("permission_mode")
                 .and_then(Value::as_str)
                 .ok_or(Malformed)?;
-            if role == "assistant" {
-                Line::AssistantDelta(content.to_owned())
+            let agent = init.get("agent").and_then(Value::as_str).ok_or(Malformed)?;
+            Line::Init {
+                conversation_id: conversation_id.to_owned(),
+                permission_mode: permission_mode.to_owned(),
+                agent: agent.to_owned(),
+            }
+        }
+        "step_update" => {
+            let update = event.get("step_update").ok_or(Malformed)?;
+            if update.get("subagent_info").is_some_and(|value| !value.is_null())
+                || update.get("step_type").and_then(Value::as_str) == Some("subagent")
+            {
+                Line::Subagent
+            } else if update.get("step_type").and_then(Value::as_str) == Some("tool")
+                || update.get("tool_info").is_some_and(|value| !value.is_null())
+            {
+                Line::Tool(
+                    update
+                        .get("tool_name")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                )
+            } else if update.get("step_type").and_then(Value::as_str) == Some("agent_response") {
+                match update.get("text_delta").and_then(Value::as_str) {
+                    Some(text) => Line::AgentDelta(text.to_owned()),
+                    None => Line::Progress,
+                }
             } else {
                 Line::Progress
             }
         }
-        "tool_use" => {
-            let tool = event
-                .get("tool_name")
+        "result" => {
+            let result = event.get("result").ok_or(Malformed)?;
+            let status = result
+                .get("status")
                 .and_then(Value::as_str)
                 .ok_or(Malformed)?;
-            if tool == "google_web_search" {
-                Line::WebSearch
-            } else {
-                Line::Progress
-            }
-        }
-        "tool_result" => Line::Progress,
-        "error" => {
-            let severity = event
-                .get("severity")
-                .and_then(Value::as_str)
-                .ok_or(Malformed)?;
-            let message = event
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            if severity == "error" {
-                Line::ResultFailed(provider_failure(message))
-            } else {
-                Line::Progress
-            }
-        }
-        "result" => match event.get("status").and_then(Value::as_str) {
-            Some("success") => Line::ResultSuccess,
-            Some("error") => {
-                let message = event
-                    .pointer("/error/message")
+            if status == "SUCCESS" {
+                let conversation_id = result
+                    .get("conversation_id")
                     .and_then(Value::as_str)
-                    .unwrap_or_default();
+                    .map(str::to_owned);
+                if conversation_id
+                    .as_deref()
+                    .is_some_and(|id| !is_conversation_id(id))
+                {
+                    return Err(Malformed);
+                }
+                Line::ResultSuccess {
+                    conversation_id,
+                    response: result
+                        .get("response")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                }
+            } else {
+                let message = result
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or(status);
                 Line::ResultFailed(provider_failure(message))
             }
-            _ => return Err(Malformed),
-        },
+        }
         _ => Line::Ignored,
     })
 }
@@ -103,7 +131,7 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
 const AUTH_REJECTED: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::ProviderNotAuthenticated,
     reason: "AUTH_REJECTED",
-    message: "Gemini isn't signed in. Open Gemini CLI, sign in, then try again.",
+    message: "Gemini isn't signed in through Antigravity. Run \"agy\" in a terminal, sign in, then try again.",
     retryable: false,
 };
 
@@ -114,27 +142,24 @@ const RATE_LIMITED: ErrorBody<'static> = ErrorBody {
     retryable: true,
 };
 
-const UNKNOWN_CONVERSATION: ErrorBody<'static> = ErrorBody {
-    code: ErrorCode::InvalidRequest,
-    reason: "UNKNOWN_CONVERSATION",
-    message: "Gemini's saved session no longer exists. Pervue will rebuild it from conversation history when possible.",
-    retryable: false,
-};
-
 const UNAVAILABLE: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROVIDER_UNAVAILABLE",
-    message: "Gemini couldn't answer right now. Try again.",
+    message: "Gemini couldn't answer through Antigravity right now. Try again.",
     retryable: true,
 };
 
-pub fn names_unknown_session(message: &str) -> bool {
+pub fn authentication_failure(message: &str) -> bool {
     let lower = message.to_ascii_lowercase();
     [
-        "invalid session identifier",
-        "session not found",
-        "no session",
-        "unknown session",
+        "authentication required",
+        "not authenticated",
+        "not signed in",
+        "sign-in required",
+        "signin required",
+        "login required",
+        "credentials missing",
+        "credentials not found",
     ]
     .iter()
     .any(|phrase| lower.contains(phrase))
@@ -142,21 +167,7 @@ pub fn names_unknown_session(message: &str) -> bool {
 
 pub fn provider_failure(message: &str) -> ErrorBody<'static> {
     let lower = message.to_ascii_lowercase();
-    if names_unknown_session(message) {
-        UNKNOWN_CONVERSATION
-    } else if [
-        "not authenticated",
-        "authentication required",
-        "login required",
-        "sign in",
-        "401 unauthorized",
-        "invalid api key",
-        "api key not valid",
-        "oauth",
-    ]
-    .iter()
-    .any(|phrase| lower.contains(phrase))
-    {
+    if authentication_failure(message) {
         AUTH_REJECTED
     } else if [
         "rate limit",
@@ -180,34 +191,48 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_documented_stream_json_events() {
+    fn parses_antigravity_stream_json_events() {
         assert_eq!(
-            parse(r#"{"type":"init","timestamp":"x","session_id":"abc-123","model":"gemini"}"#),
-            Ok(Line::Init("abc-123".to_owned()))
+            parse(
+                r#"{"event":"init","conversation_id":"agy-123","init":{"permission_mode":"request-review","agent":"pervue-text","tools":[]}}"#
+            ),
+            Ok(Line::Init {
+                conversation_id: "agy-123".to_owned(),
+                permission_mode: "request-review".to_owned(),
+                agent: "pervue-text".to_owned(),
+            })
         );
         assert_eq!(
             parse(
-                r#"{"type":"message","timestamp":"x","role":"assistant","content":"hi","delta":true}"#
+                r#"{"event":"step_update","step_update":{"step_type":"agent_response","state":"ACTIVE","text_delta":"hi"}}"#
             ),
-            Ok(Line::AssistantDelta("hi".to_owned()))
+            Ok(Line::AgentDelta("hi".to_owned()))
         );
         assert_eq!(
             parse(
-                r#"{"type":"tool_use","timestamp":"x","tool_name":"google_web_search","tool_id":"1","parameters":{}}"#
+                r#"{"event":"step_update","step_update":{"step_type":"tool","tool_name":"search_web","tool_info":{}}}"#
             ),
-            Ok(Line::WebSearch)
+            Ok(Line::Tool("search_web".to_owned()))
         );
         assert_eq!(
-            parse(r#"{"type":"result","timestamp":"x","status":"success"}"#),
-            Ok(Line::ResultSuccess)
+            parse(
+                r#"{"event":"result","result":{"conversation_id":"agy-123","status":"SUCCESS","response":"done"}}"#
+            ),
+            Ok(Line::ResultSuccess {
+                conversation_id: Some("agy-123".to_owned()),
+                response: "done".to_owned(),
+            })
         );
     }
 
     #[test]
-    fn invalid_session_ids_and_malformed_events_are_refused() {
+    fn invalid_conversation_ids_and_malformed_events_are_refused() {
         for id in ["", "--help", "../../x", "has space"] {
-            let line =
-                serde_json::json!({"type":"init","session_id":id,"model":"x","timestamp":"x"});
+            let line = serde_json::json!({
+                "event":"init",
+                "conversation_id":id,
+                "init":{"permission_mode":"request-review","agent":"pervue-text"}
+            });
             assert_eq!(parse(&line.to_string()), Err(Malformed));
         }
         assert_eq!(parse("{not json"), Err(Malformed));
@@ -216,9 +241,8 @@ mod tests {
     #[test]
     fn failures_are_normalized_without_forwarding_provider_text() {
         for (message, reason) in [
-            ("Please sign in to continue", "AUTH_REJECTED"),
+            ("authentication required", "AUTH_REJECTED"),
             ("429 RESOURCE_EXHAUSTED quota", "PROVIDER_RATE_LIMITED"),
-            ("session not found", "UNKNOWN_CONVERSATION"),
             ("secret provider detail", "PROVIDER_UNAVAILABLE"),
         ] {
             let failure = provider_failure(message);
