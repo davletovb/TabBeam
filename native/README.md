@@ -350,6 +350,20 @@ cargo-fuzz builds the targets with AddressSanitizer. `frame_reader` reads frames
 The harnesses read directly from memory rather than creating a temporary file per input. The generated corpora seed empty, small valid, exact-maximum, oversized-prefix, truncated-prefix, and truncated-payload frames, plus requests derived from the golden protocol fixtures, so smoke runs start from structurally meaningful inputs.
 
 
+### Grok
+
+The Grok provider uses Grok Build's **one-shot headless** interface, not `grok agent stdio` and not a persistent app-server. Pervue targets the currently shipped stable CLI surface: each turn launches one `grok` child with `--prompt-file`, `--output-format streaming-messages-json`, `--include-partial-messages`, and `--agent <definition-file>`, then owns that child until it exits. Follow-ups resend Pervue's bounded dialogue history instead of depending on Grok's saved-session continuation.
+
+Pervue separates authentication from customization. Each child gets a private per-turn `GROK_HOME`; the cached account credential is located using Grok's normal precedence — an existing `GROK_AUTH_PATH`, otherwise `$GROK_HOME/auth.json`, otherwise `~/.grok/auth.json` — and is passed back only as `GROK_AUTH_PATH`. Direct API-key billing is disabled with `GROK_DISABLE_API_KEY_AUTH=1`, and ambient xAI API keys/custom endpoints are not inherited. Auto-update, subagents, memory, workflows, web fetch, feedback, prompt suggestions, and provider telemetry upload are disabled.
+
+Shipped Grok Build keeps the MCP discovery/dispatch umbrellas `search_tool` and `use_tool` available unless explicitly denied, even with a restricted agent definition. Pervue therefore applies a session-level clamp and explicitly denies `Agent,search_tool,use_tool`; it also clamps built-ins to `web_search` and then disables web search, yielding a text-only ordinary/context turn. The adapter verifies the real `system/init` boundary before forwarding answer text: OAuth auth, a compatible Grok model (including a resolved versioned alias), the canonical private cwd, an empty effective tool set, empty skills, and no active MCP server. Missing boundary fields fail closed, and any later tool-bearing block stops the turn.
+
+**Web search is currently reported unsupported for Grok.** Upstream Grok Build `main` documents a backend `web_search` stream, but the shipped stable CLI verified during PRO-09 does not expose that Pervue-safe path; its search attempts use the `search_tool`/`use_tool` MCP umbrellas instead. Pervue will not weaken the text-only boundary to simulate search. The extension therefore disables its Web switch for Grok until a shipped CLI exposes the structured backend search surface Pervue can verify and normalize safely.
+
+Grok output is intentionally reported as non-streaming at the protocol capability level for now. Pervue still requests partial-message frames and converts thinking/partial/system activity into internal activity updates so long reasoning does not look idle; user-visible answer text is forwarded from complete assistant/result messages. Provider failures are normalized without exposing raw stderr, and model/workspace/tool/skills/MCP boundary failures have distinct diagnostic reasons.
+
+Per-turn state lives under Pervue's private Grok workspace and is removed off the host loop after the child exits. Workspaces carry a Pervue heartbeat marker; a second browser/profile leaves a live turn alone, while startup recovery schedules only stale Pervue-owned directories for cleanup. This also recovers prompt/context files after a hard-killed host without deleting another host's in-flight turn.
+
 ### Gemini
 
 The Gemini provider uses Google's Antigravity CLI (`agy`), not the legacy `gemini` CLI. `agy models` is the status probe: a successful probe reports the provider authenticated, a recognized sign-in failure reports unauthenticated, and other probe failures report unavailable. Pervue never passes Google/API-key or ambient Antigravity variables from Chrome; Antigravity uses its own cached account sign-in, and auto-update is disabled inside provider runs.

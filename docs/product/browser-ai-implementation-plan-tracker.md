@@ -215,7 +215,7 @@ Reached after **Milestone H**:
 | TST-14 | Add citation/source grounding regression suite | H | Testing | SRCH-04, EXT-16, EXT-17 | IMPLEMENTED — VERIFY |
 | OBS-03 | Add sanitized diagnostics export | Post-G | Observability | OBS-02, PKG-01 | IMPLEMENTED — VERIFY |
 | PRO-08 | Add Gemini adapter | Post-E | Provider | PRO-07 | IMPLEMENTED — VERIFY |
-| PRO-09 | Add Grok adapter | Post-E | Provider | PRO-07 | DEFERRED |
+| PRO-09 | Add Grok adapter | Post-E | Provider | PRO-07 | IMPLEMENTED — VERIFY |
 | CON-04 | Add SQLite native persistence only when justified | Post-MVP | Conversation | CON-02 | DEFERRED |
 | PKG-07 | Add automatic companion updater | Post-G | Packaging | PKG-03, PKG-04, PKG-06 | BACKLOG |
 | PKG-08 | Add Linux packaging if demand justifies it | Post-G | Packaging | LIB-05 | DEFERRED |
@@ -1726,7 +1726,18 @@ without terminal commands during the user journey.
 ### PRO-09 — Add Grok adapter
 **Dependencies:** PRO-07  
 **Rule:** Same abstraction discipline as PRO-08.  
-**Status:** DEFERRED
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- Uses Grok Build's shipped one-shot headless integration surface rather than a persistent ACP/app-server process. Each Pervue turn starts and owns exactly one `grok` child, using `--agent <definition-file>` rather than the newer upstream-only `--agent-profile` spelling.
+- Runs with a private per-turn working directory and private `GROK_HOME`. Cached OAuth discovery follows Grok's own precedence (`GROK_AUTH_PATH`, then `GROK_HOME/auth.json`, then `~/.grok/auth.json`) without inheriting provider API keys/custom endpoints; `GROK_DISABLE_API_KEY_AUTH=1` enforces account/OAuth use.
+- Sends bounded Pervue history/context through a private `--prompt-file`, never prompt text in argv. Continuation is stateless at the provider layer, matching the Gemini architecture.
+- Uses `streaming-messages-json` plus partial-message activity frames, verifies required init fields fail-closed, accepts version-resolved Grok aliases, canonicalizes the cwd check, and reports separate model/workspace/tool/skills/MCP boundary reasons.
+- Ordinary/context turns are text-only. The shipped CLI's always-present `search_tool`/`use_tool` MCP umbrellas are explicitly denied; built-ins are clamped and web search disabled. Grok `web_search` is therefore reported **Unsupported** until a shipped CLI exposes the structured backend search surface documented on upstream `main`; Pervue does not emulate search through MCP umbrellas.
+- Grok protocol streaming is reported **Unsupported** for now because answer text is emitted from complete assistant/result messages. Partial/thinking/system frames still become internal activity updates so long reasoning refreshes the idle timer.
+- Private workspaces use a Pervue heartbeat marker. Startup recovery removes only stale Pervue-owned directories, so another Chrome/Edge profile cannot delete a live turn; recursive cleanup runs off the host loop. Partial workspace creation is guarded so prompt/context files are cleaned on setup errors.
+- Shared private-provider helpers now centralize 0700 directories, 0600 files, Pervue conversation IDs, unique child names, bounded stderr tails, and deadline arithmetic for Grok/Gemini.
+- Fake-Grok integration coverage verifies authenticated/signed-out/relocated-auth status, stateless first/follow-up turns, model alias resolution, search refusal before launch, every init boundary (OAuth/model/cwd/tools/skills/MCP), provider-error classification, client-tool fail-stop, live-workspace coexistence across two host instances, cancellation, and invalid model/conversation rejection.
 
 ### CON-04 — Add SQLite native persistence only when justified
 **Dependencies:** CON-02  
@@ -1848,8 +1859,8 @@ Update this section whenever item statuses change.
 | F — Reusable native core | 7 | 0 | 7 | 0 | 0 | 0 | 0 | 0 |
 | G — Installable product | 9 | 0 | 7 | 0 | 0 | 0 | 2 | 0 |
 | H — Search/citations | 8 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
-| Post-milestone | 6 | 0 | 2 | 0 | 0 | 1 | 0 | 3 |
-| **Total** | **81** | **46** | **25** | **0** | **0** | **5** | **2** | **3** |
+| Post-milestone | 6 | 0 | 3 | 0 | 0 | 1 | 0 | 2 |
+| **Total** | **81** | **46** | **26** | **0** | **0** | **5** | **2** | **2** |
 
 ### Milestone completion rule
 

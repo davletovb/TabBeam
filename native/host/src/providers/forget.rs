@@ -130,6 +130,14 @@ pub(crate) fn remove(path: &Path) -> io::Result<()> {
     }
 }
 
+pub(crate) fn remove_in_background(path: std::path::PathBuf) {
+    let _ = thread::Builder::new()
+        .name("pervue-provider-cleanup".to_owned())
+        .spawn(move || {
+            let _ = remove(&path);
+        });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
