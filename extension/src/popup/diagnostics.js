@@ -96,7 +96,7 @@ export function renderDiagnostics(elements, summary) {
 
 /** @param {any} bundle */
 export function downloadDiagnosticsExport(bundle) {
-  const blob = new Blob([JSON.stringify(bundle, null, 2) + "\n"], { type: "application/json" });
+  const blob = new globalThis.Blob([JSON.stringify(bundle, null, 2) + "\n"], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   try {
     const link = document.createElement("a");
