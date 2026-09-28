@@ -3,7 +3,7 @@
 **Status:** Proposed, for discussion; the basis for Pervue's ADR-0002  
 **Date:** 2026-09-27  
 **Revised:** 2026-09-28 (see §11)  
-**Scope:** extracting a reusable provider runtime from Pervue's `native/` so that a second application can use it. How Conclave adopts the runtime is a separate decision, in the [Conclave adoption proposal](conclave-runtime-adoption-proposal.md).  
+**Scope:** hardening and extracting a reusable provider runtime from Pervue's `native/` so that a second application can use it. How Conclave adopts the runtime is recorded in Conclave's own repository, in its [adoption proposal][conclave-adoption].  
 **Evidence:** Pervue at `fc7284b` (four providers: Codex, Claude, Gemini, Grok), Conclave at `1379a37`
 
 ## Summary
@@ -20,14 +20,17 @@
   - Async servers use a small service API, which includes a supervisor.
   - If a non-Rust application ever needs the runtime, it gets a sidecar that wraps the service API.
   - There's no C ABI and no Node addon. ADR-0002 records this.
-- **This proposal needs Conclave to adopt the runtime in some form, but not in any particular form.** Conclave's options are to rewrite its server in Rust, which the project owner prefers, or to keep Node and use a sidecar. That choice is made in the [Conclave adoption proposal](conclave-runtime-adoption-proposal.md), and rejecting or delaying the Rust server doesn't invalidate this one.
+- **Conclave is the second consumer.**
+  - It has committed to adopting the runtime for all four providers at once, in a new Rust server. Its [adoption proposal][conclave-adoption], in the Conclave repository, records those decisions.
+  - This proposal needs Conclave as a consumer, but doesn't depend on how Conclave builds its server.
 - **Every provider runs as one process per turn.** Codex runs through `exec` only, and Grok in one-shot headless mode, as Pervue's adapter already does.
 - **Sign-in checks never run alongside a turn.** An application may choose to cache a successful check, but the runtime never caches by default (§8).
-- **Pilot with Gemini, then Grok, Claude, and Codex.**
-  - Gemini and Grok keep no sessions, so they need no continuation support. Claude brings the continuation hook.
-  - Preparing the runtime inside Pervue can start first. Moving an adapter into the shared layer waits until a second application has accepted a plan to use that mode (§7).
-- **Speed work comes after every provider runs on the runtime** (§8).
-- **Incubate in `native/`.** `pervue-core` becomes `runtime-core` inside the runtime workspace. The workspace gets its own repository once a second application runs on it.
+- **Three stages, each with an exit bar** (§7):
+  1. **Harden the runtime inside Pervue.** Fix the known gaps, and verify the pending tracker items, until a defined exit bar is met.
+  2. **Extract it as a library, with all four adapters at once.** Pervue switches to the library first, and its full test suite passing against the library proves the extraction.
+  3. **Conclave integrates all four providers** into its Rust server. That work is planned in Conclave's own proposal.
+- **Speed work comes after both applications run on the library** (§8).
+- **The library gets its own repository in Stage 2,** and `pervue-core` becomes `runtime-core` inside it. Both applications pin it to a git revision.
 
 ## 1. What exists today
 
@@ -142,7 +145,7 @@ In order of impact:
 
 That supersedes ADR-0001's sentence about a C ABI for non-Rust consumers.
 
-**Conclave** chooses between a Rust server, which uses the service API, and its Node server plus a sidecar, in its [adoption proposal](conclave-runtime-adoption-proposal.md). Either choice makes Conclave the second consumer this proposal needs.
+**Conclave** will use the service API from a new Rust server, as its [adoption proposal][conclave-adoption] records. A sidecar remains the fallback for Conclave if its port stalls.
 
 ## 4. Proposed boundary
 
@@ -154,7 +157,7 @@ provider-runtime workspace (working name)
 │                 (today's pervue-core, minus framing and Pervue's protocol vocabulary)
 ├─ platform       environment construction, private files and workspaces,
 │                 per-turn cleanup with its retry record
-├─ providers      gemini (the pilot), grok, claude, codex-exec
+├─ providers      gemini, grok, claude, codex-exec
 ├─ scheduler      concurrent turns, start/idle/absolute limits,
 │                 cancel → stop → kill, fairness, delta splitting
 └─ service        in-process API for async servers, with a supervisor (§6)
@@ -180,8 +183,9 @@ A second application (Conclave: see its adoption proposal)
 
 **What moves, and why.**
 - **The promotion rule.** Something moves into the runtime only when a second application uses it.
-  - A shared adapter is one execution mode of a CLI. It moves into the runtime when a second application has accepted a plan to use that same mode (§7), in the order of §7.
-  - A different mode of the same CLI that only one application uses, such as Codex app-server or Grok ACP, stays with that application.
+  - A shared adapter is one execution mode of a CLI. It moves into the runtime when a second application has accepted a plan to use that same mode.
+  - Conclave has committed to the library's mode for all four CLIs: `codex exec`, Claude's print mode, Antigravity's one-shot mode, and Grok's one-shot headless mode. That meets the bar for all four at once, so they move together in Stage 2 (§7).
+  - A different mode of the same CLI that only one application uses would stay with that application. Codex app-server and Grok ACP are examples, and Conclave has decided against both.
   - Session maps and conversation-scoped transcript removal stay in `pervue-host`, because Conclave runs every call statelessly.
   - Search-result sanitizing becomes shareable only if Conclave's server moves to Rust.
 - **One process per turn, for every provider.**
@@ -375,54 +379,68 @@ Runtime handle (owned by the application)
 - **Diagnostics** go to a hook the application supplies. They contain no prompts, output, or account identifiers, as in OBS-01.
 - **Versioning.** Consumers pin the runtime to a git revision while it incubates, and to a semver version once it's published.
 
-## 7. Phases
+## 7. Stages
 
 The tracker isn't edited here, and the IDs below are only proposals.
 
-**Phase 0: agree.** Nothing in this phase changes code.
+**Before Stage 1: agree.** Nothing here changes code.
 - Review this proposal.
 - Write ADR-0002.
-- Choose a name, a license, and where the runtime lives.
+- Choose the library's name and license.
 
-Conclave's adoption decision is separate.
+**Stage 1: harden inside Pervue** (proposed LIB-06 to LIB-09).
 
-**Phase 1: prepare the runtime inside Pervue** (proposed LIB-06 to LIB-08). This phase needs no second consumer yet, and moves no adapter into the shared layer.
-1. Create the runtime workspace:
+The native code is reshaped into the future library while it still lives in Pervue, so Stage 2 is a move rather than a redesign.
+
+1. **Verify what's pending.** Move LIB-01 to LIB-05, PRO-05 to PRO-09, TST-10, and TST-11 to VERIFIED.
+2. **Reshape the workspace:**
    - rename `pervue-core` to `runtime-core`;
    - move framing into `pervue-host`;
-   - introduce the neutral turn, error, usage, and timeout types from §5.
-2. Extract the scheduler from `host.rs`, and add the absolute limit and the rule for what counts as progress. The protocol validator and golden fixtures must stay green.
-3. Add the `service` API with its supervisor. Run the hostile matrix, the contract suite, and the panic tests through it, using the fake provider and Pervue's adapters where they are.
+   - introduce the neutral turn, error, usage, and timeout types (§5);
+   - move error wording into a message table in `pervue-host`.
+3. **Extract the scheduler** from `host.rs`, and add the absolute limit and the rule for what resets the idle timer. The rule stops a Claude turn from staying alive on unrecognized events.
+4. **Add the `service` API,** with its supervisor and panic boundary (§6).
+5. **Close the gaps this proposal found:**
+   - usage events, and live model lists (`agy models`, Grok's versioned aliases);
+   - sign-in classification, including classifying the output of `codex login status`;
+   - per-turn cleanup with the runtime's own retry record, for Gemini, Grok, and the session files `codex exec` saves for stateless turns;
+   - moving Claude and Codex onto the shared private-file helpers, replacing their copies;
+   - in `pervue-host`: a search turn must not resume a Claude or Codex session that carried page context in an earlier turn. Today the rule against combining page context with search is checked per turn only, so a resumed session gives earlier page text live search access.
+6. **Add live smoke tests for Gemini and Grok.** Today only Codex and Claude have them.
 
-**The gate for every provider phase.** A second application has accepted a plan to use the runtime with that execution mode. For Conclave, that's the first decision in its [adoption proposal](conclave-runtime-adoption-proposal.md#4-two-decisions). Until the gate is passed, the adapter stays in `pervue-host`.
+**Stage 1 exit bar:**
+- every item above is VERIFIED in the tracker;
+- all green: the hostile matrix, the panic tests, the contract suite across all four providers, the fuzz targets, the protocol validator, and the golden fixtures;
+- the live smoke tests pass for all four providers on current CLI versions;
+- no high-severity security finding is open.
 
-**Phase 2: Gemini, the pilot** (proposed LIB-09).
-- Move the Gemini provider into the shared layer, along with only the mechanics it needs:
-  - environment construction;
-  - private files and workspaces;
-  - per-turn transcript cleanup, with its retry record.
-- `pervue-host` keeps passing all of its tests.
+**Stage 2: extract the library, with all four adapters at once** (proposed LIB-10).
+1. Move these into a new repository with its own CI:
+   - the runtime crates: `runtime-core`, `platform`, `providers`, `scheduler`, and `service`;
+   - the test assets: the fake provider, the hostile matrix, the contract suite, the panic tests, and the fuzz targets.
+2. Switch Pervue to the library, pinned to a git revision. `pervue-host` keeps what §4 leaves it.
+3. Keep the library at version 0.x. Expect API changes during Stage 3, and have both applications bump their pin deliberately.
 
-**Phase 3: Grok.** Move the Grok provider in, with its per-turn workspace cleanup and heartbeat recovery. It keeps no sessions either.
+**Stage 2 exit bar:**
+- Pervue's full test suite passes against the library, including the live smoke tests;
+- the library's own CI is green.
 
-**Phase 4: Claude.** Move the Claude provider in, with the continuation hook. `pervue-host` keeps its sessions and its transcript removal when a conversation is deleted.
+**Stage 3: Conclave integrates all four providers.** This happens in Conclave's repository, following its [adoption proposal][conclave-adoption].
+- A problem in a shared adapter is fixed in the library, and both applications pick up the fix by bumping their pin.
+- Conclave never patches shared adapter behavior locally. That would let the two apps drift apart again, which is what the extraction is meant to end.
 
-**Phase 5: Codex.** Move `codex-exec` in, with per-turn cleanup of `exec`'s session files for stateless consumers.
-
-**Phase 6: speed** (proposed PRF-01 to PRF-03). See §8.
-
-**Phase 7: split and publish.** Move the runtime workspace to its own repository and publish its crates.
-
-Merging the helpers Claude and Codex still copy (§1) is cleanup inside the host, and can happen at any time.
+**After Stage 3.**
+- Speed work (proposed PRF-01 to PRF-03, §8).
+- Publish the crates once the API settles.
 
 **Working alongside the tracker.**
-- Phase 1 should start only after LIB-01 to LIB-05 are verified, so nothing is restructured while it is being verified.
-- Phases 2 and 3 also need PRO-08 and PRO-09 verified. The Gemini and Grok adapters landed on 2026-09-28, and Gemini was fixed the same day for real `agy` output, so both should settle before they move.
-- Phase 1 changes `host.rs`, the host's largest and most heavily tested file, and every import of `pervue-core`. Coordinate that with whoever holds the remaining tracker items.
+- Stage 1 is largely the remaining tracker work, so coordinate it with whoever holds those items.
+- Reshaping the workspace and extracting the scheduler touch `host.rs` and every import of `pervue-core`. Start them after LIB-01 to LIB-05 are verified.
+- The Gemini and Grok adapters landed on 2026-09-28, and Gemini was fixed the same day for real `agy` output. Both should settle before Stage 2.
 
 ## 8. Speed and cold start
 
-Optimize after every provider runs on the runtime. At that point the runtime is the one place where turns start, so a measurement or a fix covers every provider in every application at once.
+Optimize after both applications run on the library. At that point the library is the one place where turns start, so a measurement or a fix covers every provider in both applications at once.
 
 **What is measured today.**
 - TST-09 sets three budgets ([performance.js][p-perf]):
@@ -465,27 +483,27 @@ Long-lived provider processes stay out of scope (§4) unless the measurements sh
 
 ## 9. Risks
 
-- **Premature generalization.** The §4 promotion rule decides what moves. Move one provider at a time, and keep policy owned by a single application in that application.
+- **Premature generalization.** The §4 promotion rule decides what moves. Keep policy owned by a single application in that application.
+- **One large extraction step.** Moving all four adapters at once is a bigger change than moving them one at a time. Two things carry that risk: the Stage 1 exit bar, and Pervue switching to the library before Conclave does.
 - **Regressions from extracting the scheduler.**
   - `host.rs` holds protocol v1's lifecycle guarantees, so move it without changing behavior.
   - Keep TST-03, TST-04, and the golden fixtures as the gate.
 - **The rename touches every import.** Renaming `pervue-core` to `runtime-core` is mechanical but broad. Do it in one change, and coordinate it with open branches.
-- **Supervision is only as good as its tests.** The panic tests (§6) are part of Phase 1, not a follow-up.
+- **Supervision is only as good as its tests.** The panic tests (§6) are part of Stage 1, not a follow-up.
 - **Stricter checks on Gemini and Grok.**
   - Failing on anything the boundary doesn't expect is the right default: an undocumented Antigravity step type, or a Grok `init` field that doesn't match. But it broke real Gemini turns in Pervue until the 2026-09-28 fix, and any consumer inherits the behavior.
-  - Pervue has live smoke tests for Codex and Claude, but none yet for Gemini or Grok. Add them, and run them against each new CLI release.
+  - Run the live smoke tests for all four providers, including the Gemini and Grok tests Stage 1 adds, against each new CLI release.
 - **Windows.**
   - There is no Job Object yet ([process.rs][p-process]), so only the provider process itself is stopped, not its descendants.
   - Don't claim process-tree kills on Windows.
-- **Licensing.** Pervue has no license yet. Choose one before publishing crates.
+- **Licensing.** Pervue has no license yet. Choose one for the library before its repository is made public or its crates are published.
 
 ## 10. Open decisions
 
-1. Incubate the runtime in `native/` and split it later (recommended), or start a new repository now?
-2. The runtime's name. `provider-runtime` is a placeholder.
-3. The license.
-4. What should the default absolute turn limit be, and can applications raise it? Conclave uses 180 s today, and Pervue has no limit.
-5. Should Pervue keep its per-turn sign-in checks for Claude and Codex as they are, or set a caching policy? Pervue's checks guard against a signed-out CLI, not against the wrong kind of billing.
+1. The library's name. `provider-runtime` is a placeholder.
+2. The license.
+3. What should the default absolute turn limit be, and can applications raise it? Conclave uses 180 s today, and Pervue has no limit.
+4. Should Pervue keep its per-turn sign-in checks for Claude and Codex as they are, or set a caching policy? Pervue's checks guard against a signed-out CLI, not against the wrong kind of billing.
 
 ## 11. Revision history
 
@@ -513,7 +531,7 @@ Long-lived provider processes stay out of scope (§4) unless the measurements sh
 **2026-09-28, second review and Grok.**
 - **Separated decisions.**
   - This document now covers only the runtime and ADR-0002.
-  - Conclave's adoption, including the Rust server, its go/no-go, its security gaps, and the HTTP contract, moved to the [Conclave adoption proposal](conclave-runtime-adoption-proposal.md).
+  - Conclave's adoption, including the Rust server, its go/no-go, its security gaps, and the HTTP contract, moved to the [Conclave adoption proposal][conclave-adoption].
 - **Sign-in checks.** They never run alongside a turn. Caching is an explicit policy of the application, invalidated by any failure, with its billing tradeoff stated (§5, §8).
 - **Supervision.** A supervisor outside the scheduler thread, and `catch_unwind` around each adapter, produce the runtime-loss outcomes. Panic tests are part of Phase 1 (§6).
 - **IDs.** The runtime generates turn IDs, so no history of used IDs builds up (§6).
@@ -527,6 +545,18 @@ Long-lived provider processes stay out of scope (§4) unless the measurements sh
 - **Panic boundary.** It covers every entry into provider-controlled code, including every `Exchange::next` and `Exchange::cancel` call, not just the first call into an adapter (§6).
 - **Environment extensions.** They come only from trusted startup configuration, never from per-turn input (§4).
 - **Execution modes.** The runtime shares one adapter per execution mode, not per CLI. An application may keep a different mode of the same CLI outside the shared set (Summary, §4).
+
+**2026-09-28, three-stage plan.**
+- **Stages.** Three stages, each with an exit bar, replace the provider-by-provider phases:
+  1. harden inside Pervue;
+  2. extract the library with all four adapters at once, with Pervue switching to it first;
+  3. Conclave integrates all four providers.
+
+  The Gemini-first pilot is dropped (§7).
+- **Second consumer.** Conclave committed to the library's mode for all four CLIs, including `codex exec` and Grok's one-shot headless mode, so all four adapters move together (§4).
+- **Repository.** The library moves to its own repository in Stage 2 (Summary, §7).
+- **Host-side hardening.** Stage 1 now includes a fix in `pervue-host`. A search turn must not resume a Claude or Codex session that carried page context in an earlier turn (§7).
+- **Conclave's proposal.** It moved to the Conclave repository, where it belongs.
 
 [p-claude]: ../../native/host/src/providers/claude/mod.rs
 [p-claude-output]: ../../native/host/src/providers/claude/output.rs
@@ -552,3 +582,4 @@ Long-lived provider processes stay out of scope (§4) unless the measurements sh
 [c-claude-kill]: https://github.com/davletovb/conclave/blob/1379a37ccb13d484247122ee215257e642b166fc/apps/server/src/providers/anthropic-claude.ts#L139
 [c-grok-kill]: https://github.com/davletovb/conclave/blob/1379a37ccb13d484247122ee215257e642b166fc/apps/server/src/grok/acp-client.ts#L150
 [c-codex-env]: https://github.com/davletovb/conclave/blob/1379a37ccb13d484247122ee215257e642b166fc/apps/server/src/codex/app-server-client.ts#L64
+[conclave-adoption]: https://github.com/davletovb/conclave/blob/claude/eloquent-franklin-8qo1f1/docs/proposals/provider-runtime-adoption.md
