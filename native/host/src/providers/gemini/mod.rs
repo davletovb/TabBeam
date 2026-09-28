@@ -982,11 +982,6 @@ const MAX_PENDING_CLEANUPS: usize = 256;
 const TRANSCRIPT_SCAN_BUDGET: usize = 512;
 const TRANSCRIPT_SCAN_BYTES: u64 = 1024 * 1024;
 
-fn private_fs::is_conversation_id(id: &str) -> bool {
-    id.len() == 21
-        && id.starts_with("conv_")
-        && id[5..].bytes().all(|byte| byte.is_ascii_hexdigit())
-}
 
 fn installed_cleanup_dir() -> Option<PathBuf> {
     #[cfg(windows)]
@@ -1140,24 +1135,6 @@ fn transcript_tree_mentions(
     Ok(false)
 }
 
-fn private_fs::new_conversation_id() -> String {
-    format!(
-        "conv_{:016x}",
-        RandomState::new().hash_one((SystemTime::now(), std::process::id()))
-    )
-}
-
-fn private_fs::keep_tail(tail: &mut Vec<u8>, bytes: &[u8], limit: usize) {
-    let bytes = &bytes[bytes.len().saturating_sub(limit)..];
-    let excess = (tail.len() + bytes.len()).saturating_sub(limit);
-    tail.drain(..excess);
-    tail.extend_from_slice(bytes);
-}
-
-fn private_fs::after(duration: Duration) -> Instant {
-    let now = Instant::now();
-    now.checked_add(duration).unwrap_or(now)
-}
 
 #[cfg(test)]
 mod tests {
