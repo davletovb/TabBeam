@@ -266,7 +266,10 @@ mod tests {
     fn failures_are_normalized_without_forwarding_provider_text() {
         for (message, reason) in [
             ("authentication required", "AUTH_REJECTED"),
-            ("http 429 RESOURCE_EXHAUSTED quota exceeded", "PROVIDER_RATE_LIMITED"),
+            (
+                "http 429 RESOURCE_EXHAUSTED quota exceeded",
+                "PROVIDER_RATE_LIMITED",
+            ),
             ("secret provider detail", "PROVIDER_UNAVAILABLE"),
         ] {
             let failure = provider_failure(message);
@@ -277,7 +280,11 @@ mod tests {
 
     #[test]
     fn unrelated_numbers_are_not_rate_limits() {
-        for message in ["server.go:4291 crashed", "pid 14290 exited", "quota note only"] {
+        for message in [
+            "server.go:4291 crashed",
+            "pid 14290 exited",
+            "quota note only",
+        ] {
             assert_eq!(provider_failure(message).reason, "PROVIDER_UNAVAILABLE");
         }
     }
@@ -285,7 +292,9 @@ mod tests {
     #[test]
     fn unknown_step_types_fail_closed() {
         assert_eq!(
-            parse(r#"{"event":"step_update","step_update":{"step_type":"command","state":"ACTIVE"}}"#),
+            parse(
+                r#"{"event":"step_update","step_update":{"step_type":"command","state":"ACTIVE"}}"#
+            ),
             Ok(Line::UnexpectedStep)
         );
     }
