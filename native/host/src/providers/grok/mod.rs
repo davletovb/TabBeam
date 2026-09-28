@@ -379,7 +379,7 @@ impl Provider for Grok {
         };
 
         let new_conversation = request.conversation_id.is_none();
-        let conversation_id = request.conversation_id.unwrap_or_else(new_conversation_id);
+        let conversation_id = request.conversation_id.unwrap_or_else(private_fs::new_conversation_id);
         let args = grok_args(&workspace, request.model.as_deref());
         let expected_cwd = workspace.path().to_path_buf();
         let spec = self
@@ -435,9 +435,6 @@ enum StatusCheck {
 
 impl Exchange for StatusCheck {
     fn next(&mut self, deadline: Instant) -> Option<Update> {
-        if let Some(workspace) = self.workspace.as_ref() {
-            let _ = workspace.touch();
-        }
         let busy_until = deadline.max(private_fs::after(BUSY_LIMIT));
         loop {
             match self {
@@ -772,6 +769,9 @@ impl Turn {
 
 impl Exchange for Turn {
     fn next(&mut self, deadline: Instant) -> Option<Update> {
+        if let Some(workspace) = self.workspace.as_ref() {
+            let _ = workspace.touch();
+        }
         let busy_until = deadline.max(private_fs::after(BUSY_LIMIT));
         loop {
             if let Some(update) = self.queue.pop_front() {
