@@ -119,7 +119,11 @@ const MODEL_NOT_SUPPORTED: ErrorBody<'static> = ErrorBody {
 const PLAIN_AGENT: &str = r#"---
 name: pervue-text
 description: Text-only Pervue Grok responder.
+promptMode: full
 tools: []
+discoverSkills: false
+inheritSkills: false
+agentsMd: false
 disallowedTools:
   - Agent
 mcpInheritance: none
@@ -131,8 +135,12 @@ Answer the user's request directly as text. Do not use tools, files, commands, M
 const SEARCH_AGENT: &str = r#"---
 name: pervue-search
 description: Pervue Grok responder allowed to use only native web search.
+promptMode: full
 tools:
   - web_search
+discoverSkills: false
+inheritSkills: false
+agentsMd: false
 disallowedTools:
   - Agent
 mcpInheritance: none
@@ -567,9 +575,11 @@ fn grok_args(workspace: &TurnWorkspace, search: bool, model: Option<&str>) -> Ve
         OsString::from("--disallowed-tools"),
         OsString::from("Agent"),
     ];
-    if search {
-        args.extend([OsString::from("--tools"), OsString::from("web_search")]);
-    } else {
+    // --tools is a session-level final clamp in current Grok Build. Keep it
+    // on both modes so profile/default-tool drift cannot re-enable local tools.
+    // Plain mode then disables its only allowed server tool, yielding no tools.
+    args.extend([OsString::from("--tools"), OsString::from("web_search")]);
+    if !search {
         args.push(OsString::from("--disable-web-search"));
     }
     if let Some(model) = model {
@@ -918,6 +928,10 @@ mod tests {
         assert!(PLAIN_AGENT.contains("tools: []"));
         assert!(SEARCH_AGENT.contains("  - web_search"));
         for profile in [PLAIN_AGENT, SEARCH_AGENT] {
+            assert!(profile.contains("promptMode: full"));
+            assert!(profile.contains("discoverSkills: false"));
+            assert!(profile.contains("inheritSkills: false"));
+            assert!(profile.contains("agentsMd: false"));
             assert!(profile.contains("mcpInheritance: none"));
             assert!(profile.contains("permissionMode: dontAsk"));
             assert!(profile.contains("  - Agent"));
