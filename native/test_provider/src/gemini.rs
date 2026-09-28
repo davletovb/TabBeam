@@ -2,7 +2,7 @@
 
 use std::ffi::{OsStr, OsString};
 use std::fs;
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -22,6 +22,10 @@ pub fn main(args: Vec<OsString>) -> ExitCode {
 
 fn run(args: Vec<OsString>) -> Result<(), ()> {
     if args.first().is_some_and(|arg| arg == OsStr::new("models")) {
+        // A real status probe must close stdin; otherwise an interactive
+        // prompt can wait forever instead of observing EOF.
+        let mut stdin = String::new();
+        io::stdin().read_to_string(&mut stdin).map_err(|_| ())?;
         println!("gemini-test\tGemini Test");
         println!("gemini-test-pro\tGemini Test Pro");
         println!("claude-test\tClaude Test");
@@ -84,6 +88,15 @@ fn run(args: Vec<OsString>) -> Result<(), ()> {
     );
     write_transcript(&session, prompt)?;
 
+    if model.as_deref() == Some("gemini-slow-init") {
+        std::thread::sleep(std::time::Duration::from_millis(750));
+    }
+
+    let init_agent = if model.as_deref() == Some("gemini-bad-init") {
+        "default"
+    } else {
+        agent.as_str()
+    };
     let mut stdout = io::stdout();
     line(
         &mut stdout,
@@ -92,11 +105,28 @@ fn run(args: Vec<OsString>) -> Result<(), ()> {
             "conversation_id":session,
             "init":{
                 "permission_mode":"request-review",
-                "agent":agent,
+                "agent":init_agent,
                 "tools":["search_web","run_command","invoke_subagent"]
             }
         }),
     )?;
+
+    if model.as_deref() == Some("gemini-bad-init") {
+        hang_briefly();
+        return Ok(());
+    }
+
+    if model.as_deref() == Some("gemini-unknown-step") {
+        line(
+            &mut stdout,
+            &serde_json::json!({
+                "event":"step_update",
+                "step_update":{"state":"ACTIVE","step_type":"command"}
+            }),
+        )?;
+        hang_briefly();
+        return Ok(());
+    }
 
     if model.as_deref() == Some("gemini-tool-violation") {
         line(
@@ -118,7 +148,7 @@ fn run(args: Vec<OsString>) -> Result<(), ()> {
             &serde_json::json!({
                 "event":"step_update",
                 "step_update":{
-                    "state":"ACTIVE","step_type":"agent_response","text_delta":"I will search."
+                    "state":"DONE","step_type":"agent_response","text_delta":"I will search."
                 }
             }),
         )?;
@@ -131,6 +161,28 @@ fn run(args: Vec<OsString>) -> Result<(), ()> {
                 }
             }),
         )?;
+        if model.as_deref() == Some("gemini-multi-search") {
+            line(
+                &mut stdout,
+                &serde_json::json!({
+                    "event":"step_update",
+                    "step_update":{
+                        "state":"DONE","step_type":"agent_response",
+                        "text_delta":"Let me check one more source."
+                    }
+                }),
+            )?;
+            line(
+                &mut stdout,
+                &serde_json::json!({
+                    "event":"step_update",
+                    "step_update":{
+                        "state":"ACTIVE","step_type":"tool","tool_name":"search_web",
+                        "tool_info":{"query":"second"}
+                    }
+                }),
+            )?;
+        }
         "Gemini search answer [Example](https://example.com/agy-search)."
     } else if prompt.contains("Earlier assistant answer") {
         "Gemini continued answer"
@@ -188,7 +240,12 @@ fn write_transcript(session: &str, prompt: &str) -> Result<(), ()> {
         .join(session)
         .join(".system_generated/logs");
     fs::create_dir_all(&dir).map_err(|_| ())?;
-    fs::write(dir.join("transcript.jsonl"), prompt).map_err(|_| ())
+    let cwd = std::env::current_dir().map_err(|_| ())?;
+    let record = serde_json::json!({
+        "cwd": cwd.to_string_lossy(),
+        "prompt": prompt
+    });
+    fs::write(dir.join("transcript.jsonl"), format!("{record}\n")).map_err(|_| ())
 }
 
 fn hang_briefly() {
