@@ -177,7 +177,10 @@ impl Launch {
         ProcessSpec::new(executable)
             .args(args)
             .envs(self.inherited.iter().cloned())
-            .env("PATH", environment::search_path_for(executable, self.path.as_deref()))
+            .env(
+                "PATH",
+                environment::search_path_for(executable, self.path.as_deref()),
+            )
             .env("AGY_CLI_DISABLE_AUTO_UPDATE", "true")
             .current_dir(cwd)
     }
@@ -488,10 +491,7 @@ impl Exchange for StatusCheck {
                         None if Instant::now() >= *give_up => {
                             process.kill();
                             *self = Self::Done(VecDeque::from([
-                                status_update(
-                                    Availability::Unavailable,
-                                    Authentication::Unknown,
-                                ),
+                                status_update(Availability::Unavailable, Authentication::Unknown),
                                 Update::Completed,
                             ]));
                         }
