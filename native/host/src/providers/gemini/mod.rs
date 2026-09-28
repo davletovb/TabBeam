@@ -453,46 +453,57 @@ impl Exchange for StatusCheck {
                 Self::Probing {
                     process,
                     give_up,
-                    stderr_tail: _,
-                } if Instant::now() >= *give_up => {
-                    process.kill();
-                    *self = Self::Done(VecDeque::from([
-                        status_update(Availability::Unavailable, Authentication::Unknown),
-                        Update::Completed,
-                    ]));
-                }
-                Self::Probing {
-                    process,
-                    give_up,
                     stderr_tail,
-                } => match process.next_event(deadline.min(*give_up)) {
-                    Some(Event::Stdout(_)) => {}
-                    Some(Event::Stderr(bytes)) => keep_tail(stderr_tail, &bytes, STDERR_TAIL_BYTES),
-                    Some(Event::Exited(exit)) => {
-                        let success = exit.status.is_some_and(|status| status.success());
-                        let authentication = if success {
-                            Authentication::Authenticated
-                        } else if output::authentication_failure(&String::from_utf8_lossy(
-                            stderr_tail,
-                        )) {
-                            Authentication::Unauthenticated
-                        } else {
-                            Authentication::Unknown
-                        };
-                        let availability =
-                            if success || authentication == Authentication::Unauthenticated {
-                                Availability::Available
+                } => {
+                    // Even after the nominal deadline, first consume an exit
+                    // that is already queued. This avoids killing a probe that
+                    // finished while another provider status check was polled.
+                    let timed_out = Instant::now() >= *give_up;
+                    let poll_until = if timed_out {
+                        Instant::now()
+                    } else {
+                        deadline.min(*give_up)
+                    };
+                    match process.next_event(poll_until) {
+                        Some(Event::Stdout(_)) => {}
+                        Some(Event::Stderr(bytes)) => {
+                            keep_tail(stderr_tail, &bytes, STDERR_TAIL_BYTES);
+                        }
+                        Some(Event::Exited(exit)) => {
+                            let success = exit.status.is_some_and(|status| status.success());
+                            let authentication = if success {
+                                Authentication::Authenticated
+                            } else if output::authentication_failure(&String::from_utf8_lossy(
+                                stderr_tail,
+                            )) {
+                                Authentication::Unauthenticated
                             } else {
-                                Availability::Unavailable
+                                Authentication::Unknown
                             };
-                        *self = Self::Done(VecDeque::from([
-                            status_update(availability, authentication),
-                            Update::Completed,
-                        ]));
+                            let availability =
+                                if success || authentication == Authentication::Unauthenticated {
+                                    Availability::Available
+                                } else {
+                                    Availability::Unavailable
+                                };
+                            *self = Self::Done(VecDeque::from([
+                                status_update(availability, authentication),
+                                Update::Completed,
+                            ]));
+                        }
+                        None if Instant::now() >= *give_up => {
+                            process.kill();
+                            *self = Self::Done(VecDeque::from([
+                                status_update(
+                                    Availability::Unavailable,
+                                    Authentication::Unknown,
+                                ),
+                                Update::Completed,
+                            ]));
+                        }
+                        None => return None,
                     }
-                    None if Instant::now() >= *give_up => {}
-                    None => return None,
-                },
+                }
             }
             if Instant::now() >= busy_until {
                 return None;
@@ -577,6 +588,7 @@ struct Turn {
     stream: LineStream,
     workspace: Option<TurnWorkspace>,
     home: Option<PathBuf>,
+    cleanup_dir: Option<PathBuf>,
     pending_cleanups: PendingCleanups,
     queue: VecDeque<Update>,
     conversation_id: String,
@@ -589,6 +601,11 @@ struct Turn {
     searched: bool,
     saw_delta: bool,
     answer: String,
+    /// One Antigravity agent-response step held until the next step reveals
+    /// whether it was search narration.
+    held: String,
+    held_step_done: bool,
+    messages: usize,
     sources: SourceCollector,
     outcome: Option<Result<(), ErrorBody<'static>>>,
     finish_by: Option<Instant>,
@@ -602,6 +619,46 @@ impl Turn {
         self.finish_by = Some(Instant::now());
     }
 
+    fn register_cleanup_id(&mut self, id: String) {
+        let ids = {
+            let mut pending = self.pending_cleanups.borrow_mut();
+            let ids = pending.entry(self.conversation_id.clone()).or_default();
+            if !ids.iter().any(|candidate| candidate == &id) {
+                ids.push(id);
+            }
+            ids.clone()
+        };
+        if let Some(dir) = self.cleanup_dir.as_deref() {
+            let _ = save_pending_cleanup_ids(dir, &self.conversation_id, &ids);
+        }
+    }
+
+    fn clear_cleanup_ids(&mut self, removed: &HashSet<String>) {
+        if removed.is_empty() {
+            return;
+        }
+        let remaining = {
+            let mut pending = self.pending_cleanups.borrow_mut();
+            let remaining = if let Some(ids) = pending.get_mut(&self.conversation_id) {
+                ids.retain(|candidate| !removed.contains(candidate));
+                ids.clone()
+            } else {
+                Vec::new()
+            };
+            if remaining.is_empty() {
+                pending.remove(&self.conversation_id);
+            }
+            remaining
+        };
+        if let Some(dir) = self.cleanup_dir.as_deref() {
+            if remaining.is_empty() {
+                let _ = forget_cleanup_record(dir, &self.conversation_id);
+            } else {
+                let _ = save_pending_cleanup_ids(dir, &self.conversation_id, &remaining);
+            }
+        }
+    }
+
     fn on_line(&mut self, line: &str) {
         if self.outcome.is_some() || self.cancelled {
             return;
@@ -613,8 +670,17 @@ impl Turn {
                 permission_mode,
                 agent,
             }) => {
-                if self.initialized
-                    || agent != self.expected_agent
+                if self.initialized {
+                    return self.fail(BOUNDARY_VIOLATION);
+                }
+
+                // Capture and persist the provider transcript ID before any
+                // boundary check. Even an unsafe init can already have written
+                // the prompt/page context to brain/<id>.
+                self.antigravity_conversation = Some(conversation_id.clone());
+                self.register_cleanup_id(conversation_id);
+
+                if agent != self.expected_agent
                     || !matches!(
                         permission_mode.as_str(),
                         "request-review" | "proceed-in-sandbox" | "strict"
@@ -623,12 +689,6 @@ impl Turn {
                     return self.fail(BOUNDARY_VIOLATION);
                 }
                 self.initialized = true;
-                self.antigravity_conversation = Some(conversation_id.clone());
-                self.pending_cleanups
-                    .borrow_mut()
-                    .entry(self.conversation_id.clone())
-                    .or_default()
-                    .push(conversation_id);
                 if self.announce_conversation {
                     self.queue
                         .push_back(Update::ConversationCreated(self.conversation_id.clone()));
@@ -637,14 +697,21 @@ impl Turn {
                     conversation_id: Some(self.conversation_id.clone()),
                 });
             }
-            Ok(Line::AgentDelta(text)) => {
+            Ok(Line::AgentDelta { text, done }) => {
                 if !self.initialized {
                     return self.fail(MALFORMED_OUTPUT);
                 }
-                // Search narration emitted before the first actual search is
-                // intentionally dropped; it is neither an answer nor a source.
-                if !self.native_search || self.searched {
+                if !self.native_search {
                     self.show_text(text);
+                } else {
+                    // Each response step is held until the next step. If a
+                    // search follows, it was narration and is dropped. If a
+                    // second response starts, the previous one was answer text.
+                    if self.held_step_done {
+                        self.flush_held();
+                    }
+                    self.held.push_str(&text);
+                    self.held_step_done = done;
                 }
             }
             Ok(Line::Tool(tool)) => {
@@ -652,18 +719,17 @@ impl Turn {
                     return self.fail(MALFORMED_OUTPUT);
                 }
                 if self.native_search && tool == "search_web" {
+                    // Text immediately before any search is narration, not
+                    // durable answer/history.
+                    self.held.clear();
+                    self.held_step_done = false;
                     self.searched = true;
                     self.queue.push_back(Update::Activity);
                 } else {
                     self.fail(BOUNDARY_VIOLATION);
                 }
             }
-            Ok(Line::Subagent) => self.fail(BOUNDARY_VIOLATION),
-            Ok(Line::Progress) => {
-                if self.initialized {
-                    self.queue.push_back(Update::Activity);
-                }
-            }
+            Ok(Line::Subagent | Line::UnexpectedStep) => self.fail(BOUNDARY_VIOLATION),
             Ok(Line::ResultSuccess {
                 conversation_id,
                 response,
@@ -677,9 +743,16 @@ impl Turn {
                 {
                     return self.fail(MALFORMED_OUTPUT);
                 }
+                if self.native_search {
+                    self.flush_held();
+                }
                 if !self.saw_delta && (!self.native_search || self.searched) && !response.is_empty()
                 {
-                    self.show_text(response);
+                    if self.native_search {
+                        self.show_search_message(response);
+                    } else {
+                        self.show_text(response);
+                    }
                 }
                 if self.native_search && self.searched {
                     for result in codex_message_sources(&self.answer) {
@@ -702,6 +775,26 @@ impl Turn {
         }
     }
 
+    fn flush_held(&mut self) {
+        self.held_step_done = false;
+        if self.held.is_empty() {
+            return;
+        }
+        let text = std::mem::take(&mut self.held);
+        self.show_search_message(text);
+    }
+
+    fn show_search_message(&mut self, mut text: String) {
+        if text.is_empty() {
+            return;
+        }
+        if self.messages > 0 && !self.answer.is_empty() {
+            text.insert_str(0, "\n\n");
+        }
+        self.messages += 1;
+        self.show_text(text);
+    }
+
     fn show_text(&mut self, text: String) {
         if text.is_empty() {
             return;
@@ -711,40 +804,41 @@ impl Turn {
         self.queue.push_back(Update::Delta(text));
     }
 
-    fn cleanup_runtime(&mut self) -> io::Result<()> {
-        let result = match (&self.home, &self.antigravity_conversation) {
-            (_, None) => Ok(()),
-            (Some(home), Some(id)) => remove_antigravity_transcript(home, id),
-            (None, Some(_)) => Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                "home directory unavailable for Antigravity transcript cleanup",
-            )),
-        };
-        if result.is_ok() {
-            if let Some(id) = &self.antigravity_conversation {
-                let mut pending = self.pending_cleanups.borrow_mut();
-                let remove_entry = if let Some(ids) = pending.get_mut(&self.conversation_id) {
-                    ids.retain(|candidate| candidate != id);
-                    ids.is_empty()
-                } else {
-                    false
-                };
-                if remove_entry {
-                    pending.remove(&self.conversation_id);
+    /// Removes provider transcripts only after the child is gone. When init
+    /// was never consumed (stop/malformed output), identify Pervue-owned
+    /// transcripts by the unique private workspace path recorded in them.
+    fn cleanup_runtime(&mut self) {
+        let mut ids = Vec::new();
+        if let Some(id) = self.antigravity_conversation.clone() {
+            ids.push(id);
+        } else if let (Some(home), Some(workspace)) = (&self.home, &self.workspace) {
+            if let Ok(found) = antigravity_transcripts_for_workspace(home, workspace.path()) {
+                ids.extend(found);
+            }
+        }
+
+        ids.sort();
+        ids.dedup();
+        for id in &ids {
+            self.register_cleanup_id(id.clone());
+        }
+
+        let mut removed = HashSet::new();
+        if let Some(home) = &self.home {
+            for id in &ids {
+                if remove_antigravity_transcript(home, id).is_ok() {
+                    removed.insert(id.clone());
                 }
             }
         }
+        self.clear_cleanup_ids(&removed);
         self.workspace.take();
-        result
     }
 
     fn ended(&mut self, exit: &Exit) -> Update {
+        self.cleanup_runtime();
         if self.cancelled {
-            let _ = self.cleanup_runtime();
             return Update::Stopped;
-        }
-        if self.cleanup_runtime().is_err() {
-            return Update::Failed(CLEANUP_FAILED);
         }
         match self.outcome.take() {
             Some(Ok(())) => Update::Completed,
@@ -794,9 +888,8 @@ impl Exchange for Turn {
                 }
                 Some(Output::Error(_)) => {
                     self.outcome = Some(Err(MALFORMED_OUTPUT));
-                    let update = if self.cleanup_runtime().is_err() {
-                        Update::Failed(CLEANUP_FAILED)
-                    } else if self.cancelled {
+                    self.cleanup_runtime();
+                    let update = if self.cancelled {
                         Update::Stopped
                     } else {
                         Update::Failed(MALFORMED_OUTPUT)
