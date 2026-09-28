@@ -7,11 +7,15 @@
 
 ## Summary
 
-- **The decision here is how Conclave uses the provider runtime.**
-  - The project owner prefers rewriting Conclave's server in Rust, linking the runtime in-process.
-  - The alternative is to keep the Node server and use the runtime through a sidecar.
-  - Either choice makes Conclave the runtime's second consumer, and the runtime proposal stands whichever is chosen.
-- **The Rust server has its own go/no-go.** It rests on evidence: a finished runtime Phase 1, a recorded HTTP contract, and a spike that ports one slice of the server (§4). If the answer is no, Conclave takes the sidecar.
+- **There are two decisions, made in order** (§4):
+  1. **Whether to adopt the runtime at all,** instead of keeping the TypeScript adapters, starting with Gemini. Accepting this is the gate the runtime needs before it moves Gemini into its shared layer.
+  2. **How to adopt it.** Either rewrite the server in Rust and link the runtime in-process, which the project owner prefers, or keep the Node server and use a sidecar. The runtime proposal stands whichever is chosen.
+- **The Rust server has its own go/no-go.** It rests on evidence:
+  - runtime Phases 1 and 2 are done: the service API exists, and Gemini runs through it;
+  - the HTTP contract is recorded;
+  - a spike has ported one slice of the server (§4).
+
+  If the answer is no, Conclave takes the sidecar.
 - **Two things to do now, whatever the choice** (§3):
   - patch the current server's security gaps (no authentication, no Host-header check);
   - record its HTTP contract.
@@ -100,10 +104,15 @@
 
 Patching first makes authentication, Host checks, and body limits part of the recorded contract, so a Rust server has to match them rather than reinvent them.
 
-## 4. Deciding on the Rust server
+## 4. Two decisions
 
-**Evidence to gather:**
-1. **Runtime Phase 1 is done.** The service API and its supervisor pass the hostile matrix and the panic tests.
+**Decision 1: adopt the runtime.** Conclave commits to using the runtime's shared adapters instead of its TypeScript adapters, starting with Gemini. Which Codex and Grok modes it uses is decided separately (§7).
+- This decision can be made now. It doesn't choose between a Rust server and a sidecar.
+- It's the gate the runtime needs before it moves Gemini into its shared layer ([runtime proposal §7](provider-runtime-extraction-proposal.md#7-phases)).
+- Rejecting it leaves each app with its own adapters, and the runtime stays Pervue's internal library.
+
+**Decision 2: a Rust server or a sidecar.** Evidence to gather:
+1. **Runtime Phases 1 and 2 are done.** The service API and its supervisor pass the hostile matrix and the panic tests, and Gemini runs through the service API.
 2. **The contract is recorded** (§3).
 3. **A spike ports one slice** of the server into Rust:
    - storage;
@@ -240,8 +249,9 @@ Patching first makes authentication, Host checks, and body limits part of the re
 **Now.**
 1. Patch the security gaps (§3).
 2. Record the HTTP contract (§3).
+3. Make decision 1: adopt the runtime (§4).
 
-**After runtime Phase 1.** Run the spike and decide go or no-go (§4).
+**After runtime Phase 2.** Run the spike, and make decision 2: go or no-go on the Rust server (§4).
 
 **If go:**
 1. Port storage and the HTTP API. Generate the web app's types.
@@ -253,7 +263,7 @@ Patching first makes authentication, Host checks, and body limits part of the re
 1. Build the sidecar and its TypeScript client.
 2. Replace the adapters one at a time behind the flag (§6).
 
-**Afterwards:** speed work, as in runtime Phase 5.
+**Afterwards:** speed work, as in runtime Phase 6.
 
 ## 9. Risks
 
@@ -264,19 +274,20 @@ Patching first makes authentication, Host checks, and body limits part of the re
 - **Feature work during the port.** Either freeze Conclave's features, or port in parallel and re-sync (§10).
 - **Contributors need Rust** for everyday server work if the answer is go. The web app stays TypeScript.
 - **Stricter provider behavior.**
-  - The environment allowlist may drop a variable someone relies on, so each provider can extend it.
+  - The environment allowlist may drop a variable someone relies on. Conclave can extend it through its startup configuration, never from per-call input.
   - Private workspaces mean project `CLAUDE.md` files no longer apply.
   - The stricter Gemini and Grok checks can fail turns that pass today when a CLI release changes its output.
 
 ## 10. Open decisions
 
-1. After the spike: go with the Rust server, or no-go and take the sidecar?
-2. OpenAI: `codex-exec` through the runtime, or a Conclave-only app-server client?
-3. Grok: the runtime's one-shot adapter, or a Conclave-only ACP client that keeps streaming?
-4. Should Rust become the source of truth for the web app's types (recommended, if go)?
-5. Freeze Conclave's features during a port, or port in parallel and re-sync?
-6. Caching the sign-in check: keep it off by default (recommended), and what time limit when it's on?
-7. Does Conclave accept the runtime's stricter defaults, the environment allowlist and private workspaces, as they are?
+1. Adopt the runtime, starting with Gemini (decision 1)? This gates the runtime's provider phases.
+2. After the spike: go with the Rust server, or no-go and take the sidecar (decision 2)?
+3. OpenAI: `codex-exec` through the runtime, or a Conclave-only app-server client?
+4. Grok: the runtime's one-shot adapter, or a Conclave-only ACP client that keeps streaming?
+5. Should Rust become the source of truth for the web app's types (recommended, if go)?
+6. Freeze Conclave's features during a port, or port in parallel and re-sync?
+7. Caching the sign-in check: keep it off by default (recommended), and what time limit when it's on?
+8. Does Conclave accept the runtime's stricter defaults, the environment allowlist and private workspaces, as they are?
 
 [c-index]: https://github.com/davletovb/conclave/blob/1379a37ccb13d484247122ee215257e642b166fc/apps/server/src/index.ts
 [c-claude-auth]: https://github.com/davletovb/conclave/blob/1379a37ccb13d484247122ee215257e642b166fc/apps/server/src/providers/anthropic-claude.ts#L235

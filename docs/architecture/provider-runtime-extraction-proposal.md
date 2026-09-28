@@ -12,7 +12,9 @@
   - The runtime owns provider execution: running an authenticated AI CLI safely, streaming its answer, and stopping it.
   - Each application keeps its conversation and product policy.
   - Native Messaging, browser context, provider sessions, and protocol v1 stay in Pervue.
-- **Both apps now drive the same four CLIs:** Codex, Claude, Gemini (through Antigravity), and Grok. Each app has its own independent adapter for every one of them. The runtime keeps one adapter per CLI.
+- **Both apps now drive the same four CLIs:** Codex, Claude, Gemini (through Antigravity), and Grok. Each app has its own independent adapter for every one of them.
+  - The runtime owns one shared adapter per supported execution mode: `codex exec`, Claude's print mode, Antigravity's one-shot mode, and Grok's one-shot headless mode.
+  - An application can keep a different mode of the same CLI outside the shared set, such as Codex app-server or Grok ACP, when that mode's capabilities differ materially. It builds that adapter on `runtime-core`.
 - **The runtime is a Rust crate workspace that applications use in-process.**
   - `pervue-host` drives its scheduler directly.
   - Async servers use a small service API, which includes a supervisor.
@@ -21,7 +23,9 @@
 - **This proposal needs Conclave to adopt the runtime in some form, but not in any particular form.** Conclave's options are to rewrite its server in Rust, which the project owner prefers, or to keep Node and use a sidecar. That choice is made in the [Conclave adoption proposal](conclave-runtime-adoption-proposal.md), and rejecting or delaying the Rust server doesn't invalidate this one.
 - **Every provider runs as one process per turn.** Codex runs through `exec` only, and Grok in one-shot headless mode, as Pervue's adapter already does.
 - **Sign-in checks never run alongside a turn.** An application may choose to cache a successful check, but the runtime never caches by default (§8).
-- **Pilot with Gemini, then Grok, Claude, and Codex.** Gemini and Grok keep no sessions, so they need no continuation support. Claude brings the continuation hook.
+- **Pilot with Gemini, then Grok, Claude, and Codex.**
+  - Gemini and Grok keep no sessions, so they need no continuation support. Claude brings the continuation hook.
+  - Preparing the runtime inside Pervue can start first. Moving an adapter into the shared layer waits until a second application has accepted a plan to use that mode (§7).
 - **Speed work comes after every provider runs on the runtime** (§8).
 - **Incubate in `native/`.** `pervue-core` becomes `runtime-core` inside the runtime workspace. The workspace gets its own repository once a second application runs on it.
 
@@ -176,7 +180,8 @@ A second application (Conclave: see its adoption proposal)
 
 **What moves, and why.**
 - **The promotion rule.** Something moves into the runtime only when a second application uses it.
-  - Each provider adapter moves when a second application starts using it. That happens once per provider, in the order of §7.
+  - A shared adapter is one execution mode of a CLI. It moves into the runtime when a second application has accepted a plan to use that same mode (§7), in the order of §7.
+  - A different mode of the same CLI that only one application uses, such as Codex app-server or Grok ACP, stays with that application.
   - Session maps and conversation-scoped transcript removal stay in `pervue-host`, because Conclave runs every call statelessly.
   - Search-result sanitizing becomes shareable only if Conclave's server moves to Rust.
 - **One process per turn, for every provider.**
@@ -203,7 +208,7 @@ A second application (Conclave: see its adoption proposal)
 - **Environment construction.**
   - The core README lists the credential allowlist as host policy, so moving it changes that boundary deliberately.
   - Conclave needs the same protection (§2.1, item 4), and a provider in the runtime can't start without its variables.
-  - Applications can extend the list.
+  - Applications can extend the list only through trusted configuration read at startup. The names of variables a provider inherits never come from a request, a page, a prompt, a model's output, or any other per-turn input.
 
 ## 5. API changes a second application needs
 
@@ -301,7 +306,7 @@ while let Some(event) = turn.next().await {
         TurnEvent::Delta(text) => { /* answer text */ }
         TurnEvent::Source(source) => { /* citation */ }
         TurnEvent::Usage(usage) => { /* cumulative snapshot */ }
-        TurnEvent::Ended(outcome) => break, // exactly once per started turn
+        TurnEvent::Ended(outcome) => break, // exactly once per accepted turn
     }
 }
 ```
@@ -314,13 +319,28 @@ while let Some(event) = turn.next().await {
   - Pervue's adapters use this meaning today: Codex at `turn.started`; Claude, Gemini, and Grok after `init`.
 - **`Activity`**: the provider is working with nothing to show. It resets the idle timer, under the §5 rule.
 - **`Delta`, `Source`, `Usage`**: answer text, a citation, and a cumulative usage snapshot.
-- **`Ended(outcome)`**: completed, failed with a code, reason, and `retryable` flag, or cancelled.
+- **`Ended(outcome)`**: completed, failed with a code, reason, and `retryable` flag, or cancelled. Every accepted turn gets one, whether or not `Launched` or `Started` came first.
 
 **Turn lifecycle.**
 1. **Order.** `start_turn` registers the turn and assigns its ID before it returns and before any provider work starts. Events follow on the turn's channel.
 2. **IDs.** The runtime generates each ID from a counter that never repeats for the life of the process. Callers can't choose or reuse IDs, and only running turns are indexed, so no state builds up.
-3. **Exactly one ending.** A started turn gets exactly one `Ended`. A rejected `start_turn` returns an error and produces no events.
+3. **Exactly one ending.**
+   - Every turn that `start_turn` accepts produces exactly one `Ended`, whether or not `Launched` or `Started` was emitted. A provider that fails to launch, or hangs before `init`, still ends.
+   - A request that `start_turn` rejects produces no events.
 4. **Cancellation.** Cancelling a running turn succeeds, repeats included, and the turn still ends only once. Cancelling a turn that has already ended does nothing, because its `Ended` is already in its channel.
+
+```text
+start_turn accepts the turn
+ │
+ ├─ launch fails, or cancelled before launch ─────────────→ Ended
+ └─ Launched
+     ├─ init fails, start limit passes, or cancelled ─────→ Ended
+     └─ Started
+         ├─ Activity, Delta, Source, Usage (any number)
+         └─ completes, fails, hits a limit, or cancelled ─→ Ended
+```
+
+A runtime loss can end a turn at any point on this diagram (see Supervision below). It still produces exactly one `Ended`.
 
 **Supervision.** The failure outcomes are produced by code that survives the failure: a supervisor outside the scheduler thread, and a catch boundary around each adapter.
 
@@ -334,7 +354,14 @@ Runtime handle (owned by the application)
     └─ provider exchanges, which own their processes
 ```
 
-- **A panic in one adapter.** Every call into a provider adapter runs under `catch_unwind`. A panic there ends only that turn, with a runtime error marked `maybe_started`. The exchange is dropped, which kills and reaps its process.
+- **A panic in one adapter.**
+  - Every entry into provider-controlled code runs behind a `catch_unwind` boundary:
+    - constructing a provider;
+    - `status`, `send`, and `forget`;
+    - every later `Exchange::next` and `Exchange::cancel` call, which is where most output parsing happens;
+    - dropping an exchange.
+  - A panic in any of these ends only the affected turn, with a runtime error marked `maybe_started`, or fails only the affected status check.
+  - The exchange is dropped, which kills and reaps its process.
 - **A panic in the scheduler itself.** A watcher joins the scheduler thread, and the supervisor ends every turn it still holds.
   - A turn is marked `not_started` only if it was never handed to the scheduler, for example because it was queued during a restart. Every other turn is marked `maybe_started`, because a provider may have started, or even finished, before the panic.
   - Unwinding drops the scheduler's exchanges, which kills and reaps their processes.
@@ -359,36 +386,39 @@ The tracker isn't edited here, and the IDs below are only proposals.
 
 Conclave's adoption decision is separate.
 
-**Phase 1: the runtime, with Gemini** (proposed LIB-06 to LIB-09).
+**Phase 1: prepare the runtime inside Pervue** (proposed LIB-06 to LIB-08). This phase needs no second consumer yet, and moves no adapter into the shared layer.
 1. Create the runtime workspace:
    - rename `pervue-core` to `runtime-core`;
    - move framing into `pervue-host`;
    - introduce the neutral turn, error, usage, and timeout types from §5.
-2. Move the Gemini provider in, along with only the mechanics it needs:
-   - environment construction;
-   - private files and workspaces;
-   - per-turn transcript cleanup, with its retry record.
+2. Extract the scheduler from `host.rs`, and add the absolute limit and the rule for what counts as progress. The protocol validator and golden fixtures must stay green.
+3. Add the `service` API with its supervisor. Run the hostile matrix, the contract suite, and the panic tests through it, using the fake provider and Pervue's adapters where they are.
 
-   `pervue-host` keeps passing all of its tests.
-3. Extract the scheduler from `host.rs`, and add the absolute limit and the rule for what counts as progress. The protocol validator and golden fixtures must stay green.
-4. Add the `service` API with its supervisor. Run the hostile matrix, the contract suite, and the panic tests through it.
+**The gate for every provider phase.** A second application has accepted a plan to use the runtime with that execution mode. For Conclave, that's the first decision in its [adoption proposal](conclave-runtime-adoption-proposal.md#4-two-decisions). Until the gate is passed, the adapter stays in `pervue-host`.
 
-**Phase 2: Grok.** Move the Grok provider in, with its per-turn workspace cleanup and heartbeat recovery. It keeps no sessions either.
+**Phase 2: Gemini, the pilot** (proposed LIB-09).
+- Move the Gemini provider into the shared layer, along with only the mechanics it needs:
+  - environment construction;
+  - private files and workspaces;
+  - per-turn transcript cleanup, with its retry record.
+- `pervue-host` keeps passing all of its tests.
 
-**Phase 3: Claude.** Move the Claude provider in, with the continuation hook. `pervue-host` keeps its sessions and its transcript removal when a conversation is deleted.
+**Phase 3: Grok.** Move the Grok provider in, with its per-turn workspace cleanup and heartbeat recovery. It keeps no sessions either.
 
-**Phase 4: Codex.** Move `codex-exec` in, with per-turn cleanup of `exec`'s session files for stateless consumers.
+**Phase 4: Claude.** Move the Claude provider in, with the continuation hook. `pervue-host` keeps its sessions and its transcript removal when a conversation is deleted.
 
-**Phase 5: speed** (proposed PRF-01 to PRF-03). See §8.
+**Phase 5: Codex.** Move `codex-exec` in, with per-turn cleanup of `exec`'s session files for stateless consumers.
 
-**Phase 6: split and publish.** Move the runtime workspace to its own repository and publish its crates.
+**Phase 6: speed** (proposed PRF-01 to PRF-03). See §8.
 
-Each provider moves when its second consumer is ready to use it. Merging the helpers Claude and Codex still copy (§1) is cleanup inside the host, and can happen at any time.
+**Phase 7: split and publish.** Move the runtime workspace to its own repository and publish its crates.
+
+Merging the helpers Claude and Codex still copy (§1) is cleanup inside the host, and can happen at any time.
 
 **Working alongside the tracker.**
-- Phase 1 should start only after LIB-01 to LIB-05, PRO-08, and PRO-09 are verified, so nothing is restructured while it is being verified.
-- The Gemini and Grok adapters landed on 2026-09-28, and Gemini was fixed the same day for real `agy` output. Both should settle before they move.
-- Phase 1 also changes `host.rs`, the host's largest and most heavily tested file, and every import of `pervue-core`. Coordinate that with whoever holds the remaining tracker items.
+- Phase 1 should start only after LIB-01 to LIB-05 are verified, so nothing is restructured while it is being verified.
+- Phases 2 and 3 also need PRO-08 and PRO-09 verified. The Gemini and Grok adapters landed on 2026-09-28, and Gemini was fixed the same day for real `agy` output, so both should settle before they move.
+- Phase 1 changes `host.rs`, the host's largest and most heavily tested file, and every import of `pervue-core`. Coordinate that with whoever holds the remaining tracker items.
 
 ## 8. Speed and cold start
 
@@ -490,6 +520,13 @@ Long-lived provider processes stay out of scope (§4) unless the measurements sh
 - **Crate ownership.** `pervue-core` becomes `runtime-core` inside the runtime workspace. Applications never depend on Pervue's crates (§4).
 - **Events.** `Started` keeps its current meaning, "the provider accepted the turn", because the start limit depends on it. A new `Launched` event marks the moment the process starts (§6).
 - **Grok.** It landed in Pervue in one-shot headless mode, so it now moves into the runtime as the second stateless provider. The evidence is updated to Pervue `fc7284b` (§1, §7).
+
+**2026-09-28, third review.**
+- **Exactly one ending.** Every turn `start_turn` accepts ends exactly once, even if the provider never launches or never reaches `Started`. A lifecycle diagram shows every path (§6).
+- **Second-consumer gate.** Phase 1 now only prepares the runtime inside Pervue. Each provider phase waits until a second application has accepted a plan to use that execution mode, starting with Gemini (§7).
+- **Panic boundary.** It covers every entry into provider-controlled code, including every `Exchange::next` and `Exchange::cancel` call, not just the first call into an adapter (§6).
+- **Environment extensions.** They come only from trusted startup configuration, never from per-turn input (§4).
+- **Execution modes.** The runtime shares one adapter per execution mode, not per CLI. An application may keep a different mode of the same CLI outside the shared set (Summary, §4).
 
 [p-claude]: ../../native/host/src/providers/claude/mod.rs
 [p-claude-output]: ../../native/host/src/providers/claude/output.rs
