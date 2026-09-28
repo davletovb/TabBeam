@@ -7,7 +7,8 @@ export const DEFAULT_PROVIDER_ID = "codex";
 export const USER_PROVIDERS = Object.freeze([
   Object.freeze({ id: "codex", label: "Codex" }),
   Object.freeze({ id: "claude", label: "Claude" }),
-  Object.freeze({ id: "gemini", label: "Gemini" })
+  Object.freeze({ id: "gemini", label: "Gemini" }),
+  Object.freeze({ id: "grok", label: "Grok" })
 ]);
 
 /** @type {Map<string, string>} */
