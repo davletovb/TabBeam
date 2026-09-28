@@ -129,7 +129,7 @@ fn native_search_emits_normalized_sources() {
     assert!(updates.iter().any(|update| matches!(
         update,
         Update::Source(source)
-            if source.backend_id == "provider"
+            if source.backend_id == "gemini"
                 && source.url == "https://example.com/gemini-search"
     )));
     assert!(matches!(updates.last(), Some(Update::Completed)));
