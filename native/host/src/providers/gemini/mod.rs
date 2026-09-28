@@ -10,16 +10,16 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::{OsStr, OsString};
 use std::fs;
-use std::hash::{BuildHasher, RandomState};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use super::codex::workspace;
 use super::discovery;
 use super::environment;
 use super::forget;
+use super::private_fs;
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
 use crate::conversation::{SEARCH_INSTRUCTIONS, provider_prompt};
 use crate::protocol::events::{
@@ -293,7 +293,7 @@ impl Provider for Gemini {
                 process.close_stdin();
                 StatusCheck::Probing {
                     process,
-                    give_up: after(STATUS_PROBE),
+                    give_up: private_fs::after(STATUS_PROBE),
                     stderr_tail: Vec::new(),
                 }
             }
@@ -315,7 +315,7 @@ impl Provider for Gemini {
         if request
             .conversation_id
             .as_deref()
-            .is_some_and(|id| !is_pervue_conversation_id(id))
+            .is_some_and(|id| !private_fs::is_conversation_id(id))
         {
             return Box::new(Scripted::failed(UNKNOWN_CONVERSATION));
         }
@@ -390,7 +390,7 @@ impl Provider for Gemini {
     }
 
     fn forget(&self, conversation_id: &str) -> Box<dyn Exchange> {
-        if !is_pervue_conversation_id(conversation_id) {
+        if !private_fs::is_conversation_id(conversation_id) {
             return Box::new(Scripted::new([Update::Completed]));
         }
         let memory_ids = self
@@ -458,7 +458,7 @@ enum StatusCheck {
 
 impl Exchange for StatusCheck {
     fn next(&mut self, deadline: Instant) -> Option<Update> {
-        let busy_until = deadline.max(after(BUSY_LIMIT));
+        let busy_until = deadline.max(private_fs::after(BUSY_LIMIT));
         loop {
             match self {
                 Self::Done(queue) => return queue.pop_front(),
@@ -479,7 +479,7 @@ impl Exchange for StatusCheck {
                     match process.next_event(poll_until) {
                         Some(Event::Stdout(_)) => {}
                         Some(Event::Stderr(bytes)) => {
-                            keep_tail(stderr_tail, &bytes, STDERR_TAIL_BYTES);
+                            private_fs::keep_tail(stderr_tail, &bytes, STDERR_TAIL_BYTES);
                         }
                         Some(Event::Exited(exit)) => {
                             let success = exit.status.is_some_and(|status| status.success());
@@ -538,7 +538,7 @@ impl TurnWorkspace {
             "turn-{:016x}",
             RandomState::new().hash_one((SystemTime::now(), std::process::id()))
         ));
-        create_private_dir(&path)?;
+        private_fs::create_private_dir(&path)?;
         let agent = if search { SEARCH_AGENT } else { PLAIN_AGENT };
         let definition = if search {
             SEARCH_AGENT_DEFINITION
@@ -546,11 +546,11 @@ impl TurnWorkspace {
             PLAIN_AGENT_DEFINITION
         };
         let agent_dir = path.join(".agents/agents").join(agent);
-        create_private_dir(&agent_dir)?;
-        write_private_file(&agent_dir.join("agent.md"), definition.as_bytes())?;
+        private_fs::create_private_dir(&agent_dir)?;
+        private_fs::write_private_file(&agent_dir.join("agent.md"), definition.as_bytes())?;
         let hooks_dir = path.join(".agents");
-        create_private_dir(&hooks_dir)?;
-        write_private_file(&hooks_dir.join("hooks.json"), b"{}\n")?;
+        private_fs::create_private_dir(&hooks_dir)?;
+        private_fs::write_private_file(&hooks_dir.join("hooks.json"), b"{}\n")?;
         Ok(Self { path })
     }
 
@@ -565,7 +565,7 @@ impl Drop for TurnWorkspace {
     }
 }
 
-fn create_private_dir(path: &Path) -> io::Result<()> {
+fn private_fs::create_private_dir(path: &Path) -> io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
@@ -581,7 +581,7 @@ fn create_private_dir(path: &Path) -> io::Result<()> {
     }
 }
 
-fn write_private_file(path: &Path, contents: &[u8]) -> io::Result<()> {
+fn private_fs::write_private_file(path: &Path, contents: &[u8]) -> io::Result<()> {
     fs::write(path, contents)?;
     #[cfg(unix)]
     {
@@ -788,7 +788,7 @@ impl Turn {
                     Ok(())
                 };
                 self.outcome = Some(outcome);
-                self.finish_by = Some(after(FINISH_GRACE));
+                self.finish_by = Some(private_fs::after(FINISH_GRACE));
             }
             Ok(Line::ResultFailed(error)) => self.fail(error),
             Ok(Line::Ignored) => {}
@@ -917,7 +917,7 @@ impl Turn {
 
 impl Exchange for Turn {
     fn next(&mut self, deadline: Instant) -> Option<Update> {
-        let busy_until = deadline.max(after(BUSY_LIMIT));
+        let busy_until = deadline.max(private_fs::after(BUSY_LIMIT));
         loop {
             if let Some(update) = self.queue.pop_front() {
                 return Some(update);
@@ -1010,7 +1010,7 @@ const MAX_PENDING_CLEANUPS: usize = 256;
 const TRANSCRIPT_SCAN_BUDGET: usize = 512;
 const TRANSCRIPT_SCAN_BYTES: u64 = 1024 * 1024;
 
-fn is_pervue_conversation_id(id: &str) -> bool {
+fn private_fs::is_conversation_id(id: &str) -> bool {
     id.len() == 21
         && id.starts_with("conv_")
         && id[5..].bytes().all(|byte| byte.is_ascii_hexdigit())
@@ -1031,7 +1031,7 @@ fn installed_cleanup_dir() -> Option<PathBuf> {
 }
 
 fn cleanup_conversation_dir(base: &Path, conversation_id: &str) -> io::Result<PathBuf> {
-    if !is_pervue_conversation_id(conversation_id) {
+    if !private_fs::is_conversation_id(conversation_id) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "unsafe Pervue conversation id",
@@ -1048,8 +1048,8 @@ fn record_pending_cleanup_id(base: &Path, conversation_id: &str, id: &str) -> io
         ));
     }
     let dir = cleanup_conversation_dir(base, conversation_id)?;
-    create_private_dir(&dir)?;
-    write_private_file(&dir.join(id), b"pending\n")
+    private_fs::create_private_dir(&dir)?;
+    private_fs::write_private_file(&dir.join(id), b"pending\n")
 }
 
 fn read_pending_cleanup_ids(base: &Path, conversation_id: &str) -> io::Result<Vec<String>> {
@@ -1168,21 +1168,21 @@ fn transcript_tree_mentions(
     Ok(false)
 }
 
-fn new_conversation_id() -> String {
+fn private_fs::new_conversation_id() -> String {
     format!(
         "conv_{:016x}",
         RandomState::new().hash_one((SystemTime::now(), std::process::id()))
     )
 }
 
-fn keep_tail(tail: &mut Vec<u8>, bytes: &[u8], limit: usize) {
+fn private_fs::keep_tail(tail: &mut Vec<u8>, bytes: &[u8], limit: usize) {
     let bytes = &bytes[bytes.len().saturating_sub(limit)..];
     let excess = (tail.len() + bytes.len()).saturating_sub(limit);
     tail.drain(..excess);
     tail.extend_from_slice(bytes);
 }
 
-fn after(duration: Duration) -> Instant {
+fn private_fs::after(duration: Duration) -> Instant {
     let now = Instant::now();
     now.checked_add(duration).unwrap_or(now)
 }
