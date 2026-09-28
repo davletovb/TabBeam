@@ -116,6 +116,29 @@ fn run(args: Vec<OsString>) -> Result<(), ()> {
         return Ok(());
     }
 
+    // Real `agy` (1.2.x) starts every turn by echoing the prompt as a
+    // `user_input` step, and can add `system_message` steps.
+    line(
+        &mut stdout,
+        &serde_json::json!({
+            "event":"step_update",
+            "step_update":{
+                "conversation_id":session,"step_index":0,"state":"DONE",
+                "step_type":"user_input","text_delta":prompt
+            }
+        }),
+    )?;
+    line(
+        &mut stdout,
+        &serde_json::json!({
+            "event":"step_update",
+            "step_update":{
+                "conversation_id":session,"step_index":1,"state":"DONE",
+                "step_type":"system_message","text_delta":"Session ready."
+            }
+        }),
+    )?;
+
     if model.as_deref() == Some("gemini-unknown-step") {
         line(
             &mut stdout,
@@ -190,12 +213,36 @@ fn run(args: Vec<OsString>) -> Result<(), ()> {
         "Gemini answer"
     };
 
+    // The answer arrives as ACTIVE fragments, then a DONE update that names
+    // only its step. Real `agy` sends the last fragment there; a build that
+    // repeats the whole text is covered too.
+    let middle = answer.len() / 2;
+    let middle = (middle..=answer.len())
+        .find(|&index| answer.is_char_boundary(index))
+        .unwrap_or(answer.len());
+    for fragment in [&answer[..middle], &answer[middle..]] {
+        line(
+            &mut stdout,
+            &serde_json::json!({
+                "event":"step_update",
+                "step_update":{
+                    "conversation_id":session,"step_index":10,"state":"ACTIVE",
+                    "step_type":"agent_response","text_delta":fragment
+                }
+            }),
+        )?;
+    }
+    let done_text = if model.as_deref() == Some("gemini-cumulative-done") {
+        answer
+    } else {
+        ""
+    };
     line(
         &mut stdout,
         &serde_json::json!({
             "event":"step_update",
             "step_update":{
-                "state":"DONE","step_type":"agent_response","text_delta":answer
+                "conversation_id":session,"step_index":10,"state":"DONE","text_delta":done_text
             }
         }),
     )?;
