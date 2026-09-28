@@ -293,7 +293,7 @@ async function tick() {
   assert.equal(changes.at(-1)?.response, undefined, "still being checked");
   assert.deepEqual(
     sent.map((message) => [message.provider_id, message.record_diagnostics]),
-    [["codex", false], ["claude", true]]
+    [["codex", false], ["claude", true], ["gemini", false]]
   );
 
   codex.reject(new Error("worker restarted"));
