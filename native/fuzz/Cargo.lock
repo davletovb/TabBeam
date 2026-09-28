@@ -106,7 +106,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pervue-core"
+name = "runtime-core"
 version = "0.1.0-dev"
 dependencies = [
  "nix",
@@ -118,7 +118,7 @@ name = "pervue-host"
 version = "0.1.0-dev"
 dependencies = [
  "nix",
- "pervue-core",
+ "runtime-core",
  "serde",
  "serde_json",
 ]
@@ -128,7 +128,7 @@ name = "pervue-host-fuzz"
 version = "0.0.0"
 dependencies = [
  "libfuzzer-sys",
- "pervue-core",
+ "runtime-core",
  "pervue-host",
  "serde_json",
 ]

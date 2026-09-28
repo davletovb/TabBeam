@@ -10,7 +10,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 pervue-host = { path = "../host" }
-pervue-core = { path = "../core" }
+runtime-core = { path = "../runtime-core" }
 serde_json = "1.0"
 
 [[bin]]

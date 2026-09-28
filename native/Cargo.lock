@@ -51,12 +51,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "pervue-core"
+name = "runtime-core"
 version = "0.1.0-dev"
 dependencies = [
  "nix",
  "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -64,7 +63,7 @@ name = "pervue-fake-provider"
 version = "0.1.0-dev"
 dependencies = [
  "nix",
- "pervue-core",
+ "runtime-core",
  "pervue-host",
  "serde_json",
 ]
@@ -74,7 +73,7 @@ name = "pervue-host"
 version = "0.1.0-dev"
 dependencies = [
  "nix",
- "pervue-core",
+ "runtime-core",
  "serde",
  "serde_json",
 ]
