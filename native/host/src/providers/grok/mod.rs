@@ -379,7 +379,9 @@ impl Provider for Grok {
         };
 
         let new_conversation = request.conversation_id.is_none();
-        let conversation_id = request.conversation_id.unwrap_or_else(private_fs::new_conversation_id);
+        let conversation_id = request
+            .conversation_id
+            .unwrap_or_else(private_fs::new_conversation_id);
         let args = grok_args(&workspace, request.model.as_deref());
         let expected_cwd = workspace.path().to_path_buf();
         let spec = self
