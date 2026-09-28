@@ -213,9 +213,9 @@ Reached after **Milestone H**:
 | EXT-17 | Add rich sources/citations to full-page view | H | Extension | SRCH-04, EXT-06 | IMPLEMENTED — VERIFY |
 | SEC-05 | Sanitize/limit untrusted search-result content | H | Security | SRCH-02, SRCH-03 | IMPLEMENTED — VERIFY |
 | TST-14 | Add citation/source grounding regression suite | H | Testing | SRCH-04, EXT-16, EXT-17 | IMPLEMENTED — VERIFY |
-| OBS-03 | Add sanitized diagnostics export | Post-G | Observability | OBS-02, PKG-01 | BACKLOG |
-| PRO-08 | Add Gemini adapter | Post-E | Provider | PRO-07 | BACKLOG |
-| PRO-09 | Add Grok adapter | Post-E | Provider | PRO-07 | BACKLOG |
+| OBS-03 | Add sanitized diagnostics export | Post-G | Observability | OBS-02, PKG-01 | IMPLEMENTED — VERIFY |
+| PRO-08 | Add Gemini adapter | Post-E | Provider | PRO-07 | IMPLEMENTED — VERIFY |
+| PRO-09 | Add Grok adapter | Post-E | Provider | PRO-07 | DEFERRED |
 | CON-04 | Add SQLite native persistence only when justified | Post-MVP | Conversation | CON-02 | DEFERRED |
 | PKG-07 | Add automatic companion updater | Post-G | Packaging | PKG-03, PKG-04, PKG-06 | BACKLOG |
 | PKG-08 | Add Linux packaging if demand justifies it | Post-G | Packaging | LIB-05 | DEFERRED |
@@ -1842,8 +1842,8 @@ Update this section whenever item statuses change.
 | F — Reusable native core | 7 | 0 | 7 | 0 | 0 | 0 | 0 | 0 |
 | G — Installable product | 9 | 0 | 7 | 0 | 0 | 0 | 2 | 0 |
 | H — Search/citations | 8 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
-| Post-milestone | 6 | 0 | 0 | 0 | 0 | 4 | 0 | 2 |
-| **Total** | **81** | **46** | **23** | **0** | **0** | **8** | **2** | **2** |
+| Post-milestone | 6 | 0 | 2 | 0 | 0 | 1 | 0 | 3 |
+| **Total** | **81** | **46** | **25** | **0** | **0** | **5** | **2** | **3** |
 
 ### Milestone completion rule
 
