@@ -83,6 +83,7 @@ pub const INHERITED: &[&str] = &[
     "NO_PROXY",
     "SSL_CERT_FILE",
     "SSL_CERT_DIR",
+    "NODE_EXTRA_CA_CERTS",
 ];
 
 /// The variables of `host` named in [`INHERITED`] or `extra`, in `host`'s
