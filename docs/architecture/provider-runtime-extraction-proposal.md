@@ -3,7 +3,7 @@
 **Status:** Proposed, for discussion  
 **Date:** 2026-09-27  
 **Revised:** 2026-09-28 (see §12)  
-**Scope:** extracting a reusable library from `native/`, with [Conclave](https://github.com/davletovb/conclave) as its first outside consumer  
+**Scope:** extracting a reusable provider runtime from `native/`, and rewriting [Conclave](https://github.com/davletovb/conclave)'s server in Rust so that it links the runtime directly  
 **Evidence:** Pervue at `5eb0cdf` (three providers, including Gemini), Conclave at `1379a37`
 
 ## Summary
@@ -12,23 +12,25 @@
   - The runtime owns provider execution: running an authenticated AI CLI safely, streaming its answer, and stopping it.
   - Each application keeps its conversation and product policy.
   - Native Messaging, browser context, provider sessions, and protocol v1 stay in Pervue.
-- **Use a sidecar process, not linked code.** Conclave is a TypeScript/Node server. It should run the runtime as a **sidecar executable speaking a versioned JSON-RPC protocol over stdio**, not load it through a C ABI or a Node addon. ADR-0001 expected a C ABI for non-Rust consumers, so this decision would be recorded as ADR-0002.
+- **Conclave's server becomes a Rust server that links the runtime directly.**
+  - It replaces the Fastify server and keeps the same HTTP API, so Conclave's React/TypeScript web app doesn't change.
+  - There is no sidecar process, no second protocol, and no npm binary packages.
+  - All four of Conclave's providers get the runtime's process hardening. That includes Grok, which is built in Conclave on `pervue-core`'s process code.
+- **Better security, with modest speed gains.**
+  - The runtime brings the provider-side protections (§2.1).
+  - The rewrite also closes two server gaps found in Conclave today: there's no authentication and no Host-header check (§7).
+  - Speed gains come mostly from removing redundant sign-in checks and caching status, not from the language (§9).
 - **Every provider runs as one process per turn.**
-  - The runtime doesn't use long-lived provider servers, so Codex runs through `codex exec` only and `codex app-server` isn't adopted.
+  - The runtime doesn't use long-lived provider servers, so it runs Codex through `codex exec` only.
   - This keeps cancelling a turn a kill, and confines a crash to one turn.
   - It also lets each turn choose its tools with launch flags (§4).
-- **Pilot with Gemini, then Claude.**
-  - Both apps drive Antigravity (`agy`) almost identically, and neither keeps sessions for it. Gemini therefore needs no continuation support, which makes it the smallest first step.
-  - Claude follows, and brings Conclave the larger fixes (§2.1).
-- **Codex is Conclave's call.**
-  - Moving Conclave's OpenAI provider to `codex-exec` hardens it, but gives up token streaming, the live model list, and the ChatGPT usage panel.
-  - Keeping its TypeScript app-server adapter is also valid, and the runtime doesn't depend on that choice.
-- **Grok stays in Conclave.** Pervue deferred PRO-09, so nothing about Grok moves.
-- **Speed work comes after every provider runs on the runtime.** First measure cold start and time to first output with real CLIs, then optimize in one place (§9).
-- **Incubate in `native/`, then split.**
-  - Promote only what the next migration needs.
+- **Pilot with Gemini, then Claude.** Both apps drive Antigravity (`agy`) almost identically, and neither keeps sessions for it. Gemini therefore needs no continuation support and is the smallest first step.
+- **OpenAI in Conclave is a decision.** `codex-exec` loses token streaming, the live model list, and the ChatGPT usage panel. A Conclave-only app-server client keeps them (§7).
+- **Speed work comes after every provider runs on the runtime.** First measure with real CLIs, then optimize in one place (§9).
+- **Incubate the runtime in `native/`.**
+  - Conclave depends on it pinned to a git revision.
   - Don't move files while the remaining tracker items are in flight.
-  - The runtime gets its own repository once Conclave runs on it.
+  - The runtime gets its own repository once Conclave's Rust server runs on it.
 
 ## 1. What exists today
 
@@ -52,7 +54,7 @@ Merging the copied helpers is worth doing inside the host. That cleanup doesn't 
 
 ### Conclave
 
-Conclave's `ProviderAdapter` ([packages/core/src/index.ts][c-core]) has three parts: `listModels`, `generate(request, emit)` with an `AbortSignal`, and an optional `limits`. Four adapters implement it, and each handles processes its own way:
+Conclave's server is 5,712 lines of TypeScript plus 3,440 lines of tests. Its `ProviderAdapter` ([packages/core/src/index.ts][c-core]) has three parts: `listModels`, `generate(request, emit)` with an `AbortSignal`, and an optional `limits`. Four adapters implement it, and each handles processes its own way:
 
 | Provider | Runtime and transport | Prompt | Child environment | Stopping | Output |
 |---|---|---|---|---|---|
@@ -68,7 +70,9 @@ Conclave also:
 - refuses API-key, Console, and cloud billing by reading the account type (`claude auth status` JSON, Codex `account/read`);
 - bounds every call absolutely, with a 180-second `CONCLAVE_*_TURN_TIMEOUT_MS` per adapter;
 - re-arms a 180-second stall watchdog on every provider event ([orchestrator.ts:507][c-watchdog]);
-- treats usage reports as cumulative snapshots and adds the increase over the previous one ([orchestrator.ts:437–455][c-usage]).
+- treats usage reports as cumulative snapshots and adds the increase over the previous one ([orchestrator.ts:437–455][c-usage]);
+- has no authentication, only a CORS allowlist of browser origins, and doesn't check the Host header ([index.ts][c-index]);
+- starts CLI processes to answer `/providers` and `/models` on every request, and runs `claude auth status` before every Claude call ([anthropic-claude.ts:235][c-claude-auth]).
 
 ## 2. What each product gains
 
@@ -106,7 +110,7 @@ In order of impact:
    - The hostile-process matrix (TST-04).
    - The cross-provider contract suite (TST-10).
 
-   All three can run against the sidecar.
+   All three can run in-process against Conclave's Rust server.
 
 ### 2.2 What Pervue gains from Conclave's code
 
@@ -124,56 +128,53 @@ In order of impact:
    - The differences are worth reconciling. Pervue fails a turn when Antigravity reports a step type it doesn't document, while Conclave ignores such steps. Pervue deletes transcripts. Conclave reads usage.
 4. **A second application** to test the runtime's API against, so it isn't shaped only by Pervue's needs.
 
-## 3. Crossing the language boundary
+## 3. How Conclave uses the runtime
 
-Four ways Conclave could use a Rust library:
+Five ways to connect Conclave to a Rust runtime:
 
-| Option | How Conclave uses it |
+| Option | What it means for Conclave |
 |---|---|
-| **Sidecar executable** with a versioned stdio protocol | Starts one runtime process and speaks JSON-RPC over NDJSON, the same pattern as its Codex and Grok clients |
-| **Node addon** (napi-rs) | Imports a `.node` module |
-| **C ABI** (the path ADR-0001 expected) | Loads it through an FFI package |
-| **Shared contract, TypeScript port** | Reimplements the same specification in TypeScript |
+| **Rust server** (decided) | Conclave's server is rewritten in Rust and links the runtime crate. The web app stays TypeScript |
+| **Sidecar executable** | The Node server stays, and the runtime runs as a separate process speaking versioned JSON-RPC over stdio |
+| **Node addon** (napi-rs) | The Node server loads the runtime as a `.node` module |
+| **C ABI** (the path ADR-0001 expected) | The Node server loads the runtime through an FFI package |
+| **Shared contract, TypeScript port** | Conclave reimplements the runtime's behavior in TypeScript |
+
+**Rust server**
+- For:
+  - No sidecar, no second protocol, no per-platform npm packages, and no version pinning across two languages. The runtime is an ordinary Cargo dependency.
+  - Conclave-only adapters (Grok, and an OpenAI app-server client if Conclave keeps one) are built on `pervue-core`'s process and stream code. All four providers get the same hardening.
+  - One binary that also serves the built web app. Users need neither Node nor pnpm; Node is only needed to build the web app. Pervue's macOS and Windows packaging can be reused.
+  - Pervue's fake provider and hostile-process matrix run in-process against Conclave's orchestration.
+  - Provider knowledge lives in one language and one codebase.
+  - The rewrite is the natural time to fix the server's authentication and Host-header gaps. Those fixes don't depend on the language, though (§7).
+- Against:
+  - A large port. About 4,200 lines of server code, including the 1,746-line orchestrator and the Grok adapter, plus about 2,300 lines of non-provider tests. Subtle behavior must match exactly, and stored data must still load.
+  - The TypeScript types the web app shares with the server (`packages/core`, used by 15 web files) must be generated from Rust, or they drift.
+  - Slower iteration on the product logic that changes most (orchestration modes, workflows, prompts), and contributors need Rust for everyday Conclave work.
+  - Less isolation than a separate process. A runtime panic is contained to its thread, but an abort, such as running out of memory, takes the server down.
+  - No meaningful speed gain from the language itself. Model latency dominates, as ADR-0001 also found.
 
 **Sidecar executable**
 - For:
-  - No FFI and no `unsafe` code.
-  - A crash in the runtime can't take down the Fastify server and every run it owns.
-  - It reuses the host's multiplexing, cancellation, timeouts, and fairness, and the hostile-process tests cover it end to end.
-  - Any language can use it.
-  - Pervue's release workflows already build macOS and Windows binaries.
+  - The smallest change to Conclave: only its provider adapters are replaced.
+  - A runtime crash can't take down the Node server.
 - Against:
-  - A binary has to reach `pnpm dev` users.
-  - A second protocol to version.
-  - One more process hop, which is negligible next to model latency.
-  - Losing the runtime process in the middle of a turn has to be handled (§7).
+  - A binary has to reach `pnpm dev` users, and a second protocol has to be versioned.
+  - Grok, which stays Conclave-only, keeps its TypeScript process handling.
+  - A lost runtime process adds its own failure mode.
 
-**Node addon (napi-rs)**
-- For:
-  - Runs in-process, with an idiomatic JavaScript API.
-- Against:
-  - `pervue-core` is synchronous and polls against deadlines, using helper threads. Bridging that to libuv needs threadsafe-function glue.
-  - The binding crate needs an exemption from the workspace's `forbid(unsafe_code)`.
-  - A panic or abort kills the server.
-  - Reaping children inside Node shares the process with libuv's own `SIGCHLD` handling, an interaction nobody has tested.
-  - It still needs a prebuilt binary for each platform.
+**Node addon, C ABI, and TypeScript port**
+- All three keep the Node server, so they lose everything the Rust server gains.
+- **The addon and the C ABI** bring FFI, `unsafe` binding code, and in-process crashes into the Node server. The C ABI also needs a versioned C façade ([core/README](../../native/core/README.md#compatibility-and-extraction)).
+- **The TypeScript port** duplicates the hardest code, and Node can't reproduce some of its guarantees. For example, it can't kill a process group before reaping the child.
 
-**C ABI**
-- For:
-  - Language-neutral in principle.
-- Against:
-  - Everything that counts against the addon.
-  - Manual ownership.
-  - A versioned C façade with cross-version tests ([core/README](../../native/core/README.md#compatibility-and-extraction)).
-
-**Shared contract, TypeScript port**
-- For:
-  - There's no binary to ship.
-- Against:
-  - Two implementations of the hardest code, which will drift apart.
-  - Node reaps children itself, so some guarantees can't be ported. One example: killing the process group before reaping the child, so the group's ID can't be reused in between.
-
-**Recommendation:** the sidecar. Record the decision as ADR-0002, superseding ADR-0001's sentence about a C ABI for non-Rust consumers.
+**Decision (2026-09-28): the Rust server.**
+- It hardens every provider in one language, removes the sidecar layer, and ships as one binary.
+- The accepted costs are the port, generated types, and slower iteration on product logic.
+- The sidecar remains the fallback if the port stalls (§10).
+- **ADR-0002 (Pervue)** records that the runtime is shared as a Rust crate, used in-process. ADR-0001's sentence about a C ABI for non-Rust consumers stands, because no non-Rust consumer remains.
+- **Conclave's own ADR** records the server rewrite.
 
 ## 4. Proposed boundary
 
@@ -187,10 +188,11 @@ provider-runtime (working name)
 ├─ providers   gemini (the pilot), claude, codex-exec
 ├─ scheduler   concurrent turns, start/idle/absolute timeouts,
 │              cancel → stop → kill, fairness, delta splitting
-└─ sidecar     bounded, versioned JSON-RPC over stdio; a TypeScript client beside it
+└─ service     in-process API for async servers: start a turn, receive its
+               events, cancel it (§6)
 
 pervue-host
-├─ provider-runtime, linked as a crate
+├─ provider-runtime, linked as a crate; drives the scheduler from its own loop
 ├─ conversation→session map, stale-session policy, and transcript
 │  removal when a conversation is deleted
 ├─ Native Messaging framing, origin checks, manifest, protocol v1
@@ -198,44 +200,48 @@ pervue-host
 └─ diagnostics and user-facing messages
 
 conclave
-├─ the sidecar client
-├─ the Grok adapter, and the OpenAI adapter if it stays on app-server
-├─ orchestration, retries, and budgets
-├─ run persistence
-└─ SearXNG search
+├─ web app (React/TypeScript), with types generated from the server
+└─ Rust server
+   ├─ provider-runtime, linked as a crate through the service API
+   ├─ HTTP API (same routes and JSON), serving the built web app
+   ├─ orchestration, retries, and budgets
+   ├─ run persistence and replay
+   ├─ SearXNG search
+   └─ Grok adapter, and an OpenAI app-server client if Conclave keeps one,
+      built on pervue-core's process and stream code
 ```
 
 **What moves, and why.**
 - **The promotion rule.** Something moves into the runtime only when a second application uses it.
   - Session maps and conversation-scoped transcript removal stay in `pervue-host`, because Conclave runs every call statelessly.
-  - Grok stays in Conclave, because Pervue deferred it.
-  - `codex-exec` moves only when Conclave's OpenAI provider does (§7). Until then it stays in `pervue-host`.
-- **One process per turn, for every provider.**
+  - Grok stays in Conclave, because Pervue deferred it. Conclave builds it on the shared process and stream primitives, which is allowed without promoting the adapter.
+  - `codex-exec` moves when Conclave's Rust server uses it for OpenAI (§7).
+  - Search-result sanitizing becomes shareable now that both apps are Rust. Pervue's version is the stricter one: it bounds text, strips tags, and validates URLs. It moves into the runtime, or a small shared crate, when Conclave's Rust search uses it.
+- **One process per turn, for every provider in the runtime.**
   - Codex's app-server is the only CLI server that serves many conversations from one process. Grok's ACP mode can hold several sessions in one process, but Conclave runs one process per call. Claude can keep one conversation's process alive. Antigravity has no such mode that either app uses.
   - The runtime adopts none of them. Pervue chooses each turn's tools with launch flags: `--tools ""` or `--tools WebSearch` for Claude, the `pervue-text` or `pervue-search` agent for Gemini, and `-c` feature switches for Codex. A long-lived process would fix those at launch.
   - A process kept alive for a conversation would carry earlier turns' page text into later turns.
   - A crash of a shared process fails every running turn. Cancelling becomes a request the CLI has to honor, instead of a kill.
   - Pervue's host lives only as long as the extension's service worker keeps its connection ([native-connection.js][p-native-connection]), so a warm provider process wouldn't stay warm.
+  - Conclave's turns always use the same tool setup (none), so these reasons weigh less for it. A Conclave-only app-server client for OpenAI stays possible (§7), but it would be Conclave's code, outside the runtime.
   - Speed is handled separately (§9).
 - **Continuation.**
   - The runtime's Claude provider accepts an opaque native-session handle to resume, and reports the native session it ran.
   - When that session no longer exists, it fails with a reason of its own before producing any output.
   - `pervue-host` keeps the map, its `conv_` IDs, and the retry-once-with-history policy.
   - Claude's session IDs will then cross a crate boundary they don't cross today, but only as opaque values.
-  - The sidecar protocol doesn't expose continuation until a consumer needs it.
+  - Conclave never uses continuation.
   - Gemini keeps no sessions, so the pilot doesn't need this hook. The hook arrives with Claude.
 - **Cleanup has two scopes.**
   - **Per-turn cleanup is execution**, so it moves with the provider:
     - Gemini's Antigravity transcript.
-    - If Conclave moves to `codex-exec`, the session file `exec` saves for each stateless turn, deleted using the ownership check in `forget_rollouts`. Whether `exec` has a flag to skip saving hasn't been checked.
+    - For Conclave's stateless `codex-exec` turns, the session file `exec` saves for each turn, deleted using the ownership check in `forget_rollouts`. Whether `exec` has a flag to skip saving hasn't been checked.
   - **Cleanup when a conversation is deleted is policy**, so it stays with the app. In Pervue, that means Claude's and Codex's transcripts.
   - **Retrying failed deletions.** Pervue records failed Gemini deletions under its conversation IDs and retries them through `conversation.forget`. The runtime needs its own record, per namespace, retried when the runtime starts and on request, so Conclave gets retries without having conversations to hang them on. Pervue's `forget` can trigger the same retry.
 - **Environment construction.**
   - The core README lists the credential allowlist as host policy, so moving it changes that boundary deliberately.
   - Conclave needs the same protection (§2.1, item 4), and a provider in the runtime can't start without its variables.
   - Applications can extend the list.
-
-The two products sanitize search results in similar ways. Those are small pure functions in two languages, though, and a round trip through the sidecar would cost more than sharing them saves.
 
 ## 5. API changes a second application needs
 
@@ -269,10 +275,7 @@ The two products sanitize search results in similar ways. Those are small pure f
 
 **Namespace**
 - Today: paths and thread names are hard-coded under `pervue`.
-- Needed: an application namespace, fixed when the runtime starts.
-  - `pervue-host` passes a constant.
-  - The sidecar takes `--namespace` on its command line and refuses Pervue's namespace.
-  - `initialize` reports the namespace but can't change it.
+- Needed: an application namespace, fixed in code when the runtime starts. `pervue-host` passes `pervue`, and Conclave's server passes `conclave`.
 - Why: each application gets its own workspaces and cleanup records, so a mistake in one product can't touch the other's files. This protects against accidents, not attacks: any process running as the user can already write to both products' directories.
 
 **Sign-in**
@@ -288,149 +291,170 @@ The two products sanitize search results in similar ways. Those are small pure f
 - Why:
   - Pervue's Claude adapter counts any unrecognized `stream_event` as progress ([claude/output.rs][p-claude-output]). A Claude build that keeps emitting such events keeps its turn alive indefinitely.
   - That is tolerable in a popup the user can close. It isn't in a server-owned run that nobody is watching.
-  - Conclave already bounds every call absolutely, and the runtime must preserve that.
+  - These two limits replace Conclave's stall watchdog and per-adapter turn timeouts. Its `CONCLAVE_STEP_STALL_TIMEOUT_MS` and `CONCLAVE_*_TURN_TIMEOUT_MS` settings map onto them.
 
 **Reconciling what each app learned.** Each product found something the other missed, in two places:
 - **Claude command lines.** Pervue uses `--strict-mcp-config`, stream-json input, and `DISABLE_AUTOUPDATER`. Conclave uses `--no-session-persistence`, `--max-turns 1`, `--system-prompt`, `--disable-slash-commands`, and `--safe-mode`.
 - **Gemini agent definitions and step handling.** See §2.2, item 3.
 
-## 6. Sidecar protocol sketch
+## 6. The in-process runtime API
 
-The protocol is JSON-RPC 2.0 with one message per line. Conclave already has two clients in this style ([app-server-client.ts][c-codex-client], [acp-client.ts][c-grok-client]). Chrome's framing, with its length prefix in native byte order, is a browser detail that doesn't belong here.
+The runtime stays synchronous and needs no async runtime of its own.
+- **`pervue-host`** drives the scheduler directly from its existing loop.
+- **Async servers such as Conclave's** use the `service` API:
+  - The scheduler runs on its own thread.
+  - Each turn's events arrive on a channel that works from both blocking and async code.
 
-```text
-$ provider-runtime --namespace conclave
-→ {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol":1}}
-← {"jsonrpc":"2.0","id":1,"result":{"protocol":1,"runtime":"0.1.0","namespace":"conclave","providers":["gemini","claude"]}}
-→ {"jsonrpc":"2.0","id":2,"method":"turn/start","params":{"turn":"t_7f3a","provider":"claude","model":"sonnet",
-     "system":"…","messages":[{"role":"user","text":"…"}],"tools":"none"}}
-← {"jsonrpc":"2.0","id":2,"result":{}}
-← {"jsonrpc":"2.0","method":"turn/event","params":{"turn":"t_7f3a","type":"delta","text":"…"}}
-← {"jsonrpc":"2.0","method":"turn/event","params":{"turn":"t_7f3a","type":"usage","input_tokens":812,"output_tokens":95}}
-← {"jsonrpc":"2.0","method":"turn/ended","params":{"turn":"t_7f3a","outcome":"completed"}}
-→ {"jsonrpc":"2.0","id":3,"method":"turn/cancel","params":{"turn":"t_9c01"}}
-← {"jsonrpc":"2.0","id":3,"result":{}}
-← {"jsonrpc":"2.0","method":"turn/ended","params":{"turn":"t_9c01","outcome":"failed",
-     "error":{"code":"REQUEST_CANCELLED","reason":"USER_CANCELLED","retryable":false}}}
-→ {"jsonrpc":"2.0","id":4,"method":"turn/cancel","params":{"turn":"t_0000"}}
-← {"jsonrpc":"2.0","id":4,"error":{"code":-32000,"message":"unknown turn","data":{"reason":"UNKNOWN_TURN"}}}
+A sketch, not a final API:
+
+```rust
+let runtime = Runtime::start(RuntimeConfig {
+    namespace: Namespace::fixed("conclave"),
+    providers: vec![gemini::installed(), claude::installed()],
+    limits: Limits::default(),
+})?;
+
+let turn = runtime.start_turn(TurnId::new(), Turn {
+    provider: "claude".into(),
+    model: Some("sonnet".into()),
+    system: Some(system_prompt),
+    messages,
+    tools: ToolPolicy::None,
+    continuation: None,
+})?; // the turn is registered before this returns
+
+while let Some(event) = turn.events.recv().await {
+    match event {
+        TurnEvent::Started | TurnEvent::Activity => {}
+        TurnEvent::Delta(text) => { /* text_delta */ }
+        TurnEvent::Source(source) => { /* citation */ }
+        TurnEvent::Usage(usage) => { /* cumulative snapshot */ }
+        TurnEvent::Ended(outcome) => break, // exactly once per started turn
+    }
+}
+
+runtime.cancel(&turn.id)?; // Err(UnknownTurn) once the turn has ended
 ```
-
-- **Methods.** `initialize`, `provider/status`, `provider/models`, `turn/start`, `turn/cancel`, and `shutdown`. Every method gets a response.
-- **Notifications.**
-  - `turn/event` reports `started`, `delta`, `activity`, `source`, and `usage`.
-  - `turn/ended` follows each started turn.
 
 **Turn lifecycle:**
 
-1. **Order.**
-   - The runtime reads its input in order.
-   - `turn/start` registers the turn's ID before the runtime reads the next message or does any provider work. So a `turn/cancel` sent right after it always finds the turn.
-   - The response to `turn/start` comes before any event of that turn.
+1. **Order.** `start_turn` registers the turn before it returns and before any provider work starts. Events follow on the turn's channel.
 2. **Turn IDs.**
-   - A turn ID is unique for the life of the runtime process, not only while the turn is running, so a late cancel can never reach a newer turn.
-   - A `turn/start` that reuses an ID fails with `DUPLICATE_TURN_ID`, and the turn that already holds the ID is unaffected.
-3. **Exactly one ending.** A started turn gets exactly one `turn/ended`. A rejected `turn/start` gets an error response and no `turn/ended`.
+   - A turn ID is unique for the life of the runtime, not only while the turn is running, so a late cancel can never reach a newer turn.
+   - Reusing an ID fails with `DuplicateTurnId`, and the turn that already holds the ID is unaffected.
+3. **Exactly one ending.** A started turn gets exactly one `Ended`. A rejected `start_turn` returns an error and produces no events.
 4. **Cancellation.**
-   - `turn/cancel` for a running turn is acknowledged, including repeats, and the turn still ends only once.
-   - For a turn that never started or has already ended, `turn/cancel` fails with `UNKNOWN_TURN`.
-   - If a turn ends just before its cancel arrives, the runtime has already written its `turn/ended` ahead of that error, so the client can ignore the error.
+   - `cancel` for a running turn succeeds, including repeats, and the turn still ends only once.
+   - For a turn that never started or has already ended, `cancel` fails with `UnknownTurn`.
+   - If a turn ends just before its cancel arrives, its `Ended` is already in its channel, so the caller can ignore the error.
 
 **Other rules:**
-- **Lines are bounded.** The runtime reads them with the existing `LineSplitter`.
-- **End of input** cancels every turn and exits, as Pervue does with `INPUT_CLOSED`.
-- **Diagnostics on stderr** contain no prompts, output, or account identifiers, as in OBS-01.
-- **Versioning.** The protocol has its own version, separate from the runtime's version and from Pervue protocol v1. `initialize` refuses a mismatched version.
+- **Dropping the runtime** cancels every turn, waits out the stop grace, and kills what remains, as Pervue does with `INPUT_CLOSED`.
+- **A scheduler-thread panic** ends every running turn with a runtime error marked `maybe_started`, because the provider may have started or even finished. The application decides whether to retry, and can start a new runtime.
+- **If the whole server process dies,** Conclave's existing recovery marks unfinished runs `interrupted` at startup.
+- **Diagnostics** go to a hook the application supplies. They contain no prompts, output, or account identifiers, as in OBS-01.
+- **Versioning.** Conclave pins the runtime to a git revision while it incubates, and to a semver version once it's published. There's no wire protocol to version.
 
-## 7. Integrating Conclave
+## 7. The Conclave Rust server
 
-**Adapter.** A `RuntimeProvider` implements Conclave's `ProviderAdapter`. `generate` sends `turn/start`, and runtime events map to Conclave events:
+**Same functionality.** The web app keeps talking to the same HTTP API.
 
-| Runtime event | Conclave event |
+| Today (TypeScript) | Rust server |
 |---|---|
-| `delta` | `text_delta` |
-| `usage` | `usage` |
-| `source` | `citation` |
-| `activity` | A new `progress` event that the UI doesn't show. It re-arms the stall watchdog without adding noise, and `max_turn` still bounds the call |
+| Fastify routes and CORS | axum plus tower-http, with the same routes and JSON shapes |
+| Newline-delimited JSON event streams with `after=<seq>` replay | A streamed response body: same format, same replay |
+| Orchestrator (12 modes, workflow graphs, budgets, retries) | tokio tasks for parallel steps, plus cancellation tokens |
+| Stall watchdog plus 180 s per-adapter timeouts | The runtime's idle and absolute limits (§5): one layer instead of two |
+| Retry decisions by regex on error text | The runtime's `retryable` flag and reason codes. A rate-limit notice comes from the reason, not the wording |
+| `state.json` and `runs/*.ndjson`, with 0700/0600 permissions | Same file formats, so existing `~/.conclave` data still loads |
+| SearXNG client | reqwest, with the shared search-result sanitizer (§4) |
+| Claude, Gemini, and Codex adapters | The runtime, through the service API (§6) |
+| Grok adapter | Conclave code built on `pervue-core`'s process and stream code |
+| Mock provider | Rust, for development and tests |
+| Web app served by Vite in development | The server also serves the built web app |
 
-Aborting the `AbortSignal` sends `turn/cancel`.
+**Web app types.**
+- The server's Rust types become the source of truth, and the TypeScript types in `packages/core` are generated from them, for example with ts-rs.
+- CI fails if the generated types differ from the committed ones.
 
-**Errors.**
-- A failed turn rejects with `RuntimeError extends Error { code, reason, retryable }`.
-- `isRetryableStepError` and `isRateLimitError` check for it first.
-- The regular expressions stay as the fallback for adapters that haven't moved.
+**Security.**
+1. **From the runtime, for all four providers:**
+   - prompts on stdin instead of the command line;
+   - bounded memory;
+   - process-group kill with escalation;
+   - an allowlisted environment;
+   - private workspaces and absolute executable paths;
+   - Antigravity transcript cleanup;
+   - strict step checks.
+2. **Server gaps the rewrite must close:**
+   - **Authentication.** Any local process can drive today's API, and CORS only restrains browsers. The Rust server requires a per-install token on every request.
+   - **DNS rebinding.** Without a Host-header check, a malicious website can rebind its domain to `127.0.0.1`, then read conversations and start runs as if it were same-origin. Recent Chrome versions block some of this, but not every browser does. The Rust server rejects any Host not on its allowlist.
+   - **Request bodies.** Explicit size limits, and unknown JSON fields are rejected.
+3. **What Rust itself adds is smaller than it sounds.** JavaScript is memory-safe too. The real gain is that validation is harder to skip when requests become typed structs.
 
-**When the runtime process dies.**
-- The client fails every running turn with a runtime-loss error that says how far the turn got:
-  - `not_started` if the client never wrote the `turn/start` to the runtime;
-  - otherwise `maybe_started`, because a runtime that received the request may have launched the provider, or even finished the turn, before it died.
-- Conclave's retry policy decides what to do:
-  - A `not_started` turn can be retried freely.
-  - A `maybe_started` turn is retried only if the budget allows, and it counts as a new call, because the first attempt may already have used a model call and some of the rate limit.
-- A runtime that is killed outright can't stop its providers, just as the host can't today ([native/README](../../native/README.md#provider-processes)). So a `maybe_started` provider may still be running.
-- The next call starts a new runtime process.
+The two server gaps exist today and don't depend on the language. Patching them in the TypeScript server now is recommended, because the port will take months.
 
-**Release and compatibility.** These must be in place before Conclave makes the runtime its default:
-- The runtime has its own version and release tags, separate from Pervue's application releases, even while it lives in this repository.
-- `initialize` reports the runtime version and the protocol version.
-- After a new protocol version ships, the runtime keeps supporting the previous one for a documented period.
-- The per-platform npm packages carry the runtime's version.
-- Conclave pins an exact runtime version in its lockfile, and declares the protocol version it speaks.
-- Conclave's CI runs its runtime-backed tests against the pinned version.
+**Speed.** Rust handles each event in microseconds and uses tens of MB less memory than Node, but users won't notice either. The visible gains come from what the server stops doing, and the rewrite should include them:
+- no `claude auth status` before every Claude call;
+- cached provider status and model lists instead of starting CLIs on every `/providers` and `/models` request;
+- no runtime start-up, because the runtime is in-process.
 
-**Finding the binary.**
-- During development, `CONCLAVE_RUNTIME_BIN` points at it.
-- Later, per-platform npm packages ship it as `optionalDependencies`, the pattern esbuild and swc use.
+The rest of the plan is in §9. One change is slower: with `codex-exec`, OpenAI's first visible text arrives later, because `exec` delivers whole messages.
 
-**Rollout.**
-- Each provider moves separately, behind a flag: `CONCLAVE_RUNTIME_PROVIDERS=google` for the pilot, then `google,anthropic`.
-- Each TypeScript adapter stays the default until its parity checks pass.
-- The mock provider stays in TypeScript.
-
-**Parity checks for Gemini (the pilot).** Through the runtime, Gemini must match Conclave's current behavior on:
-- listing `gemini-` models from `agy models`. Conclave keeps mapping its legacy aliases (`auto`, `pro`, `flash`, `flash-lite`) itself before calling the runtime.
-- refusing Antigravity's direct Gemini API-key mode;
-- the tool-free agent and the `init` checks;
-- usage from the final `result`;
-- the absolute turn timeout;
-- cancellation;
-- the same failures in the run inspector.
-
-Conclave also gets three changes in behavior:
-- transcripts are deleted after each call;
-- the agent definition sets `hooks: []`;
-- a turn fails when Antigravity reports a step type it doesn't document. This check failed real turns in Pervue until the 2026-09-28 fix.
-
-**Parity checks for Claude (second).** Through the runtime, Claude must match Conclave's current behavior on:
-- refusing sign-ins that aren't subscriptions;
-- the `sonnet`, `opus`, and `haiku` aliases;
-- usage events;
-- no tools;
-- no session persistence;
-- the system prompt;
-- the absolute turn timeout;
-- cancellation;
-- the same failures in the run inspector.
-
-**OpenAI is Conclave's decision.**
-- **Moving to `codex-exec`** gains the hardening in §2.1, but loses:
+**OpenAI is a decision.**
+- **`codex-exec` through the runtime** is simpler, but loses:
   - token-by-token streaming;
   - the live model list (`model/list`), so the model picker needs a list kept by hand;
   - the ChatGPT usage panel (`/provider-limits`, fed by `account/rateLimits/read`), which would show as unavailable.
 
   The subscription check moves to classifying `codex login status`.
-- **Keeping the TypeScript app-server adapter** keeps those features, and also keeps that adapter's weaknesses.
+- **A Conclave-only app-server client,** built on the core process code, keeps those features. Conclave's turns never change tools, so the one-process-per-turn reasons weigh less there (§4).
+
+**Parity checks.**
+- **Orchestration.** The HTTP contract fixtures recorded from the TypeScript server (§8) must pass: every mode, the event sequences, the errors, and the stored files.
+- **Gemini (the pilot)** must match Conclave's current behavior on:
+  - listing `gemini-` models from `agy models`, with Conclave still mapping its legacy aliases (`auto`, `pro`, `flash`, `flash-lite`);
+  - refusing Antigravity's direct Gemini API-key mode;
+  - the tool-free agent and the `init` checks;
+  - usage from the final `result`;
+  - the absolute turn limit;
+  - cancellation;
+  - the same failures in the run inspector.
+
+  It also brings three changes in behavior:
+  - transcripts are deleted after each call;
+  - the agent definition sets `hooks: []`;
+  - a turn fails when Antigravity reports a step type it doesn't document. This check failed real turns in Pervue until the 2026-09-28 fix.
+- **Claude (second)** must match Conclave's current behavior on:
+  - refusing sign-ins that aren't subscriptions;
+  - the `sonnet`, `opus`, and `haiku` aliases;
+  - usage events;
+  - no tools;
+  - no session persistence;
+  - the system prompt;
+  - the absolute turn limit;
+  - cancellation;
+  - the same failures in the run inspector.
+
+**Switching over.**
+- During the port, the Rust server runs alongside the TypeScript server on another port.
+- It becomes the default once three things hold:
+  - it passes the contract fixtures;
+  - it serves all four providers;
+  - it loads real `~/.conclave` data.
+- The TypeScript server stays available for one release as a fallback, and is then removed.
 
 ## 8. Phases
 
 The tracker isn't edited here, and the IDs below are only proposals. Each phase promotes only what the next real use needs.
 
-**Phase 0: agree.** Nothing in this phase changes code.
+**Phase 0: agree.** Nothing in this phase changes the runtime.
 - Review this proposal.
-- Write ADR-0002 (a sidecar instead of a C ABI).
-- Choose a name, a license, and where the code lives.
+- Write ADR-0002 in Pervue (the runtime is shared as a Rust crate, used in-process), and Conclave's own ADR for the server rewrite.
+- Choose a name, a license, and where the runtime lives.
+- Recommended: patch the TypeScript server's authentication and Host-header gaps now (§7).
 
-**Phase 1: Gemini through the runtime** (proposed LIB-06 to LIB-09).
+**Phase 1: the runtime, with Gemini** (Pervue; proposed LIB-06 to LIB-09).
 1. Introduce the neutral turn, error, usage, and timeout types from §5.
 2. Move the Gemini provider into the runtime, along with only the mechanics it needs:
    - environment construction;
@@ -439,27 +463,27 @@ The tracker isn't edited here, and the IDs below are only proposals. Each phase 
 
    No continuation hook is needed. `pervue-host` keeps passing all of its tests.
 3. Extract the scheduler from `host.rs`, and add the absolute limit and the rule for what counts as progress. The protocol validator and golden fixtures must stay green.
-4. Build the sidecar, serving Gemini and the fake provider, and run the hostile matrix and the contract suite through it.
+4. Add the `service` API (§6), and run the hostile matrix and the contract suite through it.
 
-**Phase 2: Conclave on Gemini** (work in the Conclave repository).
-1. Build the TypeScript client.
-2. Route Gemini through the runtime behind the flag, with typed errors and runtime-loss handling.
-3. Put release and compatibility pinning in place.
-4. Make the runtime the default for Gemini.
+**Phase 2: the Rust server's foundations** (Conclave). The TypeScript server stays the default throughout.
+1. Record the HTTP contract fixtures: run the TypeScript server with the mock provider through every mode, and save the requests and responses, event sequences, errors, and stored files.
+2. Port storage and the HTTP API against those fixtures. Generate the web app's types, and add authentication and the Host allowlist.
+3. Port the orchestrator together with its tests.
+4. Connect Gemini through the runtime.
 
 **Phase 3: Claude.**
-- Move the Claude provider into the runtime, with the continuation hook. `pervue-host` keeps its sessions and its transcript removal when a conversation is deleted.
-- Route Conclave's Anthropic provider through the runtime behind the flag, then make the runtime its default.
+- Pervue moves the Claude provider into the runtime, with the continuation hook. `pervue-host` keeps its sessions and its transcript removal when a conversation is deleted.
+- Conclave's Rust server connects Claude.
 
-**Phase 4: Codex, if Conclave chooses it.**
-- Move `codex-exec` into the runtime, with per-turn cleanup of `exec`'s session files for stateless turns.
-- Route Conclave's OpenAI provider through the runtime behind the flag.
+**Phase 4: Codex and Grok.**
+- Pervue moves `codex-exec` into the runtime, with per-turn cleanup of `exec`'s session files for stateless turns. Alternatively, Conclave builds its own app-server client (§7).
+- Conclave builds Grok on the core process and stream code, and ports the mock provider.
 
-**Phase 5: speed** (proposed PRF-01 to PRF-03). See §9.
+**Phase 5: switch.** Test against real `~/.conclave` data, make the Rust server the default, and keep the TypeScript server for one release.
 
-**Phase 6: split and publish.**
-- Move the runtime to its own repository.
-- Publish the crates and npm packages.
+**Phase 6: speed** (proposed PRF-01 to PRF-03). See §9.
+
+**Phase 7: split and publish.** Move the runtime to its own repository and publish its crates.
 
 Merging Pervue's copied helpers (§1) is cleanup inside the host. It can happen at any time and stays in the host.
 
@@ -467,10 +491,11 @@ Merging Pervue's copied helpers (§1) is cleanup inside the host. It can happen 
 - Phase 1 should start only after LIB-01 to LIB-05 and PRO-08 are verified, so nothing is restructured while it is being verified.
 - Pervue's Gemini adapter landed on 2026-09-28 and was fixed the same day for real `agy` output. It should settle before it moves.
 - Phase 1 also changes `host.rs`, the host's largest and most heavily tested file. Coordinate that with whoever holds the remaining tracker items.
+- Phase 2's first three steps don't depend on the runtime, so they can start in parallel with Phase 1.
 
 ## 9. Speed and cold start
 
-Optimize after every provider runs on the runtime. At that point the runtime is the one place where turns start, so a measurement or a fix covers every provider in both apps at once, instead of four adapters in two languages.
+Optimize after every provider runs on the runtime. At that point the runtime is the one place where turns start, so a measurement or a fix covers every provider in both apps at once.
 
 **What is measured today.**
 - TST-09 sets three budgets ([performance.js][p-perf]):
@@ -481,13 +506,14 @@ Optimize after every provider runs on the runtime. At that point the runtime is 
 
 **What a turn costs today.**
 
-| Provider | Processes started per turn | Other work before the provider starts |
+| Where | Processes started | Other work |
 |---|---|---|
-| Codex (`exec`) | 2: `codex login status`, then `codex exec` ([codex/mod.rs:460][p-codex]) | Workspace ownership check |
-| Claude | 2: `claude auth status`, then `claude -p` ([claude/mod.rs:433][p-claude]) | Workspace ownership check |
-| Gemini | 1: `agy` | Creating a private workspace and writing the agent definition; workspace ownership check |
+| Codex turn (`exec`) | 2: `codex login status`, then `codex exec` ([codex/mod.rs:460][p-codex]) | Workspace ownership check |
+| Claude turn | 2: `claude auth status`, then `claude -p` ([claude/mod.rs:433][p-claude]). Conclave does the same ([anthropic-claude.ts:235][c-claude-auth]) | Workspace ownership check |
+| Gemini turn | 1: `agy` | Creating a private workspace and writing the agent definition; workspace ownership check |
+| Conclave page load | `claude auth status`, `agy models`, and a whole Grok ACP process for `/providers`, plus more for `/models` | — |
 
-In Conclave, the runtime process itself also starts once. `codex exec` delivers each message whole, so Codex's first visible text waits for its first complete message. No process-level optimization changes that.
+`codex exec` delivers each message whole, so Codex's first visible text waits for its first complete message. No process-level optimization changes that.
 
 **Step 1: measure** (PRF-01).
 - For each provider, with real CLIs, record a timeline of each turn: request received → sign-in check done → provider started → first output line → first answer text → turn ended → process exited.
@@ -500,11 +526,11 @@ In Conclave, the runtime process itself also starts once. `codex exec` delivers 
    - run the check alongside the turn instead of before it, and stop the turn if the check says signed out.
 
    Either one removes a process start from the critical path of every Codex and Claude turn. Codex needs the check because a signed-out `exec` keeps retrying instead of failing. A stale cache there is bounded by the start timeout.
-2. **Prepare per-turn resources ahead of time**, such as Gemini's next private workspace and agent definition. The workspace ownership check must still run at launch, because caching it would open a race.
-3. **Keep executable discovery across turns**, and look again only when a launch fails. Today each request does one lookup.
-4. **Start the runtime when Conclave's server starts**, not on the first call.
+2. **Cache provider status and model lists** in Conclave's server, and refresh them in the background instead of starting CLIs on every page load.
+3. **Prepare per-turn resources ahead of time**, such as Gemini's next private workspace and agent definition. The workspace ownership check must still run at launch, because caching it would open a race.
+4. **Keep executable discovery across turns**, and look again only when a launch fails. Today each request does one lookup.
 
-Long-lived provider processes stay out of scope (§4) unless the measurements show process start-up dominates and per-turn tool control can be kept.
+Long-lived provider processes stay out of scope for the runtime (§4) unless the measurements show process start-up dominates and per-turn tool control can be kept.
 
 **Step 3: budgets** (PRF-03).
 - Set targets per provider from the measurements.
@@ -513,6 +539,14 @@ Long-lived provider processes stay out of scope (§4) unless the measurements sh
 
 ## 10. Risks
 
+- **The port stalls or drifts.**
+  - About 4,200 lines and 2,300 lines of tests must match subtle behavior: custom-workflow failure handling, deferred retries, budget accounting, degraded results, event replay, and recovering interrupted runs.
+  - The contract fixtures, running both servers side by side, and the TypeScript fallback limit the damage.
+  - If the port stalls, the sidecar design from the earlier revision can still bring the runtime's hardening to the TypeScript server.
+- **Stored data compatibility.** Existing `state.json` and `runs/*.ndjson` files must load unchanged. Test with real data before switching.
+- **Feature work during the port.** Either freeze Conclave's features, or port in parallel and re-sync (§11).
+- **Less isolation in-process.** A runtime panic is contained to its thread (§6), but an abort takes the server down. The runtime bounds memory, which makes the most likely abort, running out of memory, unlikely.
+- **Contributors need Rust** for everyday Conclave server work. The web app stays TypeScript.
 - **Premature generalization.** The §4 promotion rule decides what moves. Move one provider at a time, and keep policy owned by a single application in that application.
 - **Regressions from extracting the scheduler.**
   - `host.rs` holds protocol v1's lifecycle guarantees, so move it without changing behavior.
@@ -520,56 +554,59 @@ Long-lived provider processes stay out of scope (§4) unless the measurements sh
 - **Stricter Gemini checks.**
   - Failing on step types Antigravity doesn't document is the right default for a tool-free boundary. But it broke real turns in Pervue until the 2026-09-28 fix, and Conclave would inherit it.
   - Pervue has live smoke tests for Codex and Claude, but none yet for Gemini. Add one, and run it against each new Antigravity release.
-- **Losing the runtime in the middle of a turn.** A retry can repeat work that already happened. Runtime-loss errors say whether the turn may have started, and the application decides (§7).
-- **Two protocols to version.** Each gets its own version number and handshake, and Conclave pins the runtime (§7).
-- **Shipping a binary to a `pnpm dev` project.** Until prebuilt packages exist, contributors who want the runtime need Rust. The TypeScript adapters stay as the fallback.
 - **Stricter defaults for Conclave.**
   - The environment allowlist may drop a variable someone relies on, so each provider can extend it.
   - A private workspace means project `CLAUDE.md` files no longer apply. That's intended, but users should be told.
 - **Windows.**
   - There is no Job Object yet ([process.rs][p-process]), so only the provider process itself is stopped, not its descendants. Conclave has the same gap today.
   - Don't claim process-tree kills on Windows.
-- **Licensing.** Neither repository has a license. Choose one before publishing crates or npm packages.
+- **Licensing.** Neither repository has a license. Choose one before publishing crates.
 
 ## 11. Open decisions
 
-1. A sidecar or a Node addon? The recommendation is the sidecar.
-2. Incubate in `native/` and split later (recommended), or start a new repository now?
-3. The runtime's name. `provider-runtime` is a placeholder.
-4. The license.
-5. Should Conclave move its OpenAI provider to `codex-exec`, or keep its TypeScript app-server adapter (§7)?
-6. Does Conclave accept Pervue's stricter defaults, the environment allowlist and the private workspace, as they are?
-7. What should the default absolute turn limit be, and can applications raise it? Conclave uses 180 s today, and Pervue has no limit.
-8. Who keeps the record of per-turn cleanups that failed: the runtime (recommended, §4) or the application?
+1. Incubate the runtime in `native/` and split it later (recommended), or start a new repository now?
+2. The runtime's name. `provider-runtime` is a placeholder.
+3. The license.
+4. OpenAI in Conclave: `codex-exec` through the runtime, or a Conclave-only app-server client that keeps streaming (§7)?
+5. Should Rust become the source of truth for the web app's types (recommended), or should `packages/core` stay the source and the Rust server be checked against it?
+6. Freeze Conclave's features during the port, or port in parallel and re-sync?
+7. Patch the TypeScript server's authentication and Host-header gaps now, before the port (recommended)?
+8. Does Conclave accept Pervue's stricter defaults, the environment allowlist and the private workspace, as they are?
+9. What should the default absolute turn limit be, and can applications raise it? Conclave uses 180 s today, and Pervue has no limit.
+10. Who keeps the record of per-turn cleanups that failed: the runtime (recommended, §4) or the application?
 
 ## 12. Revision history
 
 **2026-09-28, after review.** A review checked the proposal against both repositories at the original evidence commits. It led to these changes:
 
 - **Framing.** Conclave justifies a new boundary between applications. It doesn't satisfy the extraction rule for the first time, because Pervue already met it with two providers.
-- **Boundary.**
-  - Session maps, managed continuation, and transcript removal stay in `pervue-host`. The runtime offers a continuation hook instead (§4).
-  - `codex-exec` also stays in the host until another application needs it.
-- **Protocol.**
-  - `turn/cancel` now gets a response.
-  - The turn lifecycle is specified: when a turn is registered, when an ID may be reused, what happens with unknown or repeated cancellations, and that every started turn ends exactly once (§6).
-- **Runtime loss.** Errors carry `not_started` or `maybe_started`, and retrying a `maybe_started` turn is the application's decision (§7).
-- **Namespace.** It is fixed when the runtime starts, not chosen in `initialize`. It is described as protection against accidents, not a security boundary (§5).
+- **Boundary.** Session maps, managed continuation, and transcript removal stay in `pervue-host`. The runtime offers a continuation hook instead (§4).
+- **Protocol.** Cancellation gets a response, and the turn lifecycle is specified: when a turn is registered, when an ID may be reused, what happens with unknown or repeated cancellations, and that every started turn ends exactly once. These rules now apply to the in-process API (§6).
+- **Runtime loss.** Errors carry `maybe_started` when a turn may have run, and retrying it is the application's decision (§6).
+- **Namespace.** It is fixed when the runtime starts, not chosen by a caller. It is described as protection against accidents, not a security boundary (§5).
 - **Usage.** Defined as cumulative snapshots for each turn (§5).
 - **Timeouts.** An absolute `max_turn` limit and a rule for what resets the idle timer (§5). Checking the code for this showed that Pervue's Claude adapter can be kept alive indefinitely today.
-- **Releases.** The runtime is versioned and pinned independently before Conclave makes it the default (§7).
+- **Releases.** The runtime is versioned and pinned independently of both applications (§6).
 - **Phases.** Phase 1 was scoped to what its first migration needs (§8).
 
 **2026-09-28, after Gemini landed in Pervue.**
 
 - **Evidence.** Updated to Pervue `5eb0cdf`, which has three providers. The §1 tables now reflect it.
 - **Failures.** Corrected the claim that typed failures don't depend on how messages are worded (§2.1, item 8).
-- **One process per turn.** This is now the rule for every provider. `codex app-server` is no longer planned as a runtime backend, and PRO-10 is dropped (§4).
+- **One process per turn.** This is now the rule for every provider in the runtime. `codex app-server` is no longer planned as a runtime backend, and PRO-10 is dropped (§4).
 - **Pilot.** Gemini goes first because it needs no continuation support, and Claude follows (§8).
 - **Cleanup.** Split into per-turn cleanup (runtime) and cleanup when a conversation is deleted (application) (§4).
-- **Grok.** It stays in Conclave (§4).
-- **Codex.** Moving Conclave's OpenAI provider to `codex-exec` is Conclave's decision (§7).
 - **Speed.** New section on cold start and speed, for after every provider runs on the runtime (§9).
+
+**2026-09-28, Rust server for Conclave.**
+
+- **Decision.** Conclave's Fastify server is to be rewritten in Rust and link the runtime directly, keeping the same HTTP API. This replaces the sidecar recommendation (§3).
+- **Protocol.** The sidecar and its JSON-RPC protocol are dropped. An in-process `service` API keeps the same turn-lifecycle rules (§6).
+- **Server security.** Found two gaps in Conclave's current server, no authentication and no Host-header check. The Rust server closes them, and patching them in the TypeScript server now is recommended (§7).
+- **Grok.** It stays in Conclave but is built on `pervue-core`'s process code, so all four providers are hardened (§4).
+- **Search.** Search-result sanitizing becomes shareable between the two apps (§4).
+- **OpenAI.** Conclave chooses between `codex-exec` and its own app-server client (§7).
+- **Phases, risks, and open decisions** rewritten for the port (§8, §10, §11).
 
 [p-claude]: ../../native/host/src/providers/claude/mod.rs
 [p-claude-output]: ../../native/host/src/providers/claude/output.rs
@@ -584,13 +621,13 @@ Long-lived provider processes stay out of scope (§4) unless the measurements sh
 [p-native-connection]: ../../extension/src/background/native-connection.js
 [p-perf]: ../../extension/src/shared/performance.js
 [c-core]: https://github.com/davletovb/conclave/blob/1379a37ccb13d484247122ee215257e642b166fc/packages/core/src/index.ts
+[c-index]: https://github.com/davletovb/conclave/blob/1379a37ccb13d484247122ee215257e642b166fc/apps/server/src/index.ts
 [c-classify]: https://github.com/davletovb/conclave/blob/1379a37ccb13d484247122ee215257e642b166fc/apps/server/src/orchestrator.ts#L98-L130
 [c-usage]: https://github.com/davletovb/conclave/blob/1379a37ccb13d484247122ee215257e642b166fc/apps/server/src/orchestrator.ts#L437-L455
 [c-watchdog]: https://github.com/davletovb/conclave/blob/1379a37ccb13d484247122ee215257e642b166fc/apps/server/src/orchestrator.ts#L507
+[c-claude-auth]: https://github.com/davletovb/conclave/blob/1379a37ccb13d484247122ee215257e642b166fc/apps/server/src/providers/anthropic-claude.ts#L235
 [c-claude-argv]: https://github.com/davletovb/conclave/blob/1379a37ccb13d484247122ee215257e642b166fc/apps/server/src/providers/anthropic-claude.ts#L254
 [c-claude-buf]: https://github.com/davletovb/conclave/blob/1379a37ccb13d484247122ee215257e642b166fc/apps/server/src/providers/anthropic-claude.ts#L154
 [c-claude-kill]: https://github.com/davletovb/conclave/blob/1379a37ccb13d484247122ee215257e642b166fc/apps/server/src/providers/anthropic-claude.ts#L139
 [c-grok-kill]: https://github.com/davletovb/conclave/blob/1379a37ccb13d484247122ee215257e642b166fc/apps/server/src/grok/acp-client.ts#L150
 [c-codex-env]: https://github.com/davletovb/conclave/blob/1379a37ccb13d484247122ee215257e642b166fc/apps/server/src/codex/app-server-client.ts#L64
-[c-codex-client]: https://github.com/davletovb/conclave/blob/1379a37ccb13d484247122ee215257e642b166fc/apps/server/src/codex/app-server-client.ts
-[c-grok-client]: https://github.com/davletovb/conclave/blob/1379a37ccb13d484247122ee215257e642b166fc/apps/server/src/grok/acp-client.ts
