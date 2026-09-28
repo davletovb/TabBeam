@@ -177,6 +177,9 @@ fn parse_assistant(event: &Value) -> Result<Line, Malformed> {
                 }
             }
             "web_search_tool_result" => {
+                // A result itself proves provider-side search/network activity
+                // even if a future Grok omits the preceding server_tool_use.
+                searched = true;
                 let Some(results) = block.get("content").and_then(Value::as_array) else {
                     continue;
                 };
