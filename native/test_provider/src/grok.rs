@@ -5,6 +5,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::Duration;
 
 pub fn is_grok(program: &OsString) -> bool {
     Path::new(program)
@@ -25,7 +26,7 @@ fn run(args: Vec<OsString>) -> Result<(), ()> {
             .map(PathBuf::from)
             .is_some_and(|path| path.exists());
         if auth {
-            println!("You are logged in with https://accounts.x.ai.");
+            println!("You are logged in with grok.com.");
         } else {
             println!("You are not authenticated.");
         }
@@ -43,16 +44,12 @@ fn run(args: Vec<OsString>) -> Result<(), ()> {
     let prompt = arg_value(&args, "--prompt-file")
         .and_then(|path| fs::read_to_string(path).ok())
         .ok_or(())?;
-    let agent = arg_value(&args, "--agent-profile")
+    let agent = arg_value(&args, "--agent")
         .and_then(|path| fs::read_to_string(path).ok())
         .ok_or(())?;
-    let model = arg_value(&args, "--model")
+    let requested_model = arg_value(&args, "--model")
         .and_then(|value| value.to_str())
         .unwrap_or("grok-4.6");
-    let search = arg_value(&args, "--tools").and_then(|value| value.to_str()) == Some("web_search")
-        && !args
-            .iter()
-            .any(|arg| arg == OsStr::new("--disable-web-search"));
 
     if args
         .iter()
@@ -60,88 +57,109 @@ fn run(args: Vec<OsString>) -> Result<(), ()> {
     {
         return Err(());
     }
-    if search && !agent.contains("  - web_search") {
-        return Err(());
-    }
-    if !search && !agent.contains("tools: []") {
+    if !agent.contains("tools: []")
+        || !args
+            .windows(2)
+            .any(|pair| pair[0] == "--disallowed-tools" && pair[1] == "Agent,search_tool,use_tool")
+        || !args.iter().any(|arg| arg == "--disable-web-search")
+    {
         return Err(());
     }
 
     let cwd = std::env::current_dir().map_err(|_| ())?;
+    let api_key_source = if requested_model == "grok-init-auth" {
+        "user"
+    } else {
+        "oauth"
+    };
+    let actual_model = match requested_model {
+        "grok-4" => "grok-4-0709",
+        "grok-init-model" => "grok-other",
+        other => other,
+    };
+    let reported_cwd = if requested_model == "grok-init-cwd" {
+        cwd.parent().unwrap_or(&cwd).to_path_buf()
+    } else {
+        cwd.clone()
+    };
+    let tools = if requested_model == "grok-init-tools" {
+        serde_json::json!(["search_tool"])
+    } else {
+        serde_json::json!([])
+    };
+    let skills = if requested_model == "grok-init-skills" {
+        serde_json::json!(["unexpected-skill"])
+    } else {
+        serde_json::json!([])
+    };
+    let mcp_servers = if requested_model == "grok-init-mcp" {
+        serde_json::json!([{"name":"unexpected","status":"connected"}])
+    } else {
+        serde_json::json!([])
+    };
+
     line(&serde_json::json!({
         "type":"system",
         "subtype":"init",
         "session_id":"grok-fake-session",
-        "apiKeySource":"oauth",
-        "model":model,
-        "cwd":cwd.to_string_lossy(),
+        "apiKeySource":api_key_source,
+        "model":actual_model,
+        "cwd":reported_cwd.to_string_lossy(),
         "permissionMode":"dontAsk",
-        "tools": if search { serde_json::json!(["web_search"]) } else { serde_json::json!([]) },
+        "tools":tools,
         "slash_commands":[],
-        "mcp_servers":[],
-        "skills":[]
+        "mcp_servers":mcp_servers,
+        "skills":skills
     }))?;
 
-    if model == "grok-tool-violation" {
-        line(&serde_json::json!({
-            "type":"assistant",
-            "message":{"content":[{"type":"tool_use","id":"tool-1","name":"bash","input":{"command":"pwd"}}]}
-        }))?;
+    if requested_model.starts_with("grok-init-") {
         hang_briefly();
         return Ok(());
     }
 
-    if model == "grok-result-only-search" {
+    if args.iter().any(|arg| arg == "--include-partial-messages") {
         line(&serde_json::json!({
-            "type":"assistant",
-            "message":{"content":[
-                {"type":"web_search_tool_result","tool_use_id":"missing-search-use","content":[
-                    {"type":"web_search_result","url":"https://example.com/unrequested","title":"Unrequested"}
-                ]}
-            ]}
+            "type":"stream_event",
+            "event":{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"..."}}
         }))?;
-        hang_briefly();
-        return Ok(());
     }
 
-    if search {
-        let source_content = if model == "grok-search-no-sources" {
-            serde_json::json!([])
-        } else {
-            serde_json::json!([
-                {"type":"web_search_result","url":"https://example.com/grok-search","title":"Example Grok source"}
-            ])
-        };
-        line(&serde_json::json!({
-            "type":"assistant",
-            "message":{
-                "content":[
-                    {"type":"text","text":"I will search first."},
-                    {"type":"server_tool_use","id":"search-1","name":"web_search","input":{"query":"test"}},
-                    {"type":"web_search_tool_result","tool_use_id":"search-1","content":source_content},
-                    {"type":"text","text":"Grok search answer."}
-                ]
-            }
-        }))?;
-        line(&serde_json::json!({
-            "type":"result","subtype":"success","is_error":false,
-            "result":"Grok search answer.","stop_reason":"end_turn"
-        }))?;
+    match requested_model {
+        "grok-tool-violation" => {
+            line(&serde_json::json!({
+                "type":"assistant",
+                "message":{"content":[{"type":"tool_use","id":"tool-1","name":"run_terminal_cmd","input":{"command":"pwd"}}]}
+            }))?;
+            hang_briefly();
+            return Ok(());
+        }
+        "grok-result-auth" => {
+            line(&serde_json::json!({
+                "type":"result","subtype":"error_during_execution","is_error":true,
+                "errors":["Not signed in. To authenticate, run grok login."]
+            }))?;
+            return Err(());
+        }
+        "grok-hang" => {
+            std::thread::sleep(Duration::from_secs(30));
+            return Ok(());
+        }
+        _ => {}
+    }
+
+    let answer = if prompt.contains("Earlier assistant answer") {
+        "Grok follow-up answer"
     } else {
-        let answer = if prompt.contains("Earlier assistant answer") {
-            "Grok follow-up answer"
-        } else {
-            "Grok answer"
-        };
-        line(&serde_json::json!({
-            "type":"assistant",
-            "message":{"content":[{"type":"text","text":answer}]}
-        }))?;
-        line(&serde_json::json!({
-            "type":"result","subtype":"success","is_error":false,
-            "result":answer,"stop_reason":"end_turn"
-        }))?;
-    }
+        "Grok answer"
+    };
+    line(&serde_json::json!({
+        "type":"assistant",
+        "message":{"content":[{"type":"thinking","thinking":"done"},{"type":"text","text":answer}]}
+    }))?;
+    line(&serde_json::json!({
+        "type":"result","subtype":"success","is_error":false,
+        "result":answer,"stop_reason":"end_turn"
+    }))?;
     Ok(())
 }
 
@@ -187,5 +205,5 @@ fn line(value: &serde_json::Value) -> Result<(), ()> {
 }
 
 fn hang_briefly() {
-    std::thread::sleep(std::time::Duration::from_millis(750));
+    std::thread::sleep(Duration::from_millis(750));
 }
