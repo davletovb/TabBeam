@@ -49,7 +49,9 @@ fn run(args: Vec<OsString>) -> Result<(), ()> {
     let model = arg_value(&args, "--model")
         .and_then(|value| value.to_str())
         .unwrap_or("grok-4.6");
-    let search = arg_value(&args, "--tools").and_then(|value| value.to_str()) == Some("web_search");
+    let search = arg_value(&args, "--tools").and_then(|value| value.to_str())
+        == Some("web_search")
+        && !args.iter().any(|arg| arg == OsStr::new("--disable-web-search"));
 
     if args
         .iter()
