@@ -47,9 +47,9 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
                 .get("mcp_servers")
                 .and_then(Value::as_array)
                 .ok_or(Malformed)?;
-            let all_mcp_disabled = servers.iter().all(|server| {
-                server.get("status").and_then(Value::as_str) == Some("disabled")
-            });
+            let all_mcp_disabled = servers
+                .iter()
+                .all(|server| server.get("status").and_then(Value::as_str) == Some("disabled"));
             Line::Init {
                 api_key_source,
                 model,
