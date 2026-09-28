@@ -44,7 +44,10 @@ impl FakeGemini {
             self.dir.join("workspace"),
         )
         .with_environment([
-            (OsString::from(home_name), self.home.as_os_str().to_os_string()),
+            (
+                OsString::from(home_name),
+                self.home.as_os_str().to_os_string(),
+            ),
             (OsString::from("PATH"), self.dir.as_os_str().to_os_string()),
         ])
     }
@@ -159,7 +162,11 @@ fn one_shot_turns_continue_from_bounded_pervue_history() {
             .any(|update| matches!(update, Update::ConversationCreated(_)))
     );
     assert!(second.iter().any(|update| matches!(update, Update::Started { conversation_id: Some(id) } if id == &conversation)));
-    assert!(second.iter().any(|update| matches!(update, Update::Delta(text) if text == "Gemini continued answer")));
+    assert!(
+        second.iter().any(
+            |update| matches!(update, Update::Delta(text) if text == "Gemini continued answer")
+        )
+    );
     assert!(matches!(second.last(), Some(Update::Completed)));
 }
 
@@ -189,7 +196,10 @@ fn every_finished_turn_removes_antigravitys_persisted_transcript() {
     let remaining = std::fs::read_dir(fake.brain())
         .map(|entries| entries.count())
         .unwrap_or(0);
-    assert_eq!(remaining, 0, "Pervue-owned agy transcript survived the turn");
+    assert_eq!(
+        remaining, 0,
+        "Pervue-owned agy transcript survived the turn"
+    );
 }
 
 #[test]
