@@ -1,9 +1,8 @@
-//! Grok Build headless stream-json output reduced to Pervue events.
+//! Grok Build headless Messages output reduced to Pervue events.
 
 use serde_json::Value;
 
 use crate::protocol::events::{ErrorBody, ErrorCode};
-use crate::search::SearchResult;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Line {
@@ -13,18 +12,18 @@ pub enum Line {
         cwd: String,
         tools: Vec<String>,
         skills: Vec<String>,
-        active_mcp_servers: usize,
+        all_mcp_disabled: bool,
     },
     Assistant {
         text: String,
-        searched: bool,
-        sources: Vec<SearchResult>,
+        activity: bool,
         forbidden_tool: bool,
     },
     ResultSuccess {
         text: String,
     },
     ResultFailed(ErrorBody<'static>),
+    Activity,
     Ignored,
 }
 
@@ -39,67 +38,30 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
     let kind = event.get("type").and_then(Value::as_str).ok_or(Malformed)?;
     Ok(match kind {
         "system" if event.get("subtype").and_then(Value::as_str) == Some("init") => {
-            let api_key_source = event
-                .get("apiKeySource")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned();
-            let model = event
-                .get("model")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned();
-            let cwd = event
-                .get("cwd")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned();
-            let tools = strings(event.get("tools"))?;
-            let skills = strings(event.get("skills"))?;
-            let active_mcp_servers = event
+            let api_key_source = required_string(&event, "apiKeySource")?;
+            let model = required_string(&event, "model")?;
+            let cwd = required_string(&event, "cwd")?;
+            let tools = required_strings(&event, "tools")?;
+            let skills = required_strings(&event, "skills")?;
+            let servers = event
                 .get("mcp_servers")
                 .and_then(Value::as_array)
-                .map(|servers| {
-                    servers
-                        .iter()
-                        .filter(|server| {
-                            server.get("status").and_then(Value::as_str) != Some("disabled")
-                        })
-                        .count()
-                })
-                .unwrap_or(0);
+                .ok_or(Malformed)?;
+            let all_mcp_disabled = servers.iter().all(|server| {
+                server.get("status").and_then(Value::as_str) == Some("disabled")
+            });
             Line::Init {
                 api_key_source,
                 model,
                 cwd,
                 tools,
                 skills,
-                active_mcp_servers,
+                all_mcp_disabled,
             }
         }
-        "system" => Line::Ignored,
+        "system" => Line::Activity,
         "assistant" => parse_assistant(&event)?,
-        "user" => {
-            let blocks = event
-                .pointer("/message/content")
-                .and_then(Value::as_array)
-                .ok_or(Malformed)?;
-            if blocks.iter().any(|block| {
-                matches!(
-                    block.get("type").and_then(Value::as_str),
-                    Some("tool_result")
-                )
-            }) {
-                Line::Assistant {
-                    text: String::new(),
-                    searched: false,
-                    sources: Vec::new(),
-                    forbidden_tool: true,
-                }
-            } else {
-                Line::Ignored
-            }
-        }
+        "user" => parse_user(&event)?,
         "result" => {
             let subtype = event
                 .get("subtype")
@@ -128,26 +90,61 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
                             .and_then(Value::as_str)
                             .or_else(|| error.as_str())
                     })
+                    .or_else(|| event.get("result").and_then(Value::as_str))
                     .unwrap_or_default();
                 Line::ResultFailed(provider_failure(message))
             }
         }
-        // Raw partial-message framing is not requested by Pervue. If a future
-        // Grok starts emitting it anyway, fail closed rather than accidentally
-        // forwarding a new execution-bearing block.
-        "stream_event" => return Err(Malformed),
+        // Pervue does not expose token-level Grok streaming yet, but partial
+        // frames prove that the provider is still making progress and must
+        // refresh the host's idle timer.
+        "stream_event" => Line::Activity,
         _ => Line::Ignored,
     })
 }
 
-fn strings(value: Option<&Value>) -> Result<Vec<String>, Malformed> {
-    match value {
-        None => Ok(Vec::new()),
-        Some(Value::Array(values)) => values
-            .iter()
-            .map(|value| value.as_str().map(str::to_owned).ok_or(Malformed))
-            .collect(),
-        Some(_) => Err(Malformed),
+fn required_string(event: &Value, key: &str) -> Result<String, Malformed> {
+    event
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or(Malformed)
+}
+
+fn required_strings(event: &Value, key: &str) -> Result<Vec<String>, Malformed> {
+    event
+        .get(key)
+        .and_then(Value::as_array)
+        .ok_or(Malformed)?
+        .iter()
+        .map(|value| value.as_str().map(str::to_owned).ok_or(Malformed))
+        .collect()
+}
+
+fn parse_user(event: &Value) -> Result<Line, Malformed> {
+    let Some(content) = event.pointer("/message/content") else {
+        return Err(Malformed);
+    };
+    match content {
+        Value::String(_) => Ok(Line::Activity),
+        Value::Array(blocks) => {
+            let forbidden_tool = blocks.iter().any(|block| {
+                matches!(
+                    block.get("type").and_then(Value::as_str),
+                    Some("tool_result")
+                )
+            });
+            if forbidden_tool {
+                Ok(Line::Assistant {
+                    text: String::new(),
+                    activity: true,
+                    forbidden_tool: true,
+                })
+            } else {
+                Ok(Line::Activity)
+            }
+        }
+        _ => Err(Malformed),
     }
 }
 
@@ -157,54 +154,35 @@ fn parse_assistant(event: &Value) -> Result<Line, Malformed> {
         .and_then(Value::as_array)
         .ok_or(Malformed)?;
     let mut text = String::new();
-    let mut searched = false;
-    let mut sources = Vec::new();
+    let mut activity = false;
     let mut forbidden_tool = false;
 
     for block in blocks {
-        match block.get("type").and_then(Value::as_str).ok_or(Malformed)? {
+        let kind = block.get("type").and_then(Value::as_str).ok_or(Malformed)?;
+        match kind {
             "text" => {
+                activity = true;
                 if let Some(value) = block.get("text").and_then(Value::as_str) {
                     text.push_str(value);
                 }
             }
-            "thinking" => {}
-            "server_tool_use" => {
-                if block.get("name").and_then(Value::as_str) == Some("web_search") {
-                    searched = true;
-                } else {
-                    forbidden_tool = true;
-                }
+            "thinking" | "redacted_thinking" => activity = true,
+            // Pervue's shipped Grok integration is deliberately text-only.
+            // Any tool-bearing block, including hosted/server tools, is a
+            // boundary violation regardless of its particular tool name.
+            "tool_use" | "tool_result" | "server_tool_use" | "web_search_tool_result" => {
+                activity = true;
+                forbidden_tool = true;
             }
-            "web_search_tool_result" => {
-                // A result itself proves provider-side search/network activity
-                // even if a future Grok omits the preceding server_tool_use.
-                searched = true;
-                let Some(results) = block.get("content").and_then(Value::as_array) else {
-                    continue;
-                };
-                for result in results {
-                    if result.get("type").and_then(Value::as_str) != Some("web_search_result") {
-                        continue;
-                    }
-                    let Some(url) = result.get("url").and_then(Value::as_str) else {
-                        continue;
-                    };
-                    let title = result.get("title").and_then(Value::as_str).unwrap_or(url);
-                    if let Some(source) = SearchResult::new(title, url, "", None, None) {
-                        sources.push(source);
-                    }
-                }
-            }
-            "tool_use" => forbidden_tool = true,
+            // Unknown blocks fail closed: Grok adds new execution-bearing
+            // block types over time, and Pervue must not silently bless one.
             _ => return Err(Malformed),
         }
     }
 
     Ok(Line::Assistant {
         text,
-        searched,
-        sources,
+        activity,
         forbidden_tool,
     })
 }
@@ -236,11 +214,14 @@ pub fn authentication_failure(message: &str) -> bool {
         "not authenticated",
         "authentication failed",
         "run grok login",
-        "sign in",
+        "not signed in",
+        "please sign in",
         "login required",
         "cached credential",
         "token expired",
-        "unauthorized",
+        "401 unauthorized",
+        "http 401",
+        "status 401",
     ]
     .iter()
     .any(|phrase| lower.contains(phrase))
@@ -273,39 +254,60 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_current_messages_stream_shapes() {
-        let init = parse(r#"{"type":"system","subtype":"init","session_id":"s","apiKeySource":"oauth","model":"grok-4.6","cwd":"/tmp/x","tools":["web_search"],"skills":[],"mcp_servers":[]}"#).unwrap();
+    fn parses_shipped_messages_shapes_strictly() {
+        let init = parse(r#"{"type":"system","subtype":"init","session_id":"s","apiKeySource":"oauth","model":"grok-4.6","cwd":"/tmp/x","tools":[],"skills":[],"mcp_servers":[]}"#).unwrap();
         assert!(matches!(
             init,
             Line::Init {
                 api_key_source,
                 model,
                 tools,
-                active_mcp_servers: 0,
+                all_mcp_disabled: true,
                 ..
-            } if api_key_source == "oauth" && model == "grok-4.6" && tools == ["web_search"]
+            } if api_key_source == "oauth" && model == "grok-4.6" && tools.is_empty()
         ));
 
-        let assistant = parse(r#"{"type":"assistant","message":{"content":[{"type":"server_tool_use","id":"x","name":"web_search","input":{"query":"q"}},{"type":"web_search_tool_result","tool_use_id":"x","content":[{"type":"web_search_result","url":"https://example.com/a","title":"Example"}]},{"type":"text","text":"answer"}]}}"#).unwrap();
-        match assistant {
-            Line::Assistant {
-                text,
-                searched,
-                sources,
-                forbidden_tool,
-            } => {
-                assert_eq!(text, "answer");
-                assert!(searched);
-                assert!(!forbidden_tool);
-                assert_eq!(sources.len(), 1);
-                assert_eq!(sources[0].url, "https://example.com/a");
+        assert!(parse(r#"{"type":"system","subtype":"init","apiKeySource":"oauth","model":"grok-4.6","cwd":"/tmp/x","skills":[],"mcp_servers":[]}"#).is_err());
+        assert!(parse(r#"{"type":"system","subtype":"init","apiKeySource":"oauth","model":"grok-4.6","cwd":"/tmp/x","tools":[],"skills":[]}"#).is_err());
+
+        let active = parse(r#"{"type":"system","subtype":"init","apiKeySource":"oauth","model":"grok-4.6","cwd":"/tmp/x","tools":[],"skills":[],"mcp_servers":[{"name":"x","status":"connected"}]}"#).unwrap();
+        assert!(matches!(
+            active,
+            Line::Init {
+                all_mcp_disabled: false,
+                ..
             }
-            other => panic!("unexpected: {other:?}"),
-        }
+        ));
     }
 
     #[test]
-    fn client_tools_fail_closed() {
+    fn user_strings_are_activity_but_tool_results_fail_closed() {
+        assert_eq!(
+            parse(r#"{"type":"user","message":{"content":"hello"}}"#).unwrap(),
+            Line::Activity
+        );
+        let tool = parse(r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"x","content":"done"}]}}"#).unwrap();
+        assert!(matches!(
+            tool,
+            Line::Assistant {
+                forbidden_tool: true,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn reasoning_is_activity_and_client_tools_fail_closed() {
+        let thinking = parse(r#"{"type":"assistant","message":{"content":[{"type":"redacted_thinking","data":"x"}]}}"#).unwrap();
+        assert!(matches!(
+            thinking,
+            Line::Assistant {
+                activity: true,
+                forbidden_tool: false,
+                ..
+            }
+        ));
+
         let line = parse(r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"x","name":"run_terminal_cmd","input":{}}]}}"#).unwrap();
         assert!(matches!(
             line,
@@ -317,18 +319,39 @@ mod tests {
     }
 
     #[test]
-    fn provider_errors_are_normalized() {
+    fn partial_frames_are_activity() {
+        assert_eq!(
+            parse(r#"{"type":"stream_event","event":{"type":"content_block_delta"}}"#).unwrap(),
+            Line::Activity
+        );
+    }
+
+    #[test]
+    fn failed_result_falls_back_to_top_level_result() {
+        let line = parse(r#"{"type":"result","subtype":"error_during_execution","is_error":true,"result":"Not signed in. Run grok login."}"#).unwrap();
+        assert!(matches!(
+            line,
+            Line::ResultFailed(error) if error.reason == "AUTH_REJECTED"
+        ));
+    }
+
+    #[test]
+    fn provider_errors_are_normalized_without_bare_sign_in_matches() {
         assert_eq!(
             provider_failure("Authentication failed").reason,
             "AUTH_REJECTED"
         );
         assert_eq!(
-            provider_failure("HTTP 429 rate limit").reason,
-            "PROVIDER_RATE_LIMITED"
+            provider_failure("Not signed in. Run grok login.").reason,
+            "AUTH_REJECTED"
         );
         assert_eq!(
-            provider_failure("internal detail").reason,
+            provider_failure("failed to assign input buffer").reason,
             "PROVIDER_UNAVAILABLE"
+        );
+        assert_eq!(
+            provider_failure("HTTP 429 rate limit").reason,
+            "PROVIDER_RATE_LIMITED"
         );
     }
 }
