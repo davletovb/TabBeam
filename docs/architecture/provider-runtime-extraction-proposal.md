@@ -1,6 +1,6 @@
 # Proposal: a shared provider runtime
 
-**Status:** Proposed, for discussion; the basis for Pervue's ADR-0002  
+**Status:** Proposed, for discussion; the basis for [ADR-0002](adr-0002-shared-provider-runtime.md)  
 **Date:** 2026-09-27  
 **Revised:** 2026-09-28 (see §11)  
 **Scope:** hardening and extracting a reusable provider runtime from Pervue's `native/` so that a second application can use it. How Conclave adopts the runtime is recorded in Conclave's own repository, in its [adoption proposal][conclave-adoption].  
