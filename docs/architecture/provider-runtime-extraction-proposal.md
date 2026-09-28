@@ -210,8 +210,11 @@ A second application (Conclave: see its adoption proposal)
   - **Per-turn cleanup is execution**, so it moves with the provider:
     - Gemini's Antigravity transcript.
     - Grok's private workspace, with heartbeat markers and recovery of stale directories at startup.
-    - For `Ephemeral` `codex-exec` turns (§5), the session file `exec` saves for each turn, deleted using the ownership check in `forget_rollouts`. Whether `exec` has a flag to skip saving hasn't been checked.
-  - **Cleanup when a conversation is deleted is policy**, so it stays with the application. In Pervue, that means Claude's and Codex's transcripts.
+    - `Ephemeral` `codex exec` turns (§5) need none: they run with `codex exec --ephemeral`, so Codex saves no session at all. Deleting rollout files isn't an equivalent fallback. Codex's state database, which `forget_rollouts` leaves untouched, can still hold the first user message.
+  - **Cleanup when a conversation is deleted is policy**, so it stays with the application.
+    - In Pervue, that means Claude's and Codex's transcripts for every session the conversation has used, not just its current one.
+    - A conversation's session changes when a search turn starts a new one (§7), or when Claude reports a different session. Each time, the host records the superseded handle durably before switching, then removes that session's transcript in the background.
+    - A removal that fails stays recorded, and `conversation.forget` removes every session recorded for the conversation.
   - **Retrying failed deletions.** The runtime keeps its own record of failed per-turn deletions, per namespace. It retries them when it starts and on request, so a consumer without conversations still gets retries. Pervue's `conversation.forget` can trigger the same retry.
 - **Environment construction.**
   - The core README lists the credential allowlist as host policy, so moving it changes that boundary deliberately.
@@ -251,7 +254,11 @@ A second application (Conclave: see its adoption proposal)
 **Session policy**
 - Today: each adapter decides for itself whether the provider keeps its native session.
 - Needed: every turn states `Ephemeral` or `Persistent`.
-  - **`Ephemeral`:** nothing the provider saves outlives the turn. Where the CLI has a flag for this, the adapter uses it, such as Claude's `--no-session-persistence`. Otherwise per-turn cleanup removes what the CLI saved: `codex exec`'s session file, Antigravity's transcript, or Grok's workspace. No `Session` event is sent.
+  - **`Ephemeral`:** nothing the provider saves outlives the turn. No `Session` event is sent.
+    - Where the CLI has a flag for this, the adapter uses it: Claude's `--no-session-persistence`, and `codex exec --ephemeral`.
+    - Otherwise, per-turn cleanup removes what the CLI saved: Antigravity's transcript, or Grok's workspace.
+    - Each mode's live smoke test verifies this. After an `Ephemeral` turn, nothing the CLI stores, files or databases, may hold the prompt.
+    - A mode that can't meet that refuses `Ephemeral` rather than degrading. One example is an installed Codex without `--ephemeral`.
   - **`Persistent`:** the provider keeps its native session and reports it through `Session` (§6). Only execution modes that can resume (Claude and Codex) accept it; `start_turn` rejects it for the others. A turn that carries a `continuation` handle is always `Persistent`.
 - Why: the same start, with no continuation handle, needs opposite behavior from the two applications. Pervue's first turn with Claude or Codex must keep the new session and report it, so the conversation can resume. Every Conclave call must leave nothing behind. A default either way would break one of them.
   - **Conclave:** always `Ephemeral`.
@@ -439,9 +446,13 @@ The native code is reshaped into the future library while it still lives in Perv
    - in `pervue-host`: **a search turn never resumes a native Claude or Codex session.**
      - The problem: the rule against combining page context with search is checked per turn only, so resuming a session that saw page context earlier gives that page text live search access.
      - The rule: a search turn starts a new `Persistent` session from the bounded dialogue history, which never includes page context. The host then replaces the conversation's mapping with that new session.
+     - The superseded session, which may hold page text, is recorded and cleaned up as §4 describes, so deleting the conversation later still removes it.
      - It holds across host restarts without any stored metadata, because it doesn't depend on remembering which sessions saw page context.
      - The replayed history can still hold earlier answers that quoted a page, just as Gemini's and Grok's history does. The rule keeps raw page text out.
 6. **Add live smoke tests for Gemini and Grok.** Today only Codex and Claude have them.
+7. **Verify the session policies with real CLIs:**
+   - After an `Ephemeral` turn, each CLI's stored state holds no prompt. That includes checking that `codex exec --ephemeral` writes neither a rollout nor a state-database entry.
+   - A test runs the sequence "page-context turn → search turn → delete the conversation" across a host restart, and confirms that no transcript of either session remains.
 
 **Stage 1 exit bar:**
 - every item above is VERIFIED in the tracker;
@@ -528,6 +539,7 @@ Long-lived provider processes stay out of scope (§4) unless the measurements sh
 - **Stricter checks on Gemini and Grok.**
   - Failing on anything the boundary doesn't expect is the right default: an undocumented Antigravity step type, or a Grok `init` field that doesn't match. But it broke real Gemini turns in Pervue until the 2026-09-28 fix, and any consumer inherits the behavior.
   - Run the live smoke tests for all four providers, including the Gemini and Grok tests Stage 1 adds, against each new CLI release.
+- **Codex's state database.** `conversation.forget` doesn't clear it today, and it can hold a thread's first user message. That gap predates this proposal, and it is documented in `native/README.md`. Stage 1 should decide whether Pervue can remove a thread's entry through Codex itself, or documents the gap as accepted.
 - **Windows.**
   - There is no Job Object yet ([process.rs][p-process]), so only the provider process itself is stopped, not its descendants.
   - Don't claim process-tree kills on Windows.
@@ -600,6 +612,10 @@ Long-lived provider processes stay out of scope (§4) unless the measurements sh
 **2026-09-28, second PR review (davletovb/pervue#40).**
 - **Session policy.** Every turn now states `Ephemeral` or `Persistent`, so a shared adapter knows whether to keep the provider's native session. Pervue's first Claude or Codex turn keeps it, and every Conclave call leaves nothing behind (§5, §6).
 - **Search turns.** A search turn never resumes a native Claude or Codex session. It starts a new one from the bounded dialogue history, which never includes page context, and the host replaces its mapping. The protection survives host restarts without stored metadata (§7).
+
+**2026-09-28, third PR review (davletovb/pervue#40).**
+- **Superseded sessions.** When a conversation's session is replaced, by a search turn or by Claude reporting a different session, the host records the old handle durably and removes its transcript. `conversation.forget` removes every session a conversation has used. A new test covers "page-context turn → search turn → delete" across a host restart (§4, §7).
+- **Ephemeral Codex.** `Ephemeral` `codex exec` turns use `--ephemeral`. Deleting rollout files isn't accepted as a fallback, because Codex's state database can keep the first user message. Every mode's `Ephemeral` behavior is verified by its live smoke test, and a mode that can't meet it refuses `Ephemeral` (§4, §5, §7).
 
 [p-claude]: ../../native/host/src/providers/claude/mod.rs
 [p-claude-output]: ../../native/host/src/providers/claude/output.rs

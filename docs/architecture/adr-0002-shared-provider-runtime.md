@@ -44,11 +44,11 @@ Conclave has decided to adopt a shared runtime for all four providers at once, i
   - Native Messaging framing, origin checks, and the manifest;
   - protocol v1 and browser-context policy;
   - conversation-to-session maps and the continuation policy;
-  - removing transcripts when a conversation is deleted;
+  - removing transcripts when a conversation is deleted, for every session it has used, with superseded sessions recorded durably and cleaned up when replaced;
   - diagnostics and all user-facing wording.
 - The library returns failures as a code, a reason, and a `retryable` flag. Each application writes its own messages, so protocol v1 doesn't change.
 - Resumable providers take and report native sessions as opaque handles.
-- A search turn in Pervue never resumes a native Claude or Codex session. It starts a new one from the bounded dialogue history, which never includes page context, so the protection needs no stored metadata.
+- A search turn in Pervue never resumes a native Claude or Codex session. It starts a new one from the bounded dialogue history, which never includes page context, so the protection needs no stored metadata. The superseded session is cleaned up like any other.
 - Applications depend only on the library's crates, never on Pervue's. An application's own adapters build on `runtime-core`.
 
 **3. In-process consumption.**
@@ -60,7 +60,10 @@ Conclave has decided to adopt a shared runtime for all four providers at once, i
 **4. Execution rules.**
 - **One process per turn,** for every shared adapter. The library adopts no long-lived provider server.
 - **Every turn states a session policy.**
-  - `Ephemeral`: nothing the provider saves outlives the turn, using a CLI flag where one exists and per-turn cleanup otherwise.
+  - `Ephemeral`: nothing the provider saves outlives the turn.
+    - It uses a CLI flag where one exists (Claude's `--no-session-persistence`, `codex exec --ephemeral`) and per-turn cleanup otherwise.
+    - Each mode's live smoke test verifies that no prompt content remains in anything the CLI stores.
+    - A mode that can't meet that refuses `Ephemeral` rather than degrading.
   - `Persistent`: the provider keeps its native session and reports it. Only modes that can resume (Claude, Codex) accept it, and a turn that carries a continuation handle is always `Persistent`.
 
   Conclave's turns are always `Ephemeral`.
