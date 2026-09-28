@@ -288,7 +288,7 @@ impl Provider for Grok {
             Ok(mut process) => {
                 process.close_stdin();
                 StatusCheck::Probing {
-                    process,
+                    process: Box::new(process),
                     workspace: Some(workspace),
                     give_up: after(STATUS_PROBE),
                     stdout: Vec::new(),
@@ -382,7 +382,7 @@ fn status_update(availability: Availability, authentication: Authentication) -> 
 
 enum StatusCheck {
     Probing {
-        process: Process,
+        process: Box<Process>,
         workspace: Option<ProbeWorkspace>,
         give_up: Instant,
         stdout: Vec<u8>,
