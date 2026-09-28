@@ -20,6 +20,7 @@ export function bindDiagnostics(elements, runtime) {
     if (pending) return;
     pending = true;
     elements.refresh.disabled = true;
+    elements.export.disabled = true;
     try {
       const summary = await runtime.sendMessage({ type: DIAGNOSTICS_MESSAGE });
       renderDiagnostics(elements, summary);
@@ -31,6 +32,7 @@ export function bindDiagnostics(elements, runtime) {
     } finally {
       pending = false;
       elements.refresh.disabled = false;
+      elements.export.disabled = false;
     }
   }
 
@@ -105,6 +107,6 @@ export function downloadDiagnosticsExport(bundle) {
     link.rel = "noopener";
     link.click();
   } finally {
-    URL.revokeObjectURL(url);
+    globalThis.setTimeout(() => URL.revokeObjectURL(url), 30_000);
   }
 }
