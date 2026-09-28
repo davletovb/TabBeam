@@ -215,7 +215,7 @@ Reached after **Milestone H**:
 | TST-14 | Add citation/source grounding regression suite | H | Testing | SRCH-04, EXT-16, EXT-17 | IMPLEMENTED — VERIFY |
 | OBS-03 | Add sanitized diagnostics export | Post-G | Observability | OBS-02, PKG-01 | IMPLEMENTED — VERIFY |
 | PRO-08 | Add Gemini adapter | Post-E | Provider | PRO-07 | IMPLEMENTED — VERIFY |
-| PRO-09 | Add Grok adapter | Post-E | Provider | PRO-07 | DEFERRED |
+| PRO-09 | Add Grok adapter | Post-E | Provider | PRO-07 | IMPLEMENTED — VERIFY |
 | CON-04 | Add SQLite native persistence only when justified | Post-MVP | Conversation | CON-02 | DEFERRED |
 | PKG-07 | Add automatic companion updater | Post-G | Packaging | PKG-03, PKG-04, PKG-06 | BACKLOG |
 | PKG-08 | Add Linux packaging if demand justifies it | Post-G | Packaging | LIB-05 | DEFERRED |
@@ -1726,7 +1726,16 @@ without terminal commands during the user journey.
 ### PRO-09 — Add Grok adapter
 **Dependencies:** PRO-07  
 **Rule:** Same abstraction discipline as PRO-08.  
-**Status:** DEFERRED
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- Uses Grok Build's current one-shot headless integration surface rather than a persistent ACP/app-server process. Each Pervue turn starts and owns exactly one `grok` child.
+- Runs with a private per-turn working directory and private `GROK_HOME`; only the user's existing `~/.grok/auth.json` is referenced through Grok's supported `GROK_AUTH_PATH` override. Direct xAI/API-key/custom-endpoint environment routes are not inherited and `GROK_DISABLE_API_KEY_AUTH=1` enforces subscription/OAuth use.
+- Sends the bounded Pervue history/context through a private `--prompt-file`, never prompt text in argv. Continuation is stateless at the provider layer, matching the Gemini architecture.
+- Uses `streaming-messages-json`, verifies the init boundary (`apiKeySource=oauth`, expected Grok model, private cwd, exact tool set, no skills, no active MCP), and fails closed on unexpected client-side tool activity.
+- Ordinary/context turns expose no tools. Web turns expose only Grok's native `web_search`; success requires an observed search plus at least one normalized HTTP(S) source from `web_search_tool_result`.
+- Private `GROK_HOME` keeps Grok's session/log state inside the per-turn directory, so cleanup is deterministic when the process ends; cancellation uses the shared process-tree stop/kill path.
+- Fake-Grok integration coverage verifies status/auth, one-shot first/follow-up turns, OAuth/API-key isolation, native search/source normalization, no-source grounding failure, tool-boundary failure, and invalid model/conversation rejection.
 
 ### CON-04 — Add SQLite native persistence only when justified
 **Dependencies:** CON-02  
@@ -1848,8 +1857,8 @@ Update this section whenever item statuses change.
 | F — Reusable native core | 7 | 0 | 7 | 0 | 0 | 0 | 0 | 0 |
 | G — Installable product | 9 | 0 | 7 | 0 | 0 | 0 | 2 | 0 |
 | H — Search/citations | 8 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
-| Post-milestone | 6 | 0 | 2 | 0 | 0 | 1 | 0 | 3 |
-| **Total** | **81** | **46** | **25** | **0** | **0** | **5** | **2** | **3** |
+| Post-milestone | 6 | 0 | 3 | 0 | 0 | 1 | 0 | 2 |
+| **Total** | **81** | **46** | **26** | **0** | **0** | **5** | **2** | **2** |
 
 ### Milestone completion rule
 
