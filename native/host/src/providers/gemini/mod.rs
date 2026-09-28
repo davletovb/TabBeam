@@ -534,10 +534,7 @@ struct TurnWorkspace {
 
 impl TurnWorkspace {
     fn create(base: &Path, search: bool) -> io::Result<Self> {
-        let path = base.join(format!(
-            "turn-{:016x}",
-            RandomState::new().hash_one((SystemTime::now(), std::process::id()))
-        ));
+        let path = private_fs::unique_child(base, "turn");
         private_fs::create_private_dir(&path)?;
         let agent = if search { SEARCH_AGENT } else { PLAIN_AGENT };
         let definition = if search {
@@ -565,31 +562,6 @@ impl Drop for TurnWorkspace {
     }
 }
 
-fn private_fs::create_private_dir(path: &Path) -> io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
-        fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(path)?;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700))
-    }
-    #[cfg(not(unix))]
-    {
-        fs::create_dir_all(path)
-    }
-}
-
-fn private_fs::write_private_file(path: &Path, contents: &[u8]) -> io::Result<()> {
-    fs::write(path, contents)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-    }
-    Ok(())
-}
 
 struct Turn {
     // Keep the process before the workspace so dropping a live turn stops the
