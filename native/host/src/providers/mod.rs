@@ -26,6 +26,7 @@ pub mod fake;
 pub mod forget;
 pub mod gemini;
 pub mod grok;
+pub(crate) mod private_fs;
 
 /// One `conversation.send`, in provider-neutral terms.
 #[derive(Debug, Clone, PartialEq, Eq)]
