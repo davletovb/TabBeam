@@ -118,6 +118,19 @@ pub fn lookup<'a>(host: &'a [(OsString, OsString)], name: &str) -> Option<&'a Os
         .map(|(_, value)| value.as_os_str())
 }
 
+/// Provider PATH with the executable's directory first. If an inherited PATH
+/// contains a platform-invalid entry that `join_paths` cannot reconstruct,
+/// preserve the inherited value rather than replacing PATH with an empty one.
+pub fn search_path_for(executable: &std::path::Path, inherited: Option<&OsStr>) -> OsString {
+    let dirs = executable
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .into_iter()
+        .chain(inherited.into_iter().flat_map(std::env::split_paths));
+    std::env::join_paths(dirs)
+        .unwrap_or_else(|_| inherited.map(OsStr::to_os_string).unwrap_or_default())
+}
+
 #[cfg(unix)]
 fn same_name(name: &OsStr, wanted: &str) -> bool {
     name == wanted
