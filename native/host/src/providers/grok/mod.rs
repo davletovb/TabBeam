@@ -42,7 +42,7 @@ const EXECUTABLE: &str = "grok";
 const MAX_LINE_BYTES: usize = 8 * 1024 * 1024;
 const STDERR_TAIL_BYTES: usize = 8 * 1024;
 const STATUS_OUTPUT_BYTES: usize = 16 * 1024;
-const STATUS_PROBE: Duration = Duration::from_secs(15);
+const STATUS_PROBE: Duration = Duration::from_secs(10);
 const FINISH_GRACE: Duration = Duration::from_secs(5);
 
 pub const CAPABILITIES: Capabilities = Capabilities {
@@ -216,6 +216,13 @@ impl Grok {
     }
 
     pub fn new(search: SearchPath, work_dir: PathBuf) -> Self {
+        // A hard-killed host cannot run TurnWorkspace::drop. Clear only the
+        // Grok directories Pervue names itself before this adapter starts
+        // serving requests, so prompt/context files from an interrupted prior
+        // host do not accumulate in the cache.
+        if let Ok(base) = workspace::prepare(&work_dir) {
+            sweep_stale_workspaces(&base);
+        }
         Self {
             search,
             launch: Rc::new(Launch::new(work_dir, std::env::vars_os().collect())),
@@ -778,6 +785,22 @@ impl Exchange for Turn {
         self.queue.clear();
         self.finish_by = None;
         self.stream.cancel(grace);
+    }
+}
+
+fn sweep_stale_workspaces(base: &Path) {
+    let Ok(entries) = fs::read_dir(base) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        if (name.starts_with("turn-") || name.starts_with("status-"))
+            && entry.file_type().is_ok_and(|kind| kind.is_dir())
+        {
+            let _ = forget::remove(&entry.path());
+        }
     }
 }
 
