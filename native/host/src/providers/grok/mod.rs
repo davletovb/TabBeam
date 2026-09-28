@@ -209,7 +209,10 @@ pub struct Grok {
 impl Grok {
     pub fn installed() -> Self {
         let host: Vec<_> = std::env::vars_os().collect();
-        Self::new(discovery::installed(), workspace::default_for(&host, "grok"))
+        Self::new(
+            discovery::installed(),
+            workspace::default_for(&host, "grok"),
+        )
     }
 
     pub fn new(search: SearchPath, work_dir: PathBuf) -> Self {
@@ -334,12 +337,9 @@ impl Provider for Grok {
         let conversation_id = request.conversation_id.unwrap_or_else(new_conversation_id);
         let args = grok_args(&workspace, request.native_search, request.model.as_deref());
         let expected_cwd = workspace.path().to_path_buf();
-        let spec = self.launch.command(
-            workspace.path(),
-            workspace.grok_home(),
-            &executable,
-            args,
-        );
+        let spec = self
+            .launch
+            .command(workspace.path(), workspace.grok_home(), &executable, args);
         let Ok(mut process) = Process::spawn(&spec) else {
             return Box::new(Scripted::failed(START_FAILED));
         };
@@ -406,7 +406,9 @@ impl Exchange for StatusCheck {
                 } => {
                     let poll_until = deadline.min(*give_up);
                     match process.next_event(poll_until) {
-                        Some(Event::Stdout(bytes)) => keep_head(stdout, &bytes, STATUS_OUTPUT_BYTES),
+                        Some(Event::Stdout(bytes)) => {
+                            keep_head(stdout, &bytes, STATUS_OUTPUT_BYTES)
+                        }
                         Some(Event::Stderr(bytes)) => keep_tail(stderr, &bytes, STDERR_TAIL_BYTES),
                         Some(Event::Exited(exit)) => {
                             let text = String::from_utf8_lossy(stdout);
@@ -456,9 +458,7 @@ impl Exchange for StatusCheck {
 
     fn cancel(&mut self, _grace: Duration) {
         if let Self::Probing {
-            process,
-            workspace,
-            ..
+            process, workspace, ..
         } = self
         {
             process.kill();
@@ -861,14 +861,22 @@ mod tests {
         };
         let args = grok_args(&workspace, true, Some("grok-4.6"));
         let rendered: Vec<_> = args.iter().map(|arg| arg.to_string_lossy()).collect();
-        assert!(rendered.windows(2).any(|pair| pair == ["--tools", "web_search"]));
+        assert!(
+            rendered
+                .windows(2)
+                .any(|pair| pair == ["--tools", "web_search"])
+        );
         assert!(
             rendered
                 .windows(2)
                 .any(|pair| pair == ["--model", "grok-4.6"])
         );
         assert!(rendered.contains(&std::borrow::Cow::Borrowed("streaming-messages-json")));
-        assert!(!rendered.iter().any(|arg| arg.contains("Current user question")));
+        assert!(
+            !rendered
+                .iter()
+                .any(|arg| arg.contains("Current user question"))
+        );
         std::mem::forget(workspace);
     }
 
