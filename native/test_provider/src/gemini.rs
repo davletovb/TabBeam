@@ -29,7 +29,9 @@ fn run(args: Vec<OsString>) -> Result<(), ()> {
     while index < args.len() {
         let arg = args[index].to_string_lossy();
         if arg == "--session-id" || arg == "--resume" {
-            session = args.get(index + 1).map(|value| value.to_string_lossy().into_owned());
+            session = args
+                .get(index + 1)
+                .map(|value| value.to_string_lossy().into_owned());
             index += 2;
         } else {
             index += 1;
@@ -43,28 +45,43 @@ fn run(args: Vec<OsString>) -> Result<(), ()> {
     io::stdin().read_to_string(&mut prompt).map_err(|_| ())?;
     let search = prompt.contains("Search the web before you answer");
     let mut stdout = io::stdout();
-    line(&mut stdout, &serde_json::json!({
-        "type":"init","timestamp":"2026-01-01T00:00:00Z",
-        "session_id":session,"model":"gemini-test"
-    }))?;
+    line(
+        &mut stdout,
+        &serde_json::json!({
+            "type":"init","timestamp":"2026-01-01T00:00:00Z",
+            "session_id":session,"model":"gemini-test"
+        }),
+    )?;
     if search {
-        line(&mut stdout, &serde_json::json!({
-            "type":"tool_use","timestamp":"2026-01-01T00:00:01Z",
-            "tool_name":"google_web_search","tool_id":"search_1","parameters":{"query":"test"}
-        }))?;
-        line(&mut stdout, &serde_json::json!({
-            "type":"message","timestamp":"2026-01-01T00:00:02Z","role":"assistant",
-            "content":"Gemini search answer [Example](https://example.com/gemini-search).","delta":true
-        }))?;
+        line(
+            &mut stdout,
+            &serde_json::json!({
+                "type":"tool_use","timestamp":"2026-01-01T00:00:01Z",
+                "tool_name":"google_web_search","tool_id":"search_1","parameters":{"query":"test"}
+            }),
+        )?;
+        line(
+            &mut stdout,
+            &serde_json::json!({
+                "type":"message","timestamp":"2026-01-01T00:00:02Z","role":"assistant",
+                "content":"Gemini search answer [Example](https://example.com/gemini-search).","delta":true
+            }),
+        )?;
     } else {
-        line(&mut stdout, &serde_json::json!({
-            "type":"message","timestamp":"2026-01-01T00:00:02Z","role":"assistant",
-            "content":"Gemini answer","delta":true
-        }))?;
+        line(
+            &mut stdout,
+            &serde_json::json!({
+                "type":"message","timestamp":"2026-01-01T00:00:02Z","role":"assistant",
+                "content":"Gemini answer","delta":true
+            }),
+        )?;
     }
-    line(&mut stdout, &serde_json::json!({
-        "type":"result","timestamp":"2026-01-01T00:00:03Z","status":"success"
-    }))?;
+    line(
+        &mut stdout,
+        &serde_json::json!({
+            "type":"result","timestamp":"2026-01-01T00:00:03Z","status":"success"
+        }),
+    )?;
     Ok(())
 }
 

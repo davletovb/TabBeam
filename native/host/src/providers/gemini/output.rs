@@ -37,7 +37,10 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
     let kind = event.get("type").and_then(Value::as_str).ok_or(Malformed)?;
     Ok(match kind {
         "init" => {
-            let id = event.get("session_id").and_then(Value::as_str).ok_or(Malformed)?;
+            let id = event
+                .get("session_id")
+                .and_then(Value::as_str)
+                .ok_or(Malformed)?;
             if !is_session_id(id) {
                 return Err(Malformed);
             }
@@ -45,7 +48,10 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
         }
         "message" => {
             let role = event.get("role").and_then(Value::as_str).ok_or(Malformed)?;
-            let content = event.get("content").and_then(Value::as_str).ok_or(Malformed)?;
+            let content = event
+                .get("content")
+                .and_then(Value::as_str)
+                .ok_or(Malformed)?;
             if role == "assistant" {
                 Line::AssistantDelta(content.to_owned())
             } else {
@@ -53,7 +59,10 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
             }
         }
         "tool_use" => {
-            let tool = event.get("tool_name").and_then(Value::as_str).ok_or(Malformed)?;
+            let tool = event
+                .get("tool_name")
+                .and_then(Value::as_str)
+                .ok_or(Malformed)?;
             if tool == "google_web_search" {
                 Line::WebSearch
             } else {
@@ -62,8 +71,14 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
         }
         "tool_result" => Line::Progress,
         "error" => {
-            let severity = event.get("severity").and_then(Value::as_str).ok_or(Malformed)?;
-            let message = event.get("message").and_then(Value::as_str).unwrap_or_default();
+            let severity = event
+                .get("severity")
+                .and_then(Value::as_str)
+                .ok_or(Malformed)?;
+            let message = event
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             if severity == "error" {
                 Line::ResultFailed(provider_failure(message))
             } else {
@@ -115,9 +130,14 @@ const UNAVAILABLE: ErrorBody<'static> = ErrorBody {
 
 pub fn names_unknown_session(message: &str) -> bool {
     let lower = message.to_ascii_lowercase();
-    ["invalid session identifier", "session not found", "no session", "unknown session"]
-        .iter()
-        .any(|phrase| lower.contains(phrase))
+    [
+        "invalid session identifier",
+        "session not found",
+        "no session",
+        "unknown session",
+    ]
+    .iter()
+    .any(|phrase| lower.contains(phrase))
 }
 
 pub fn provider_failure(message: &str) -> ErrorBody<'static> {
@@ -166,11 +186,15 @@ mod tests {
             Ok(Line::Init("abc-123".to_owned()))
         );
         assert_eq!(
-            parse(r#"{"type":"message","timestamp":"x","role":"assistant","content":"hi","delta":true}"#),
+            parse(
+                r#"{"type":"message","timestamp":"x","role":"assistant","content":"hi","delta":true}"#
+            ),
             Ok(Line::AssistantDelta("hi".to_owned()))
         );
         assert_eq!(
-            parse(r#"{"type":"tool_use","timestamp":"x","tool_name":"google_web_search","tool_id":"1","parameters":{}}"#),
+            parse(
+                r#"{"type":"tool_use","timestamp":"x","tool_name":"google_web_search","tool_id":"1","parameters":{}}"#
+            ),
             Ok(Line::WebSearch)
         );
         assert_eq!(
@@ -182,7 +206,8 @@ mod tests {
     #[test]
     fn invalid_session_ids_and_malformed_events_are_refused() {
         for id in ["", "--help", "../../x", "has space"] {
-            let line = serde_json::json!({"type":"init","session_id":id,"model":"x","timestamp":"x"});
+            let line =
+                serde_json::json!({"type":"init","session_id":id,"model":"x","timestamp":"x"});
             assert_eq!(parse(&line.to_string()), Err(Malformed));
         }
         assert_eq!(parse("{not json"), Err(Malformed));

@@ -213,10 +213,12 @@ impl Provider for Gemini {
         };
 
         let new_conversation = request.conversation_id.is_none();
-        let conversation_id = request
-            .conversation_id
-            .unwrap_or_else(new_conversation_id);
-        let history = if new_conversation { &request.history[..] } else { &[][..] };
+        let conversation_id = request.conversation_id.unwrap_or_else(new_conversation_id);
+        let history = if new_conversation {
+            &request.history[..]
+        } else {
+            &[][..]
+        };
         let mut prompt = provider_prompt(history, request.context.as_ref(), &request.text);
         if request.native_search {
             prompt.insert_str(0, SEARCH_INSTRUCTIONS);
@@ -239,8 +241,7 @@ impl Provider for Gemini {
         process.close_stdin();
 
         Box::new(Turn {
-            stream: LineStream::new(process, MAX_LINE_BYTES)
-                .keeping_stderr_tail(STDERR_TAIL_BYTES),
+            stream: LineStream::new(process, MAX_LINE_BYTES).keeping_stderr_tail(STDERR_TAIL_BYTES),
             queue: VecDeque::new(),
             conversation_id,
             announce_conversation: new_conversation,
@@ -351,7 +352,8 @@ impl Exchange for Turn {
             match self.stream.next(deadline)? {
                 Output::Line(line) => self.on_line(&line),
                 Output::Final(exit) => {
-                    if !exit.status.is_some_and(|status| status.success()) && self.outcome.is_none() {
+                    if !exit.status.is_some_and(|status| status.success()) && self.outcome.is_none()
+                    {
                         self.fail(PROCESS_EXITED);
                     }
                     return Some(self.finished());
@@ -436,7 +438,11 @@ mod tests {
         assert!(strings.contains(&std::borrow::Cow::Borrowed("--session-id")));
         assert!(strings.contains(&std::borrow::Cow::Borrowed("conv_123")));
         assert!(strings.contains(&std::borrow::Cow::Borrowed("--model=gemini-3.5-flash")));
-        assert!(!strings.iter().any(|arg| arg.contains("Current user question")));
+        assert!(
+            !strings
+                .iter()
+                .any(|arg| arg.contains("Current user question"))
+        );
     }
 
     #[test]
