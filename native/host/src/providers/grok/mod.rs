@@ -45,6 +45,9 @@ const STDERR_TAIL_BYTES: usize = 8 * 1024;
 const STATUS_OUTPUT_BYTES: usize = 16 * 1024;
 const STATUS_PROBE: Duration = Duration::from_secs(10);
 const FINISH_GRACE: Duration = Duration::from_secs(5);
+const OWNER_FILE: &str = ".pervue-owner";
+const STALE_WORKSPACE_AFTER: Duration = Duration::from_secs(15 * 60);
+const LEGACY_STALE_WORKSPACE_AFTER: Duration = Duration::from_secs(24 * 60 * 60);
 
 pub const CAPABILITIES: Capabilities = Capabilities {
     streaming: Capability::Unsupported,
@@ -432,6 +435,9 @@ enum StatusCheck {
 
 impl Exchange for StatusCheck {
     fn next(&mut self, deadline: Instant) -> Option<Update> {
+        if let Some(workspace) = self.workspace.as_ref() {
+            let _ = workspace.touch();
+        }
         let busy_until = deadline.max(after(BUSY_LIMIT));
         loop {
             match self {
@@ -443,6 +449,9 @@ impl Exchange for StatusCheck {
                     stdout,
                     stderr,
                 } => {
+                    if let Some(workspace) = workspace.as_ref() {
+                        let _ = workspace.touch();
+                    }
                     // A status-of-all request starts every probe up front and
                     // polls providers in sequence. If this probe already
                     // finished while another provider was being polled, drain
@@ -524,9 +533,15 @@ struct ProbeWorkspace {
 impl ProbeWorkspace {
     fn create(base: &Path) -> io::Result<Self> {
         let path = unique_child(base, "status");
+        create_private_dir(&path)?;
+        write_private_file(&path.join(OWNER_FILE), b"live")?;
         let grok_home = path.join("grok-home");
         create_private_dir(&grok_home)?;
         Ok(Self { path, grok_home })
+    }
+
+    fn touch(&self) -> io::Result<()> {
+        fs::write(self.path.join(OWNER_FILE), b"live")
     }
 
     fn path(&self) -> &Path {
@@ -557,25 +572,25 @@ impl TurnWorkspace {
         create_private_dir(&path)?;
         // Construct the guard before any sensitive file is written so every
         // later error path removes the partial workspace.
-        let mut workspace = Self {
+        let workspace = Self {
             grok_home: path.join("grok-home"),
             prompt: path.join("prompt.txt"),
             agent: path.join("agent.md"),
             path,
         };
-        if let Err(error) = workspace.initialize(prompt) {
-            let path = workspace.path.clone();
-            workspace.path = PathBuf::new();
-            let _ = forget::remove(&path);
-            return Err(error);
-        }
+        workspace.initialize(prompt)?;
         Ok(workspace)
     }
 
     fn initialize(&self, prompt: &str) -> io::Result<()> {
+        write_private_file(&self.path.join(OWNER_FILE), b"live")?;
         create_private_dir(&self.grok_home)?;
         write_private_file(&self.prompt, prompt.as_bytes())?;
         write_private_file(&self.agent, PLAIN_AGENT.as_bytes())
+    }
+
+    fn touch(&self) -> io::Result<()> {
+        fs::write(self.path.join(OWNER_FILE), b"live")
     }
 
     fn path(&self) -> &Path {
@@ -829,12 +844,27 @@ fn sweep_stale_workspaces(base: &Path) {
         let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
             continue;
         };
-        if (name.starts_with("turn-") || name.starts_with("status-"))
-            && entry.file_type().is_ok_and(|kind| kind.is_dir())
+        if !(name.starts_with("turn-") || name.starts_with("status-"))
+            || !entry.file_type().is_ok_and(|kind| kind.is_dir())
         {
-            let _ = forget::remove(&entry.path());
+            continue;
+        }
+        let path = entry.path();
+        let owner = path.join(OWNER_FILE);
+        let stale = age_at_least(&owner, STALE_WORKSPACE_AFTER)
+            || (!owner.exists() && age_at_least(&path, LEGACY_STALE_WORKSPACE_AFTER));
+        if stale {
+            forget::remove_in_background(path);
         }
     }
+}
+
+fn age_at_least(path: &Path, age: Duration) -> bool {
+    fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+        .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+        .is_some_and(|elapsed| elapsed >= age)
 }
 
 fn unique_child(base: &Path, prefix: &str) -> PathBuf {
