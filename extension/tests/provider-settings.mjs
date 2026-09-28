@@ -106,13 +106,13 @@ const doc = {
   const rows = options.children;
   const radio = (/** @type {number} */ i) => rows[i].children[0];
   const line = (/** @type {number} */ i) => rows[i].children[1].children[1];
-  assert.deepEqual(rows.map((row) => row.children[1].children[0].textContent), ["Codex", "Claude", "Gemini"]);
+  assert.deepEqual(rows.map((row) => row.children[1].children[0].textContent), ["Codex", "Claude", "Gemini", "Grok"]);
   assert.equal(radio(1).checked, true, "the saved choice is selected");
   assert.equal(radio(0).checked, false);
   assert.equal(settings.getProviderId(), "claude");
   // Every provider is checked, and the page never overwrites the popup's
   // diagnostics.
-  assert.deepEqual(checks.map((check) => [check.provider_id, check.record_diagnostics]), [["codex", false], ["claude", false], ["gemini", false]]);
+  assert.deepEqual(checks.map((check) => [check.provider_id, check.record_diagnostics]), [["codex", false], ["claude", false], ["gemini", false], ["grok", false]]);
   assert.equal(line(0).textContent, "Codex is ready.");
   assert.equal(line(0).getAttribute("data-state"), "ready");
   assert.equal(line(1).getAttribute("data-kind"), "provider-missing", "what's left to set up shows per provider");
