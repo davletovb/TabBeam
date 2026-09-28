@@ -350,6 +350,16 @@ cargo-fuzz builds the targets with AddressSanitizer. `frame_reader` reads frames
 The harnesses read directly from memory rather than creating a temporary file per input. The generated corpora seed empty, small valid, exact-maximum, oversized-prefix, truncated-prefix, and truncated-payload frames, plus requests derived from the golden protocol fixtures, so smoke runs start from structurally meaningful inputs.
 
 
+### Grok
+
+The Grok provider uses the current Grok Build **headless one-shot** interface, not `grok agent stdio` and not a persistent app-server. Every Pervue turn launches its own `grok` child with `--output-format streaming-messages-json`, a private prompt file, and a private agent profile; the child exits after that answer. Follow-ups resend Pervue's bounded dialogue history rather than depending on Grok's saved-session continuation.
+
+Pervue separates authentication from customization. The child receives a fresh private `GROK_HOME`, while `GROK_AUTH_PATH` points only to the user's existing `~/.grok/auth.json`. That reuses the supported Grok/X account login without loading the user's Grok config, plugins, skills, MCP credentials, memory, or prior sessions into the turn. Direct API-key billing is disabled with `GROK_DISABLE_API_KEY_AUTH=1`; API-key and custom-endpoint variables are not inherited from Chrome. Auto-update, subagents, memory, workflows, web fetch, feedback, prompt suggestions, and provider telemetry upload are disabled for the child.
+
+Ordinary/context turns expose no tools. Web turns expose only the server-side `web_search` capability. Before any answer text is forwarded, the adapter verifies Grok's `system/init`: the auth source must be OAuth, the model must be Grok (and match an explicit selection), the cwd must be Pervue's private turn directory, the advertised tool set must match the requested mode, skills must be empty, and no MCP server may be active. Any generic client `tool_use` / `tool_result` is a boundary violation. Search sources come from Grok's structured `web_search_tool_result` blocks and are normalized through the shared source sanitizer; a Web turn without an observed search and a usable source fails grounding.
+
+The signed-in model catalog changes independently of Pervue releases, so the adapter does not hard-code a current Grok model list. `grok models` is used only as the availability/authentication probe; valid explicit selections use `grok-*` IDs. Because Grok's mutable session state lives under the private per-turn `GROK_HOME`, the whole provider state for that Pervue turn is removed with the workspace after the child exits.
+
 ### Gemini
 
 The Gemini provider uses Google's Antigravity CLI (`agy`), not the legacy `gemini` CLI. `agy models` is the status probe: a successful probe reports the provider authenticated, a recognized sign-in failure reports unauthenticated, and other probe failures report unavailable. Pervue never passes Google/API-key or ambient Antigravity variables from Chrome; Antigravity uses its own cached account sign-in, and auto-update is disabled inside provider runs.
