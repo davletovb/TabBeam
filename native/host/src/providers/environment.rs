@@ -43,6 +43,7 @@ pub const INHERITED: &[&str] = &[
     // Extra CA certificates, for networks that inspect TLS.
     "SSL_CERT_FILE",
     "SSL_CERT_DIR",
+    "NODE_EXTRA_CA_CERTS",
 ];
 
 /// Variables every provider gets from the host's environment, when set.
@@ -153,6 +154,7 @@ mod tests {
             ("PATH", "/usr/bin"),
             ("HTTPS_PROXY", "http://proxy:3128"),
             ("SSL_CERT_FILE", "/etc/corp.pem"),
+            ("NODE_EXTRA_CA_CERTS", "/etc/node-corp.pem"),
             ("CODEX_HOME", "/home/user/.codex"),
             ("CODEX_API_KEY", "sk-live-secret"),
         ]);
@@ -162,6 +164,7 @@ mod tests {
                 (home, "/home/user"),
                 ("HTTPS_PROXY", "http://proxy:3128"),
                 ("SSL_CERT_FILE", "/etc/corp.pem"),
+                ("NODE_EXTRA_CA_CERTS", "/etc/node-corp.pem"),
                 ("CODEX_HOME", "/home/user/.codex"),
             ])
         );
