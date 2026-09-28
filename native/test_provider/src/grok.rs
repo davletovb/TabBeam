@@ -49,11 +49,12 @@ fn run(args: Vec<OsString>) -> Result<(), ()> {
     let model = arg_value(&args, "--model")
         .and_then(|value| value.to_str())
         .unwrap_or("grok-4.6");
-    let search = arg_value(&args, "--tools")
-        .and_then(|value| value.to_str())
-        == Some("web_search");
+    let search = arg_value(&args, "--tools").and_then(|value| value.to_str()) == Some("web_search");
 
-    if args.iter().any(|arg| arg.to_string_lossy().contains("Current user question")) {
+    if args
+        .iter()
+        .any(|arg| arg.to_string_lossy().contains("Current user question"))
+    {
         return Err(());
     }
     if search && !agent.contains("  - web_search") {
@@ -134,7 +135,11 @@ fn assert_isolated_environment() -> Result<(), ()> {
     if home.as_ref() == Some(&grok_home) {
         return Err(());
     }
-    for secret in ["XAI_API_KEY", "GROK_CODE_XAI_API_KEY", "GROK_MODELS_BASE_URL"] {
+    for secret in [
+        "XAI_API_KEY",
+        "GROK_CODE_XAI_API_KEY",
+        "GROK_MODELS_BASE_URL",
+    ] {
         if std::env::var_os(secret).is_some() {
             return Err(());
         }
