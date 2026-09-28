@@ -19,7 +19,7 @@ native/
 │   │   ├── diagnostics.rs  structured lifecycle diagnostics (JSON lines on stderr)
 │   │   ├── limits.rs    browser input bounds; reexports the core frame limit
 │   │   ├── manifest.rs  caller-origin checks and the Native Messaging manifest
-│   │   ├── providers/   adapter contract, host discovery policy, fake, Codex, Claude
+│   │   ├── providers/   adapter contract, host discovery policy, fake, Codex, Claude, Gemini
 │   │   ├── protocol/    strict request validation and event emission
 │   │   ├── search.rs    provider-native search request options
 │   │   ├── host.rs      request loop: requests side by side, cancellation, timeouts
@@ -348,3 +348,8 @@ cargo +nightly fuzz run protocol fuzz/corpus/protocol -- -runs=2000 -max_len="$(
 cargo-fuzz builds the targets with AddressSanitizer. `frame_reader` reads frames from memory until the first non-frame result. `protocol` runs each input through the whole host as one request frame and fails if any emitted frame is not a JSON object.
 
 The harnesses read directly from memory rather than creating a temporary file per input. The generated corpora seed empty, small valid, exact-maximum, oversized-prefix, truncated-prefix, and truncated-payload frames, plus requests derived from the golden protocol fixtures, so smoke runs start from structurally meaningful inputs.
+
+
+### Gemini
+
+The Gemini adapter invokes the installed `gemini` CLI in headless `stream-json` mode. Prompts travel on stdin, continuation uses Gemini sessions, and provider output is normalized before it reaches protocol events. Pervue supplies a private system-settings file for each turn: ordinary/context turns enable no built-in tools, while Web turns allow only `google_web_search`; hooks, MCP servers, extensions, and skills are disabled for the provider process. Provider status reports installation separately from authentication because Gemini CLI does not expose a side-effect-free authentication-status command.
