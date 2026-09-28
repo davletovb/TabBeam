@@ -205,7 +205,10 @@ impl Launch {
         ProcessSpec::new(executable)
             .args(args)
             .envs(self.inherited.iter().cloned())
-            .env("PATH", environment::search_path_for(executable, self.path.as_deref()))
+            .env(
+                "PATH",
+                environment::search_path_for(executable, self.path.as_deref()),
+            )
             .current_dir(workspace)
     }
 }
