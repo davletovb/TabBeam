@@ -284,21 +284,24 @@ fn cancellation_before_init_scans_the_unique_workspace_and_cleans_transcript() {
     request.model = Some("gemini-slow-init".to_owned());
     let mut exchange = fake.adapter().send(request);
 
+    let transcript_ready = || {
+        std::fs::read_dir(fake.brain()).is_ok_and(|entries| {
+            entries.filter_map(Result::ok).any(|entry| {
+                entry
+                    .path()
+                    .join(".system_generated/logs/transcript.jsonl")
+                    .metadata()
+                    .is_ok_and(|metadata| metadata.len() > 0)
+            })
+        })
+    };
     let give_up = Instant::now() + Duration::from_secs(2);
-    while Instant::now() < give_up {
-        if std::fs::read_dir(fake.brain())
-            .map(|entries| entries.count() > 0)
-            .unwrap_or(false)
-        {
-            break;
-        }
+    while Instant::now() < give_up && !transcript_ready() {
         std::thread::sleep(Duration::from_millis(10));
     }
     assert!(
-        std::fs::read_dir(fake.brain())
-            .map(|entries| entries.count() > 0)
-            .unwrap_or(false),
-        "fake never created its pre-init transcript"
+        transcript_ready(),
+        "fake never finished writing its pre-init transcript"
     );
 
     exchange.cancel(Duration::from_millis(10));
