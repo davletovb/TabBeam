@@ -122,7 +122,7 @@ async function tick() {
   );
   await selector.ready;
 
-  assert.deepEqual(select.options.map((option) => option.value), ["codex", "claude"]);
+  assert.deepEqual(select.options.map((option) => option.value), ["codex", "claude", "gemini"]);
   assert.equal(selector.getProviderId(), "claude");
   assert.equal(changes.at(-1)?.status?.capabilities?.page_context, false);
 
@@ -293,7 +293,7 @@ async function tick() {
   assert.equal(changes.at(-1)?.response, undefined, "still being checked");
   assert.deepEqual(
     sent.map((message) => [message.provider_id, message.record_diagnostics]),
-    [["codex", false], ["claude", true]]
+    [["codex", false], ["claude", true], ["gemini", false]]
   );
 
   codex.reject(new Error("worker restarted"));

@@ -63,10 +63,15 @@
                   <div><dt>Provider</dt><dd id="diag-provider">Not checked</dd></div>
                   <div><dt>Recent failure</dt><dd id="diag-failure">None</dd></div>
                 </dl>
-                <button id="diag-refresh" class="button button-outline button-sm" type="button">
-                  <svg class="icon icon-xs" aria-hidden="true"><use href="../shared/icons.svg#refresh"/></svg>
-                  Refresh diagnostics
-                </button>
+                <div class="diagnostic-actions">
+                  <button id="diag-refresh" class="button button-outline button-sm" type="button">
+                    <svg class="icon icon-xs" aria-hidden="true"><use href="../shared/icons.svg#refresh"/></svg>
+                    Refresh diagnostics
+                  </button>
+                  <button id="diag-export" class="button button-outline button-sm" type="button">
+                    Export support file
+                  </button>
+                </div>
                 <p class="diagnostic-note">Diagnostics exclude prompts, page text, selections, credentials, and provider output.</p>
               </details>
             </div>

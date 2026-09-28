@@ -19,7 +19,7 @@ native/
 │   │   ├── diagnostics.rs  structured lifecycle diagnostics (JSON lines on stderr)
 │   │   ├── limits.rs    browser input bounds; reexports the core frame limit
 │   │   ├── manifest.rs  caller-origin checks and the Native Messaging manifest
-│   │   ├── providers/   adapter contract, host discovery policy, fake, Codex, Claude
+│   │   ├── providers/   adapter contract, host discovery policy, fake, Codex, Claude, Gemini
 │   │   ├── protocol/    strict request validation and event emission
 │   │   ├── search.rs    provider-native search request options
 │   │   ├── host.rs      request loop: requests side by side, cancellation, timeouts
@@ -348,3 +348,12 @@ cargo +nightly fuzz run protocol fuzz/corpus/protocol -- -runs=2000 -max_len="$(
 cargo-fuzz builds the targets with AddressSanitizer. `frame_reader` reads frames from memory until the first non-frame result. `protocol` runs each input through the whole host as one request frame and fails if any emitted frame is not a JSON object.
 
 The harnesses read directly from memory rather than creating a temporary file per input. The generated corpora seed empty, small valid, exact-maximum, oversized-prefix, truncated-prefix, and truncated-payload frames, plus requests derived from the golden protocol fixtures, so smoke runs start from structurally meaningful inputs.
+
+
+### Gemini
+
+The Gemini provider uses Google's Antigravity CLI (`agy`), not the legacy `gemini` CLI. `agy models` is the status probe: a successful probe reports the provider authenticated, a recognized sign-in failure reports unauthenticated, and other probe failures report unavailable. Pervue never passes Google/API-key or ambient Antigravity variables from Chrome; Antigravity uses its own cached account sign-in, and auto-update is disabled inside provider runs.
+
+Each answer is a one-shot `agy` process in a private per-turn workspace using `--input-format stream-json --output-format stream-json --sandbox`. Pervue writes a workspace-local Markdown agent with `inheritCustomizations: false`, no MCP, skills, plugins, rules, subagents, hooks, or command execution. Ordinary/context turns expose no tools; Web turns expose only `search_web`. The adapter verifies the selected agent (`PROVIDER_AGENT_NOT_USED`) and a safe permission mode (`request-review`, `proceed-in-sandbox`, or `strict`; `always-proceed` is `PROVIDER_PERMISSIONS_TOO_OPEN`) at `init`, fails closed if any unapproved tool or subagent actually runs or a step type Antigravity doesn't document appears, and treats a Web answer as grounded only after an observed `search_web` step plus at least one usable cited HTTP(S) source. Real `agy` (1.2.x) opens every turn by echoing the prompt as a `user_input` step and can add `system_message` and `unknown` steps: they count as activity, and their text is never shown. An `agent_response` step streams as ACTIVE fragments; its DONE update may name only its `step_index`, and one that repeats the whole text shows only what's new. Each agent-response step is held until the following step shows whether it was narration for another search; narration immediately before any `search_web` step is not forwarded or saved into later history.
+
+Antigravity continuation is deliberately not used. Pervue sends the protocol's bounded dialogue history on every follow-up, so a provider-side session disappearing cannot strand the conversation and no browser-supplied conversation ID reaches Antigravity argv. After `result`, the adapter gives `agy` a short finish grace, bounds busy output with the shared stream fairness limit, classifies stderr only into fixed normalized errors, and then removes both the private turn workspace and the Pervue-launched Antigravity transcript under `~/.gemini/antigravity-cli/brain/<id>`. The transcript ID is recorded before the init boundary is accepted; if init was never consumed, cleanup can identify only transcripts that record that turn's unique private workspace. Cleanup failures do not discard an otherwise-complete answer: safe transcript IDs are retained in private Pervue cleanup records across host restarts, and `conversation.forget` retries them.

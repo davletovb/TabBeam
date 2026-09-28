@@ -24,6 +24,7 @@ pub mod discovery;
 pub mod environment;
 pub mod fake;
 pub mod forget;
+pub mod gemini;
 
 /// One `conversation.send`, in provider-neutral terms.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,6 +93,7 @@ impl Providers {
             Box::new(fake::Fake),
             Box::new(codex::Codex::installed()),
             Box::new(claude::Claude::installed()),
+            Box::new(gemini::Gemini::installed()),
         ])
     }
 

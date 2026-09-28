@@ -43,6 +43,7 @@ pub const INHERITED: &[&str] = &[
     // Extra CA certificates, for networks that inspect TLS.
     "SSL_CERT_FILE",
     "SSL_CERT_DIR",
+    "NODE_EXTRA_CA_CERTS",
 ];
 
 /// Variables every provider gets from the host's environment, when set.
@@ -82,6 +83,7 @@ pub const INHERITED: &[&str] = &[
     "NO_PROXY",
     "SSL_CERT_FILE",
     "SSL_CERT_DIR",
+    "NODE_EXTRA_CA_CERTS",
 ];
 
 /// The variables of `host` named in [`INHERITED`] or `extra`, in `host`'s
@@ -114,6 +116,19 @@ pub fn lookup<'a>(host: &'a [(OsString, OsString)], name: &str) -> Option<&'a Os
     host.iter()
         .find(|(candidate, _)| same_name(candidate, name))
         .map(|(_, value)| value.as_os_str())
+}
+
+/// Provider PATH with the executable's directory first. If an inherited PATH
+/// contains a platform-invalid entry that `join_paths` cannot reconstruct,
+/// preserve the inherited value rather than replacing PATH with an empty one.
+pub fn search_path_for(executable: &std::path::Path, inherited: Option<&OsStr>) -> OsString {
+    let dirs = executable
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .into_iter()
+        .chain(inherited.into_iter().flat_map(std::env::split_paths));
+    std::env::join_paths(dirs)
+        .unwrap_or_else(|_| inherited.map(OsStr::to_os_string).unwrap_or_default())
 }
 
 #[cfg(unix)]
@@ -153,6 +168,7 @@ mod tests {
             ("PATH", "/usr/bin"),
             ("HTTPS_PROXY", "http://proxy:3128"),
             ("SSL_CERT_FILE", "/etc/corp.pem"),
+            ("NODE_EXTRA_CA_CERTS", "/etc/node-corp.pem"),
             ("CODEX_HOME", "/home/user/.codex"),
             ("CODEX_API_KEY", "sk-live-secret"),
         ]);
@@ -162,6 +178,7 @@ mod tests {
                 (home, "/home/user"),
                 ("HTTPS_PROXY", "http://proxy:3128"),
                 ("SSL_CERT_FILE", "/etc/corp.pem"),
+                ("NODE_EXTRA_CA_CERTS", "/etc/node-corp.pem"),
                 ("CODEX_HOME", "/home/user/.codex"),
             ])
         );
