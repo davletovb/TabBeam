@@ -218,6 +218,33 @@ fn unexpected_client_tool_activity_fails_closed() {
 }
 
 #[test]
+fn a_search_result_without_a_search_use_still_fails_a_plain_turn() {
+    let fake = FakeGrok::install();
+    let updates = collect(
+        fake.adapter()
+            .send(request(None, false, "grok-result-only-search")),
+    );
+    assert!(matches!(
+        updates.last(),
+        Some(Update::Failed(error)) if error.reason == "PROVIDER_BOUNDARY_VIOLATION"
+    ));
+}
+
+#[test]
+fn adapter_startup_removes_a_stale_prompt_workspace() {
+    let fake = FakeGrok::install();
+    let stale = fake.dir.join("workspace/turn-stale-from-crash");
+    std::fs::create_dir_all(&stale).unwrap();
+    std::fs::write(stale.join("prompt.txt"), "sensitive browser context").unwrap();
+
+    let _adapter = fake.adapter();
+    assert!(
+        !stale.exists(),
+        "a prompt workspace left by an interrupted host was not removed"
+    );
+}
+
+#[test]
 fn invalid_model_and_conversation_ids_are_refused_before_launch() {
     let fake = FakeGrok::install();
     let model = collect(fake.adapter().send(request(None, false, "claude-opus")));
