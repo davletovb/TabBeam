@@ -2,23 +2,30 @@
 
 **Status:** Proposed, for discussion  
 **Date:** 2026-09-27  
+**Revised:** 2026-09-28, after review (see §11)  
 **Scope:** extracting a reusable library from `native/`, with [Conclave](https://github.com/davletovb/conclave) as its first outside consumer  
 **Evidence:** Pervue at `2cc35ef`, Conclave at `1379a37`
 
 ## Summary
 
-- **Conclave is the second consumer, but for only part of the code.** The extraction rule (framework §9.6) has been waiting for a second consumer. Conclave needs only the *provider runtime*: running an authenticated AI CLI safely, streaming its answer, and stopping it. Native Messaging, browser context, and protocol v1 stay in Pervue.
-- **Use a sidecar process, not linked code.** Conclave is a TypeScript/Node server. The recommendation is that it run the library as a **sidecar executable speaking a versioned JSON-RPC protocol over stdio**, not load it through a C ABI or a Node addon. ADR-0001 expected a C ABI for non-Rust consumers, so this decision would be recorded as ADR-0002.
+- **Conclave justifies a new boundary between applications.** Pervue already extracted `pervue-core` under the framework's two-provider rule (§9.6). Conclave doesn't justify reuse for the first time. It justifies a *provider runtime* that two applications share.
+  - The runtime owns provider execution: running an authenticated AI CLI safely, streaming its answer, and stopping it.
+  - Each application keeps its conversation and product policy.
+  - Native Messaging, browser context, provider sessions, and protocol v1 stay in Pervue.
+- **Use a sidecar process, not linked code.** Conclave is a TypeScript/Node server. It should run the runtime as a **sidecar executable speaking a versioned JSON-RPC protocol over stdio**, not load it through a C ABI or a Node addon. ADR-0001 expected a C ABI for non-Rust consumers, so this decision would be recorded as ADR-0002.
 - **Start with Claude.** Both products drive `claude -p` with stream-json, so Pervue's adapter already covers most of what Conclave needs. It also replaces Conclave's weakest adapter (§2.1).
-- **Codex needs a new adapter first.** Conclave uses `codex app-server`, while Pervue uses `codex exec`. Moving Conclave to `exec` would lose token streaming, the live model list, and rate-limit data. An app-server adapter in the library would give Pervue token-level streaming too.
+- **Treat the two Codex paths as separate backends.** Conclave uses `codex app-server`, while Pervue uses `codex exec`. Their lifecycles and capabilities differ. The runtime should add `codex-app-server` as a backend of its own, next to `codex-exec`, not as a replacement for it.
 - **Grok and Gemini knowledge flows the other way.** Conclave's working TypeScript adapters are the reference for Pervue's backlog items PRO-08 and PRO-09.
-- **Incubate in `native/`, then split.** Add new crates next to the existing ones, and don't move files while the remaining tracker items are in flight. The library gets its own repository once Conclave runs on it.
+- **Keep the first step small, and incubate in `native/`.**
+  - Promote only what Claude in Conclave needs.
+  - Don't move files while the remaining tracker items are in flight.
+  - The runtime gets its own repository once Conclave runs on it.
 
 ## 1. What exists today
 
 ### Pervue
 
-`pervue-core` already holds the primitives that Codex and Claude share ([core/README](../../native/core/README.md)): `process`, `stream`, `discovery`, `exchange`, `protocol`, and `framing`. The next layer is provider plumbing, not browser policy, but it still lives in the host, and most of it is copied between the two adapters:
+`pervue-core` already holds the primitives that Codex and Claude share ([core/README](../../native/core/README.md)): `process`, `stream`, `discovery`, `exchange`, `protocol`, and `framing`. The host holds the rest of the provider plumbing, and some of it is copied between the two adapters:
 
 | Host-owned piece | Where | Reuse today |
 |---|---|---|
@@ -29,7 +36,7 @@
 | Removing provider transcripts | [providers/forget.rs][p-forget] | Shared |
 | Request loop: in-flight table, start/idle timeouts, cancel → stop → kill, fairness, delta splitting | [host.rs][p-host] (`Session`, `Running`) | Tied to writing protocol-v1 events |
 
-Consolidating the copied rows is worth doing whatever happens with Conclave.
+Merging the copied session code is worth doing inside the host. That cleanup doesn't justify moving it into the runtime: Conclave has no provider sessions (§4).
 
 ### Conclave
 
@@ -47,7 +54,9 @@ Conclave also:
 - decides whether to retry or report a rate limit by matching error messages against regular expressions ([orchestrator.ts:98–130][c-classify]);
 - keeps no provider sessions: Codex threads are `ephemeral`, Claude runs with `--no-session-persistence`, and each prompt replays the history;
 - refuses API-key, Console, and cloud billing by reading the account type (`claude auth status` JSON, Codex `account/read`);
-- re-arms a 180-second stall watchdog on every provider event ([orchestrator.ts:507][c-watchdog]).
+- bounds every call absolutely, with a 180-second `CONCLAVE_*_TURN_TIMEOUT_MS` per adapter;
+- re-arms a 180-second stall watchdog on every provider event ([orchestrator.ts:507][c-watchdog]);
+- treats usage reports as cumulative snapshots and adds the increase over the previous one ([orchestrator.ts:437–455][c-usage]).
 
 ## 2. What each product gains
 
@@ -88,10 +97,10 @@ In order of impact:
    - It has `turn/interrupt`, which stops a turn without killing the process.
 2. **Knowing how the CLI is billed.**
    - Pervue's environment allowlist keeps API keys in environment variables away from providers. It doesn't cover a CLI that was itself signed in with an API key or a Console account.
-   - Conclave detects that case. The library can classify the sign-in method without keeping account identifiers, and each product decides what to do with the result.
+   - Conclave detects that case. The runtime can classify the sign-in method without keeping account identifiers, and each product decides what to do with the result.
 3. **Grok and Gemini adapters.** Conclave has already worked out the operational details: the lockdown environment flags, denying ACP permission requests, and the text-only Antigravity agent definition with its init-event check. They are the reference for PRO-08 and PRO-09.
 4. **Token usage events**, which `Update` doesn't have yet.
-5. **A second consumer** that tests the shape of the API, which is what the extraction rule asks for.
+5. **A second application** to test the runtime's API against, so it isn't shaped only by Pervue's needs.
 
 ## 3. Crossing the language boundary
 
@@ -115,6 +124,7 @@ Four ways Conclave could use a Rust library:
   - A binary has to reach `pnpm dev` users.
   - A second protocol to version.
   - One more process hop, which is negligible next to model latency.
+  - Losing the runtime process in the middle of a turn has to be handled (§7).
 
 **Node addon (napi-rs)**
 - For:
@@ -143,53 +153,65 @@ Four ways Conclave could use a Rust library:
 
 **Recommendation:** the sidecar. Record the decision as ADR-0002, superseding ADR-0001's sentence about a C ABI for non-Rust consumers.
 
-## 4. Proposed shape
+## 4. Proposed boundary
+
+The runtime owns **provider execution mechanics**. The applications keep **conversation and product policy**.
 
 ```text
 provider-runtime (working name)
-├─ core        process, stream, discovery, exchange,        today's pervue-core, minus framing
-│              errors, capabilities
-├─ platform    environment allowlist, private workspace     moved from pervue-host and parameterized
-│              and its checks, session-map store,           by an app namespace
-│              removing provider transcripts
-├─ providers   claude, codex-exec; later codex-app-server,  configured by the app that embeds them,
-│              grok-acp, gemini-agy                         never by request text
-├─ scheduler   in-flight table, start/idle timeouts,        extracted from host.rs
-│              cancel → stop → kill, fairness, delta split
-├─ runtime     the sidecar binary: JSON-RPC over stdio, on top of the scheduler
-└─ clients/ts  typed client, with types generated from the protocol schema
+├─ core        process, stream, discovery; neutral turn, error, and usage types
+├─ platform    environment construction (a base allowlist plus each provider's
+│              variables), private-workspace primitives
+├─ providers   claude; later codex-app-server, grok-acp, gemini-agy
+├─ scheduler   concurrent turns, start/idle/absolute timeouts,
+│              cancel → stop → kill, fairness, delta splitting
+└─ sidecar     bounded, versioned JSON-RPC over stdio; a TypeScript client beside it
 
-pervue-host  = scheduler + providers + framing, origin checks, manifest, protocol v1,
-               browser context, diagnostics
-conclave     = clients/ts + its own orchestration, budgets, persistence, and search
+pervue-host
+├─ provider-runtime, linked as a crate
+├─ the codex-exec provider, until another application needs it
+├─ conversation→session map, stale-session policy, transcript removal
+├─ Native Messaging framing, origin checks, manifest, protocol v1
+├─ browser context policy
+└─ diagnostics and user-facing messages
+
+conclave
+├─ the sidecar client
+├─ orchestration, retries, and budgets
+├─ run persistence
+└─ SearXNG search
 ```
 
-**What stays in Pervue:**
-- Native Messaging framing, which moves back into `pervue-host` with its fuzz target.
-- Origin checks and the manifest.
-- The protocol-v1 validator.
-- Browser context and how it is framed in prompts.
-- Diagnostics records and redaction rules.
+**What moves, and why.**
+- **The promotion rule.** Something moves into the runtime only when a second application uses it. Conclave runs every call ephemerally and reaches Codex through app-server. That's why session maps, transcript removal, and `codex-exec` stay in `pervue-host`.
+- **Continuation.**
+  - The runtime's Claude provider accepts an opaque native-session handle to resume, and reports the native session it ran.
+  - When that session no longer exists, it fails with a reason of its own before producing any output.
+  - `pervue-host` keeps the map, its `conv_` IDs, and the retry-once-with-history policy.
+  - Claude's session IDs will then cross a crate boundary they don't cross today, but only as opaque values.
+  - The sidecar protocol doesn't expose continuation until a consumer needs it.
+- **Environment construction.**
+  - The core README lists the credential allowlist as host policy, so moving it changes that boundary deliberately.
+  - Conclave needs the same protection (§2.1, item 4), and a Claude provider in the runtime can't start without its variables.
+  - Applications can extend the list.
+- **Codex backends.**
+  - `codex-exec` and `codex-app-server` stay separate: one is a one-shot process, the other a persistent server. They also differ in streaming granularity, model discovery, usage and rate-limit data, and interruption.
+  - A product can present either one as "OpenAI via Codex".
+  - The runtime treats them as separate until app-server reaches parity.
 
-**What stays in Conclave:**
-- Orchestration modes, budgets, and retries.
-- Run persistence and replay.
-- SearXNG evidence.
-- How models are presented.
+The two products sanitize search results in similar ways. Those are small pure functions in two languages, though, and a round trip through the sidecar would cost more than sharing them saves.
 
-The two products sanitize search results in similar ways, but those are small pure functions in two languages, and a round trip through the sidecar would cost more than sharing them saves.
-
-## 5. API changes a second consumer needs
+## 5. API changes a second application needs
 
 **Error wording**
 - Today: `ErrorBody<'static>` carries Pervue's wording, such as "Pervue couldn't prepare a private folder…".
-- Needed: the library returns only `code`, `reason`, and `retryable`, and each app writes its own messages.
+- Needed: the runtime returns only `code`, `reason`, and `retryable`, and each app writes its own messages.
 - Why: `pervue-host` keeps a table of messages, so protocol v1 doesn't change.
 
 **Error codes and capabilities**
 - Today: `ErrorCode` and `Capabilities` mix runtime concepts with browser ones: `HostNotInstalled`, `ContextUnavailable`, `page_context`.
-- Needed: runtime concepts in the library, marked `#[non_exhaustive]`. Browser concepts in the host.
-- Why: the library can add codes without breaking semver.
+- Needed: runtime concepts in the runtime, marked `#[non_exhaustive]`. Browser concepts in the host.
+- Why: the runtime can add codes without breaking semver.
 
 **Models**
 - Today: `ModelOption` holds `&'static str` values from a fixed list.
@@ -198,28 +220,39 @@ The two products sanitize search results in similar ways, but those are small pu
 
 **Usage**
 - Today: `Update` has no usage.
-- Needed: `Update::Usage { input_tokens, output_tokens }`.
-- Why: Conclave's budgets and run inspector use it.
+- Needed: `Update::Usage`, a cumulative snapshot for the whole turn.
+  - Both `input_tokens` and `output_tokens` are optional.
+  - Neither value is ever lower than in the previous snapshot, and consumers keep the latest.
+  - An adapter whose provider reports usage per message adds those reports up itself.
+- Why: Conclave's budgets and run inspector depend on it, and its orchestrator already reads usage this way ([orchestrator.ts:437–455][c-usage]).
 
 **Requests**
 - Today: `SendRequest` has `text`, `history`, browser `context`, and `native_search`.
-- Needed: a neutral turn with `system`, `messages`, `model`, a tool policy (`None` or `NativeWebSearch`), and persistence (`Ephemeral` or `Managed`).
-- Why: Conclave needs a system prompt and no persistence. Pervue frames its browser context into messages before it calls the library.
+- Needed: a neutral turn with `system`, `messages`, `model`, a tool policy (`None` or `NativeWebSearch`), and an optional continuation handle (§4).
+- Why: Conclave needs a system prompt and runs every call ephemerally. Pervue frames its browser context into messages before it calls the runtime.
 
-**Paths**
+**Namespace**
 - Today: paths and thread names are hard-coded under `pervue`.
-- Needed: an app namespace, such as `pervue` or `conclave`.
-- Why: each app gets its own workspaces and session stores. Removal proves ownership by the workspace a transcript ran in, so Pervue can never delete Conclave's transcripts, and the other way round.
+- Needed: an application namespace, fixed when the runtime starts.
+  - `pervue-host` passes a constant.
+  - The sidecar takes `--namespace` on its command line and refuses Pervue's namespace.
+  - `initialize` reports the namespace but can't change it.
+- Why: each application gets its own workspaces, so a mistake in one product can't touch the other's files. This protects against accidents, not attacks: any process running as the user can already write to both products' directories.
 
 **Sign-in**
 - Today: the status check reads only the exit code.
 - Needed: an optional sign-in classification (`Subscription`, `ApiKey`, `Cloud`, `Unknown`) that keeps no identifiers.
-- Why: Conclave's subscription-only policy. Refusing a sign-in stays the app's decision.
+- Why: Conclave's subscription-only policy. Refusing a sign-in stays the application's decision.
 
 **Timeouts**
-- Today: each adapter has fixed timeout constants.
-- Needed: overrides from the app, within ceilings.
-- Why: Conclave's `CONCLAVE_*_TIMEOUT_MS` settings and its stall watchdog.
+- Today: each adapter has fixed start, idle, and stop-grace constants, and nothing limits a turn's total duration.
+- Needed:
+  - An absolute `max_turn` limit alongside the others. Applications can override all of them, within ceilings.
+  - A fixed rule for what resets the idle timer: deltas, sources, and provider events that the adapter recognizes as work. stderr and unrecognized output never reset it.
+- Why:
+  - Pervue's Claude adapter counts any unrecognized `stream_event` as progress ([claude/output.rs][p-claude-output]). A Claude build that keeps emitting such events keeps its turn alive indefinitely.
+  - That is tolerable in a popup the user can close. It isn't in a server-owned run that nobody is watching.
+  - Conclave already bounds every call absolutely, and the runtime must preserve that.
 
 The two products' Claude command lines should also be reconciled once. Each product found something the other missed:
 - Pervue uses `--strict-mcp-config`, stream-json input, and `DISABLE_AUTOUPDATER`.
@@ -230,28 +263,48 @@ The two products' Claude command lines should also be reconciled once. Each prod
 The protocol is JSON-RPC 2.0 with one message per line. Conclave already has two clients in this style ([app-server-client.ts][c-codex-client], [acp-client.ts][c-grok-client]). Chrome's framing, with its length prefix in native byte order, is a browser detail that doesn't belong here.
 
 ```text
-→ {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol":1,"namespace":"conclave"}}
-← {"jsonrpc":"2.0","id":1,"result":{"protocol":1,"runtime":"0.1.0","providers":["claude","codex"]}}
+$ provider-runtime --namespace conclave
+→ {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol":1}}
+← {"jsonrpc":"2.0","id":1,"result":{"protocol":1,"runtime":"0.1.0","namespace":"conclave","providers":["claude"]}}
 → {"jsonrpc":"2.0","id":2,"method":"turn/start","params":{"turn":"t_7f3a","provider":"claude","model":"sonnet",
-     "system":"…","messages":[{"role":"user","text":"…"}],"tools":"none","persistence":"ephemeral"}}
+     "system":"…","messages":[{"role":"user","text":"…"}],"tools":"none"}}
 ← {"jsonrpc":"2.0","id":2,"result":{}}
 ← {"jsonrpc":"2.0","method":"turn/event","params":{"turn":"t_7f3a","type":"delta","text":"…"}}
 ← {"jsonrpc":"2.0","method":"turn/event","params":{"turn":"t_7f3a","type":"usage","input_tokens":812,"output_tokens":95}}
 ← {"jsonrpc":"2.0","method":"turn/ended","params":{"turn":"t_7f3a","outcome":"completed"}}
 → {"jsonrpc":"2.0","id":3,"method":"turn/cancel","params":{"turn":"t_9c01"}}
+← {"jsonrpc":"2.0","id":3,"result":{}}
 ← {"jsonrpc":"2.0","method":"turn/ended","params":{"turn":"t_9c01","outcome":"failed",
      "error":{"code":"REQUEST_CANCELLED","reason":"USER_CANCELLED","retryable":false}}}
+→ {"jsonrpc":"2.0","id":4,"method":"turn/cancel","params":{"turn":"t_0000"}}
+← {"jsonrpc":"2.0","id":4,"error":{"code":-32000,"message":"unknown turn","data":{"reason":"UNKNOWN_TURN"}}}
 ```
 
-- **Methods:** `initialize`, `provider/status`, `provider/models`, `turn/start`, `turn/cancel`, and `shutdown`.
-- **Notifications:**
+- **Methods.** `initialize`, `provider/status`, `provider/models`, `turn/start`, `turn/cancel`, and `shutdown`. Every method gets a response.
+- **Notifications.**
   - `turn/event` reports `started`, `delta`, `activity`, `source`, and `usage`.
-  - `turn/ended` follows, exactly once per turn.
-- **Turn IDs come from the client**, so a cancel can't race the start of its turn.
+  - `turn/ended` follows each started turn.
+
+**Turn lifecycle:**
+
+1. **Order.**
+   - The runtime reads its input in order.
+   - `turn/start` registers the turn's ID before the runtime reads the next message or does any provider work. So a `turn/cancel` sent right after it always finds the turn.
+   - The response to `turn/start` comes before any event of that turn.
+2. **Turn IDs.**
+   - A turn ID is unique for the life of the runtime process, not only while the turn is running, so a late cancel can never reach a newer turn.
+   - A `turn/start` that reuses an ID fails with `DUPLICATE_TURN_ID`, and the turn that already holds the ID is unaffected.
+3. **Exactly one ending.** A started turn gets exactly one `turn/ended`. A rejected `turn/start` gets an error response and no `turn/ended`.
+4. **Cancellation.**
+   - `turn/cancel` for a running turn is acknowledged, including repeats, and the turn still ends only once.
+   - For a turn that never started or has already ended, `turn/cancel` fails with `UNKNOWN_TURN`.
+   - If a turn ends just before its cancel arrives, the runtime has already written its `turn/ended` ahead of that error, so the client can ignore the error.
+
+**Other rules:**
 - **Lines are bounded.** The runtime reads them with the existing `LineSplitter`.
 - **End of input** cancels every turn and exits, as Pervue does with `INPUT_CLOSED`.
-- **Diagnostics on stderr** hold no prompts, output, or account identifiers, as in OBS-01.
-- **The protocol has its own version**, separate from the crate version and from Pervue protocol v1. `initialize` refuses a mismatched version.
+- **Diagnostics on stderr** contain no prompts, output, or account identifiers, as in OBS-01.
+- **Versioning.** The protocol has its own version, separate from the runtime's version and from Pervue protocol v1. `initialize` refuses a mismatched version.
 
 ## 7. Integrating Conclave
 
@@ -262,7 +315,7 @@ The protocol is JSON-RPC 2.0 with one message per line. Conclave already has two
 | `delta` | `text_delta` |
 | `usage` | `usage` |
 | `source` | `citation` |
-| `activity` | A new `progress` event that the UI doesn't show, so the stall watchdog re-arms without extra noise |
+| `activity` | A new `progress` event that the UI doesn't show. It re-arms the stall watchdog without adding noise, and `max_turn` still bounds the call |
 
 Aborting the `AbortSignal` sends `turn/cancel`.
 
@@ -271,14 +324,27 @@ Aborting the `AbortSignal` sends `turn/cancel`.
 - `isRetryableStepError` and `isRateLimitError` check for it first.
 - The regular expressions stay as the fallback for adapters that haven't moved.
 
-**Sidecar lifecycle.**
-- The server runs one runtime process, started on first use.
-- If that process exits, its in-flight turns fail as retryable, so Conclave's existing single retry covers the crash.
-- The next call starts a new process.
+**When the runtime process dies.**
+- The client fails every running turn with a runtime-loss error that says how far the turn got:
+  - `not_started` if the client never wrote the `turn/start` to the runtime;
+  - otherwise `maybe_started`, because a runtime that received the request may have launched the provider, or even finished the turn, before it died.
+- Conclave's retry policy decides what to do:
+  - A `not_started` turn can be retried freely.
+  - A `maybe_started` turn is retried only if the budget allows, and it counts as a new call, because the first attempt may already have used a model call and some of the rate limit.
+- A runtime that is killed outright can't stop its providers, just as the host can't today ([native/README](../../native/README.md#provider-processes)). So a `maybe_started` provider may still be running.
+- The next call starts a new runtime process.
+
+**Release and compatibility.** These must be in place before Conclave makes the runtime its default:
+- The runtime has its own version and release tags, separate from Pervue's application releases, even while it lives in this repository.
+- `initialize` reports the runtime version and the protocol version.
+- After a new protocol version ships, the runtime keeps supporting the previous one for a documented period.
+- The per-platform npm packages carry the runtime's version.
+- Conclave pins an exact runtime version in its lockfile, and declares the protocol version it speaks.
+- Conclave's CI runs its runtime-backed tests against the pinned version.
 
 **Finding the binary.**
 - During development, `CONCLAVE_RUNTIME_BIN` points at it.
-- Later, per-platform npm packages ship it as `optionalDependencies`, the pattern esbuild and swc use. Pervue's existing release workflows can build them.
+- Later, per-platform npm packages ship it as `optionalDependencies`, the pattern esbuild and swc use.
 
 **Rollout.**
 - Each provider moves separately, behind a flag such as `CONCLAVE_RUNTIME_PROVIDERS=anthropic`.
@@ -292,55 +358,57 @@ Aborting the `AbortSignal` sends `turn/cancel`.
 - no tools;
 - no session persistence;
 - the system prompt;
+- the absolute turn timeout;
 - cancellation;
 - the same failures in the run inspector.
 
 ## 8. Phases
 
-The tracker isn't edited here, and the IDs below are only proposals.
+The tracker isn't edited here, and the IDs below are only proposals. Each phase promotes only what the next real use needs.
 
 **Phase 0: agree.** Nothing in this phase changes code.
 - Review this proposal.
 - Write ADR-0002 (a sidecar instead of a C ABI).
 - Choose a name, a license, and where the code lives.
 
-**Phase 1: additive work in `native/`** (proposed LIB-06 to LIB-09).
-1. Consolidate the copied adapter plumbing.
-2. Introduce the neutral types from §5.
-3. Extract the scheduler from `host.rs` without changing behavior. The protocol validator and golden fixtures must stay green.
-4. Build the sidecar binary and its schema, and run the hostile matrix and the contract suite through it.
+**Phase 1: Claude through the runtime** (proposed LIB-06 to LIB-09).
+1. Introduce the neutral turn, error, usage, and timeout types from §5.
+2. Move the Claude provider into the runtime, along with only the mechanics it needs: environment construction, private-workspace primitives, and the status probe. The continuation hook comes with it. `pervue-host` keeps its sessions and transcript removal, and all of its tests pass unchanged.
+3. Extract the scheduler from `host.rs`, and add the absolute limit and the rule for what counts as progress. The protocol validator and golden fixtures must stay green.
+4. Build the sidecar, serving Claude and the fake provider, and run the hostile matrix and the contract suite through it.
 
 **Phase 2: Conclave on Claude** (work in the Conclave repository).
 1. Build the TypeScript client.
-2. Route Claude through the runtime behind the flag, with typed errors.
-3. Make the runtime the default once the parity checks pass.
+2. Route Claude through the runtime behind the flag, with typed errors and runtime-loss handling.
+3. Put release and compatibility pinning in place.
+4. Make the runtime the default.
 
 **Phase 3: Codex app-server** (proposed PRO-10).
-- Add the app-server adapter to the library and move Conclave to it.
-- Moving Pervue off `exec` is a separate decision. It needs its own security review of the sandbox, the workspace, and removing app-server threads.
+- Add `codex-app-server` to the runtime as a backend of its own, and move Conclave to it.
+- `codex-exec` stays in `pervue-host`. Whether Pervue ever switches is a separate decision, with its own security review of the sandbox, the workspace, and removing app-server threads.
 
 **Phase 4: more providers, then split** (PRO-08, PRO-09).
 - Port the Grok and Gemini adapters from Conclave.
-- Move the library to its own repository.
+- Move the runtime to its own repository.
 - Publish the crates and npm packages.
 
-**Working alongside the tracker.** Phase 1 changes both adapters and `host.rs`, the host's largest and most heavily tested file.
+Merging Pervue's copied session code (§1) is cleanup inside the host. It can happen at any time and stays in the host.
+
+**Working alongside the tracker.** Phase 1 changes the Claude adapter and `host.rs`, the host's largest and most heavily tested file.
 - It should start after LIB-01 to LIB-05 are verified, so nothing is restructured while it is being verified.
 - Until then, coordinate it with whoever holds the remaining tracker items.
 
 ## 9. Risks
 
-- **Premature generalization.**
-  - Move one provider at a time.
-  - Add the Codex app-server adapter only when both products want it.
-  - Keep framing, browser context, and conversation removal out of the shared API until a second consumer needs them.
+- **Premature generalization.** The §4 promotion rule decides what moves. Move one provider at a time, and keep policy owned by a single application in that application.
 - **Regressions from extracting the scheduler.**
   - `host.rs` holds protocol v1's lifecycle guarantees, so move it without changing behavior.
   - Keep TST-03, TST-04, and the golden fixtures as the gate.
-- **Two protocols to version.** Each gets its own version number and handshake.
+- **Losing the runtime in the middle of a turn.** A retry can repeat work that already happened. Runtime-loss errors say whether the turn may have started, and the application decides (§7).
+- **Two protocols to version.** Each gets its own version number and handshake, and Conclave pins the runtime (§7).
 - **Shipping a binary to a `pnpm dev` project.** Until prebuilt packages exist, contributors who want the runtime need Rust. The TypeScript adapters stay as the fallback.
 - **Stricter defaults for Conclave.**
-  - The environment allowlist may drop a variable someone relies on, so each provider can extend the list.
+  - The environment allowlist may drop a variable someone relies on, so each provider can extend it.
   - A private workspace means project `CLAUDE.md` files no longer apply. That's intended, but users should be told.
 - **Windows.**
   - There is no Job Object yet ([process.rs][p-process]), so only the provider process itself is stopped, not its descendants. Conclave has the same gap today.
@@ -351,12 +419,33 @@ The tracker isn't edited here, and the IDs below are only proposals.
 
 1. A sidecar or a Node addon? The recommendation is the sidecar.
 2. Incubate in `native/` and split later (recommended), or start a new repository now?
-3. The library's name. `provider-runtime` is a placeholder.
+3. The runtime's name. `provider-runtime` is a placeholder.
 4. The license.
-5. Should the library's Codex adapter move to app-server (recommended), or keep only `exec`?
+5. Should Pervue ever move from `codex-exec` to `codex-app-server`? The runtime can carry both.
 6. Does Conclave accept Pervue's stricter defaults, the environment allowlist and the private workspace, as they are?
+7. What should the default absolute turn limit be, and can applications raise it? Conclave uses 180 s today, and Pervue has no limit.
+
+## 11. Changes after review
+
+A review on 2026-09-28 checked this proposal against both repositories at the evidence commits. It led to these changes:
+
+- **Framing.** Conclave justifies a new boundary between applications. It doesn't satisfy the extraction rule for the first time, because Pervue already met it with two providers.
+- **Boundary.**
+  - Session maps, managed continuation, and transcript removal stay in `pervue-host`. The runtime offers a continuation hook instead (§4).
+  - `codex-exec` also stays in the host until another application needs it.
+- **Protocol.**
+  - `turn/cancel` now gets a response.
+  - The turn lifecycle is specified: when a turn is registered, when an ID may be reused, what happens with unknown or repeated cancellations, and that every started turn ends exactly once (§6).
+- **Runtime loss.** Errors carry `not_started` or `maybe_started`, and retrying a `maybe_started` turn is the application's decision (§7).
+- **Namespace.** It is fixed when the runtime starts, not chosen in `initialize`. It is described as protection against accidents, not a security boundary (§5).
+- **Usage.** Defined as cumulative snapshots for each turn (§5).
+- **Timeouts.** An absolute `max_turn` limit and a rule for what resets the idle timer (§5). Checking the code for this showed that Pervue's Claude adapter can be kept alive indefinitely today.
+- **Codex.** `codex-exec` and `codex-app-server` are separate backends (§4).
+- **Releases.** The runtime is versioned and pinned independently before Conclave makes it the default (§7).
+- **Phases.** Phase 1 is now scoped to what Claude in Conclave needs (§8).
 
 [p-claude]: ../../native/host/src/providers/claude/mod.rs
+[p-claude-output]: ../../native/host/src/providers/claude/output.rs
 [p-codex]: ../../native/host/src/providers/codex/mod.rs
 [p-env]: ../../native/host/src/providers/environment.rs
 [p-workspace]: ../../native/host/src/providers/codex/workspace.rs
@@ -365,6 +454,7 @@ The tracker isn't edited here, and the IDs below are only proposals.
 [p-process]: ../../native/core/src/process.rs
 [c-core]: https://github.com/davletovb/conclave/blob/1379a37ccb13d484247122ee215257e642b166fc/packages/core/src/index.ts
 [c-classify]: https://github.com/davletovb/conclave/blob/1379a37ccb13d484247122ee215257e642b166fc/apps/server/src/orchestrator.ts#L98-L130
+[c-usage]: https://github.com/davletovb/conclave/blob/1379a37ccb13d484247122ee215257e642b166fc/apps/server/src/orchestrator.ts#L437-L455
 [c-watchdog]: https://github.com/davletovb/conclave/blob/1379a37ccb13d484247122ee215257e642b166fc/apps/server/src/orchestrator.ts#L507
 [c-claude-argv]: https://github.com/davletovb/conclave/blob/1379a37ccb13d484247122ee215257e642b166fc/apps/server/src/providers/anthropic-claude.ts#L254
 [c-claude-buf]: https://github.com/davletovb/conclave/blob/1379a37ccb13d484247122ee215257e642b166fc/apps/server/src/providers/anthropic-claude.ts#L154
