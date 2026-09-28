@@ -202,7 +202,7 @@ impl Launch {
             .args(args)
             .envs(self.inherited.iter().cloned())
             .env("DISABLE_AUTOUPDATER", "1")
-            .env("PATH", search_path_for(executable, self.path.as_deref()))
+            .env("PATH", environment::search_path_for(executable, self.path.as_deref()))
             .current_dir(workspace)
     }
 }
@@ -467,15 +467,6 @@ fn signed_in(exit: &Exit) -> Authentication {
     }
 }
 
-fn search_path_for(executable: &Path, inherited: Option<&OsStr>) -> OsString {
-    let dirs = executable
-        .parent()
-        .map(Path::to_path_buf)
-        .into_iter()
-        .chain(inherited.into_iter().flat_map(std::env::split_paths));
-    std::env::join_paths(dirs)
-        .unwrap_or_else(|_| inherited.map(OsStr::to_os_string).unwrap_or_default())
-}
 
 fn after(duration: Duration) -> Instant {
     let now = Instant::now();
