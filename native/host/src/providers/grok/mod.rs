@@ -5,7 +5,9 @@
 //! directory and GROK_HOME, and the protocol's bounded history. Only the
 //! existing Grok/X OAuth file is referenced outside that directory.
 //!
-//! Ordinary turns expose no tools. Web turns expose only `web_search`.
+//! Ordinary turns expose no tools. Grok web search is deliberately not
+//! advertised yet because the currently shipped headless CLI does not expose
+//! the backend search surface that upstream main documents.
 //! The headless stream's init event is verified before any answer text is
 //! forwarded, and the private workspace (including Grok's session files and
 //! the prompt file) is removed after the child has exited.
@@ -24,11 +26,10 @@ use super::discovery;
 use super::environment;
 use super::forget;
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
-use crate::conversation::{SEARCH_INSTRUCTIONS, provider_prompt};
+use crate::conversation::provider_prompt;
 use crate::protocol::events::{
     Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ProviderState,
 };
-use crate::search::{NATIVE_SEARCH_NO_SOURCES, SourceCollector};
 use pervue_core::discovery::SearchPath;
 use pervue_core::process::{Event, Exit, Process, ProcessSpec};
 use pervue_core::stream::{BUSY_LIMIT, LineStream, Output};
@@ -46,9 +47,9 @@ const STATUS_PROBE: Duration = Duration::from_secs(10);
 const FINISH_GRACE: Duration = Duration::from_secs(5);
 
 pub const CAPABILITIES: Capabilities = Capabilities {
-    streaming: Capability::Supported,
+    streaming: Capability::Unsupported,
     continuation: Capability::Supported,
-    web_search: Capability::Supported,
+    web_search: Capability::Unsupported,
     page_context: Capability::Supported,
     attachments: Capability::Unsupported,
     model_selection: Capability::Supported,
@@ -115,6 +116,42 @@ const MODEL_NOT_SUPPORTED: ErrorBody<'static> = ErrorBody {
     message: "The Grok provider accepts Grok model IDs only.",
     retryable: false,
 };
+const SEARCH_UNSUPPORTED: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::InvalidRequest,
+    reason: "SEARCH_UNSUPPORTED",
+    message: "Grok Build's shipped headless CLI doesn't expose a Pervue-safe native web-search surface yet. Turn Web off and try again.",
+    retryable: false,
+};
+const MODEL_MISMATCH: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::ProviderFailed,
+    reason: "MODEL_MISMATCH",
+    message: "Grok started a different model than Pervue requested. Update Grok Build or choose its default model, then try again.",
+    retryable: false,
+};
+const WORKSPACE_MISMATCH: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::ProviderFailed,
+    reason: "WORKSPACE_MISMATCH",
+    message: "Grok didn't stay in Pervue's private workspace, so the turn was stopped.",
+    retryable: false,
+};
+const TOOLSET_MISMATCH: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::ProviderFailed,
+    reason: "TOOLSET_MISMATCH",
+    message: "Grok exposed tools in a text-only Pervue turn, so the turn was stopped.",
+    retryable: false,
+};
+const SKILLS_MISMATCH: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::ProviderFailed,
+    reason: "SKILLS_MISMATCH",
+    message: "Grok loaded skills in Pervue's isolated turn, so the turn was stopped.",
+    retryable: false,
+};
+const MCP_MISMATCH: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::ProviderFailed,
+    reason: "MCP_MISMATCH",
+    message: "Grok connected an MCP server in Pervue's isolated turn, so the turn was stopped.",
+    retryable: false,
+};
 
 const PLAIN_AGENT: &str = r#"---
 name: pervue-text
@@ -132,23 +169,6 @@ permissionMode: dontAsk
 Answer the user's request directly as text. Do not use tools, files, commands, MCP servers, skills, plugins, hooks, subagents, memory, or external side effects.
 "#;
 
-const SEARCH_AGENT: &str = r#"---
-name: pervue-search
-description: Pervue Grok responder allowed to use only native web search.
-promptMode: full
-tools:
-  - web_search
-discoverSkills: false
-inheritSkills: false
-agentsMd: false
-disallowedTools:
-  - Agent
-mcpInheritance: none
-permissionMode: dontAsk
----
-Use web_search when answering. Do not use files, commands, web_fetch, MCP servers, skills, plugins, hooks, subagents, memory, or any other external side effect.
-"#;
-
 #[derive(Debug, Clone)]
 struct Launch {
     work_dir: PathBuf,
@@ -159,7 +179,14 @@ struct Launch {
 
 impl Launch {
     fn new(work_dir: PathBuf, host: Vec<(OsString, OsString)>) -> Self {
-        let auth_path = environment::home_dir(&host).map(|home| home.join(".grok/auth.json"));
+        let auth_path = environment::lookup(&host, "GROK_AUTH_PATH")
+            .map(PathBuf::from)
+            .or_else(|| {
+                environment::lookup(&host, "GROK_HOME")
+                    .map(PathBuf::from)
+                    .map(|home| home.join("auth.json"))
+            })
+            .or_else(|| environment::home_dir(&host).map(|home| home.join(".grok/auth.json")));
         Self {
             work_dir,
             inherited: environment::inherit(host.clone(), &[]),
@@ -318,6 +345,9 @@ impl Provider for Grok {
     }
 
     fn send(&self, request: SendRequest) -> Box<dyn Exchange> {
+        if request.native_search {
+            return Box::new(Scripted::failed(SEARCH_UNSUPPORTED));
+        }
         if request
             .model
             .as_deref()
@@ -339,18 +369,15 @@ impl Provider for Grok {
             return Box::new(Scripted::failed(NO_WORKSPACE));
         };
 
-        let mut prompt = provider_prompt(&request.history, request.context.as_ref(), &request.text);
-        if request.native_search {
-            prompt.insert_str(0, SEARCH_INSTRUCTIONS);
-        }
-        let workspace = match TurnWorkspace::create(&base, request.native_search, &prompt) {
+        let prompt = provider_prompt(&request.history, request.context.as_ref(), &request.text);
+        let workspace = match TurnWorkspace::create(&base, &prompt) {
             Ok(workspace) => workspace,
             Err(_) => return Box::new(Scripted::failed(NO_WORKSPACE)),
         };
 
         let new_conversation = request.conversation_id.is_none();
         let conversation_id = request.conversation_id.unwrap_or_else(new_conversation_id);
-        let args = grok_args(&workspace, request.native_search, request.model.as_deref());
+        let args = grok_args(&workspace, request.model.as_deref());
         let expected_cwd = workspace.path().to_path_buf();
         let spec = self
             .launch
@@ -370,10 +397,7 @@ impl Provider for Grok {
             requested_model: request.model,
             initialized: false,
             cancelled: false,
-            native_search: request.native_search,
-            searched: false,
             saw_text: false,
-            sources: SourceCollector::new(ID),
             outcome: None,
             finish_by: None,
             done: false,
@@ -419,7 +443,16 @@ impl Exchange for StatusCheck {
                     stdout,
                     stderr,
                 } => {
-                    let poll_until = deadline.min(*give_up);
+                    // A status-of-all request starts every probe up front and
+                    // polls providers in sequence. If this probe already
+                    // finished while another provider was being polled, drain
+                    // that queued exit before applying the timeout.
+                    let timed_out = Instant::now() >= *give_up;
+                    let poll_until = if timed_out {
+                        Instant::now()
+                    } else {
+                        deadline.min(*give_up)
+                    };
                     match process.next_event(poll_until) {
                         Some(Event::Stdout(bytes)) => {
                             keep_head(stdout, &bytes, STATUS_OUTPUT_BYTES)
@@ -507,7 +540,7 @@ impl ProbeWorkspace {
 
 impl Drop for ProbeWorkspace {
     fn drop(&mut self) {
-        let _ = forget::remove(&self.path);
+        forget::remove_in_background(self.path.clone());
     }
 }
 
@@ -519,27 +552,30 @@ struct TurnWorkspace {
 }
 
 impl TurnWorkspace {
-    fn create(base: &Path, search: bool, prompt: &str) -> io::Result<Self> {
+    fn create(base: &Path, prompt: &str) -> io::Result<Self> {
         let path = unique_child(base, "turn");
-        let grok_home = path.join("grok-home");
-        create_private_dir(&grok_home)?;
-        let prompt_path = path.join("prompt.txt");
-        write_private_file(&prompt_path, prompt.as_bytes())?;
-        let agent = path.join("agent.md");
-        write_private_file(
-            &agent,
-            if search {
-                SEARCH_AGENT.as_bytes()
-            } else {
-                PLAIN_AGENT.as_bytes()
-            },
-        )?;
-        Ok(Self {
+        create_private_dir(&path)?;
+        // Construct the guard before any sensitive file is written so every
+        // later error path removes the partial workspace.
+        let mut workspace = Self {
+            grok_home: path.join("grok-home"),
+            prompt: path.join("prompt.txt"),
+            agent: path.join("agent.md"),
             path,
-            grok_home,
-            prompt: prompt_path,
-            agent,
-        })
+        };
+        if let Err(error) = workspace.initialize(prompt) {
+            let path = workspace.path.clone();
+            workspace.path = PathBuf::new();
+            let _ = forget::remove(&path);
+            return Err(error);
+        }
+        Ok(workspace)
+    }
+
+    fn initialize(&self, prompt: &str) -> io::Result<()> {
+        create_private_dir(&self.grok_home)?;
+        write_private_file(&self.prompt, prompt.as_bytes())?;
+        write_private_file(&self.agent, PLAIN_AGENT.as_bytes())
     }
 
     fn path(&self) -> &Path {
@@ -553,18 +589,21 @@ impl TurnWorkspace {
 
 impl Drop for TurnWorkspace {
     fn drop(&mut self) {
-        let _ = forget::remove(&self.path);
+        if !self.path.as_os_str().is_empty() {
+            forget::remove_in_background(self.path.clone());
+        }
     }
 }
 
-fn grok_args(workspace: &TurnWorkspace, search: bool, model: Option<&str>) -> Vec<OsString> {
+fn grok_args(workspace: &TurnWorkspace, model: Option<&str>) -> Vec<OsString> {
     let mut args = vec![
         OsString::from("--prompt-file"),
         workspace.prompt.as_os_str().to_os_string(),
         OsString::from("--verbatim"),
         OsString::from("--output-format"),
         OsString::from("streaming-messages-json"),
-        OsString::from("--agent-profile"),
+        OsString::from("--include-partial-messages"),
+        OsString::from("--agent"),
         workspace.agent.as_os_str().to_os_string(),
         OsString::from("--no-subagents"),
         OsString::from("--no-auto-update"),
@@ -573,15 +612,14 @@ fn grok_args(workspace: &TurnWorkspace, search: bool, model: Option<&str>) -> Ve
         OsString::from("--permission-mode"),
         OsString::from("dontAsk"),
         OsString::from("--disallowed-tools"),
-        OsString::from("Agent"),
+        OsString::from("Agent,search_tool,use_tool"),
+        // Shipped Grok always offers the MCP search/use umbrellas unless
+        // explicitly denied. Clamp the built-in surface to web_search, then
+        // disable that hosted tool too: the resulting turn is text-only.
+        OsString::from("--tools"),
+        OsString::from("web_search"),
+        OsString::from("--disable-web-search"),
     ];
-    // --tools is a session-level final clamp in current Grok Build. Keep it
-    // on both modes so profile/default-tool drift cannot re-enable local tools.
-    // Plain mode then disables its only allowed server tool, yielding no tools.
-    args.extend([OsString::from("--tools"), OsString::from("web_search")]);
-    if !search {
-        args.push(OsString::from("--disable-web-search"));
-    }
     if let Some(model) = model {
         args.extend([OsString::from("--model"), OsString::from(model)]);
     }
@@ -599,10 +637,7 @@ struct Turn {
     requested_model: Option<String>,
     initialized: bool,
     cancelled: bool,
-    native_search: bool,
-    searched: bool,
     saw_text: bool,
-    sources: SourceCollector,
     outcome: Option<Result<(), ErrorBody<'static>>>,
     finish_by: Option<Instant>,
     done: bool,
@@ -628,33 +663,28 @@ impl Turn {
                 cwd,
                 tools,
                 skills,
-                active_mcp_servers,
+                all_mcp_disabled,
             }) => {
                 if self.initialized {
                     return self.fail(MALFORMED_OUTPUT);
                 }
-                let model_ok = model.starts_with("grok-")
-                    && self
-                        .requested_model
-                        .as_deref()
-                        .is_none_or(|requested| requested == model);
-                let tools_ok = if self.native_search {
-                    tools.len() == 1 && tools[0] == "web_search"
-                } else {
-                    tools.is_empty()
-                };
-                if api_key_source != "oauth"
-                    || !model_ok
-                    || Path::new(&cwd) != self.expected_cwd
-                    || !tools_ok
-                    || !skills.is_empty()
-                    || active_mcp_servers != 0
-                {
-                    return self.fail(if api_key_source != "oauth" {
-                        AUTH_MODE_REJECTED
-                    } else {
-                        BOUNDARY_VIOLATION
-                    });
+                if api_key_source != "oauth" {
+                    return self.fail(AUTH_MODE_REJECTED);
+                }
+                if !model_matches(self.requested_model.as_deref(), &model) {
+                    return self.fail(MODEL_MISMATCH);
+                }
+                if !forget::same_directory(&cwd, &self.expected_cwd) {
+                    return self.fail(WORKSPACE_MISMATCH);
+                }
+                if !tools.is_empty() {
+                    return self.fail(TOOLSET_MISMATCH);
+                }
+                if !skills.is_empty() {
+                    return self.fail(SKILLS_MISMATCH);
+                }
+                if !all_mcp_disabled {
+                    return self.fail(MCP_MISMATCH);
                 }
                 self.initialized = true;
                 if self.announce_conversation {
@@ -667,55 +697,35 @@ impl Turn {
             }
             Ok(Line::Assistant {
                 text,
-                searched,
-                sources,
+                activity,
                 forbidden_tool,
             }) => {
                 if !self.initialized {
                     return self.fail(MALFORMED_OUTPUT);
                 }
-                if forbidden_tool || (searched && !self.native_search) {
+                if forbidden_tool {
                     return self.fail(BOUNDARY_VIOLATION);
                 }
-                self.searched |= searched;
-                for source in sources {
-                    if let Some(source) = self.sources.push(source) {
-                        self.queue.push_back(Update::Source(source));
-                    }
-                }
-                // Search frames can contain "I will search..." narration in
-                // the same assistant message as the server tool. The terminal
-                // result is the authoritative final answer, so hold all search
-                // text until then.
-                if !self.native_search && !text.is_empty() {
+                if !text.is_empty() {
                     self.saw_text = true;
                     self.queue.push_back(Update::Delta(text));
+                } else if activity {
+                    self.queue.push_back(Update::Activity);
                 }
             }
             Ok(Line::ResultSuccess { text }) => {
                 if !self.initialized {
                     return self.fail(MALFORMED_OUTPUT);
                 }
-                if self.native_search {
-                    if !text.is_empty() {
-                        self.saw_text = true;
-                        self.queue.push_back(Update::Delta(text));
-                    }
-                    self.outcome = Some(if self.searched && self.sources.count() > 0 {
-                        Ok(())
-                    } else {
-                        Err(NATIVE_SEARCH_NO_SOURCES)
-                    });
-                } else {
-                    if !self.saw_text && !text.is_empty() {
-                        self.queue.push_back(Update::Delta(text));
-                    }
-                    self.outcome = Some(Ok(()));
+                if !self.saw_text && !text.is_empty() {
+                    self.queue.push_back(Update::Delta(text));
                 }
+                self.outcome = Some(Ok(()));
                 self.finish_by = Some(after(FINISH_GRACE));
             }
             Ok(Line::ResultFailed(error)) => self.fail(error),
-            Ok(Line::Ignored) => {}
+            Ok(Line::Activity) if self.initialized => self.queue.push_back(Update::Activity),
+            Ok(Line::Activity | Line::Ignored) => {}
         }
     }
 
@@ -796,6 +806,19 @@ impl Exchange for Turn {
         self.finish_by = None;
         self.stream.cancel(grace);
     }
+}
+
+fn model_matches(requested: Option<&str>, actual: &str) -> bool {
+    if !actual.starts_with("grok-") {
+        return false;
+    }
+    requested.is_none_or(|requested| {
+        actual == requested
+            || actual
+                .strip_prefix(requested)
+                .and_then(|suffix| suffix.as_bytes().first())
+                .is_some_and(|byte| matches!(*byte, b'-' | b'.' | b'@' | b':'))
+    })
 }
 
 fn sweep_stale_workspaces(base: &Path) {
@@ -892,7 +915,7 @@ mod tests {
             prompt: PathBuf::from("/tmp/pervue-grok/prompt.txt"),
             agent: PathBuf::from("/tmp/pervue-grok/agent.md"),
         };
-        let args = grok_args(&workspace, true, Some("grok-4.6"));
+        let args = grok_args(&workspace, Some("grok-4.6"));
         let rendered: Vec<_> = args.iter().map(|arg| arg.to_string_lossy()).collect();
         assert!(
             rendered
@@ -915,26 +938,44 @@ mod tests {
 
     #[test]
     fn capabilities_match_the_provider_contract() {
-        assert_eq!(CAPABILITIES.streaming, Capability::Supported);
+        assert_eq!(CAPABILITIES.streaming, Capability::Unsupported);
         assert_eq!(CAPABILITIES.continuation, Capability::Supported);
-        assert_eq!(CAPABILITIES.web_search, Capability::Supported);
+        assert_eq!(CAPABILITIES.web_search, Capability::Unsupported);
         assert_eq!(CAPABILITIES.page_context, Capability::Supported);
         assert_eq!(CAPABILITIES.model_selection, Capability::Supported);
         assert_eq!(CAPABILITIES.cancellation, Capability::Supported);
     }
 
     #[test]
-    fn agent_profiles_are_closed_except_for_native_search() {
+    fn agent_profile_and_cli_clamps_are_text_only() {
         assert!(PLAIN_AGENT.contains("tools: []"));
-        assert!(SEARCH_AGENT.contains("  - web_search"));
-        for profile in [PLAIN_AGENT, SEARCH_AGENT] {
-            assert!(profile.contains("promptMode: full"));
-            assert!(profile.contains("discoverSkills: false"));
-            assert!(profile.contains("inheritSkills: false"));
-            assert!(profile.contains("agentsMd: false"));
-            assert!(profile.contains("mcpInheritance: none"));
-            assert!(profile.contains("permissionMode: dontAsk"));
-            assert!(profile.contains("  - Agent"));
-        }
+        assert!(PLAIN_AGENT.contains("promptMode: full"));
+        assert!(PLAIN_AGENT.contains("discoverSkills: false"));
+        assert!(PLAIN_AGENT.contains("inheritSkills: false"));
+        assert!(PLAIN_AGENT.contains("agentsMd: false"));
+        assert!(PLAIN_AGENT.contains("mcpInheritance: none"));
+        assert!(PLAIN_AGENT.contains("permissionMode: dontAsk"));
+        assert!(PLAIN_AGENT.contains("  - Agent"));
+
+        let workspace = TurnWorkspace {
+            path: PathBuf::from("/tmp/pervue-grok"),
+            grok_home: PathBuf::from("/tmp/pervue-grok/grok-home"),
+            prompt: PathBuf::from("/tmp/pervue-grok/prompt.txt"),
+            agent: PathBuf::from("/tmp/pervue-grok/agent.md"),
+        };
+        let args = grok_args(&workspace, None);
+        let rendered: Vec<_> = args.iter().map(|arg| arg.to_string_lossy()).collect();
+        assert!(rendered.windows(2).any(|pair| pair == ["--agent", "/tmp/pervue-grok/agent.md"]));
+        assert!(rendered.windows(2).any(|pair| pair == ["--disallowed-tools", "Agent,search_tool,use_tool"]));
+        assert!(rendered.contains(&std::borrow::Cow::Borrowed("--disable-web-search")));
+        std::mem::forget(workspace);
+    }
+
+    #[test]
+    fn model_aliases_may_resolve_to_versioned_ids() {
+        assert!(model_matches(Some("grok-4"), "grok-4-0709"));
+        assert!(model_matches(Some("grok-4.6"), "grok-4.6"));
+        assert!(!model_matches(Some("grok-4"), "grok-40"));
+        assert!(!model_matches(Some("grok-4"), "claude-grok-4"));
     }
 }
