@@ -3,6 +3,7 @@
 mod claude;
 mod codex;
 mod gemini;
+mod grok;
 
 use std::ffi::{OsStr, OsString};
 use std::io::{self, BufRead, Read, Write};
@@ -87,6 +88,9 @@ fn main() -> ExitCode {
     }
     if gemini::is_gemini(&program) {
         return gemini::main(arguments);
+    }
+    if grok::is_grok(&program) {
+        return grok::main(arguments);
     }
 
     let mode = match arguments.as_slice() {
