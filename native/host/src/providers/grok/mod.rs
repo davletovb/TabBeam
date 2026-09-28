@@ -466,7 +466,9 @@ impl Exchange for StatusCheck {
                         Some(Event::Stdout(bytes)) => {
                             keep_head(stdout, &bytes, STATUS_OUTPUT_BYTES)
                         }
-                        Some(Event::Stderr(bytes)) => private_fs::keep_tail(stderr, &bytes, STDERR_TAIL_BYTES),
+                        Some(Event::Stderr(bytes)) => {
+                            private_fs::keep_tail(stderr, &bytes, STDERR_TAIL_BYTES)
+                        }
                         Some(Event::Exited(exit)) => {
                             let text = String::from_utf8_lossy(stdout);
                             let error = String::from_utf8_lossy(stderr);
@@ -867,7 +869,6 @@ fn age_at_least(path: &Path, age: Duration) -> bool {
         .is_some_and(|elapsed| elapsed >= age)
 }
 
-
 fn keep_head(head: &mut Vec<u8>, bytes: &[u8], limit: usize) {
     if head.len() >= limit {
         return;
@@ -875,7 +876,6 @@ fn keep_head(head: &mut Vec<u8>, bytes: &[u8], limit: usize) {
     let remaining = limit - head.len();
     head.extend_from_slice(&bytes[..bytes.len().min(remaining)]);
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -939,8 +939,16 @@ mod tests {
         };
         let args = grok_args(&workspace, None);
         let rendered: Vec<_> = args.iter().map(|arg| arg.to_string_lossy()).collect();
-        assert!(rendered.windows(2).any(|pair| pair == ["--agent", "/tmp/pervue-grok/agent.md"]));
-        assert!(rendered.windows(2).any(|pair| pair == ["--disallowed-tools", "Agent,search_tool,use_tool"]));
+        assert!(
+            rendered
+                .windows(2)
+                .any(|pair| pair == ["--agent", "/tmp/pervue-grok/agent.md"])
+        );
+        assert!(
+            rendered
+                .windows(2)
+                .any(|pair| pair == ["--disallowed-tools", "Agent,search_tool,use_tool"])
+        );
         assert!(rendered.contains(&std::borrow::Cow::Borrowed("--disable-web-search")));
         std::mem::forget(workspace);
     }
