@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::hash::{BuildHasher, RandomState};
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime};
@@ -95,16 +95,10 @@ const BOUNDARY_VIOLATION: ErrorBody<'static> = ErrorBody {
     message: "Antigravity tried to use a capability Pervue did not allow. The turn was stopped.",
     retryable: false,
 };
-const CLEANUP_FAILED: ErrorBody<'static> = ErrorBody {
-    code: ErrorCode::InternalError,
-    reason: "PROVIDER_TRANSCRIPT_CLEANUP_FAILED",
-    message: "Pervue couldn't remove Antigravity's temporary conversation data. Delete the conversation to retry cleanup.",
-    retryable: true,
-};
 const UNKNOWN_CONVERSATION: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::InvalidRequest,
     reason: "UNKNOWN_CONVERSATION",
-    message: "This conversation can't be continued because its bounded history is unavailable. Start a new conversation.",
+    message: "This Gemini conversation ID is not one Pervue issued. Start a new conversation.",
     retryable: false,
 };
 const MODEL_NOT_SUPPORTED: ErrorBody<'static> = ErrorBody {
@@ -620,16 +614,15 @@ impl Turn {
     }
 
     fn register_cleanup_id(&mut self, id: String) {
-        let ids = {
+        {
             let mut pending = self.pending_cleanups.borrow_mut();
             let ids = pending.entry(self.conversation_id.clone()).or_default();
             if !ids.iter().any(|candidate| candidate == &id) {
-                ids.push(id);
+                ids.push(id.clone());
             }
-            ids.clone()
-        };
+        }
         if let Some(dir) = self.cleanup_dir.as_deref() {
-            let _ = save_pending_cleanup_ids(dir, &self.conversation_id, &ids);
+            let _ = record_pending_cleanup_id(dir, &self.conversation_id, &id);
         }
     }
 
@@ -637,24 +630,25 @@ impl Turn {
         if removed.is_empty() {
             return;
         }
-        let remaining = {
+        let empty = {
             let mut pending = self.pending_cleanups.borrow_mut();
-            let remaining = if let Some(ids) = pending.get_mut(&self.conversation_id) {
+            let empty = if let Some(ids) = pending.get_mut(&self.conversation_id) {
                 ids.retain(|candidate| !removed.contains(candidate));
-                ids.clone()
+                ids.is_empty()
             } else {
-                Vec::new()
+                true
             };
-            if remaining.is_empty() {
+            if empty {
                 pending.remove(&self.conversation_id);
             }
-            remaining
+            empty
         };
         if let Some(dir) = self.cleanup_dir.as_deref() {
-            if remaining.is_empty() {
+            for id in removed {
+                let _ = forget_cleanup_id_record(dir, &self.conversation_id, id);
+            }
+            if empty {
                 let _ = forget_cleanup_record(dir, &self.conversation_id);
-            } else {
-                let _ = save_pending_cleanup_ids(dir, &self.conversation_id, &remaining);
             }
         }
     }
@@ -950,23 +944,173 @@ fn remove_antigravity_transcript(home: &Path, id: &str) -> io::Result<()> {
     )
 }
 
+const MAX_PENDING_CLEANUPS: usize = 256;
+const TRANSCRIPT_SCAN_BUDGET: usize = 512;
+const TRANSCRIPT_SCAN_BYTES: u64 = 1024 * 1024;
+
+fn is_pervue_conversation_id(id: &str) -> bool {
+    id.len() == 21
+        && id.starts_with("conv_")
+        && id[5..].bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn installed_cleanup_dir() -> Option<PathBuf> {
+    #[cfg(windows)]
+    let base = std::env::var_os("LOCALAPPDATA").or_else(|| std::env::var_os("APPDATA"));
+    #[cfg(not(windows))]
+    let base = std::env::var_os("XDG_DATA_HOME")
+        .filter(|path| Path::new(path).is_absolute())
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .map(|home| PathBuf::from(home).join(".local/share").into_os_string())
+        });
+    base.map(PathBuf::from)
+        .map(|path| path.join("pervue/gemini-cleanups"))
+}
+
+fn cleanup_conversation_dir(base: &Path, conversation_id: &str) -> io::Result<PathBuf> {
+    if !is_pervue_conversation_id(conversation_id) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "unsafe Pervue conversation id",
+        ));
+    }
+    Ok(base.join(conversation_id))
+}
+
+fn record_pending_cleanup_id(base: &Path, conversation_id: &str, id: &str) -> io::Result<()> {
+    if !output::is_conversation_id(id) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "unsafe Antigravity conversation id",
+        ));
+    }
+    let dir = cleanup_conversation_dir(base, conversation_id)?;
+    create_private_dir(&dir)?;
+    write_private_file(&dir.join(id), b"pending\n")
+}
+
+fn read_pending_cleanup_ids(base: &Path, conversation_id: &str) -> io::Result<Vec<String>> {
+    let dir = cleanup_conversation_dir(base, conversation_id)?;
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error),
+    };
+    let mut ids = Vec::new();
+    for entry in entries.take(MAX_PENDING_CLEANUPS) {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let Some(id) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        if output::is_conversation_id(&id) {
+            ids.push(id);
+        }
+    }
+    Ok(ids)
+}
+
+fn forget_cleanup_id_record(base: &Path, conversation_id: &str, id: &str) -> io::Result<()> {
+    if !output::is_conversation_id(id) {
+        return Ok(());
+    }
+    let dir = cleanup_conversation_dir(base, conversation_id)?;
+    forget::remove(&dir.join(id))
+}
+
+fn forget_cleanup_record(base: &Path, conversation_id: &str) -> io::Result<()> {
+    let dir = cleanup_conversation_dir(base, conversation_id)?;
+    forget::remove(&dir)
+}
+
+fn antigravity_brain(home: &Path) -> PathBuf {
+    home.join(".gemini").join("antigravity-cli").join("brain")
+}
+
+/// Finds only transcripts that prove they came from this turn's unique
+/// Pervue-owned workspace. This is the fallback when cancellation/malformed
+/// output prevents the adapter from consuming Antigravity's init event.
+fn antigravity_transcripts_for_workspace(home: &Path, workspace: &Path) -> io::Result<Vec<String>> {
+    let brain = antigravity_brain(home);
+    let entries = match fs::read_dir(&brain) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error),
+    };
+    let raw = workspace.to_string_lossy().into_owned();
+    let escaped = serde_json::to_string(&raw)
+        .unwrap_or_default()
+        .trim_matches('"')
+        .to_owned();
+    let mut ids = Vec::new();
+    for entry in entries.take(MAX_PENDING_CLEANUPS) {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let Some(id) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        if !output::is_conversation_id(&id) {
+            continue;
+        }
+        let mut budget = TRANSCRIPT_SCAN_BUDGET;
+        if transcript_tree_mentions(&entry.path(), &raw, &escaped, 6, &mut budget)? {
+            ids.push(id);
+        }
+    }
+    Ok(ids)
+}
+
+fn transcript_tree_mentions(
+    dir: &Path,
+    raw: &str,
+    escaped: &str,
+    depth: usize,
+    budget: &mut usize,
+) -> io::Result<bool> {
+    if depth == 0 || *budget == 0 {
+        return Ok(false);
+    }
+    for entry in fs::read_dir(dir)? {
+        if *budget == 0 {
+            break;
+        }
+        *budget -= 1;
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
+            if transcript_tree_mentions(&entry.path(), raw, escaped, depth - 1, budget)? {
+                return Ok(true);
+            }
+            continue;
+        }
+        if !file_type.is_file() {
+            continue;
+        }
+        let mut bytes = Vec::new();
+        fs::File::open(entry.path())?
+            .take(TRANSCRIPT_SCAN_BYTES)
+            .read_to_end(&mut bytes)?;
+        let text = String::from_utf8_lossy(&bytes);
+        if text.contains(raw) || (!escaped.is_empty() && text.contains(escaped)) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn new_conversation_id() -> String {
     format!(
         "conv_{:016x}",
         RandomState::new().hash_one((SystemTime::now(), std::process::id()))
     )
-}
-
-fn search_path_for(executable: &Path, inherited: Option<&OsStr>) -> OsString {
-    let mut paths = executable
-        .parent()
-        .map(Path::to_path_buf)
-        .into_iter()
-        .collect::<Vec<_>>();
-    if let Some(inherited) = inherited {
-        paths.extend(std::env::split_paths(inherited));
-    }
-    std::env::join_paths(paths).unwrap_or_default()
 }
 
 fn keep_tail(tail: &mut Vec<u8>, bytes: &[u8], limit: usize) {
