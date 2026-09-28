@@ -15,7 +15,6 @@
 use std::collections::VecDeque;
 use std::ffi::{OsStr, OsString};
 use std::fs;
-use std::hash::{BuildHasher, RandomState};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -25,6 +24,7 @@ use super::codex::workspace;
 use super::discovery;
 use super::environment;
 use super::forget;
+use super::private_fs;
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
 use crate::conversation::provider_prompt;
 use crate::protocol::events::{
@@ -335,7 +335,7 @@ impl Provider for Grok {
                 StatusCheck::Probing {
                     process: Box::new(process),
                     workspace: Some(workspace),
-                    give_up: after(STATUS_PROBE),
+                    give_up: private_fs::after(STATUS_PROBE),
                     stdout: Vec::new(),
                     stderr: Vec::new(),
                 }
@@ -361,7 +361,7 @@ impl Provider for Grok {
         if request
             .conversation_id
             .as_deref()
-            .is_some_and(|id| !is_pervue_conversation_id(id))
+            .is_some_and(|id| !private_fs::is_conversation_id(id))
         {
             return Box::new(Scripted::failed(UNKNOWN_CONVERSATION));
         }
@@ -438,7 +438,7 @@ impl Exchange for StatusCheck {
         if let Some(workspace) = self.workspace.as_ref() {
             let _ = workspace.touch();
         }
-        let busy_until = deadline.max(after(BUSY_LIMIT));
+        let busy_until = deadline.max(private_fs::after(BUSY_LIMIT));
         loop {
             match self {
                 Self::Done(queue) => return queue.pop_front(),
@@ -466,7 +466,7 @@ impl Exchange for StatusCheck {
                         Some(Event::Stdout(bytes)) => {
                             keep_head(stdout, &bytes, STATUS_OUTPUT_BYTES)
                         }
-                        Some(Event::Stderr(bytes)) => keep_tail(stderr, &bytes, STDERR_TAIL_BYTES),
+                        Some(Event::Stderr(bytes)) => private_fs::keep_tail(stderr, &bytes, STDERR_TAIL_BYTES),
                         Some(Event::Exited(exit)) => {
                             let text = String::from_utf8_lossy(stdout);
                             let error = String::from_utf8_lossy(stderr);
@@ -532,11 +532,11 @@ struct ProbeWorkspace {
 
 impl ProbeWorkspace {
     fn create(base: &Path) -> io::Result<Self> {
-        let path = unique_child(base, "status");
-        create_private_dir(&path)?;
-        write_private_file(&path.join(OWNER_FILE), b"live")?;
+        let path = private_fs::unique_child(base, "status");
+        private_fs::create_private_dir(&path)?;
+        private_fs::write_private_file(&path.join(OWNER_FILE), b"live")?;
         let grok_home = path.join("grok-home");
-        create_private_dir(&grok_home)?;
+        private_fs::create_private_dir(&grok_home)?;
         Ok(Self { path, grok_home })
     }
 
@@ -568,8 +568,8 @@ struct TurnWorkspace {
 
 impl TurnWorkspace {
     fn create(base: &Path, prompt: &str) -> io::Result<Self> {
-        let path = unique_child(base, "turn");
-        create_private_dir(&path)?;
+        let path = private_fs::unique_child(base, "turn");
+        private_fs::create_private_dir(&path)?;
         // Construct the guard before any sensitive file is written so every
         // later error path removes the partial workspace.
         let workspace = Self {
@@ -583,10 +583,10 @@ impl TurnWorkspace {
     }
 
     fn initialize(&self, prompt: &str) -> io::Result<()> {
-        write_private_file(&self.path.join(OWNER_FILE), b"live")?;
-        create_private_dir(&self.grok_home)?;
-        write_private_file(&self.prompt, prompt.as_bytes())?;
-        write_private_file(&self.agent, PLAIN_AGENT.as_bytes())
+        private_fs::write_private_file(&self.path.join(OWNER_FILE), b"live")?;
+        private_fs::create_private_dir(&self.grok_home)?;
+        private_fs::write_private_file(&self.prompt, prompt.as_bytes())?;
+        private_fs::write_private_file(&self.agent, PLAIN_AGENT.as_bytes())
     }
 
     fn touch(&self) -> io::Result<()> {
@@ -736,7 +736,7 @@ impl Turn {
                     self.queue.push_back(Update::Delta(text));
                 }
                 self.outcome = Some(Ok(()));
-                self.finish_by = Some(after(FINISH_GRACE));
+                self.finish_by = Some(private_fs::after(FINISH_GRACE));
             }
             Ok(Line::ResultFailed(error)) => self.fail(error),
             Ok(Line::Activity) if self.initialized => self.queue.push_back(Update::Activity),
@@ -770,7 +770,7 @@ impl Turn {
 
 impl Exchange for Turn {
     fn next(&mut self, deadline: Instant) -> Option<Update> {
-        let busy_until = deadline.max(after(BUSY_LIMIT));
+        let busy_until = deadline.max(private_fs::after(BUSY_LIMIT));
         loop {
             if let Some(update) = self.queue.pop_front() {
                 return Some(update);
@@ -867,14 +867,14 @@ fn age_at_least(path: &Path, age: Duration) -> bool {
         .is_some_and(|elapsed| elapsed >= age)
 }
 
-fn unique_child(base: &Path, prefix: &str) -> PathBuf {
+fn private_fs::unique_child(base: &Path, prefix: &str) -> PathBuf {
     base.join(format!(
         "{prefix}-{:016x}",
         RandomState::new().hash_one((SystemTime::now(), std::process::id()))
     ))
 }
 
-fn create_private_dir(path: &Path) -> io::Result<()> {
+fn private_fs::create_private_dir(path: &Path) -> io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
@@ -890,7 +890,7 @@ fn create_private_dir(path: &Path) -> io::Result<()> {
     }
 }
 
-fn write_private_file(path: &Path, contents: &[u8]) -> io::Result<()> {
+fn private_fs::write_private_file(path: &Path, contents: &[u8]) -> io::Result<()> {
     fs::write(path, contents)?;
     #[cfg(unix)]
     {
@@ -900,13 +900,13 @@ fn write_private_file(path: &Path, contents: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
-fn is_pervue_conversation_id(id: &str) -> bool {
+fn private_fs::is_conversation_id(id: &str) -> bool {
     id.len() == 21
         && id.starts_with("conv_")
         && id[5..].bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-fn new_conversation_id() -> String {
+fn private_fs::new_conversation_id() -> String {
     format!(
         "conv_{:016x}",
         RandomState::new().hash_one((SystemTime::now(), std::process::id()))
@@ -921,14 +921,14 @@ fn keep_head(head: &mut Vec<u8>, bytes: &[u8], limit: usize) {
     head.extend_from_slice(&bytes[..bytes.len().min(remaining)]);
 }
 
-fn keep_tail(tail: &mut Vec<u8>, bytes: &[u8], limit: usize) {
+fn private_fs::keep_tail(tail: &mut Vec<u8>, bytes: &[u8], limit: usize) {
     let bytes = &bytes[bytes.len().saturating_sub(limit)..];
     let excess = (tail.len() + bytes.len()).saturating_sub(limit);
     tail.drain(..excess);
     tail.extend_from_slice(bytes);
 }
 
-fn after(duration: Duration) -> Instant {
+fn private_fs::after(duration: Duration) -> Instant {
     let now = Instant::now();
     now.checked_add(duration).unwrap_or(now)
 }
