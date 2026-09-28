@@ -44,7 +44,10 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
         return Ok(Line::Ignored);
     }
     let event: Value = serde_json::from_str(line).map_err(|_| Malformed)?;
-    let kind = event.get("event").and_then(Value::as_str).ok_or(Malformed)?;
+    let kind = event
+        .get("event")
+        .and_then(Value::as_str)
+        .ok_or(Malformed)?;
     Ok(match kind {
         "init" => {
             let conversation_id = event
@@ -68,12 +71,16 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
         }
         "step_update" => {
             let update = event.get("step_update").ok_or(Malformed)?;
-            if update.get("subagent_info").is_some_and(|value| !value.is_null())
+            if update
+                .get("subagent_info")
+                .is_some_and(|value| !value.is_null())
                 || update.get("step_type").and_then(Value::as_str) == Some("subagent")
             {
                 Line::Subagent
             } else if update.get("step_type").and_then(Value::as_str) == Some("tool")
-                || update.get("tool_info").is_some_and(|value| !value.is_null())
+                || update
+                    .get("tool_info")
+                    .is_some_and(|value| !value.is_null())
             {
                 Line::Tool(
                     update
