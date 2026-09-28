@@ -88,6 +88,19 @@ fn run(args: Vec<OsString>) -> Result<(), ()> {
         return Ok(());
     }
 
+    if model == "grok-result-only-search" {
+        line(&serde_json::json!({
+            "type":"assistant",
+            "message":{"content":[
+                {"type":"web_search_tool_result","tool_use_id":"missing-search-use","content":[
+                    {"type":"web_search_result","url":"https://example.com/unrequested","title":"Unrequested"}
+                ]}
+            ]}
+        }))?;
+        hang_briefly();
+        return Ok(());
+    }
+
     if search {
         let source_content = if model == "grok-search-no-sources" {
             serde_json::json!([])
