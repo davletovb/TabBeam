@@ -562,7 +562,6 @@ impl Drop for TurnWorkspace {
     }
 }
 
-
 struct Turn {
     // Keep the process before the workspace so dropping a live turn stops the
     // child before its cwd is removed.
@@ -982,7 +981,6 @@ const MAX_PENDING_CLEANUPS: usize = 256;
 const TRANSCRIPT_SCAN_BUDGET: usize = 512;
 const TRANSCRIPT_SCAN_BYTES: u64 = 1024 * 1024;
 
-
 fn installed_cleanup_dir() -> Option<PathBuf> {
     #[cfg(windows)]
     let base = std::env::var_os("LOCALAPPDATA").or_else(|| std::env::var_os("APPDATA"));
@@ -1134,7 +1132,6 @@ fn transcript_tree_mentions(
     }
     Ok(false)
 }
-
 
 #[cfg(test)]
 mod tests {
