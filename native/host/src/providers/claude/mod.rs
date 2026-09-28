@@ -202,7 +202,10 @@ impl Launch {
             .args(args)
             .envs(self.inherited.iter().cloned())
             .env("DISABLE_AUTOUPDATER", "1")
-            .env("PATH", environment::search_path_for(executable, self.path.as_deref()))
+            .env(
+                "PATH",
+                environment::search_path_for(executable, self.path.as_deref()),
+            )
             .current_dir(workspace)
     }
 }
@@ -466,7 +469,6 @@ fn signed_in(exit: &Exit) -> Authentication {
         _ => Authentication::Unknown,
     }
 }
-
 
 fn after(duration: Duration) -> Instant {
     let now = Instant::now();
