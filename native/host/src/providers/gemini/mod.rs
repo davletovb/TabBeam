@@ -320,9 +320,7 @@ impl Provider for Gemini {
             + "
 ";
         let args = agy_args(agent, request.model.as_deref());
-        let spec = self
-            .launch
-            .command(workspace.path(), &executable, args);
+        let spec = self.launch.command(workspace.path(), &executable, args);
         let Ok(mut process) = Process::spawn(&spec) else {
             return Box::new(Scripted::failed(START_FAILED));
         };
@@ -491,8 +489,10 @@ impl TurnWorkspace {
         write_private_file(&agent_dir.join("agent.md"), definition.as_bytes())?;
         let hooks_dir = path.join(".agents");
         create_private_dir(&hooks_dir)?;
-        write_private_file(&hooks_dir.join("hooks.json"), b"{}
-")?;
+        write_private_file(
+            &hooks_dir.join("hooks.json"),
+            b"{}\n",
+        )?;
         Ok(Self { path })
     }
 
@@ -639,9 +639,7 @@ impl Turn {
                 {
                     return self.fail(MALFORMED_OUTPUT);
                 }
-                if !self.saw_delta
-                    && (!self.native_search || self.searched)
-                    && !response.is_empty()
+                if !self.saw_delta && (!self.native_search || self.searched) && !response.is_empty()
                 {
                     self.show_text(response);
                 }
@@ -652,12 +650,12 @@ impl Turn {
                         }
                     }
                 }
-                let outcome =
-                    if self.native_search && (!self.searched || self.sources.count() == 0) {
-                        Err(NATIVE_SEARCH_NO_SOURCES)
-                    } else {
-                        Ok(())
-                    };
+                let outcome = if self.native_search && (!self.searched || self.sources.count() == 0)
+                {
+                    Err(NATIVE_SEARCH_NO_SOURCES)
+                } else {
+                    Ok(())
+                };
                 self.outcome = Some(outcome);
                 self.finish_by = Some(after(FINISH_GRACE));
             }
@@ -717,9 +715,8 @@ impl Turn {
                 Update::Failed(MALFORMED_OUTPUT)
             }
             None => {
-                let failure = output::provider_failure(&String::from_utf8_lossy(
-                    self.stream.stderr_tail(),
-                ));
+                let failure =
+                    output::provider_failure(&String::from_utf8_lossy(self.stream.stderr_tail()));
                 if failure.reason == "PROVIDER_UNAVAILABLE" {
                     Update::Failed(PROCESS_EXITED)
                 } else {
