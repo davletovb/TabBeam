@@ -81,7 +81,10 @@ In order of impact:
    - Project instruction files there can apply to every council call: `CLAUDE.md` for Claude, `AGENTS.md` for Codex, and for Codex also those in directories above it up to the git root. Conclave passes `--safe-mode` to Claude, which may limit this for Claude; its Codex calls have no equivalent.
    - Pervue runs each provider in an empty private workspace whose ownership it checks. Conclave's Gemini adapter already does something similar.
 6. **Executables are found through the server's `PATH`** (`spawn("claude")`). Pervue resolves an absolute path from fixed install locations and allows an explicit override.
-7. **Failures are typed.** Every Pervue failure has a `code`, a `reason`, and a `retryable` flag, so handling rate limits and transient errors doesn't depend on how an error message is worded.
+7. **Failures are classified once, inside the adapter.**
+   - Outside a Pervue adapter, every failure has a `code`, a `reason`, and a `retryable` flag, so code handling rate limits and transient errors never reads error text.
+   - Underneath, both adapters still classify by matching phrases in the provider's message ([codex/output.rs:128][p-codex-output], [claude/output.rs:211][p-claude-output]), because the failures arrive as text.
+   - Unlike Conclave's regular expressions, they match specific phrases rather than bare words such as "rate" or "auth", next to the parser for that provider's output. The Codex matching is tested against output captured from Codex CLI 0.156.1.
 8. **Test assets.**
    - A fake provider binary with Codex and Claude personas.
    - The hostile-process matrix (TST-04).
@@ -447,6 +450,7 @@ A review on 2026-09-28 checked this proposal against both repositories at the ev
 [p-claude]: ../../native/host/src/providers/claude/mod.rs
 [p-claude-output]: ../../native/host/src/providers/claude/output.rs
 [p-codex]: ../../native/host/src/providers/codex/mod.rs
+[p-codex-output]: ../../native/host/src/providers/codex/output.rs
 [p-env]: ../../native/host/src/providers/environment.rs
 [p-workspace]: ../../native/host/src/providers/codex/workspace.rs
 [p-forget]: ../../native/host/src/providers/forget.rs
