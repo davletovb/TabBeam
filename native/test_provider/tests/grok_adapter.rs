@@ -63,12 +63,11 @@ impl FakeGrok {
 
     fn adapter_with_environment(&self, extra: &[(&str, PathBuf)]) -> Grok {
         let mut environment = self.environment();
-        environment.extend(extra.iter().map(|(name, value)| {
-            (
-                OsString::from(name),
-                value.as_os_str().to_os_string(),
-            )
-        }));
+        environment.extend(
+            extra
+                .iter()
+                .map(|(name, value)| (OsString::from(name), value.as_os_str().to_os_string())),
+        );
         Grok::new(
             SearchPath::new([self.dir.clone()]),
             self.dir.join("workspace"),
@@ -225,7 +224,11 @@ fn one_shot_turns_continue_from_bounded_pervue_history() {
         })
         .expect("conversation created");
     assert_eq!(answer_text(&first), "Grok answer");
-    assert!(first.iter().any(|update| matches!(update, Update::Activity)));
+    assert!(
+        first
+            .iter()
+            .any(|update| matches!(update, Update::Activity))
+    );
     assert!(matches!(first.last(), Some(Update::Completed)));
 
     let second = collect(adapter.send(request(Some(conversation.clone()), false, "grok-4.6")));
@@ -301,7 +304,10 @@ fn unexpected_client_tool_activity_fails_closed() {
 #[test]
 fn failed_results_are_normalized() {
     let fake = FakeGrok::install();
-    let updates = collect(fake.adapter().send(request(None, false, "grok-result-auth")));
+    let updates = collect(
+        fake.adapter()
+            .send(request(None, false, "grok-result-auth")),
+    );
     assert!(matches!(
         updates.last(),
         Some(Update::Failed(error)) if error.reason == "AUTH_REJECTED"
