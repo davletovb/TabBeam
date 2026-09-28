@@ -1729,13 +1729,15 @@ without terminal commands during the user journey.
 **Status:** IMPLEMENTED — VERIFY
 
 **Implementation evidence**
-- Uses Grok Build's current one-shot headless integration surface rather than a persistent ACP/app-server process. Each Pervue turn starts and owns exactly one `grok` child.
-- Runs with a private per-turn working directory and private `GROK_HOME`; only the user's existing `~/.grok/auth.json` is referenced through Grok's supported `GROK_AUTH_PATH` override. Direct xAI/API-key/custom-endpoint environment routes are not inherited and `GROK_DISABLE_API_KEY_AUTH=1` enforces subscription/OAuth use.
-- Sends the bounded Pervue history/context through a private `--prompt-file`, never prompt text in argv. Continuation is stateless at the provider layer, matching the Gemini architecture.
-- Uses `streaming-messages-json`, verifies the init boundary (`apiKeySource=oauth`, expected Grok model, private cwd, exact tool set, no skills, no active MCP), and fails closed on unexpected client-side tool activity.
-- Ordinary/context turns expose no tools. Web turns expose only Grok's native `web_search`; success requires an observed search plus at least one normalized HTTP(S) source from `web_search_tool_result`.
-- Private `GROK_HOME` keeps Grok's session/log state inside the per-turn directory, so cleanup is deterministic when the process ends; cancellation uses the shared process-tree stop/kill path.
-- Fake-Grok integration coverage verifies status/auth, one-shot first/follow-up turns, OAuth/API-key isolation, native search/source normalization, no-source grounding failure, tool-boundary failure, and invalid model/conversation rejection.
+- Uses Grok Build's shipped one-shot headless integration surface rather than a persistent ACP/app-server process. Each Pervue turn starts and owns exactly one `grok` child, using `--agent <definition-file>` rather than the newer upstream-only `--agent-profile` spelling.
+- Runs with a private per-turn working directory and private `GROK_HOME`. Cached OAuth discovery follows Grok's own precedence (`GROK_AUTH_PATH`, then `GROK_HOME/auth.json`, then `~/.grok/auth.json`) without inheriting provider API keys/custom endpoints; `GROK_DISABLE_API_KEY_AUTH=1` enforces account/OAuth use.
+- Sends bounded Pervue history/context through a private `--prompt-file`, never prompt text in argv. Continuation is stateless at the provider layer, matching the Gemini architecture.
+- Uses `streaming-messages-json` plus partial-message activity frames, verifies required init fields fail-closed, accepts version-resolved Grok aliases, canonicalizes the cwd check, and reports separate model/workspace/tool/skills/MCP boundary reasons.
+- Ordinary/context turns are text-only. The shipped CLI's always-present `search_tool`/`use_tool` MCP umbrellas are explicitly denied; built-ins are clamped and web search disabled. Grok `web_search` is therefore reported **Unsupported** until a shipped CLI exposes the structured backend search surface documented on upstream `main`; Pervue does not emulate search through MCP umbrellas.
+- Grok protocol streaming is reported **Unsupported** for now because answer text is emitted from complete assistant/result messages. Partial/thinking/system frames still become internal activity updates so long reasoning refreshes the idle timer.
+- Private workspaces use a Pervue heartbeat marker. Startup recovery removes only stale Pervue-owned directories, so another Chrome/Edge profile cannot delete a live turn; recursive cleanup runs off the host loop. Partial workspace creation is guarded so prompt/context files are cleaned on setup errors.
+- Shared private-provider helpers now centralize 0700 directories, 0600 files, Pervue conversation IDs, unique child names, bounded stderr tails, and deadline arithmetic for Grok/Gemini.
+- Fake-Grok integration coverage verifies authenticated/signed-out/relocated-auth status, stateless first/follow-up turns, model alias resolution, search refusal before launch, every init boundary (OAuth/model/cwd/tools/skills/MCP), provider-error classification, client-tool fail-stop, live-workspace coexistence across two host instances, cancellation, and invalid model/conversation rejection.
 
 ### CON-04 — Add SQLite native persistence only when justified
 **Dependencies:** CON-02  
