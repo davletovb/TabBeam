@@ -41,7 +41,7 @@ fn run(args: Vec<OsString>) -> Result<(), ()> {
 
     let mut prompt = String::new();
     io::stdin().read_to_string(&mut prompt).map_err(|_| ())?;
-    let search = prompt.contains("Search the web before answering");
+    let search = prompt.contains("Search the web before you answer");
     let mut stdout = io::stdout();
     line(&mut stdout, &serde_json::json!({
         "type":"init","timestamp":"2026-01-01T00:00:00Z",
