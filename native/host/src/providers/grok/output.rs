@@ -101,7 +101,10 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
             }
         }
         "result" => {
-            let subtype = event.get("subtype").and_then(Value::as_str).unwrap_or_default();
+            let subtype = event
+                .get("subtype")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             let is_error = event
                 .get("is_error")
                 .and_then(Value::as_bool)
@@ -312,8 +315,17 @@ mod tests {
 
     #[test]
     fn provider_errors_are_normalized() {
-        assert_eq!(provider_failure("Authentication failed").reason, "AUTH_REJECTED");
-        assert_eq!(provider_failure("HTTP 429 rate limit").reason, "PROVIDER_RATE_LIMITED");
-        assert_eq!(provider_failure("internal detail").reason, "PROVIDER_UNAVAILABLE");
+        assert_eq!(
+            provider_failure("Authentication failed").reason,
+            "AUTH_REJECTED"
+        );
+        assert_eq!(
+            provider_failure("HTTP 429 rate limit").reason,
+            "PROVIDER_RATE_LIMITED"
+        );
+        assert_eq!(
+            provider_failure("internal detail").reason,
+            "PROVIDER_UNAVAILABLE"
+        );
     }
 }
