@@ -331,7 +331,7 @@ impl Provider for Gemini {
         };
 
         let new_conversation = request.conversation_id.is_none();
-        let conversation_id = request.conversation_id.unwrap_or_else(new_conversation_id);
+        let conversation_id = request.conversation_id.unwrap_or_else(private_fs::new_conversation_id);
         let agent = if request.native_search {
             SEARCH_AGENT
         } else {
