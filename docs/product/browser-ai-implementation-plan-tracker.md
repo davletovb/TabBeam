@@ -1715,12 +1715,18 @@ without terminal commands during the user journey.
 ### PRO-08 — Add Gemini adapter
 **Dependencies:** PRO-07  
 **Rule:** Must conform to the proven provider abstraction; do not expand the interface unless Gemini exposes a real missing capability.  
-**Status:** BACKLOG
+**Status:** IMPLEMENTED — VERIFY
+
+**Implementation evidence**
+- The provider remains `gemini` at the protocol/UI boundary but executes Google's current Antigravity CLI (`agy`), replacing the retired consumer Gemini CLI path. `agy models` supplies installation/authentication probing; protocol v1 continues to expose an empty static model-suggestion list while accepting validated Gemini model IDs through the existing custom-model path.
+- Each turn is a one-shot sandboxed `agy` run with bounded Pervue history. A private workspace-local Markdown agent disables inherited customizations, MCP, skills, plugins, rules, subagents, hooks, and command execution; ordinary/context turns expose no tools and native-search turns expose only `search_web`.
+- The stream parser verifies Antigravity `init` identity/permission mode, forwards only answer deltas after the allowed boundary is established, requires an observed `search_web` step plus a usable cited source for Web success, rejects every other tool/subagent step, normalizes auth/rate/process failures, bounds ignored-output loops, and enforces a finish grace.
+- Antigravity's persisted `brain/<conversation-id>` transcript is removed after the child exits. Cleanup IDs are validated before filesystem use, failed cleanup remains retryable through `conversation.forget`, and per-turn workspaces are removed deterministically. Tests cover status, stateless continuation, search proof/narration suppression, transcript deletion, tool-boundary failure, missing-history refusal, and non-Gemini model refusal.
 
 ### PRO-09 — Add Grok adapter
 **Dependencies:** PRO-07  
 **Rule:** Same abstraction discipline as PRO-08.  
-**Status:** BACKLOG
+**Status:** DEFERRED
 
 ### CON-04 — Add SQLite native persistence only when justified
 **Dependencies:** CON-02  
