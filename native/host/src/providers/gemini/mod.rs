@@ -489,10 +489,7 @@ impl TurnWorkspace {
         write_private_file(&agent_dir.join("agent.md"), definition.as_bytes())?;
         let hooks_dir = path.join(".agents");
         create_private_dir(&hooks_dir)?;
-        write_private_file(
-            &hooks_dir.join("hooks.json"),
-            b"{}\n",
-        )?;
+        write_private_file(&hooks_dir.join("hooks.json"), b"{}\n")?;
         Ok(Self { path })
     }
 
