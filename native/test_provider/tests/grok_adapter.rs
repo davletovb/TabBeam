@@ -50,7 +50,10 @@ impl FakeGrok {
                 self.home.as_os_str().to_os_string(),
             ),
             (OsString::from("PATH"), self.dir.as_os_str().to_os_string()),
-            (OsString::from("XAI_API_KEY"), OsString::from("must-not-leak")),
+            (
+                OsString::from("XAI_API_KEY"),
+                OsString::from("must-not-leak"),
+            ),
         ])
     }
 }
@@ -120,7 +123,10 @@ fn status_uses_grok_models_and_cached_oauth() {
     let fake = FakeGrok::install();
     let updates = collect(fake.adapter().status());
     match &updates[0] {
-        Update::Status { provider_id, status } => {
+        Update::Status {
+            provider_id,
+            status,
+        } => {
             assert_eq!(provider_id, "grok");
             assert_eq!(
                 status.availability,
@@ -130,7 +136,10 @@ fn status_uses_grok_models_and_cached_oauth() {
                 status.authentication,
                 pervue_host::protocol::events::Authentication::Authenticated
             );
-            assert_eq!(status.capabilities, pervue_host::providers::grok::CAPABILITIES);
+            assert_eq!(
+                status.capabilities,
+                pervue_host::providers::grok::CAPABILITIES
+            );
         }
         other => panic!("unexpected update: {other:?}"),
     }
@@ -154,7 +163,11 @@ fn one_shot_turns_continue_from_bounded_pervue_history() {
     assert!(matches!(first.last(), Some(Update::Completed)));
 
     let second = collect(adapter.send(request(Some(conversation.clone()), false, "grok-4.6")));
-    assert!(!second.iter().any(|update| matches!(update, Update::ConversationCreated(_))));
+    assert!(
+        !second
+            .iter()
+            .any(|update| matches!(update, Update::ConversationCreated(_)))
+    );
     assert!(second.iter().any(|update| matches!(
         update,
         Update::Started { conversation_id: Some(id) } if id == &conversation
@@ -181,7 +194,10 @@ fn native_search_uses_only_server_web_search_and_emits_sources() {
 #[test]
 fn search_without_a_usable_source_fails_grounding() {
     let fake = FakeGrok::install();
-    let updates = collect(fake.adapter().send(request(None, true, "grok-search-no-sources")));
+    let updates = collect(
+        fake.adapter()
+            .send(request(None, true, "grok-search-no-sources")),
+    );
     assert!(matches!(
         updates.last(),
         Some(Update::Failed(error)) if error.reason == "NATIVE_SEARCH_NO_SOURCES"
@@ -191,7 +207,10 @@ fn search_without_a_usable_source_fails_grounding() {
 #[test]
 fn unexpected_client_tool_activity_fails_closed() {
     let fake = FakeGrok::install();
-    let updates = collect(fake.adapter().send(request(None, false, "grok-tool-violation")));
+    let updates = collect(
+        fake.adapter()
+            .send(request(None, false, "grok-tool-violation")),
+    );
     assert!(matches!(
         updates.last(),
         Some(Update::Failed(error)) if error.reason == "PROVIDER_BOUNDARY_VIOLATION"
