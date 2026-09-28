@@ -10,6 +10,7 @@ import {
   normalizeThemePreference
 } from "../src/shared/theme.js";
 import { createDiagnosticsState } from "../src/background/diagnostics.js";
+import { buildDiagnosticsExport } from "../src/shared/diagnostics.js";
 import { renderDiagnostics } from "../src/popup/diagnostics.js";
 
 class FakeElement {
@@ -173,6 +174,21 @@ class FakeElement {
   });
   assert.ok(!JSON.stringify(summary).includes("secret"));
 
+  const exported = buildDiagnosticsExport({
+    ...summary,
+    prompt: "secret prompt",
+    page_text: "secret page",
+    token: "secret token",
+    provider: { ...summary.provider, provider_output: "secret output" },
+    recent_failure: { ...summary.recent_failure, message: "secret failure detail" }
+  }, 5678);
+  assert.equal(exported.format, "pervue-support-diagnostics");
+  assert.equal(exported.version, 1);
+  assert.equal(exported.generated_at, 5678);
+  assert.deepEqual(exported.provider, summary.provider);
+  assert.deepEqual(exported.recent_failure, summary.recent_failure);
+  assert.ok(!JSON.stringify(exported).includes("secret"));
+
   diagnostics.noteFailure({
     code: "INTERNAL_ERROR",
     reason: "token=definitely-not-a-safe-reason",
@@ -221,6 +237,7 @@ class FakeElement {
     assert.ok(markup.includes('aria-atomic="true"'));
   }
   assert.ok(popup.includes('id="diagnostics"'));
+  assert.ok(popup.includes('id="diag-export"'));
   assert.ok(popup.includes('id="companion-setup"'));
   assert.ok(popup.includes("../setup/index.html"));
   for (const markup of [popup, fullpage, setup]) {

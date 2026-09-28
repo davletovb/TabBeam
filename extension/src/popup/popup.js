@@ -296,6 +296,7 @@ bindDiagnostics(
   {
     details: requireElement("#diagnostics", HTMLDetailsElement),
     refresh: requireElement("#diag-refresh", HTMLButtonElement),
+    export: requireElement("#diag-export", HTMLButtonElement),
     host: requireElement("#diag-host", HTMLElement),
     protocol: requireElement("#diag-protocol", HTMLElement),
     provider: requireElement("#diag-provider", HTMLElement),

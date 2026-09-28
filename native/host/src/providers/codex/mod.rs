@@ -205,7 +205,10 @@ impl Launch {
         ProcessSpec::new(executable)
             .args(args)
             .envs(self.inherited.iter().cloned())
-            .env("PATH", search_path_for(executable, self.path.as_deref()))
+            .env(
+                "PATH",
+                environment::search_path_for(executable, self.path.as_deref()),
+            )
             .current_dir(workspace)
     }
 }
@@ -543,19 +546,6 @@ fn signed_in(exit: &Exit) -> Authentication {
         Some(1) => Authentication::Unauthenticated,
         _ => Authentication::Unknown,
     }
-}
-
-/// The host's `PATH` with the executable's own directory first. npm installs
-/// `codex` as a Node script next to `node`, and a host started by Chrome
-/// inherits a `PATH` that may not include that directory.
-fn search_path_for(executable: &Path, inherited: Option<&OsStr>) -> OsString {
-    let dirs = executable
-        .parent()
-        .map(Path::to_path_buf)
-        .into_iter()
-        .chain(inherited.into_iter().flat_map(std::env::split_paths));
-    std::env::join_paths(dirs)
-        .unwrap_or_else(|_| inherited.map(OsStr::to_os_string).unwrap_or_default())
 }
 
 fn after(duration: Duration) -> Instant {
@@ -1189,11 +1179,11 @@ mod tests {
         } else {
             (r"C:\npm\codex.cmd", r"C:\Windows;C:\bin")
         };
-        let path = search_path_for(Path::new(codex), Some(OsStr::new(inherited)));
+        let path = environment::search_path_for(Path::new(codex), Some(OsStr::new(inherited)));
         let dirs: Vec<PathBuf> = std::env::split_paths(&path).collect();
         assert_eq!(dirs[0], Path::new(codex).parent().unwrap());
         assert_eq!(dirs.len(), 3);
-        let alone = search_path_for(Path::new(codex), None);
+        let alone = environment::search_path_for(Path::new(codex), None);
         assert_eq!(
             std::env::split_paths(&alone).collect::<Vec<_>>(),
             [Path::new(codex).parent().unwrap()]

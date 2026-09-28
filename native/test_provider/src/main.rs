@@ -2,6 +2,7 @@
 
 mod claude;
 mod codex;
+mod gemini;
 
 use std::ffi::{OsStr, OsString};
 use std::io::{self, BufRead, Read, Write};
@@ -83,6 +84,9 @@ fn main() -> ExitCode {
     }
     if claude::is_claude(&program) {
         return claude::main(arguments);
+    }
+    if gemini::is_gemini(&program) {
+        return gemini::main(arguments);
     }
 
     let mode = match arguments.as_slice() {
