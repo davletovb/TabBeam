@@ -309,12 +309,13 @@ jobs:
         with:
           node-version: "22"
       - name: Verify the exact dependency pin
+        id: seatline-pin
         run: node scripts/check-seatline-pin.mjs
       - name: Check out the pinned Seatline revision
         uses: actions/checkout@v5
         with:
           repository: davletovb/seatline
-          ref: e021c2acf05132073d82bf3e2149f1ff64f1f49f
+          ref: ${{ steps.seatline-pin.outputs.rev }}
           path: .seatline-checkout
       - name: Test Seatline standalone
         working-directory: .seatline-checkout
