@@ -75,7 +75,9 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
         "turn.started" => Line::TurnStarted,
         "turn.completed" => Line::TurnCompleted(Usage {
             input_tokens: event.pointer("/usage/input_tokens").and_then(Value::as_u64),
-            output_tokens: event.pointer("/usage/output_tokens").and_then(Value::as_u64),
+            output_tokens: event
+                .pointer("/usage/output_tokens")
+                .and_then(Value::as_u64),
         }),
         "turn.failed" => Line::TurnFailed(
             event
@@ -175,7 +177,10 @@ mod tests {
                 Line::Progress,
                 Line::TurnStarted,
                 Line::AgentMessage("Hello from the mock — ünïcödé ✓".to_owned()),
-                Line::TurnCompleted(Usage { input_tokens: Some(12), output_tokens: Some(7) }),
+                Line::TurnCompleted(Usage {
+                    input_tokens: Some(12),
+                    output_tokens: Some(7)
+                }),
             ]
         );
     }

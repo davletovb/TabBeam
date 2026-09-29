@@ -1143,8 +1143,7 @@ impl Turn {
                                 .as_deref()
                                 .map(|dir| superseded_thread_dir(dir, conversation_id).join(&old));
                             forget::tracked_cleanup(marker, move || {
-                                home
-                                    .as_deref()
+                                home.as_deref()
                                     .map_or(Ok(()), |home| forget_rollouts(home, &workspace, &old))
                             });
                         }
