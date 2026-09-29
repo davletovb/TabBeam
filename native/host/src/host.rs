@@ -2347,7 +2347,7 @@ mod tests {
             ])
             .as_slice(),
         );
-        assert!(started.elapsed() >= STOP_SLACK);
+        assert!(started.elapsed() >= Duration::from_secs(1));
         assert_eq!(
             session.sequence(),
             pairs(&[
