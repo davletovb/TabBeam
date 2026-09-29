@@ -96,6 +96,22 @@ impl Running {
         catch_unwind(AssertUnwindSafe(|| exchange.next(deadline))).map_err(|_| ())
     }
 
+    fn begin_stop(&mut self, reason: StopReason, grace: Duration, now: Instant) -> bool {
+        if self.stop.is_some() {
+            return false;
+        }
+        let cancel_panicked = self.cancel_exchange(grace).is_err();
+        self.stop = Some(reason);
+        self.stop_limit = Some(if cancel_panicked {
+            now
+        } else {
+            now.checked_add(grace)
+                .and_then(|limit| limit.checked_add(STOP_SLACK))
+                .unwrap_or(now)
+        });
+        true
+    }
+
     fn drop_exchange(&mut self) {
         if let Some(exchange) = self.exchange.take() {
             let _ = catch_unwind(AssertUnwindSafe(|| drop(exchange)));
@@ -114,6 +130,8 @@ pub struct Scheduler {
     running: Vec<Running>,
     #[cfg(any(test, feature = "test-hooks"))]
     panic_next_poll: bool,
+    #[cfg(test)]
+    panic_after_events: Option<usize>,
 }
 
 impl Default for Scheduler {
@@ -124,12 +142,22 @@ impl Default for Scheduler {
 
 impl Scheduler {
     pub fn new() -> Self {
+        Self::with_next_id(1)
+    }
+
+    fn with_next_id(next_id: TurnId) -> Self {
         Self {
-            next_id: 1,
+            next_id,
             running: Vec::new(),
             #[cfg(any(test, feature = "test-hooks"))]
             panic_next_poll: false,
+            #[cfg(test)]
+            panic_after_events: None,
         }
+    }
+
+    fn next_id(&self) -> TurnId {
+        self.next_id
     }
 
     pub fn start(
@@ -139,7 +167,10 @@ impl Scheduler {
         status_stop_grace: Duration,
     ) -> TurnId {
         let id = self.next_id;
-        self.next_id = self.next_id.checked_add(1).unwrap_or(1);
+        self.next_id = self
+            .next_id
+            .checked_add(1)
+            .expect("turn id space exhausted");
         let now = Instant::now();
         self.running.push(Running {
             id,
@@ -167,48 +198,39 @@ impl Scheduler {
         let Some(running) = self.running.iter_mut().find(|running| running.id == id) else {
             return false;
         };
-        if running.stop.is_none() {
-            let grace = running.stop_grace;
-            if running.cancel_exchange(grace).is_err() {
-                running.stop = Some(StopReason::Cancelled);
-                running.stop_limit = Some(Instant::now());
-                return true;
-            }
-            running.stop = Some(StopReason::Cancelled);
-            let now = Instant::now();
-            running.stop_limit = Some(now.checked_add(grace + STOP_SLACK).unwrap_or(now));
-        }
-        true
+        let grace = running.stop_grace;
+        running.begin_stop(StopReason::Cancelled, grace, Instant::now())
     }
 
     pub fn shutdown(&mut self, grace: Duration) {
+        let now = Instant::now();
         for running in &mut self.running {
-            if running.stop.is_none() {
-                let _ = running.cancel_exchange(grace);
-                running.stop = Some(StopReason::Cancelled);
-                let now = Instant::now();
-                running.stop_limit = Some(now.checked_add(grace + STOP_SLACK).unwrap_or(now));
-            }
+            let _ = running.begin_stop(StopReason::Cancelled, grace, now);
         }
     }
 
     pub fn poll(&mut self, slice: Duration) -> Vec<Event> {
+        let mut out = Vec::new();
+        self.poll_into(slice, &mut out);
+        out
+    }
+
+    fn poll_into(&mut self, slice: Duration, out: &mut Vec<Event>) {
         #[cfg(any(test, feature = "test-hooks"))]
         if std::mem::take(&mut self.panic_next_poll) {
             panic!("injected scheduler panic");
         }
-
-        let mut out = Vec::new();
         let mut index = 0;
         while index < self.running.len() {
             let now = Instant::now();
             if let Some(kind) = self.running[index].timeout(now) {
                 if self.running[index].stop.is_none() {
                     let grace = self.running[index].stop_grace;
-                    let _ = self.running[index].cancel_exchange(grace);
-                    self.running[index].stop = Some(StopReason::Timeout(kind));
-                    self.running[index].stop_limit =
-                        Some(now.checked_add(grace + STOP_SLACK).unwrap_or(now));
+                    let _ = self.running[index].begin_stop(
+                        StopReason::Timeout(kind),
+                        grace,
+                        now,
+                    );
                 }
             }
 
@@ -238,11 +260,13 @@ impl Scheduler {
                     }
                 };
 
-                if Running::recognized_work(&update) {
-                    self.running[index].last_work = Instant::now();
-                }
-                if matches!(update, Update::Started { .. }) {
-                    self.running[index].started = true;
+                if self.running[index].stop.is_none() {
+                    if Running::recognized_work(&update) {
+                        self.running[index].last_work = Instant::now();
+                    }
+                    if matches!(update, Update::Started { .. }) {
+                        self.running[index].started = true;
+                    }
                 }
 
                 if update.is_terminal() {
@@ -257,10 +281,13 @@ impl Scheduler {
                     break;
                 }
 
-                out.push(Event::Update {
-                    turn_id: self.running[index].id,
-                    update,
-                });
+                if self.running[index].stop.is_none() {
+                    out.push(Event::Update {
+                        turn_id: self.running[index].id,
+                        update,
+                    });
+                    self.maybe_panic_after_output(out.len());
+                }
                 if Instant::now() >= slice_end {
                     break;
                 }
@@ -274,16 +301,32 @@ impl Scheduler {
                     turn_id: id,
                     reason,
                 });
+                self.maybe_panic_after_output(out.len());
             } else {
                 index += 1;
             }
         }
-        out
     }
+
+    #[cfg(test)]
+    fn maybe_panic_after_output(&mut self, count: usize) {
+        if self.panic_after_events == Some(count) {
+            self.panic_after_events = None;
+            panic!("injected scheduler panic after output");
+        }
+    }
+
+    #[cfg(not(test))]
+    fn maybe_panic_after_output(&mut self, _count: usize) {}
 
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn inject_scheduler_panic_for_test(&mut self) {
         self.panic_next_poll = true;
+    }
+
+    #[cfg(test)]
+    fn inject_scheduler_panic_after_events_for_test(&mut self, count: usize) {
+        self.panic_after_events = Some(count);
     }
 
     fn take_all_after_panic(&mut self) -> Vec<Event> {
@@ -352,11 +395,15 @@ impl Supervisor {
     }
 
     pub fn poll(&mut self, slice: Duration) -> Vec<Event> {
-        match catch_unwind(AssertUnwindSafe(|| self.scheduler.poll(slice))) {
-            Ok(events) => events,
+        let mut events = Vec::new();
+        match catch_unwind(AssertUnwindSafe(|| {
+            self.scheduler.poll_into(slice, &mut events);
+        })) {
+            Ok(()) => events,
             Err(_) => {
-                let mut events = self.scheduler.take_all_after_panic();
-                self.scheduler = Scheduler::new();
+                let next_id = self.scheduler.next_id();
+                events.extend(self.scheduler.take_all_after_panic());
+                self.scheduler = Scheduler::with_next_id(next_id);
                 self.generation = self.generation.saturating_add(1);
                 events.shrink_to_fit();
                 events
@@ -367,6 +414,11 @@ impl Supervisor {
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn inject_scheduler_panic_for_test(&mut self) {
         self.scheduler.inject_scheduler_panic_for_test();
+    }
+
+    #[cfg(test)]
+    fn inject_scheduler_panic_after_events_for_test(&mut self, count: usize) {
+        self.scheduler.inject_scheduler_panic_after_events_for_test(count);
     }
 }
 
@@ -469,6 +521,32 @@ mod tests {
             Some(limits()),
             Duration::ZERO,
         );
+        assert_ne!(first, second);
+        assert!(!supervisor.cancel(first));
         assert!(supervisor.poll(Duration::ZERO).iter().any(|event| matches!(event, Event::Ended { turn_id, reason: EndReason::Completed } if *turn_id == second)));
     }
+    #[test]
+    fn scheduler_panic_preserves_events_already_produced_in_that_poll() {
+        let mut supervisor = Supervisor::new();
+        let finished = supervisor.start(
+            Box::new(Scripted::new([Update::Completed])),
+            Some(limits()),
+            Duration::ZERO,
+        );
+        let still_running =
+            supervisor.start(Box::new(Scripted::new([])), Some(limits()), Duration::ZERO);
+        supervisor.inject_scheduler_panic_after_events_for_test(1);
+
+        let events = supervisor.poll(Duration::ZERO);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::Ended { turn_id, reason: EndReason::Completed } if *turn_id == finished
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::Ended { turn_id, reason: EndReason::SchedulerPanicked { .. } }
+                if *turn_id == still_running
+        )));
+    }
+
 }
