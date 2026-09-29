@@ -172,3 +172,8 @@ The [runtime proposal §10](provider-runtime-extraction-proposal.md#10-open-deci
   - **Live smoke tests.** All four providers have them, at the runtime's level (`live_gemini`, `live_grok`, `live_codex`, `live_claude`), with workflows that start them by hand for Gemini, Grok and Codex. They ran against the real CLIs (`agy` 1.2.13, `grok` 1.0.41, `codex` 0.154.0, `claude` 2.1.236, on the owner's macOS machine, all signed in) and all four pass, after the fixes the runs called for: the removal of Antigravity's conversation databases, the per-provider system-prompt channels above, and a search for leftover prompts that reads only files modified since the run began, so that a provider's home of any size is searched in full.
 
 [conclave-adoption]: https://github.com/davletovb/conclave/blob/claude/eloquent-franklin-8qo1f1/docs/proposals/provider-runtime-adoption.md
+
+
+## Extraction completion note (2026-09-30)
+
+Seatline now lives at https://github.com/davletovb/seatline. TabBeam's extraction branch pins revision `e021c2acf05132073d82bf3e2149f1ff64f1f49f` and removes the in-tree runtime crates. The extracted 73 runtime/test/fuzz files have the same Git blob SHAs as TabBeam commit `b4bfd5bd0f3ca9db461963b971b8af0177754e5d`. The available GitHub connector did not support a `git filter-repo`-equivalent history push, so original pre-extraction history remains in TabBeam and Seatline records explicit provenance instead of synthetic rewritten author/date history.

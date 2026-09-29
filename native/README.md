@@ -1,8 +1,6 @@
 # TabBeam Native Host
 
-Reusable primitives and their API/compatibility policy live in
-[`seatline-core/README.md`](seatline-core/README.md). The host owns browser policy and provider
-adapters; `seatline-core` can be tested independently of the host.
+Reusable provider-runtime primitives now live in the standalone [Seatline](https://github.com/davletovb/seatline) repository, pinned by this workspace to `e021c2acf05132073d82bf3e2149f1ff64f1f49f`. TabBeam owns browser policy, conversations, Native Messaging, packaging, and product-facing diagnostics.
 
 This directory contains the native Rust companion/host.
 
@@ -14,17 +12,7 @@ The host serves the Chrome extension over Native Messaging. It validates each pr
 native/
 ├── Cargo.toml       Cargo workspace: shared version, Rust 1.85+, `unsafe` forbidden
 │
-│   The provider runtime (ADR-0002). None of these crates may depend on an application's crate
-│   (`scripts/check-runtime-independence.mjs`); they are meant to move to a repository of their own.
-├── seatline-core/    seatline-core: reusable process, stream, discovery, turn, prompt, and search primitives
-├── platform/        seatline-platform: environment allow-lists, private files and workspaces, discovery policy, layout
-├── providers/       seatline-providers: the `Provider` trait and the Codex, Claude, Gemini and Grok adapters
-├── scheduler/       seatline-scheduler: fair, bounded turn scheduling and the panic-isolating supervisor
-├── service/         seatline-service: threaded in-process entry point for async servers
-├── fake-provider/   seatline-fake-provider: the fake Codex, Claude, Antigravity and Grok CLIs and the harness that installs them
-├── seatline-tests/   seatline-tests: adapter, contract, hostile-matrix, service and process tests, at the runtime's level
-├── seatline-fuzz/    seatline-fuzz: the runtime's cargo-fuzz target (`stream_lines`) and its seed-corpus generator
-│
+│   Seatline is an external Git dependency pinned in Cargo.toml.
 │   TabBeam: the application over the runtime.
 ├── host/            tabbeam-host: the Native Messaging host (binary + library)
 │   ├── src/
@@ -54,9 +42,9 @@ cargo build
 cargo test --workspace
 ```
 
-`cargo build` builds only the host (`target/debug/tabbeam-host`); the fake provider is a test fixture, so `cargo test --workspace` builds and tests it. The runtime's own tests are `cargo test -p seatline-tests`; they use nothing of TabBeam's.
+`cargo build` builds only the host (`target/debug/tabbeam-host`); the fake provider is a test fixture, so `cargo test --workspace` builds and tests it. The runtime's own tests run in the standalone Seatline repository. TabBeam CI also checks out the exact pinned Seatline revision and runs its standalone workspace tests as an integration gate.
 
-All project crates forbid `unsafe` code. The shared `clippy.toml` bans `std::process::Command::new` in both crates; only the provider process manager (`seatline-core/src/process.rs`, NAT-04) starts processes, through one explicitly allowed call (see `docs/security/trust-boundaries.md`). CI treats compiler and Clippy warnings as errors and checks formatting:
+All project crates forbid `unsafe` code. TabBeam's local Clippy policy applies to application crates; Seatline carries the provider-process enforcement and its own Clippy policy in the pinned external repository (see `docs/security/trust-boundaries.md`). CI treats compiler and Clippy warnings as errors and checks formatting:
 
 ```bash
 cargo fmt --all --check
