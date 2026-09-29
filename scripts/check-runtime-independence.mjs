@@ -31,19 +31,31 @@ const EXPECTED_RUNTIME_CRATES = [
 ];
 
 function packagesOf(manifest) {
-  const output = execFileSync(
-    "cargo",
-    [
-      "metadata",
-      "--format-version",
-      "1",
-      "--no-deps",
-      "--locked",
-      "--manifest-path",
-      path.join(ROOT, manifest),
-    ],
-    { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
-  );
+  let output;
+  try {
+    output = execFileSync(
+      "cargo",
+      [
+        "metadata",
+        "--format-version",
+        "1",
+        "--no-deps",
+        "--locked",
+        "--manifest-path",
+        path.join(ROOT, manifest),
+      ],
+      { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] },
+    );
+  } catch (error) {
+    // Fail closed, and say why: a dependency added without refreshing the lock
+    // file (which `--locked` refuses) ends up here too.
+    const reason = String(error.stderr || error.message).trim().split("\n").slice(0, 5).join("\n");
+    console.error(
+      `Could not read ${manifest}, so its crates were not checked:\n${reason}\n` +
+        "If a dependency was just added, refresh that manifest's Cargo.lock and run this again.",
+    );
+    process.exit(1);
+  }
   return JSON.parse(output).packages;
 }
 

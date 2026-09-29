@@ -80,7 +80,11 @@ pub struct Turn {
     /// together (Pervue: one conversation). Opaque to the runtime.
     pub cleanup_group: Option<String>,
     /// Whether the caller requires a fresh sign-in classification before the
-    /// provider process starts.
+    /// provider process starts. No adapter keeps a classification from one turn
+    /// to the next, so every turn that asks starts a probe first; an
+    /// application that wants fewer probes decides for itself which turns need
+    /// one (Pervue asks before every turn it sends, except the turn that
+    /// rebuilds a lost session, whose request has just passed the check).
     pub check_sign_in: bool,
 }
 
@@ -178,10 +182,17 @@ pub enum SignInClassification {
     Unknown,
 }
 
+/// The name an application gives the runtime, which becomes a component of
+/// every directory the runtime chooses (cache, data, workspaces).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Namespace(String);
 
 impl Namespace {
+    /// A namespace of 1 to 64 lowercase ASCII letters, digits, `-` or `_`, that
+    /// is not the name of a Windows device (`con`, `prn`, `aux`, `nul`, `com0`
+    /// to `com9`, `lpt0` to `lpt9`): as a directory name, a device name cannot
+    /// be created on Windows, whatever its case. It is refused on every
+    /// platform, so that a namespace that works on one works on all.
     pub fn fixed(value: impl Into<String>) -> Result<Self, NamespaceError> {
         let value = value.into();
         if value.is_empty()
@@ -189,6 +200,7 @@ impl Namespace {
             || !value.bytes().all(|byte| {
                 byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_')
             })
+            || is_windows_device_name(&value)
         {
             return Err(NamespaceError);
         }
@@ -200,12 +212,24 @@ impl Namespace {
     }
 }
 
+/// Whether Windows reserves `name`, in lowercase, as the name of a device.
+fn is_windows_device_name(name: &str) -> bool {
+    matches!(name, "con" | "prn" | "aux" | "nul")
+        || name
+            .strip_prefix("com")
+            .or_else(|| name.strip_prefix("lpt"))
+            .is_some_and(|number| matches!(number.as_bytes(), [b'0'..=b'9']))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NamespaceError;
 
 impl fmt::Display for NamespaceError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("namespace must be 1-64 lowercase ASCII letters, digits, '-' or '_'")
+        formatter.write_str(
+            "namespace must be 1-64 lowercase ASCII letters, digits, '-' or '_', \
+             and not a Windows device name such as 'con' or 'com1'",
+        )
     }
 }
 
@@ -265,6 +289,32 @@ mod tests {
             assert!(Namespace::fixed(value).is_err(), "{value}");
         }
     }
+
+    #[test]
+    fn a_namespace_is_never_a_windows_device_name() {
+        // As a directory, `Con` or `con` cannot be created on Windows, and the
+        // paths the runtime derives from a namespace would all fail.
+        for value in [
+            "con", "prn", "aux", "nul", "com0", "com1", "com9", "lpt0", "lpt1", "lpt9",
+        ] {
+            assert!(Namespace::fixed(value).is_err(), "{value}");
+        }
+        // Names that only look like them are ordinary.
+        for value in [
+            "com",
+            "lpt",
+            "com10",
+            "lpt10",
+            "console",
+            "con-app",
+            "my-con",
+            "nulls",
+            "auxiliary",
+        ] {
+            assert_eq!(Namespace::fixed(value).unwrap().as_str(), value);
+        }
+    }
+
     #[test]
     fn argv_bound_fields_are_validated() {
         let base = Turn {

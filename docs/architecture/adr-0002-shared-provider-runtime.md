@@ -161,6 +161,7 @@ The [runtime proposal §10](provider-runtime-extraction-proposal.md#10-open-deci
 - **2026-09-29, LIB-10 step 2.**
   - The runtime is now made of crates that need nothing of Pervue: `runtime-core`, `runtime-platform` (environment allowlist, private files and workspaces, discovery policy, layout), `runtime-providers` (the `Provider` trait and the four adapters), the scheduler and the service, with their fake provider (`runtime-fake-provider`), tests (`runtime-tests`) and fuzz target (`runtime-fuzz`). CI fails if a crate not named `pervue*` depends on one that is.
   - The environment allowlist moved out of the host, as the risks above expected.
+  - A namespace is refused when Windows would reserve it as a device name, and the service queues at most one unread `Activity` update per turn, so neither a consumer's choice of name nor a slow reader can break the runtime.
   - The provider contract now runs against all four adapters, at the runtime's level and as Pervue serves them, which closes the part of the LIB-09 gap that concerned Gemini and Grok in that suite. The Gemini and Grok live smoke tests are still to be written.
 
 [conclave-adoption]: https://github.com/davletovb/conclave/blob/claude/eloquent-franklin-8qo1f1/docs/proposals/provider-runtime-adoption.md

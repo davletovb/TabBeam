@@ -276,6 +276,10 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: "22"
+      - name: Install stable Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
       - name: The provider runtime does not depend on Pervue
         run: node scripts/check-runtime-independence.mjs
 

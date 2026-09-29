@@ -77,12 +77,31 @@ fn common_contract(provider: &dyn ConversationProvider) {
     else {
         panic!("missing provider status: {status:?}");
     };
-    assert_eq!(provider_id, provider.id());
-    assert_eq!(state.availability, Availability::Available);
-    assert_eq!(state.authentication, Authentication::Authenticated);
-    assert_eq!(state.capabilities, provider.capabilities());
-    assert_eq!(state.capabilities.continuation, Capability::Supported);
-    assert_eq!(state.capabilities.cancellation, Capability::Supported);
+    // Every message names the provider and what it reported, so a failure
+    // (a probe that ended unexpectedly, say) says which one, and how.
+    let id = provider.id();
+    assert_eq!(provider_id, id);
+    assert_eq!(
+        state.availability,
+        Availability::Available,
+        "{id}: {status:?}"
+    );
+    assert_eq!(
+        state.authentication,
+        Authentication::Authenticated,
+        "{id}: {status:?}"
+    );
+    assert_eq!(state.capabilities, provider.capabilities(), "{id}");
+    assert_eq!(
+        state.capabilities.continuation,
+        Capability::Supported,
+        "{id}"
+    );
+    assert_eq!(
+        state.capabilities.cancellation,
+        Capability::Supported,
+        "{id}"
+    );
 
     let first_request = ask(provider, "first");
     let slot = first_request.conversation.clone();

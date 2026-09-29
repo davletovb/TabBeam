@@ -71,7 +71,11 @@ impl Layout {
     /// The application's directory in the user's cache.
     ///
     /// macOS and Windows name application directories with a capital letter
-    /// (`Pervue`); other Unix systems use the namespace as it is.
+    /// (`Pervue`); other Unix systems use the namespace as it is. The data
+    /// directory ([`Layout::data_dir`]) uses the namespace as it is everywhere,
+    /// so on Windows the two differ in case (`%LOCALAPPDATA%\Pervue` and
+    /// `%LOCALAPPDATA%\pervue`). That is how installed hosts have always laid
+    /// them out, and tests pin it; changing either would strand their files.
     #[cfg(target_vendor = "apple")]
     pub fn cache_dir(&self, host: &[(OsString, OsString)]) -> Option<PathBuf> {
         absolute(host, "HOME").map(|home| home.join("Library/Caches").join(self.title()))

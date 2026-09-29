@@ -1534,7 +1534,7 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 3. Create the library repository (history kept with `git filter-repo`), with CI on Linux, macOS and Windows, a Rust 1.85 job, a fuzz smoke run and manually started live workflows for all four providers.
 4. Switch Pervue to an exact pinned revision, and remove the in-tree crates.
 
-**Open before step 3:** the library's name and license (ADR-0002, "Not decided here"), and LIB-06 to LIB-09 verified, including the Gemini and Grok live smoke tests (see the LIB-09 correction).
+**Open before step 3:** the library's name and license (ADR-0002, "Not decided here"), and LIB-06 to LIB-09 verified, including the Gemini and Grok live smoke tests (see the LIB-09 correction). Also a sweep of the runtime crates for `pervue` (`rg -i pervue` over `native/{runtime-core,platform,providers,scheduler,service,fake-provider,runtime-tests,runtime-fuzz}`): the CI check reads the crate graph only, so the strings that are behaviour (the Gemini agent names `pervue-text` and `pervue-search`, the Grok owner marker and agent name, the provider thread names) move into adapter configuration, and the rest is reworded, before anyone else has to ship them.
 
 **Implementation evidence (step 1)**
 - Every directory the adapters choose comes from one `Layout` derived from a `Namespace`; `pervue` resolves to the paths installed hosts already use, pinned by tests.
@@ -1551,6 +1551,7 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 - Pervue's `test_provider` keeps what maps conversations onto turns, over each adapter (thread and session mapping, rebuilds after a lost session, page-context framing, forget), the host's own hostile matrix, and the contract as Pervue serves the providers, now for all four (LIB-09's Codex-and-Claude-only gap is closed for this suite; the Gemini and Grok live smoke tests remain to be written).
 - `stream_lines` moved to `runtime-fuzz` (its own lock file, `runtime-core` only) with its seed generator; `frame_reader` and `protocol` stay in `fuzz`. CI generates each corpus from its own directory and runs `stream_lines` with `--fuzz-dir runtime-fuzz`.
 - Verified on Linux with Rust stable and 1.85 (476 tests pass), clippy and rustfmt clean, the Windows and macOS targets type-checked including tests with warnings as errors, and both fuzz crates compiling. Not run here: the fuzz smoke run itself (it needs nightly and cargo-fuzz), and the Windows and macOS test runs, which CI provides.
+- Review follow-ups. The runtime hostile matrix failed the Linux release job on its memory bound: its own log of every progress update was the largest thing it held (74 MiB for one case), not the runtime (with progress only counted, that case grows by 168 KiB in release). The service was still unbounded behind a slow reader, though, so a turn now queues at most one unread `Update::Activity`. `Namespace::fixed` now refuses Windows device names (`con`, `aux`, `nul`, `com1`…), which no directory can be named. The independence check reports an unreadable manifest instead of dying, and its CI job installs a toolchain like the others.
 
 ## Milestone G — Installable Product
 
@@ -1975,10 +1976,12 @@ Update this section whenever item statuses change.
 | MVP closure | 7 | 7 | 0 | 0 | 0 | 0 | 0 | 0 |
 | E — Second provider | 5 | 0 | 5 | 0 | 0 | 0 | 0 | 0 |
 | F — Reusable native core | 7 | 0 | 7 | 0 | 0 | 0 | 0 | 0 |
+| ADR-0002 Stage 1 (LIB-06–LIB-09) | 4 | 0 | 4 | 0 | 0 | 0 | 0 | 0 |
+| ADR-0002 Stage 2 (LIB-10) | 1 | 0 | 0 | 1 | 0 | 0 | 0 | 0 |
 | G — Installable product | 9 | 0 | 7 | 0 | 0 | 0 | 2 | 0 |
-| H — Search/citations | 8 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| H — Search/citations | 8 | 0 | 8 | 0 | 0 | 0 | 0 | 0 |
 | Post-milestone | 6 | 0 | 3 | 0 | 0 | 1 | 0 | 2 |
-| **Total** | **81** | **46** | **26** | **0** | **0** | **5** | **2** | **2** |
+| **Total** | **86** | **46** | **34** | **1** | **0** | **1** | **2** | **2** |
 
 ### Milestone completion rule
 

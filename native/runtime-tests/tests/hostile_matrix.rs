@@ -141,6 +141,9 @@ fn claude_limits(start_ms: u64, idle_ms: u64) -> runtime_providers::claude::Limi
 
 struct Case {
     name: &'static str,
+    /// Turns that must have reported at least this many progress updates, so a
+    /// case that floods really flooded, and its memory bound means something.
+    flooded: &'static [(&'static str, usize)],
     fake: Fake,
     steps: Vec<Step>,
     /// Each turn's ending, and at the latest how long after it started it
@@ -158,12 +161,14 @@ fn cases() -> Vec<Case> {
     vec![
         Case {
             name: "slow stream: every line arrives a few bytes at a time",
+            flooded: &[],
             fake: codex("dribble", TEST_LIMITS),
             steps: vec![ask(0, "turn", "Dribble é✓😀 for me")],
             expect: vec![("turn", answer("You asked: Dribble é✓😀 for me"), secs(5))],
         },
         Case {
             name: "stderr flood: 128 MiB of stderr while answering",
+            flooded: &[],
             fake: codex("stderr-flood", TEST_LIMITS),
             steps: vec![ask(0, "turn", "Answer through the noise")],
             expect: vec![(
@@ -174,96 +179,112 @@ fn cases() -> Vec<Case> {
         },
         Case {
             name: "stderr without end: stderr is not progress",
+            flooded: &[],
             fake: codex("endless-stderr", quick),
             steps: vec![ask(0, "turn", "Say nothing")],
             expect: vec![("turn", IDLE, secs(5))],
         },
         Case {
             name: "stdout flood: 100,000 progress events, then the answer",
+            flooded: &[("turn", 100_000)],
             fake: codex("stdout-flood", TEST_LIMITS),
             steps: vec![ask(0, "turn", "Work hard")],
             expect: vec![("turn", answer("Done flooding."), secs(30))],
         },
         Case {
             name: "progress without end, cancelled",
+            flooded: &[("turn", 10_000)],
             fake: codex("endless-flood", TEST_LIMITS),
             steps: vec![ask(0, "turn", "Never finish"), cancel(500, "turn")],
             expect: vec![("turn", Ending::Cancelled, secs(5))],
         },
         Case {
             name: "unknown events without end: not progress",
+            flooded: &[],
             fake: codex("unknown-flood", quick),
             steps: vec![ask(0, "turn", "Speak in riddles")],
             expect: vec![("turn", IDLE, secs(5))],
         },
         Case {
             name: "nonzero exit mid-turn",
+            flooded: &[],
             fake: codex("exits-nonzero", TEST_LIMITS),
             steps: vec![ask(0, "turn", "Give up")],
             expect: vec![("turn", EXITED, secs(5))],
         },
         Case {
             name: "crash mid-turn",
+            flooded: &[],
             fake: codex("crashes", TEST_LIMITS),
             steps: vec![ask(0, "turn", "Fall over")],
             expect: vec![("turn", EXITED, secs(5))],
         },
         Case {
             name: "hang before the turn starts",
+            flooded: &[],
             fake: codex("never-starts", quick),
             steps: vec![ask(0, "turn", "Wait forever")],
             expect: vec![("turn", Ending::TimedOut(TimeoutKind::Start), secs(5))],
         },
         Case {
             name: "hang mid-turn",
+            flooded: &[],
             fake: codex("goes-quiet", quick),
             steps: vec![ask(0, "turn", "Go quiet")],
             expect: vec![("turn", IDLE, secs(5))],
         },
         Case {
             name: "ignored cancellation: killed after the grace period",
+            flooded: &[],
             fake: codex("ignores-cancel", TEST_LIMITS),
             steps: vec![ask(0, "turn", "Ignore me"), cancel(500, "turn")],
             expect: vec![("turn", Ending::Cancelled, secs(5))],
         },
         Case {
             name: "ignored cancellation while flooding",
+            flooded: &[("turn", 10_000)],
             fake: codex("floods-and-ignores-cancel", TEST_LIMITS),
             steps: vec![ask(0, "turn", "Ignore me loudly"), cancel(500, "turn")],
             expect: vec![("turn", Ending::Cancelled, secs(5))],
         },
         Case {
             name: "malformed output: not JSON",
+            flooded: &[],
             fake: codex("malformed", TEST_LIMITS),
             steps: vec![ask(0, "turn", "Garble")],
             expect: vec![("turn", MALFORMED, secs(5))],
         },
         Case {
             name: "malformed output: not UTF-8",
+            flooded: &[],
             fake: codex("invalid-utf8", TEST_LIMITS),
             steps: vec![ask(0, "turn", "Garble bytes")],
             expect: vec![("turn", MALFORMED, secs(5))],
         },
         Case {
             name: "large output: a 330 KB answer",
+            flooded: &[],
             fake: codex("huge", TEST_LIMITS),
             steps: vec![ask(0, "turn", "Say a lot")],
             expect: vec![("turn", Ending::Answer("é✓😀 ".repeat(30_000)), secs(10))],
         },
         Case {
             name: "large output: a 9 MiB line",
+            flooded: &[],
             fake: codex("oversized", TEST_LIMITS),
             steps: vec![ask(0, "turn", "Say too much")],
             expect: vec![("turn", MALFORMED, secs(10))],
         },
         Case {
             name: "large output: a line without end",
+            flooded: &[],
             fake: codex("endless-line", TEST_LIMITS),
             steps: vec![ask(0, "turn", "Never stop talking")],
             expect: vec![("turn", MALFORMED, secs(10))],
         },
         Case {
             name: "a sign-in check that floods: given up on, and the question asked",
+            flooded: &[],
             fake: Fake::Codex {
                 exec: "answers",
                 login: "floods",
@@ -277,6 +298,7 @@ fn cases() -> Vec<Case> {
         },
         Case {
             name: "hostile neighbours: a plain answer and a cancel get through",
+            flooded: &[("flood", 10_000)],
             fake: codex("by-prompt", codex_limits(10_000, 2_000)),
             steps: vec![
                 ask(0, "flood", "endless-flood"),
@@ -297,6 +319,7 @@ fn cases() -> Vec<Case> {
         // Claude speaks another dialect, and gets the same treatment.
         Case {
             name: "claude: silence after its first event",
+            flooded: &[],
             fake: Fake::Claude {
                 print: "hangs",
                 limits: claude_limits(1_000, 1_000),
@@ -306,6 +329,7 @@ fn cases() -> Vec<Case> {
         },
         Case {
             name: "claude: events it does not know are not progress",
+            flooded: &[],
             fake: Fake::Claude {
                 print: "flooding",
                 limits: claude_limits(1_000, 1_000),
@@ -315,6 +339,7 @@ fn cases() -> Vec<Case> {
         },
         Case {
             name: "claude: output that is not JSON",
+            flooded: &[],
             fake: Fake::Claude {
                 print: "malformed",
                 limits: CLAUDE_TEST_LIMITS,
@@ -324,6 +349,7 @@ fn cases() -> Vec<Case> {
         },
         Case {
             name: "claude: a clean exit without a result is malformed output",
+            flooded: &[],
             fake: Fake::Claude {
                 print: "no-result",
                 limits: CLAUDE_TEST_LIMITS,
@@ -333,6 +359,7 @@ fn cases() -> Vec<Case> {
         },
         Case {
             name: "claude: ignored cancellation: killed after the grace period",
+            flooded: &[],
             fake: Fake::Claude {
                 print: "ignores-cancel",
                 limits: CLAUDE_TEST_LIMITS,
@@ -365,7 +392,9 @@ fn turn(text: &str) -> Turn {
 #[derive(Default)]
 struct Seen {
     started_at: Option<Instant>,
+    /// Everything but the progress counted in `activity`.
     events: Vec<Event>,
+    activity: usize,
     ended_at: Option<Instant>,
 }
 
@@ -391,15 +420,25 @@ impl Seen {
     }
 }
 
-/// Files what the supervisor reported under the turns it is about.
+/// Files what the supervisor reported under the turns it is about. Progress
+/// with nothing to show (`Update::Activity`) is only counted: a provider that
+/// floods progress reports hundreds of thousands of them, and a log of every one
+/// would be the largest thing the test holds, and what its memory bound measures.
 fn record(seen: &mut HashMap<TurnId, Seen>, events: Vec<Event>) {
     for event in events {
         let (Event::Update { turn_id, .. } | Event::Ended { turn_id, .. }) = &event;
         let entry = seen.entry(*turn_id).or_default();
-        if matches!(event, Event::Ended { .. }) {
-            entry.ended_at = Some(Instant::now());
+        match event {
+            Event::Update {
+                update: Update::Activity,
+                ..
+            } => entry.activity += 1,
+            Event::Ended { .. } => {
+                entry.ended_at = Some(Instant::now());
+                entry.events.push(event);
+            }
+            Event::Update { .. } => entry.events.push(event),
         }
-        entry.events.push(event);
     }
 }
 
@@ -496,6 +535,14 @@ fn run(case: &Case) {
 
     for (name, ending, within) in &case.expect {
         check(case, name, &seen[name], ending, *within);
+    }
+    for (name, minimum) in case.flooded {
+        assert!(
+            seen[name].activity >= *minimum,
+            "{}: {name} reported {} progress updates, fewer than {minimum}",
+            case.name,
+            seen[name].activity
+        );
     }
 
     // Nothing the provider wrote to stderr reaches the events.
