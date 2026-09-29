@@ -12,8 +12,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use pervue_core::discovery::SearchPath;
-use pervue_core::framing;
+use runtime_core::discovery::SearchPath;
+use pervue_host::framing;
 use pervue_host::diagnostics::Diagnostics;
 use pervue_host::host;
 use pervue_host::providers::claude::{Claude, Limits as ClaudeLimits};

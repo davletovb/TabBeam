@@ -4,7 +4,7 @@
 
 use std::time::{Duration, Instant};
 
-use pervue_core::process::{Event, Process, ProcessSpec};
+use runtime_core::process::{Event, Process, ProcessSpec};
 
 const PROVIDER: &str = env!("CARGO_BIN_EXE_pervue-fake-provider");
 const ROUNDS: usize = 120;

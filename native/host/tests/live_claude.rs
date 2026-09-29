@@ -24,7 +24,7 @@ use std::sync::mpsc::{self, Receiver};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use pervue_core::framing;
+use pervue_host::framing;
 use serde_json::Value;
 
 const HOST: &str = env!("CARGO_BIN_EXE_pervue-host");

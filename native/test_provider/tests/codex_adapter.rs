@@ -847,7 +847,7 @@ fn codex_runs_in_its_own_workspace() {
 #[cfg(unix)]
 #[test]
 fn codex_gets_the_workspace_s_real_path() {
-    use pervue_core::discovery::SearchPath;
+    use runtime_core::discovery::SearchPath;
     use std::path::Path;
 
     // Reached through a link, the workspace is checked, and given to Codex,
