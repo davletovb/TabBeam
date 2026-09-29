@@ -105,8 +105,8 @@ fn request(conversation_id: Option<String>, native_search: bool) -> SendRequest 
         context: None,
         model: Some("gemini-test".to_owned()),
         native_search,
-    session_policy: SessionPolicy::Ephemeral,
-    fresh_session: false,
+        session_policy: SessionPolicy::Ephemeral,
+        fresh_session: false,
     }
 }
 
