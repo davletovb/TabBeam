@@ -40,6 +40,7 @@ use crate::protocol::events::{
 use crate::protocol::messages;
 use crate::protocol::request::{self, Method, RequestFailure, RequestId};
 use crate::providers::{Exchange, Providers, Scripted, SendRequest, StatusOfAll, Timeouts, Update};
+use runtime_core::protocol::Failure;
 use runtime_core::stream::split_text;
 
 /// Why the host stopped before a clean end of stream.
@@ -112,38 +113,33 @@ const STATUS_STOP_GRACE: Duration = Duration::from_millis(250);
 /// period; this bounds a broken one.
 const STOP_SLACK: Duration = Duration::from_secs(1);
 
-const PROVIDER_NOT_INSTALLED: ErrorBody<'static> = ErrorBody {
+const PROVIDER_NOT_INSTALLED: Failure = Failure {
     code: ErrorCode::ProviderNotFound,
     reason: "PROVIDER_NOT_INSTALLED",
-    message: "Pervue's companion app doesn't support this AI provider yet. Update it, then try again.",
     retryable: false,
 };
 
-const NATIVE_SEARCH_UNSUPPORTED: ErrorBody<'static> = ErrorBody {
+const NATIVE_SEARCH_UNSUPPORTED: Failure = Failure {
     code: ErrorCode::SearchFailed,
     reason: "NATIVE_SEARCH_UNSUPPORTED",
-    message: "The selected AI provider does not support native web search.",
     retryable: false,
 };
 
-const SEARCH_WITH_CONTEXT_UNSUPPORTED: ErrorBody<'static> = ErrorBody {
+const SEARCH_WITH_CONTEXT_UNSUPPORTED: Failure = Failure {
     code: ErrorCode::SearchFailed,
     reason: "SEARCH_WITH_CONTEXT_UNSUPPORTED",
-    message: "Pervue won't combine web search with browser context yet. Choose No context or turn off Search.",
     retryable: false,
 };
 
-const PAGE_CONTEXT_UNSUPPORTED: ErrorBody<'static> = ErrorBody {
+const PAGE_CONTEXT_UNSUPPORTED: Failure = Failure {
     code: ErrorCode::InvalidRequest,
     reason: "PAGE_CONTEXT_UNSUPPORTED",
-    message: "This AI provider can't use browser context. Choose No context, then ask again.",
     retryable: false,
 };
 
-const MODEL_SELECTION_UNSUPPORTED: ErrorBody<'static> = ErrorBody {
+const MODEL_SELECTION_UNSUPPORTED: Failure = Failure {
     code: ErrorCode::InvalidRequest,
     reason: "MODEL_SELECTION_UNSUPPORTED",
-    message: "This AI provider can't switch models. Choose its default model, then ask again.",
     retryable: false,
 };
 
