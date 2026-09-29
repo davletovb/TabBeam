@@ -274,7 +274,9 @@ fn a_turn_runs_as_an_agent_named_after_the_applications_namespace() {
         })
         .collect();
     assert_eq!(agents, ["seatline-tests-text", "seatline-tests-search"]);
-    assert!(!fake.invocations().concat().contains("tabbeam"));
+    let invocations = fake.invocations().concat();
+    assert!(!invocations.contains("pervue"));
+    assert!(!invocations.contains("tabbeam"));
 }
 
 #[test]

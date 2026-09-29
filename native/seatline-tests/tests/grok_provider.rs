@@ -239,6 +239,7 @@ fn a_turn_is_owned_and_named_after_the_applications_namespace() {
     let live = fake.turn_dirs();
     assert_eq!(live.len(), 1);
     assert!(live[0].join(".seatline-tests-owner").exists());
+    assert!(!live[0].join(".pervue-owner").exists());
     assert!(!live[0].join(".tabbeam-owner").exists());
     running.cancel(Duration::from_millis(100));
     run_to_end(running.as_mut());
@@ -246,6 +247,7 @@ fn a_turn_is_owned_and_named_after_the_applications_namespace() {
     // The agent it runs as is named the same way.
     let agents = fake.read("grok-agents");
     assert!(agents.contains("name: seatline-tests-text\n"), "{agents}");
+    assert!(!agents.contains("pervue"), "{agents}");
     assert!(!agents.contains("tabbeam"), "{agents}");
 }
 

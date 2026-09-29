@@ -126,7 +126,7 @@ fn invalid_model_and_conversation_ids_are_refused_before_launch() {
 }
 
 #[test]
-fn tabbeam_marks_its_grok_workspaces_with_the_owner_file_installed_hosts_know() {
+fn tabbeam_marks_its_grok_workspaces_with_its_owner_file() {
     // A host that was killed leaves its workspaces behind, and the next one
     // finds them by this name, so it must not change.
     let fake = FakeGrok::install();

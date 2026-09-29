@@ -198,7 +198,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
     item.className = `message message-${role}`;
     item.setAttribute("data-state", state);
     const label = owner.createElement("strong");
-    label.textContent = role === "user" ? "You" : "TabBeam";
+    label.textContent = role === "user" ? "You" : "Beam";
     const body = owner.createElement("div");
     body.className = "message-body";
     if (role === "assistant" && text && options.renderMessage) {

@@ -25,11 +25,44 @@ use crate::environment;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Layout {
     namespace: Namespace,
+    #[cfg(any(target_vendor = "apple", not(unix)))]
+    cache_title: Option<String>,
 }
 
 impl Layout {
     pub fn new(namespace: Namespace) -> Self {
-        Self { namespace }
+        Self {
+            namespace,
+            #[cfg(any(target_vendor = "apple", not(unix)))]
+            cache_title: None,
+        }
+    }
+
+    /// Builds a layout whose macOS/Windows cache directory uses the
+    /// application's exact display capitalization instead of deriving it from
+    /// the lowercase namespace. The title is application-owned metadata, not
+    /// request input, and must be one path component.
+    pub fn with_cache_title(namespace: Namespace, title: &str) -> Self {
+        #[cfg(any(target_vendor = "apple", not(unix)))]
+        {
+            assert!(
+                !title.is_empty()
+                    && title != "."
+                    && title != ".."
+                    && !title.contains('/')
+                    && !title.contains('\\'),
+                "cache title must be one path component"
+            );
+            Self {
+                namespace,
+                cache_title: Some(title.to_owned()),
+            }
+        }
+        #[cfg(all(unix, not(target_vendor = "apple")))]
+        {
+            let _ = title;
+            Self { namespace }
+        }
     }
 
     pub fn namespace(&self) -> &Namespace {
@@ -121,6 +154,9 @@ impl Layout {
     /// The namespace with a capital first letter.
     #[cfg(any(target_vendor = "apple", not(unix)))]
     fn title(&self) -> String {
+        if let Some(title) = &self.cache_title {
+            return title.clone();
+        }
         let name = self.namespace.as_str();
         let mut title = name[..1].to_ascii_uppercase();
         title.push_str(&name[1..]);
@@ -183,6 +219,17 @@ mod tests {
             ),
             PathBuf::from("/home/me/.cache/my-app/codex-workspace")
         );
+    }
+
+    #[cfg(any(target_vendor = "apple", not(unix)))]
+    #[test]
+    fn a_custom_cache_title_preserves_application_branding() {
+        let app = Layout::with_cache_title(Namespace::fixed("myapp").unwrap(), "MyApp");
+        let host = vars(&[
+            ("HOME", "/Users/me"),
+            ("LOCALAPPDATA", r"C:\Users\me\AppData\Local"),
+        ]);
+        assert!(app.workspace(&host, "codex").to_string_lossy().contains("MyApp"));
     }
 
     #[cfg(not(unix))]

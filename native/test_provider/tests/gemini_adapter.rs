@@ -179,12 +179,15 @@ fn answer_text(updates: &[Update]) -> String {
 #[test]
 fn tabbeam_runs_its_turns_as_agents_named_tabbeam() {
     // The agent definitions live in per-turn workspaces, so nothing installed
-    // depends on these names, but they are what TabBeam has always used.
+    // pins these names as part of TabBeam's clean-break namespace.
     let fake = FakeGemini::install();
     collect(fake.adapter().send(request(None, false)));
     collect(fake.adapter().send(request(None, true)));
     let invocations = fake.invocations().concat();
-    assert!(invocations.contains("--agent tabbeam-text"), "{invocations}");
+    assert!(
+        invocations.contains("--agent tabbeam-text"),
+        "{invocations}"
+    );
     assert!(
         invocations.contains("--agent tabbeam-search"),
         "{invocations}"

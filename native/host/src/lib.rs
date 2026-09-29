@@ -21,14 +21,15 @@ pub mod search;
 pub const HOST_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// TabBeam's provider-runtime namespace (ADR-0002): its workspaces, conversation
-/// mappings and cleanup records live under this name. Changing it would strand
-/// installed hosts' files.
+/// mappings and cleanup records live under this name. This clean-break namespace
+/// is established before the first release and should remain stable afterward.
 pub const NAMESPACE: &str = "tabbeam";
 
 /// The directories TabBeam's provider adapters use.
 pub fn layout() -> providers::Layout {
-    providers::Layout::new(
+    providers::Layout::with_cache_title(
         seatline_core::turn::Namespace::fixed(NAMESPACE).expect("TabBeam's namespace is valid"),
+        "TabBeam",
     )
 }
 
@@ -49,15 +50,15 @@ mod tests {
     }
 
     #[test]
-    fn tabbeams_namespace_is_valid_and_unchanged() {
+    fn tabbeams_namespace_is_valid() {
         assert_eq!(layout().namespace().as_str(), "tabbeam");
         assert_eq!(NAMESPACE, "tabbeam");
     }
 
-    /// Installed hosts keep finding the directories TabBeam has always used, and
-    /// the names it has always given what it leaves in them.
+    /// The clean-break rename establishes TabBeam's provider override and
+    /// application-owned runtime names before the first release.
     #[test]
-    fn installed_hosts_keep_their_override_and_the_names_they_look_for() {
+    fn tabbeam_uses_its_provider_override_and_runtime_names() {
         assert_eq!(layout().search_path_variable(), "TABBEAM_PROVIDER_PATH");
         // A killed host's leftover Grok workspaces are found by this file.
         assert_eq!(grok::owner_file(layout().namespace()), ".tabbeam-owner");
@@ -73,7 +74,7 @@ mod tests {
 
     #[cfg(target_vendor = "apple")]
     #[test]
-    fn tabbeam_keeps_its_cache_directory() {
+    fn tabbeam_uses_its_cache_directory() {
         assert_eq!(
             layout().workspace(&vars(&[("HOME", "/Users/me")]), "codex"),
             PathBuf::from("/Users/me/Library/Caches/TabBeam/codex-workspace")
@@ -82,7 +83,7 @@ mod tests {
 
     #[cfg(all(unix, not(target_vendor = "apple")))]
     #[test]
-    fn tabbeam_keeps_its_cache_directory() {
+    fn tabbeam_uses_its_cache_directory() {
         assert_eq!(
             layout().workspace(&vars(&[("HOME", "/home/me")]), "codex"),
             PathBuf::from("/home/me/.cache/tabbeam/codex-workspace")
@@ -98,7 +99,7 @@ mod tests {
 
     #[cfg(not(unix))]
     #[test]
-    fn tabbeam_keeps_its_cache_directory() {
+    fn tabbeam_uses_its_cache_directory() {
         assert_eq!(
             layout().workspace(
                 &vars(&[("LOCALAPPDATA", r"C:\Users\me\AppData\Local")]),
@@ -110,7 +111,7 @@ mod tests {
 
     #[cfg(not(windows))]
     #[test]
-    fn tabbeam_keeps_its_data_directory() {
+    fn tabbeam_uses_its_data_directory() {
         assert_eq!(
             layout().data_dir_in(&vars(&[("HOME", "/home/me")])),
             Some(PathBuf::from("/home/me/.local/share/tabbeam"))
@@ -123,7 +124,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn tabbeam_keeps_its_data_directory() {
+    fn tabbeam_uses_its_data_directory() {
         assert_eq!(
             layout().data_dir_in(&vars(&[("LOCALAPPDATA", r"C:\Users\me\AppData\Local")])),
             Some(PathBuf::from(r"C:\Users\me\AppData\Local\tabbeam"))
