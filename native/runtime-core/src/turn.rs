@@ -69,6 +69,13 @@ pub enum SessionPolicy {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Turn {
+    /// The application's own instructions for the conversation, as opposed to
+    /// what its user said. No adapter can hand it to a provider CLI apart from
+    /// the prompt without exposing it on the command line, so each sends it as
+    /// the first part of the prompt, under [`crate::prompt::SYSTEM_INTRO`]. It
+    /// goes with every turn that carries it, including one that resumes a
+    /// native session, where it repeats what the session already holds: an
+    /// application that resumes sessions sends it on the first turn only.
     pub system: Option<String>,
     pub messages: Vec<Message>,
     pub model: Option<String>,

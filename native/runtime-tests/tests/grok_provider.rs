@@ -250,6 +250,32 @@ fn a_turn_is_owned_and_named_after_the_applications_namespace() {
 }
 
 #[test]
+fn a_system_prompt_goes_ahead_of_the_question_and_never_onto_the_command_line() {
+    let fake = FakeGrok::install(FIXTURES);
+    let updates = run_to_end(
+        fake.adapter()
+            .send(Turn {
+                system: Some("Answer in French. SYSTEM-MARKER".to_owned()),
+                ..ask("What is muse?")
+            })
+            .as_mut(),
+    );
+    assert_eq!(updates.last(), Some(&Update::Completed));
+    // What Grok read from its prompt file.
+    assert_eq!(
+        fake.prompts(),
+        [format!(
+            "{}Answer in French. SYSTEM-MARKER\n\nWhat is muse?",
+            runtime_core::prompt::SYSTEM_INTRO
+        )]
+    );
+    assert!(
+        !fake.invocations().concat().contains("SYSTEM-MARKER"),
+        "the system prompt reached the command line"
+    );
+}
+
+#[test]
 fn turns_the_adapter_cannot_serve_are_refused_before_grok_runs() {
     let fake = FakeGrok::install(FIXTURES);
     let adapter = fake.adapter();
@@ -258,13 +284,6 @@ fn turns_the_adapter_cannot_serve_are_refused_before_grok_runs() {
         (
             model("claude-opus"),
             (ErrorCode::InvalidRequest, "MODEL_NOT_SUPPORTED"),
-        ),
-        (
-            Turn {
-                system: Some("Be brief.".to_owned()),
-                ..ask("hi")
-            },
-            (ErrorCode::InvalidRequest, "SYSTEM_PROMPT_UNSUPPORTED"),
         ),
         (
             // Grok keeps no session: only the caller's messages continue.

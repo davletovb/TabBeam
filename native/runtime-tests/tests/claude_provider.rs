@@ -851,23 +851,38 @@ fn a_turn_that_does_not_ask_for_the_sign_in_check_does_not_get_one() {
 }
 
 #[test]
-fn turns_the_adapter_cannot_serve_are_refused_before_claude_runs() {
+fn a_system_prompt_goes_ahead_of_the_question_and_never_onto_the_command_line() {
     let claude = FakeClaude::install(FIXTURES, "answers", "signed-in");
-    let adapter = claude.adapter();
-
-    // A system prompt has nowhere to go yet: refused, not dropped.
     let updates = run_to_end(
-        adapter
+        claude
+            .adapter()
             .send(Turn {
-                system: Some("Be brief.".to_owned()),
-                ..ask("hi")
+                system: Some("Answer in French. SYSTEM-MARKER".to_owned()),
+                ..ask("What is muse?")
             })
             .as_mut(),
     );
+    assert_eq!(updates.last(), Some(&Update::Completed));
+
+    let prompts = claude.prompts();
+    assert_eq!(prompts.len(), 1, "{prompts:?}");
     assert_eq!(
-        failure(&updates),
-        (ErrorCode::InvalidRequest, "SYSTEM_PROMPT_UNSUPPORTED")
+        prompts[0],
+        format!(
+            "{}Answer in French. SYSTEM-MARKER\n\nWhat is muse?",
+            runtime_core::prompt::SYSTEM_INTRO
+        )
     );
+    assert!(
+        !claude.invocations().concat().contains("SYSTEM-MARKER"),
+        "the system prompt reached the command line"
+    );
+}
+
+#[test]
+fn turns_the_adapter_cannot_serve_are_refused_before_claude_runs() {
+    let claude = FakeClaude::install(FIXTURES, "answers", "signed-in");
+    let adapter = claude.adapter();
 
     // Anything that could become an option of its own never reaches argv.
     for turn in [

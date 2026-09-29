@@ -28,7 +28,7 @@ use crate::{Cleanup, Exchange, Provider, Scripted, Timeouts, Update};
 use runtime_core::discovery::SearchPath;
 use runtime_core::exchange::SessionLoss;
 use runtime_core::process::{Event, Exit, Process, ProcessSpec};
-use runtime_core::prompt::{self, SYSTEM_PROMPT_UNSUPPORTED};
+use runtime_core::prompt;
 use runtime_core::protocol::Failure as ErrorBody;
 use runtime_core::protocol::{
     Authentication, Availability, Capabilities, Capability, ErrorCode, ProviderState,
@@ -340,9 +340,6 @@ impl Provider for Codex {
         if request.validate().is_err() {
             return Box::new(Scripted::failed(crate::INVALID_TURN));
         }
-        if request.system.is_some() {
-            return Box::new(Scripted::failed(SYSTEM_PROMPT_UNSUPPORTED));
-        }
         if let Err(error) = self.check_tools(request.tools) {
             return Box::new(Scripted::failed(error));
         }
@@ -351,7 +348,7 @@ impl Provider for Codex {
             stage: Stage::Done,
             executable,
             launch: Rc::clone(&self.launch),
-            prompt: prompt::render(&request.messages, request.tools),
+            prompt: prompt::render(request.system.as_deref(), &request.messages, request.tools),
             resume: request.continuation,
             session_policy: request.session,
             finish_grace: self.limits.finish,

@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 use crate::{Cleanup, Exchange, Provider, Scripted, Timeouts, Update};
 use runtime_core::discovery::SearchPath;
 use runtime_core::process::{Event, Exit, Process, ProcessSpec};
-use runtime_core::prompt::{self, SYSTEM_PROMPT_UNSUPPORTED};
+use runtime_core::prompt;
 use runtime_core::protocol::Failure as ErrorBody;
 use runtime_core::protocol::{
     Authentication, Availability, Capabilities, Capability, ErrorCode, ModelOption, ProviderState,
@@ -351,9 +351,6 @@ impl Provider for Gemini {
         if request.validate().is_err() {
             return Box::new(Scripted::failed(crate::INVALID_TURN));
         }
-        if request.system.is_some() {
-            return Box::new(Scripted::failed(SYSTEM_PROMPT_UNSUPPORTED));
-        }
         if request
             .model
             .as_deref()
@@ -378,7 +375,7 @@ impl Provider for Gemini {
             .cleanup_group
             .clone()
             .unwrap_or_else(|| UNGROUPED.to_owned());
-        let prompt = prompt::render(&request.messages, request.tools);
+        let prompt = prompt::render(request.system.as_deref(), &request.messages, request.tools);
         let input = serde_json::json!({
             "event": "user",
             "message": { "content": prompt }

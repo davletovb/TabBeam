@@ -18,7 +18,7 @@ use crate::{Cleanup, Exchange, Provider, Scripted, Timeouts, Update};
 use runtime_core::discovery::SearchPath;
 use runtime_core::exchange::SessionLoss;
 use runtime_core::process::{Event, Exit, Process, ProcessSpec};
-use runtime_core::prompt::{self, SYSTEM_PROMPT_UNSUPPORTED};
+use runtime_core::prompt;
 use runtime_core::protocol::Failure as ErrorBody;
 use runtime_core::protocol::{
     Authentication, Availability, Capabilities, Capability, ErrorCode, ModelOption, ProviderState,
@@ -298,15 +298,12 @@ impl Provider for Claude {
         if request.validate().is_err() {
             return Box::new(Scripted::failed(crate::INVALID_TURN));
         }
-        if request.system.is_some() {
-            return Box::new(Scripted::failed(SYSTEM_PROMPT_UNSUPPORTED));
-        }
 
         let mut turn = Turn {
             stage: Stage::Done,
             executable,
             launch: Rc::clone(&self.launch),
-            prompt: prompt::render(&request.messages, request.tools),
+            prompt: prompt::render(request.system.as_deref(), &request.messages, request.tools),
             resume: request.continuation,
             session_policy: request.session,
             reported_session: None,
