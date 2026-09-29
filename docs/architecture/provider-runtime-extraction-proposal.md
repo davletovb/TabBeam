@@ -617,6 +617,12 @@ Long-lived provider processes stay out of scope (§4) unless the measurements sh
 - **Superseded sessions.** When a conversation's session is replaced, by a search turn or by Claude reporting a different session, the host records the old handle durably and removes its transcript. `conversation.forget` removes every session a conversation has used. A new test covers "page-context turn → search turn → delete" across a host restart (§4, §7).
 - **Ephemeral Codex.** `Ephemeral` `codex exec` turns use `--ephemeral`. Deleting rollout files isn't accepted as a fallback, because Codex's state database can keep the first user message. Every mode's `Ephemeral` behavior is verified by its live smoke test, and a mode that can't meet it refuses `Ephemeral` (§4, §5, §7).
 
+**2026-09-29, LIB-10 preparation (in-tree).**
+- **Boundary.** Before the move, the adapters were made to depend on nothing else in `pervue-host`: a namespaced `Layout` for every path, runtime-only error codes and capabilities (with `tool_isolation`, which Codex already computed as page context), a Turn-based `Provider`, and the `conversations` layer that owns everything about conversations (§4).
+- **Tool policy.** A third value, `ProviderDefault`, so a plain Pervue turn stays unrestricted (§5).
+- **Session loss.** A resumed turn that can't resume says `SessionLost` (`Confirmed` or `Suspected`), and the application chooses whether to rebuild from history; Claude and Codex recover differently, as they already did (§6).
+- **Cleanup.** Per-turn cleanup records are grouped by an opaque `cleanup_group` the application supplies, which keeps Gemini's record layout (§4).
+
 [p-claude]: ../../native/host/src/providers/claude/mod.rs
 [p-claude-output]: ../../native/host/src/providers/claude/output.rs
 [p-codex]: ../../native/host/src/providers/codex/mod.rs

@@ -67,6 +67,7 @@ Conclave has decided to adopt a shared runtime for all four providers at once, i
   - `Persistent`: the provider keeps its native session and reports it. Only modes that can resume (Claude, Codex) accept it, and a turn that carries a continuation handle is always `Persistent`.
 
   Conclave's turns are always `Ephemeral`.
+- **Every turn states its tool policy.** `None` runs the provider with no tools, for text the application doesn't control; an adapter that can't guarantee that (see `Capabilities::tool_isolation`) refuses the turn. `NativeWebSearch` allows only the provider's own search. `ProviderDefault` leaves the user's own provider configuration in charge, for text the application wrote itself. The third value exists because Codex restricts tools only on turns that carry page text or search: a plain turn must keep working for a user with MCP servers configured, which a neutral `None` that means "restricted" would refuse.
 - **Sign-in checks** that an application requests finish before a turn's provider process starts, and never run alongside it. The library doesn't cache them. Caching is an explicit policy of the application, and any authentication or provider failure invalidates it.
 - **Each application's namespace is fixed when it starts the runtime.** Its workspaces and cleanup records live under that namespace.
 - **The environment allowlist** can be extended only through trusted configuration read at startup. It never takes names from per-turn input: requests, pages, prompts, or model output.
@@ -78,7 +79,7 @@ Conclave has decided to adopt a shared runtime for all four providers at once, i
 - **`Launched` and `Started`.**
   - `Launched` means the provider process started.
   - `Started` means the provider accepted the turn and, where the adapter checks one, its `init` boundary passed. No answer text comes before it, and the start limit runs until it arrives.
-- **Native sessions.** A provider that can resume (Claude, Codex) reports its native session as an opaque handle in a `Session` event.
+- **Native sessions.** A provider that can resume (Claude, Codex) reports its native session as an opaque handle in a `Session` event. A turn that resumes one it can't use reports `SessionLost` (`Confirmed` when the provider said it is gone, `Suspected` when the run merely ended before the turn began) before its terminal failure, and the application decides whether to start over.
   - The event comes before `Started`, so the application can store its mapping before announcing the conversation.
   - It comes again if the provider reports a different session later.
   - Only `Persistent` turns send it.
@@ -150,5 +151,12 @@ Both applications pin the library to a git revision, and it stays at version 0.x
 - Whether Pervue caches its sign-in checks.
 
 The [runtime proposal §10](provider-runtime-extraction-proposal.md#10-open-decisions) tracks these.
+
+## Amendments
+
+- **2026-09-29, LIB-10 preparation.**
+  - The tool policy gained `ProviderDefault` (see Decision 4), and the neutral turn gained an opaque `cleanup_group` that groups a turn's per-turn cleanup records so an application can retry a group together. Pervue passes the conversation ID, which keeps Gemini's existing on-disk record layout, so installed hosts lose no pending deletion.
+  - The conversation, its session map, the superseded-session records, and the choice between resuming and replaying the dialogue live in `pervue-host`'s `conversations` layer, above the adapters, as Decision 2 says. The runtime's `Update` no longer has conversation variants.
+  - A lone plain first question is sent as it is to every provider, as it always was to Claude and Codex; Gemini and Grok used to add a "Current user question:" label to it.
 
 [conclave-adoption]: https://github.com/davletovb/conclave/blob/claude/eloquent-franklin-8qo1f1/docs/proposals/provider-runtime-adoption.md
