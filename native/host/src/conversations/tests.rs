@@ -15,7 +15,7 @@ struct Scratch(PathBuf);
 impl Scratch {
     fn new() -> Self {
         Self(std::env::temp_dir().join(format!(
-            "pervue-conversations-{}-{:x}",
+            "tabbeam-conversations-{}-{:x}",
             std::process::id(),
             RandomState::new().hash_one(SystemTime::now())
         )))
@@ -917,7 +917,7 @@ mod prompts_match_what_the_adapters_used_to_build {
 #[test]
 fn forgetting_a_conversation_named_like_a_path_removes_nothing_outside_the_store() {
     let scratch = Scratch::new();
-    let store_dir = scratch.0.join("pervue").join("claude-sessions");
+    let store_dir = scratch.0.join("tabbeam").join("claude-sessions");
     let conversations = Conversations::new(
         Recorder::new(true).script(answer("session-1")),
         SessionStore::new(Some(store_dir.clone())),
@@ -929,7 +929,7 @@ fn forgetting_a_conversation_named_like_a_path_removes_nothing_outside_the_store
         .store()
         .record_superseded(&id, "old-session")
         .unwrap();
-    let important = scratch.0.join("pervue").join("important");
+    let important = scratch.0.join("tabbeam").join("important");
     std::fs::create_dir_all(&important).unwrap();
     std::fs::write(important.join("data"), b"keep").unwrap();
 

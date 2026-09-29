@@ -450,7 +450,7 @@ const fakeDocument = {
   // The conversation is saved as the answer completes (Chrome reports a
   // write with its newValue; only a removal has none).
   for (const listener of storageListeners) {
-    listener({ [`pervue.conversation.${conversation.id}`]: { newValue: {} } }, "local");
+    listener({ [`tabbeam.conversation.${conversation.id}`]: { newValue: {} } }, "local");
   }
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(loads, 0, "the saved copy waits for the answer to finish typing out");
@@ -463,7 +463,7 @@ const fakeDocument = {
   assert.equal(loads, 1);
   assert.equal(elements.answer.hidden, true);
   assert.equal(elements.answer.getAttribute("aria-busy"), "false");
-  assert.deepEqual(markdownBodies, ["message-body markdown:**Answer**"], "only Pervue's turns render as Markdown");
+  assert.deepEqual(markdownBodies, ["message-body markdown:**Answer**"], "only TabBeam's turns render as Markdown");
   const [question] = elements.history.children;
   assert.equal(question.children[1].className, "message-body");
   assert.equal(question.children[1].textContent, "Question");

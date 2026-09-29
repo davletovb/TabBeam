@@ -10,7 +10,7 @@
 //! where they were, and its peak memory must stay within a bound far below
 //! what the provider wrote.
 //!
-//! An application runs the same misbehaviour through its whole host (Pervue's is
+//! An application runs the same misbehaviour through its whole host (TabBeam's is
 //! in `test_provider`); this is the same through no application at all. The cases
 //! run one after another in a single test, so the resource measurements see
 //! only the case under way.

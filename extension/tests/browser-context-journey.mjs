@@ -198,7 +198,7 @@ function harness({ tab = webTab, pageReply = { ok: true, text: "Readable article
       onEvent() { throw new Error("private page text"); }
     });
     port.emitMessage({ version: 1, type: "event", request_id: "req_private", event: "response.delta", payload: { text: "private page text" } });
-    assert.deepEqual(logs, ["Pervue native connection callback failed."]);
+    assert.deepEqual(logs, ["TabBeam native connection callback failed."]);
   } finally {
     console.error = original;
   }
@@ -209,7 +209,7 @@ function harness({ tab = webTab, pageReply = { ok: true, text: "Readable article
   await app.entries.onMenuClick({ menuItemId: MENU_PAGE_ID }, webTab);
   await app.preload();
   assert.deepEqual(app.contentRequests, [
-    { tabId: 7, message: { type: "pervue.page.read" }, options: { frameId: 0 } }
+    { tabId: 7, message: { type: "tabbeam.page.read" }, options: { frameId: 0 } }
   ]);
   assert.equal(app.controls.getContext().text, "Readable article");
   app.ask("Summarize");

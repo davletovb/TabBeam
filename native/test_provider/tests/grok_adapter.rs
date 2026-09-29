@@ -1,5 +1,5 @@
-//! Pervue's conversations over the Grok adapter, against a fake `grok`. Grok
-//! keeps no session, so a conversation continues from the dialogue Pervue
+//! TabBeam's conversations over the Grok adapter, against a fake `grok`. Grok
+//! keeps no session, so a conversation continues from the dialogue TabBeam
 //! replays; this tests that mapping, and that a conversation the host never
 //! made is refused before Grok runs. The adapter's own behaviour is tested at
 //! the runtime's level, in `seatline-tests`.
@@ -8,11 +8,11 @@ mod support;
 
 use std::time::{Duration, Instant};
 
-use pervue_host::conversation::{HistoryMessage, Role};
-use pervue_host::providers::{
+use seatline_core::turn::SessionPolicy;
+use tabbeam_host::conversation::{HistoryMessage, Role};
+use tabbeam_host::providers::{
     ConversationProvider, ConversationSlot, Exchange, SendRequest, Update,
 };
-use seatline_core::turn::SessionPolicy;
 
 use support::FakeGrok;
 
@@ -74,7 +74,7 @@ fn answer_text(updates: &[Update]) -> String {
 }
 
 #[test]
-fn one_shot_turns_continue_from_bounded_pervue_history() {
+fn one_shot_turns_continue_from_bounded_tabbeam_history() {
     let fake = FakeGrok::install();
     let adapter = fake.adapter();
 
@@ -126,7 +126,7 @@ fn invalid_model_and_conversation_ids_are_refused_before_launch() {
 }
 
 #[test]
-fn pervue_marks_its_grok_workspaces_with_the_owner_file_installed_hosts_know() {
+fn tabbeam_marks_its_grok_workspaces_with_its_owner_file() {
     // A host that was killed leaves its workspaces behind, and the next one
     // finds them by this name, so it must not change.
     let fake = FakeGrok::install();
@@ -140,8 +140,8 @@ fn pervue_marks_its_grok_workspaces_with_the_owner_file_installed_hosts_know() {
     }
     let live = fake.turn_dirs();
     assert_eq!(live.len(), 1);
-    assert!(live[0].join(".pervue-owner").exists());
+    assert!(live[0].join(".tabbeam-owner").exists());
     running.cancel(Duration::from_millis(100));
     collect(running);
-    assert!(fake.read("grok-agents").contains("name: pervue-text\n"));
+    assert!(fake.read("grok-agents").contains("name: tabbeam-text\n"));
 }

@@ -1,22 +1,22 @@
 [package]
-name = "pervue-fake-provider"
-description = "Pervue's integration tests, and the fake provider binary they run"
+name = "tabbeam-fake-provider"
+description = "TabBeam's integration tests, and the fake provider binary they run"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
 [[bin]]
-name = "pervue-fake-provider"
+name = "tabbeam-fake-provider"
 path = "src/main.rs"
 
 [dependencies]
 seatline-fake-provider = { path = "../fake-provider" }
 
 [dev-dependencies]
-# Pervue's tests run the host, and the adapters it serves, against the fake
+# TabBeam's tests run the host, and the adapters it serves, against the fake
 # provider this package builds a binary of.
-pervue-host = { path = "../host" }
+tabbeam-host = { path = "../host" }
 seatline-core = { path = "../seatline-core" }
 seatline-platform = { path = "../platform" }
 seatline-providers = { path = "../providers" }

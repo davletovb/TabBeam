@@ -35,7 +35,7 @@ export const HOST_OUT_OF_DATE = HOST_PROTOCOL_MISMATCH;
 export const STATUS_TIMED_OUT = Object.freeze({
   code: "REQUEST_TIMEOUT",
   reason: "REQUEST_DEADLINE_EXCEEDED",
-  message: "Pervue's companion app didn't answer in time. Try again.",
+  message: "TabBeam's companion app didn't answer in time. Try again.",
   retryable: true
 });
 

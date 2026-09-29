@@ -12,9 +12,9 @@ use std::path::Path;
 use serde::Serialize;
 
 /// The name the extension connects to and the manifest registers.
-pub const HOST_NAME: &str = "com.pervue.host";
+pub const HOST_NAME: &str = "com.tabbeam.host";
 
-const DESCRIPTION: &str = "Pervue native host";
+const DESCRIPTION: &str = "TabBeam native host";
 const EXTENSION_ID_LENGTH: usize = 32;
 const ORIGIN_SCHEME: &[u8] = b"chrome-extension://";
 
@@ -113,7 +113,7 @@ mod tests {
     const OTHER_ID: &str = "ponmlkjihgfedcbaponmlkjihgfedcba";
 
     fn absolute_host_path() -> std::path::PathBuf {
-        std::env::temp_dir().join("pervue-host")
+        std::env::temp_dir().join("tabbeam-host")
     }
 
     #[test]
@@ -152,7 +152,7 @@ mod tests {
             format!("https://{ID}/"),
             format!(" chrome-extension://{ID}/"),
             "chrome-extension://*/".to_owned(),
-            "chrome-extension://pervue/".to_owned(),
+            "chrome-extension://tabbeam/".to_owned(),
             "chrome-extension:///".to_owned(),
         ] {
             assert!(!is_extension_origin(invalid.as_bytes()), "{invalid:?}");
@@ -168,8 +168,8 @@ mod tests {
         assert_eq!(
             manifest,
             serde_json::json!({
-                "name": "com.pervue.host",
-                "description": "Pervue native host",
+                "name": "com.tabbeam.host",
+                "description": "TabBeam native host",
                 "path": path.to_str().unwrap(),
                 "type": "stdio",
                 "allowed_origins": [
@@ -198,7 +198,7 @@ mod tests {
             );
         }
         assert_eq!(
-            manifest_json(Path::new("pervue-host"), &[ID]),
+            manifest_json(Path::new("tabbeam-host"), &[ID]),
             Err(ManifestError::RelativeHostPath)
         );
     }

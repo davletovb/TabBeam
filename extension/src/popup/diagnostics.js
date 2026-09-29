@@ -103,7 +103,7 @@ export function downloadDiagnosticsExport(bundle) {
   try {
     const link = document.createElement("a");
     link.href = url;
-    link.download = "pervue-support-diagnostics.json";
+    link.download = "tabbeam-support-diagnostics.json";
     link.rel = "noopener";
     link.click();
   } finally {

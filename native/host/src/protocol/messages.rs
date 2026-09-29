@@ -1,4 +1,4 @@
-//! Pervue-owned wording for neutral runtime failures.
+//! TabBeam-owned wording for neutral runtime failures.
 
 use seatline_core::protocol::Failure;
 
@@ -15,7 +15,7 @@ pub fn provider_failure(provider: Option<&str>, failure: Failure) -> ErrorBody<'
 }
 
 /// The name protocol v1 gives a failure the runtime names in its own terms.
-/// Pervue only asks for a tool-free turn to carry page context, and only
+/// TabBeam only asks for a tool-free turn to carry page context, and only
 /// resumes a session on behalf of a conversation.
 fn wire_reason(reason: &'static str) -> &'static str {
     match reason {
@@ -79,16 +79,16 @@ fn message(provider: Option<&str>, reason: &str, retryable: bool) -> &'static st
         }
 
         (Some("codex"), "WORKSPACE_UNAVAILABLE", _) => {
-            "Pervue couldn't prepare a private folder for Codex. Make sure your cache folder exists and only you can change it, then try again."
+            "TabBeam couldn't prepare a private folder for Codex. Make sure your cache folder exists and only you can change it, then try again."
         }
         (Some("claude"), "WORKSPACE_UNAVAILABLE", _) => {
-            "Pervue couldn't prepare a private folder for Claude. Check your cache folder and try again."
+            "TabBeam couldn't prepare a private folder for Claude. Check your cache folder and try again."
         }
         (Some("gemini"), "WORKSPACE_UNAVAILABLE", _) => {
-            "Pervue couldn't prepare a private folder for Antigravity. Check your cache folder, then try again."
+            "TabBeam couldn't prepare a private folder for Antigravity. Check your cache folder, then try again."
         }
         (Some("grok"), "WORKSPACE_UNAVAILABLE", _) => {
-            "Pervue couldn't prepare a private folder for Grok. Check your cache folder, then try again."
+            "TabBeam couldn't prepare a private folder for Grok. Check your cache folder, then try again."
         }
 
         (Some("codex"), "PROCESS_EXITED", _) => "Codex stopped unexpectedly. Try again.",
@@ -97,16 +97,16 @@ fn message(provider: Option<&str>, reason: &str, retryable: bool) -> &'static st
         (Some("grok"), "PROCESS_EXITED", _) => "Grok stopped unexpectedly. Try again.",
 
         (Some("codex"), "MALFORMED_PROVIDER_OUTPUT", _) => {
-            "Codex answered in a way Pervue doesn't understand. Update Codex and Pervue, then try again."
+            "Codex answered in a way TabBeam doesn't understand. Update Codex and TabBeam, then try again."
         }
         (Some("claude"), "MALFORMED_PROVIDER_OUTPUT", _) => {
-            "Claude answered in a way Pervue doesn't understand. Update Claude Code and Pervue, then try again."
+            "Claude answered in a way TabBeam doesn't understand. Update Claude Code and TabBeam, then try again."
         }
         (Some("gemini"), "MALFORMED_PROVIDER_OUTPUT", _) => {
-            "Antigravity answered in a way Pervue doesn't understand. Update Antigravity CLI and Pervue, then try again."
+            "Antigravity answered in a way TabBeam doesn't understand. Update Antigravity CLI and TabBeam, then try again."
         }
         (Some("grok"), "MALFORMED_PROVIDER_OUTPUT", _) => {
-            "Grok answered in a way Pervue doesn't understand. Update Grok Build and Pervue, then try again."
+            "Grok answered in a way TabBeam doesn't understand. Update Grok Build and TabBeam, then try again."
         }
 
         (Some("codex"), "PROVIDER_RATE_LIMITED", _) => {
@@ -123,19 +123,19 @@ fn message(provider: Option<&str>, reason: &str, retryable: bool) -> &'static st
         }
 
         (Some("codex"), "PAGE_CONTEXT_TOOLS_ENABLED", _) => {
-            "Pervue won't send browser context to Codex while user-configured MCP servers are enabled. Disable them or choose No context."
+            "TabBeam won't send browser context to Codex while user-configured MCP servers are enabled. Disable them or choose No context."
         }
         (Some("codex"), "NATIVE_SEARCH_CONFIGURATION_UNSAFE", _) => {
-            "Pervue won't enable Codex web search while user-configured MCP servers are enabled. Disable them or use a plain Ask turn."
+            "TabBeam won't enable Codex web search while user-configured MCP servers are enabled. Disable them or use a plain Ask turn."
         }
         (Some("gemini"), "PROVIDER_AGENT_NOT_USED", _) => {
-            "Antigravity didn't use Pervue's restricted agent, so the turn was stopped. Update Antigravity CLI, then try again."
+            "Antigravity didn't use TabBeam's restricted agent, so the turn was stopped. Update Antigravity CLI, then try again."
         }
         (Some("gemini"), "PROVIDER_PERMISSIONS_TOO_OPEN", _) => {
-            "Antigravity is set to run tools without asking, so Pervue stopped the turn. Set Antigravity's tool permission to review requests, then try again."
+            "Antigravity is set to run tools without asking, so TabBeam stopped the turn. Set Antigravity's tool permission to review requests, then try again."
         }
         (Some("grok"), "SEARCH_UNSUPPORTED", _) => {
-            "Grok Build's shipped headless CLI doesn't expose a Pervue-safe native web-search surface yet. Turn Web off and try again."
+            "Grok Build's shipped headless CLI doesn't expose a TabBeam-safe native web-search surface yet. Turn Web off and try again."
         }
         (Some("claude"), "UNKNOWN_CONVERSATION", _) => {
             "Claude's saved session no longer exists or can't be continued. Start a new conversation."
@@ -148,13 +148,13 @@ fn message(provider: Option<&str>, reason: &str, retryable: bool) -> &'static st
         }
 
         (_, "PROVIDER_NOT_INSTALLED", _) => {
-            "Pervue's companion app doesn't support this AI provider yet. Update it, then try again."
+            "TabBeam's companion app doesn't support this AI provider yet. Update it, then try again."
         }
         (_, "NATIVE_SEARCH_UNSUPPORTED", _) => {
             "The selected AI provider does not support native web search."
         }
         (_, "SEARCH_WITH_CONTEXT_UNSUPPORTED", _) => {
-            "Pervue won't combine web search with browser context yet. Choose No context or turn off Search."
+            "TabBeam won't combine web search with browser context yet. Choose No context or turn off Search."
         }
         (_, "PAGE_CONTEXT_UNSUPPORTED", _) => {
             "This AI provider can't use browser context. Choose No context, then ask again."
@@ -167,47 +167,47 @@ fn message(provider: Option<&str>, reason: &str, retryable: bool) -> &'static st
         }
         (_, "UNKNOWN_CONVERSATION", _) => "This conversation can't be continued. Start a new one.",
         (_, "WORKSPACE_UNAVAILABLE", _) => {
-            "Pervue couldn't prepare a private provider workspace. Check your cache folder, then try again."
+            "TabBeam couldn't prepare a private provider workspace. Check your cache folder, then try again."
         }
         (_, "PROCESS_EXITED", _) => "The provider stopped unexpectedly. Try again.",
         (_, "MALFORMED_PROVIDER_OUTPUT", _) => {
-            "The provider answered in an unsupported format. Update the provider CLI and Pervue, then try again."
+            "The provider answered in an unsupported format. Update the provider CLI and TabBeam, then try again."
         }
         (_, "PROVIDER_BOUNDARY_VIOLATION", _) => {
-            "The provider exposed or used a tool Pervue doesn't allow, so the turn was stopped."
+            "The provider exposed or used a tool TabBeam doesn't allow, so the turn was stopped."
         }
         (_, "PROVIDER_AGENT_NOT_USED", _) => {
-            "The provider did not use Pervue's restricted agent, so the turn was stopped."
+            "The provider did not use TabBeam's restricted agent, so the turn was stopped."
         }
         (_, "PROVIDER_PERMISSIONS_TOO_OPEN", _) => {
-            "The provider's tool permissions are too open for this Pervue turn."
+            "The provider's tool permissions are too open for this TabBeam turn."
         }
         (_, "SESSION_STORE_FAILED", _) => {
             "The provider conversation could not be saved. Check available disk space and try again."
         }
         (_, "SESSION_FORGET_FAILED", _) => {
-            "Pervue couldn't remove everything this conversation left behind. Delete it again to retry."
+            "TabBeam couldn't remove everything this conversation left behind. Delete it again to retry."
         }
         (_, "NATIVE_SEARCH_NO_SOURCES", _) => {
             "The provider finished web search without returning usable sources. Try again or update the provider."
         }
         (_, "PAGE_CONTEXT_TOOLS_ENABLED", _) => {
-            "Pervue won't send browser context while user-configured provider tools are enabled."
+            "TabBeam won't send browser context while user-configured provider tools are enabled."
         }
         (_, "NATIVE_SEARCH_CONFIGURATION_UNSAFE", _) => {
-            "Pervue won't enable native search while user-configured provider tools are enabled."
+            "TabBeam won't enable native search while user-configured provider tools are enabled."
         }
         (_, "MODEL_NOT_SUPPORTED" | "MODEL_MISMATCH", _) => {
             "The selected model is not supported by this provider."
         }
         (_, "SEARCH_UNSUPPORTED", _) => {
-            "This provider execution mode does not expose a Pervue-safe native web-search surface."
+            "This provider execution mode does not expose a TabBeam-safe native web-search surface."
         }
         (_, "PERSISTENT_SESSION_UNSUPPORTED", _) => {
             "This provider execution mode does not support persistent native sessions."
         }
         (_, "WORKSPACE_MISMATCH" | "TOOLSET_MISMATCH" | "SKILLS_MISMATCH" | "MCP_MISMATCH", _) => {
-            "The provider crossed Pervue's isolated execution boundary, so the turn was stopped."
+            "The provider crossed TabBeam's isolated execution boundary, so the turn was stopped."
         }
         (_, "PROVIDER_UNAVAILABLE", _) => "The provider couldn't answer right now. Try again.",
         _ => "The provider couldn't complete this request. Try again.",

@@ -8,7 +8,7 @@
  * host cannot report itself, such as an unreachable host, arrive as a
  * `response.failed` event in the DOC-02 error vocabulary.
  */
-export const ASK_PORT_NAME = "pervue.ask";
+export const ASK_PORT_NAME = "tabbeam.ask";
 
 /**
  * The failure for a question too large for the native host to accept

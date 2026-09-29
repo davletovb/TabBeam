@@ -42,16 +42,16 @@ export function isErrorCode(code) {
  * @type {Readonly<Record<string, string>>}
  */
 export const KIND_MESSAGES = Object.freeze({
-  "host-missing": "Pervue's companion app isn't installed. Install it, then try again.",
-  "host-unavailable": "Pervue's companion app isn't responding. Try again.",
+  "host-missing": "TabBeam's companion app isn't installed. Install it, then try again.",
+  "host-unavailable": "TabBeam's companion app isn't responding. Try again.",
   "provider-missing": "The AI provider isn't installed. Install it, then try again.",
   "provider-signed-out": "The AI provider isn't signed in. Sign in, then try again.",
   "provider-failed": "The AI provider couldn't answer. Try again.",
   "search-failed": "This AI provider can't use web search for that request.",
   timeout: "The answer took too long. Try again.",
   cancelled: "Stopped. You can ask again.",
-  "context-unavailable": "Pervue couldn't use this page. Choose No context, then ask again.",
-  "invalid-request": "Pervue couldn't send that question. Try again.",
+  "context-unavailable": "TabBeam couldn't use this page. Choose No context, then ask again.",
+  "invalid-request": "TabBeam couldn't send that question. Try again.",
   "internal-error": "Something went wrong. Try again."
 });
 

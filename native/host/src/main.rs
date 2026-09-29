@@ -3,9 +3,9 @@ use std::io::{self, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
-use pervue_host::diagnostics::Diagnostics;
-use pervue_host::manifest::{self, is_extension_origin};
-use pervue_host::{HOST_VERSION, host};
+use tabbeam_host::diagnostics::Diagnostics;
+use tabbeam_host::manifest::{self, is_extension_origin};
+use tabbeam_host::{HOST_VERSION, host};
 
 const EXIT_IO: u8 = 2;
 const EXIT_USAGE: u8 = 64;
@@ -13,7 +13,9 @@ const PARENT_WINDOW_PREFIX: &[u8] = b"--parent-window=";
 
 fn main() -> ExitCode {
     let mut args = std::env::args_os();
-    let program = args.next().unwrap_or_else(|| OsString::from("pervue-host"));
+    let program = args
+        .next()
+        .unwrap_or_else(|| OsString::from("tabbeam-host"));
     let arguments: Vec<OsString> = args.collect();
 
     match arguments.as_slice() {
@@ -63,7 +65,7 @@ fn print_manifest(extension_ids: &[OsString]) -> ExitCode {
         Err(error) => {
             let _ = writeln!(
                 io::stderr(),
-                "pervue-host: cannot locate this executable: {error}"
+                "tabbeam-host: cannot locate this executable: {error}"
             );
             return ExitCode::from(EXIT_IO);
         }
@@ -75,7 +77,7 @@ fn print_manifest(extension_ids: &[OsString]) -> ExitCode {
             Err(_) => ExitCode::from(EXIT_IO),
         },
         Err(error) => {
-            let _ = writeln!(io::stderr(), "pervue-host: {error}");
+            let _ = writeln!(io::stderr(), "tabbeam-host: {error}");
             ExitCode::from(EXIT_USAGE)
         }
     }

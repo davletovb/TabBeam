@@ -124,7 +124,7 @@ const createRequestId = () => `req_forget_${++nextId}`;
   assert.deepEqual((await store.list()).map((item) => item.id), [kept.id]);
   // Recorded before the host is asked, so a lost answer is retried later.
   assert.deepEqual(storage.saved[PENDING_FORGETS_KEY], [
-    { provider_id: "claude", conversation_id: "conv_host_claude", pervue_id: claude.id }
+    { provider_id: "claude", conversation_id: "conv_host_claude", tabbeam_id: claude.id }
   ]);
   await settle();
   assert.equal(manager.sent.length, 1);

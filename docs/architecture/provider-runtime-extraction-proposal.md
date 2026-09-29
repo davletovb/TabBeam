@@ -1,5 +1,8 @@
 # Proposal: a shared provider runtime
 
+
+> **Naming note (2026-09-29):** The application was renamed from **Pervue** to **TabBeam** before release. Historical references to Pervue and `pervue-core` are intentionally retained; current application identifiers use TabBeam, while `pervue-core` became `seatline-core`.
+
 **Status:** Proposed, for discussion; the basis for [ADR-0002](adr-0002-shared-provider-runtime.md)  
 **Date:** 2026-09-27  
 **Revised:** 2026-09-28 (see §11)  

@@ -1,7 +1,7 @@
 //! Conversations over a runtime [`Provider`].
 //!
 //! The runtime runs turns; it knows no conversations. This layer is where
-//! Pervue's conversations meet it. For each request it:
+//! TabBeam's conversations meet it. For each request it:
 //!
 //! - frames the request's history and browser context into the turn's
 //!   messages, and picks the turn's tool policy;
@@ -38,7 +38,7 @@ mod store;
 
 pub use store::{Durability, SessionStore};
 
-/// Whether `id` has the shape of a conversation ID Pervue issues: `conv_` and
+/// Whether `id` has the shape of a conversation ID TabBeam issues: `conv_` and
 /// sixteen hex digits. Nothing else may be joined into a path or named to a
 /// provider.
 pub(crate) fn is_conversation_id(id: &str) -> bool {
@@ -69,7 +69,7 @@ pub const SESSION_STORE_FAILED: Failure = Failure {
     retryable: true,
 };
 
-/// A provider, with the conversations Pervue keeps over it.
+/// A provider, with the conversations TabBeam keeps over it.
 pub struct Conversations<P: Provider> {
     provider: Rc<P>,
     store: Rc<SessionStore>,
@@ -140,7 +140,7 @@ impl Draft {
             session: self.session,
             continuation,
             cleanup_group: group.map(str::to_owned),
-            // Pervue checks the sign-in before every turn of a provider that
+            // TabBeam checks the sign-in before every turn of a provider that
             // can be asked to.
             check_sign_in: true,
         }

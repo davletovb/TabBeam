@@ -1,27 +1,27 @@
-interface PervueChromeEvent<TCallback> {
+interface TabBeamChromeEvent<TCallback> {
   addListener(callback: TCallback): void;
   removeListener?(callback: TCallback): void;
 }
 
-interface PervueChromePort {
+interface TabBeamChromePort {
   postMessage(message: any): void;
   disconnect(): void;
-  onMessage: PervueChromeEvent<(message: any) => void>;
-  onDisconnect: PervueChromeEvent<() => void>;
+  onMessage: TabBeamChromeEvent<(message: any) => void>;
+  onDisconnect: TabBeamChromeEvent<() => void>;
 }
 
-interface PervueChromeRuntimePort extends PervueChromePort {
+interface TabBeamChromeRuntimePort extends TabBeamChromePort {
   name: string;
   sender?: {
     url?: string;
   };
 }
 
-interface PervueChrome {
+interface TabBeamChrome {
   runtime: {
-    onInstalled: PervueChromeEvent<() => void | Promise<void>>;
-    onConnect: PervueChromeEvent<(port: PervueChromeRuntimePort) => void>;
-    onMessage: PervueChromeEvent<
+    onInstalled: TabBeamChromeEvent<() => void | Promise<void>>;
+    onConnect: TabBeamChromeEvent<(port: TabBeamChromeRuntimePort) => void>;
+    onMessage: TabBeamChromeEvent<
       (
         message: any,
         sender: any,
@@ -32,19 +32,19 @@ interface PervueChrome {
     getManifest(): { version: string };
     getPlatformInfo(): Promise<{os: string; arch: string}>;
     sendMessage(message: any): Promise<any>;
-    connect(connectInfo: { name: string }): PervueChromeRuntimePort;
-    connectNative(hostName: string): PervueChromePort;
+    connect(connectInfo: { name: string }): TabBeamChromeRuntimePort;
+    connectNative(hostName: string): TabBeamChromePort;
     lastError?: {
       message?: string;
     };
   };
   commands: {
-    onCommand: PervueChromeEvent<
+    onCommand: TabBeamChromeEvent<
       (command: string) => void | Promise<void>
     >;
   };
   contextMenus: {
-    onClicked: PervueChromeEvent<
+    onClicked: TabBeamChromeEvent<
       (info: { menuItemId: string | number; selectionText?: string }, tab?: { id?: number; url?: string; title?: string }) => void | Promise<void>
     >;
     removeAll(): Promise<void>;
@@ -77,4 +77,4 @@ interface PervueChrome {
   };
 }
 
-declare var chrome: PervueChrome;
+declare var chrome: TabBeamChrome;

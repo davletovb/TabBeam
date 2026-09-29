@@ -165,7 +165,7 @@ const CANCELLED: ErrorBody<'static> = ErrorBody {
 const INPUT_CLOSED: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::RequestCancelled,
     reason: "INPUT_CLOSED",
-    message: "Stopped because Pervue closed. You can ask again.",
+    message: "Stopped because TabBeam closed. You can ask again.",
     retryable: true,
 };
 
@@ -547,7 +547,7 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                         if context.is_some()
                             && Capabilities::new(
                                 provider.capabilities(),
-                                HostCapabilities::PERVUE,
+                                HostCapabilities::TABBEAM,
                             )
                             .page_context
                                 != Capability::Supported =>
@@ -912,7 +912,7 @@ fn forward<W: Write + ?Sized>(
         } => {
             let payload = ProviderStatus {
                 provider_id: &provider_id,
-                status: ProviderState::new(status, HostCapabilities::PERVUE),
+                status: ProviderState::new(status, HostCapabilities::TABBEAM),
             };
             write_event(output, raw, Event::ProviderStatus, &payload)
         }
@@ -1723,7 +1723,7 @@ mod tests {
             r#"{"version":1,"type":"request","request_id":"req_status_codex","method":"provider.status","payload":{"provider_id":"codex"}}"#,
             r#"{"version":1,"type":"request","request_id":"req_cancel","method":"request.cancel","payload":{"target_request_id":"req_continue"}}"#,
         ]);
-        let not_installed = r#"{"error":{"code":"PROVIDER_NOT_FOUND","reason":"PROVIDER_NOT_INSTALLED","message":"Pervue's companion app doesn't support this AI provider yet. Update it, then try again.","retryable":false}}"#;
+        let not_installed = r#"{"error":{"code":"PROVIDER_NOT_FOUND","reason":"PROVIDER_NOT_INSTALLED","message":"TabBeam's companion app doesn't support this AI provider yet. Update it, then try again.","retryable":false}}"#;
 
         let session = run_host(&input);
         assert_eq!(session.result, Ok(()));
@@ -2726,7 +2726,7 @@ mod tests {
     }
 
     #[test]
-    fn identifiers_pervue_did_not_issue_are_redacted_in_diagnostics() {
+    fn identifiers_tabbeam_did_not_issue_are_redacted_in_diagnostics() {
         // SEC-02: a record keeps a request ID only in the extension's shape, a
         // provider only if this host serves it, and a conversation only if
         // this host created it. Anything else, such as a secret where an ID

@@ -28,8 +28,13 @@ assert.deepEqual([...manifest.permissions].sort(), [
 assert.equal("host_permissions" in manifest, false);
 assert.equal("optional_host_permissions" in manifest, false);
 assert.equal("externally_connectable" in manifest, false);
-assert.ok(manifest.commands._execute_action?.suggested_key);
-assert.equal(manifest.commands["open-pervue-full-page"], undefined);
+// The keys date from before the rename (P was Pervue's mnemonic) and were left
+// as they are. If they change, change the manifest and this pin together.
+assert.deepEqual(manifest.commands._execute_action?.suggested_key, {
+  default: "Alt+Shift+P",
+  mac: "Command+Shift+P"
+});
+assert.equal(manifest.commands["open-tabbeam-full-page"], undefined);
 const popupMarkup = fs.readFileSync(path.join(root, manifest.action.default_popup), "utf8");
 for (const id of ["context-none", "context-selection", "context-page", "context-preview"]) {
   assert.ok(popupMarkup.includes(`id="${id}"`), `missing popup context control: ${id}`);
@@ -156,14 +161,14 @@ assert.equal(listeners.commands.length, 0, "the reserved action command opens th
 assert.equal(listeners.contextMenuClicks.length, 1);
 await listeners.installed[0]();
 assert.deepEqual(menuItems.map(({ id, contexts }) => ({ id, contexts })), [
-  { id: "pervue-use-selection", contexts: ["selection"] },
-  { id: "pervue-use-page", contexts: ["page"] }
+  { id: "tabbeam-use-selection", contexts: ["selection"] },
+  { id: "tabbeam-use-page", contexts: ["page"] }
 ]);
 
 /** @type {any} */
 let healthResponse;
 listeners.messages[0](
-  { type: "pervue.health" },
+  { type: "tabbeam.health" },
   {},
   (/** @type {any} */ response) => {
     healthResponse = response;
@@ -185,7 +190,7 @@ const contentScriptPort = new MockPort(ASK_PORT_NAME, { url: "https://example.co
 onConnect(contentScriptPort);
 assert.equal(contentScriptPort.disconnectCalls, 1);
 
-const otherPort = new MockPort("pervue.other", { url: popupUrl });
+const otherPort = new MockPort("tabbeam.other", { url: popupUrl });
 onConnect(otherPort);
 assert.equal(otherPort.disconnectCalls, 0);
 assert.equal(otherPort.onMessage.listeners.size, 0);

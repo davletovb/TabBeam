@@ -51,31 +51,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pervue-fake-provider"
-version = "0.1.0-dev"
-dependencies = [
- "nix",
- "pervue-host",
- "seatline-core",
- "seatline-fake-provider",
- "seatline-platform",
- "seatline-providers",
- "serde_json",
-]
-
-[[package]]
-name = "pervue-host"
-version = "0.1.0-dev"
-dependencies = [
- "seatline-core",
- "seatline-platform",
- "seatline-providers",
- "seatline-scheduler",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "proc-macro2"
 version = "1.0.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -210,6 +185,31 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "tabbeam-fake-provider"
+version = "0.1.0-dev"
+dependencies = [
+ "nix",
+ "seatline-core",
+ "seatline-fake-provider",
+ "seatline-platform",
+ "seatline-providers",
+ "serde_json",
+ "tabbeam-host",
+]
+
+[[package]]
+name = "tabbeam-host"
+version = "0.1.0-dev"
+dependencies = [
+ "seatline-core",
+ "seatline-platform",
+ "seatline-providers",
+ "seatline-scheduler",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

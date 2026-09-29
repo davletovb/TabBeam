@@ -1,9 +1,9 @@
 /** Lists saved conversations: `{value: ConversationSummary[]}`. */
-export const CONVERSATIONS_LIST_MESSAGE = "pervue.conversations.list";
+export const CONVERSATIONS_LIST_MESSAGE = "tabbeam.conversations.list";
 /** Reads one conversation: `{conversation_id}` → `{value: Conversation}`. */
-export const CONVERSATIONS_GET_MESSAGE = "pervue.conversations.get";
+export const CONVERSATIONS_GET_MESSAGE = "tabbeam.conversations.get";
 /** Deletes one conversation: `{conversation_id}` → `{}`. */
-export const CONVERSATIONS_DELETE_MESSAGE = "pervue.conversations.delete";
+export const CONVERSATIONS_DELETE_MESSAGE = "tabbeam.conversations.delete";
 
 const MESSAGES = new Set([CONVERSATIONS_LIST_MESSAGE, CONVERSATIONS_GET_MESSAGE, CONVERSATIONS_DELETE_MESSAGE]);
 
@@ -26,7 +26,7 @@ export function isConversationMessage(message) {
  *   remove(id: string): Promise<void>
  * }} store
  * @param {Set<string>} inFlight conversation IDs with a question running
- * @param {{queue(providerId: string, conversationId: string, pervueId?: string): Promise<void>, flush(): Promise<void>}} [forgetter]
+ * @param {{queue(providerId: string, conversationId: string, tabbeamId?: string): Promise<void>, flush(): Promise<void>}} [forgetter]
  * @returns {Promise<{ok: true, value?: any} | {ok: false, error: string}>}
  */
 export async function answerConversationMessage(message, store, inFlight, forgetter) {
@@ -68,7 +68,7 @@ export async function answerConversationMessage(message, store, inFlight, forget
  *
  * @param {string} id
  * @param {{getPrivate(id: string): Promise<any>, remove(id: string): Promise<void>}} store
- * @param {{queue(providerId: string, conversationId: string, pervueId?: string): Promise<void>, flush(): Promise<void>}} [forgetter]
+ * @param {{queue(providerId: string, conversationId: string, tabbeamId?: string): Promise<void>, flush(): Promise<void>}} [forgetter]
  */
 async function deleteConversation(id, store, forgetter) {
   if (!forgetter) {

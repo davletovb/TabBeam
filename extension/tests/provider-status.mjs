@@ -149,7 +149,7 @@ function hostEvent(requestId, event, payload = {}) {
   const failure = {
     code: "PROVIDER_NOT_FOUND",
     reason: "PROVIDER_NOT_INSTALLED",
-    message: "Pervue's companion app doesn't support this AI provider yet.",
+    message: "TabBeam's companion app doesn't support this AI provider yet.",
     retryable: false
   };
   let { ports, check } = worker();
@@ -388,7 +388,7 @@ function settle() {
     ],
     [
       { availability: "unknown", authentication: "unknown" },
-      { state: "unknown", kind: null, message: "Pervue couldn't check Codex." }
+      { state: "unknown", kind: null, message: "TabBeam couldn't check Codex." }
     ]
   ];
   for (const [status, expected] of cases) {
@@ -414,7 +414,7 @@ function settle() {
   const missing = {
     code: "HOST_NOT_INSTALLED",
     reason: "NATIVE_HOST_NOT_FOUND",
-    message: "Pervue's companion app isn't installed. Install it, then try again.",
+    message: "TabBeam's companion app isn't installed. Install it, then try again.",
     retryable: false
   };
   let popup = openLine(async () => ({ provider_id: "codex", error: missing }));
@@ -437,7 +437,7 @@ function settle() {
   let answer = () => {};
   let popup = openLine(() => new Promise((resolve) => (answer = resolve)));
   popup.timers[0].callback();
-  assert.deepEqual(popup.view, { state: "unknown", kind: null, message: "Pervue couldn't check Codex." });
+  assert.deepEqual(popup.view, { state: "unknown", kind: null, message: "TabBeam couldn't check Codex." });
   answer({ provider_id: "codex", status: READY });
   await settle();
   assert.equal(popup.view.state, "unknown");
@@ -478,7 +478,7 @@ function settle() {
   }
   popup.line.update({ kind: "completed" });
   assert.deepEqual(popup.view, { state: "ready", kind: null, message: "Codex is ready." });
-  popup.line.update({ kind: "host-missing", message: "Pervue's companion app isn't installed." });
+  popup.line.update({ kind: "host-missing", message: "TabBeam's companion app isn't installed." });
   assert.equal(popup.view.kind, "host-missing");
 }
 
@@ -530,7 +530,7 @@ function settle() {
   assert.equal(element.getAttribute("data-kind"), "provider-signed-out");
 
   line.follow({ providerId: "codex", response: null, providerChanged: true, statusUpdated: false });
-  assert.deepEqual(view(), { state: "unknown", message: "Pervue couldn't check Codex." });
+  assert.deepEqual(view(), { state: "unknown", message: "TabBeam couldn't check Codex." });
   assert.deepEqual(sent, []);
 }
 

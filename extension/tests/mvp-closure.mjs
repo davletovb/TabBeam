@@ -182,7 +182,7 @@ class FakeElement {
     provider: { ...summary.provider, provider_output: "secret output" },
     recent_failure: { ...summary.recent_failure, message: "secret failure detail" }
   }, 5678);
-  assert.equal(exported.format, "pervue-support-diagnostics");
+  assert.equal(exported.format, "tabbeam-support-diagnostics");
   assert.equal(exported.version, 1);
   assert.equal(exported.generated_at, 5678);
   assert.deepEqual(exported.provider, summary.provider);
@@ -236,6 +236,28 @@ class FakeElement {
     assert.ok(markup.includes('aria-live="polite"'));
     assert.ok(markup.includes('aria-atomic="true"'));
   }
+  // The companion persona is Beam on every surface where the user types, and
+  // the popup keeps saying that a page is seen only when it is shared.
+  // The full view is where a conversation continues, so its accessible label
+  // keeps the follow-up cue that a screen-reader user needs there.
+  for (const [surface, markup, heading, label] of [
+    ["popup", popup, "h1", "Ask Beam"],
+    ["full view", fullpage, "h2", "Ask Beam a follow-up"]
+  ]) {
+    assert.ok(markup.includes(`>Ask Beam anything</${heading}>`), `${surface}: heading should say "Ask Beam anything"`);
+    assert.ok(markup.includes(`>${label}</label>`), `${surface}: the input's accessible label should say "${label}"`);
+    assert.ok(markup.includes('placeholder="Ask Beam…"'), `${surface}: the placeholder should say "Ask Beam…"`);
+  }
+  assert.ok(
+    popup.includes("TabBeam only sees a page when you share it."),
+    "the popup should state that a page is seen only when it is shared"
+  );
+  // The streaming answer is labelled by CSS, which a DOM fake cannot see, so
+  // read its rule. Whitespace, quote style and other declarations may change.
+  assert.ok(
+    /\.answer::before\s*\{[^}]*\bcontent:\s*(["'])Beam\1\s*;/.test(sharedCss),
+    'ui.css should label the streaming answer "Beam" (.answer::before)'
+  );
   assert.ok(popup.includes('id="diagnostics"'));
   assert.ok(popup.includes('id="diag-export"'));
   assert.ok(popup.includes('id="companion-setup"'));

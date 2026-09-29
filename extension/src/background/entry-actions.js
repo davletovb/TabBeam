@@ -1,8 +1,8 @@
 import { captureContext } from "./selection-capture.js";
 
-export const MENU_SELECTION_ID = "pervue-use-selection";
-export const MENU_PAGE_ID = "pervue-use-page";
-export const MENU_CONSUME_MESSAGE = "pervue.context.consume-menu";
+export const MENU_SELECTION_ID = "tabbeam-use-selection";
+export const MENU_PAGE_ID = "tabbeam-use-page";
+export const MENU_CONSUME_MESSAGE = "tabbeam.context.consume-menu";
 const HANDOFF_MS = 30_000;
 
 /**

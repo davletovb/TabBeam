@@ -1,6 +1,6 @@
 {
   "description": "Trust-boundary constants shared by the extension and the native host (SEC-01). Each side's tests check its own values against this file.",
-  "host_name": "com.pervue.host",
+  "host_name": "com.tabbeam.host",
   "max_frame_bytes": 1048576,
   "max_json_depth": 128,
   "max_request_id_length": 128,

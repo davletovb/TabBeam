@@ -1,5 +1,5 @@
-//! Pervue's conversations over the Gemini adapter, against a fake `agy`. Gemini
-//! keeps no session, so a conversation continues from the dialogue Pervue
+//! TabBeam's conversations over the Gemini adapter, against a fake `agy`. Gemini
+//! keeps no session, so a conversation continues from the dialogue TabBeam
 //! replays; this tests that mapping, that a failed first turn's conversation
 //! can be retried, and what deleting a conversation removes. The adapter's own
 //! behaviour is tested at the runtime's level, in `seatline-tests`.
@@ -8,12 +8,12 @@ mod support;
 
 use std::time::{Duration, Instant};
 
-use pervue_host::conversation::{HistoryMessage, Role};
-use pervue_host::conversations::{Conversations, SessionStore};
-use pervue_host::providers::{
+use seatline_core::turn::SessionPolicy;
+use tabbeam_host::conversation::{HistoryMessage, Role};
+use tabbeam_host::conversations::{Conversations, SessionStore};
+use tabbeam_host::providers::{
     ConversationProvider, ConversationSlot, Exchange, SendRequest, Update,
 };
-use seatline_core::turn::SessionPolicy;
 
 use support::FakeGemini;
 
@@ -65,7 +65,7 @@ fn request(conversation_id: Option<String>, native_search: bool) -> SendRequest 
 }
 
 #[test]
-fn one_shot_turns_continue_from_bounded_pervue_history() {
+fn one_shot_turns_continue_from_bounded_tabbeam_history() {
     let fake = FakeGemini::install();
     let adapter = fake.adapter();
 
@@ -125,7 +125,7 @@ fn a_failed_first_turn_can_retry_with_empty_completed_history() {
 }
 
 #[test]
-fn invalid_pervue_conversation_ids_are_refused_without_running_agy() {
+fn invalid_tabbeam_conversation_ids_are_refused_without_running_agy() {
     let fake = FakeGemini::install();
     let mut request = request(Some("latest".to_owned()), false);
     request.history.clear();
@@ -177,16 +177,20 @@ fn answer_text(updates: &[Update]) -> String {
 }
 
 #[test]
-fn pervue_runs_its_turns_as_agents_named_pervue() {
-    // The agent definitions live in per-turn workspaces, so nothing installed
-    // depends on these names, but they are what Pervue has always used.
+fn tabbeam_runs_its_turns_as_agents_named_tabbeam() {
+    // Agent definitions live only in per-turn workspaces, so no installed file
+    // depends on these names. Pin them here so changing TabBeam's application
+    // namespace is always an explicit, reviewed change.
     let fake = FakeGemini::install();
     collect(fake.adapter().send(request(None, false)));
     collect(fake.adapter().send(request(None, true)));
     let invocations = fake.invocations().concat();
-    assert!(invocations.contains("--agent pervue-text"), "{invocations}");
     assert!(
-        invocations.contains("--agent pervue-search"),
+        invocations.contains("--agent tabbeam-text"),
+        "{invocations}"
+    );
+    assert!(
+        invocations.contains("--agent tabbeam-search"),
         "{invocations}"
     );
 }

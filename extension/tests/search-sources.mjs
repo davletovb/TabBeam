@@ -376,7 +376,7 @@ function openView(variant, getSearch) {
     },
     /** @param {any} message */
     async sendMessage(message) {
-      if (message.type === "pervue.conversations.get") return { ok: true, value: await store.get(message.conversation_id) };
+      if (message.type === "tabbeam.conversations.get") return { ok: true, value: await store.get(message.conversation_id) };
       throw new Error("unexpected worker message");
     }
   };

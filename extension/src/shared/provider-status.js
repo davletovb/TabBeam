@@ -13,7 +13,7 @@
  *
  * The worker answers within {@link PROVIDER_STATUS_TIMEOUT_MS}.
  */
-export const PROVIDER_STATUS_MESSAGE = "pervue.provider-status";
+export const PROVIDER_STATUS_MESSAGE = "tabbeam.provider-status";
 
 /**
  * How long the worker waits for the host's answer. After that it answers with

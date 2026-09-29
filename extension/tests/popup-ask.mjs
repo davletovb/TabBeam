@@ -261,12 +261,12 @@ function hostEvent(event, payload = {}) {
 {
   // Enter asks one question over one port.
   const popup = openPopup();
-  const keydown = popup.ask("What is Pervue?");
+  const keydown = popup.ask("What is TabBeam?");
 
   assert.equal(keydown.defaultPrevented, true);
   assert.deepEqual(popup.connectInfos, [{ name: ASK_PORT_NAME }]);
   assert.deepEqual(popup.ports[0].messages, [
-    { type: "ask", text: "What is Pervue?" }
+    { type: "ask", text: "What is TabBeam?" }
   ]);
   assert.equal(popup.statusText, "Sending…");
   assert.equal(popup.statusState, "pending");

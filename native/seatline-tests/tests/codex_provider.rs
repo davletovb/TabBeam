@@ -3,7 +3,7 @@
 //! come out. It covers discovery and sign-in status, requests and streaming,
 //! cancellation, timeouts and failures, and how Codex is started (SEC-02). The
 //! adapter knows no conversations, so the tests that pin how an application maps
-//! its own to Codex threads belong to that application (Pervue's are in
+//! its own to Codex threads belong to that application (TabBeam's are in
 //! `test_provider`).
 
 mod support;

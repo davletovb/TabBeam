@@ -4,14 +4,14 @@ import { probeInstalledHost } from "../../scripts/installed-host-probe.mjs";
 
 const extensionId = process.argv[2];
 assert.match(extensionId ?? "", /^[a-p]{32}$/);
-const host = "/Library/Application Support/Pervue/pervue-host";
+const host = "/Library/Application Support/TabBeam/tabbeam-host";
 const manifest = JSON.parse(fs.readFileSync(
-  "/Library/Google/Chrome/NativeMessagingHosts/com.pervue.host.json", "utf8"
+  "/Library/Google/Chrome/NativeMessagingHosts/com.tabbeam.host.json", "utf8"
 ));
 const build = JSON.parse(fs.readFileSync(
-  "/Library/Application Support/Pervue/build-info.json", "utf8"
+  "/Library/Application Support/TabBeam/build-info.json", "utf8"
 ));
-assert.equal(manifest.name, "com.pervue.host");
+assert.equal(manifest.name, "com.tabbeam.host");
 assert.equal(manifest.path, host);
 assert.deepEqual(manifest.allowed_origins, [`chrome-extension://${extensionId}/`]);
 assert.equal(build.extension_id, extensionId);
@@ -19,7 +19,7 @@ assert.equal(build.architecture, "universal2");
 assert.match(build.version, /^\d+\.\d+\.\d+/);
 assert.match(build.source_commit, /^[0-9a-f]{40}$/);
 assert.ok(fs.statSync(host).isFile());
-assert.ok(fs.statSync("/Applications/Uninstall Pervue.app").isDirectory());
+assert.ok(fs.statSync("/Applications/Uninstall TabBeam.app").isDirectory());
 
 const { code, signal, stderr, events } = await probeInstalledHost(
   host,

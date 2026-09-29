@@ -15,7 +15,7 @@
  */
 
 export const RESUME_WINDOW_MS = 30 * 60_000;
-export const TAB_SESSIONS_KEY = "pervue.popup.tab-sessions";
+export const TAB_SESSIONS_KEY = "tabbeam.popup.tab-sessions";
 const MAX_TAB_SESSIONS = 50;
 
 /**

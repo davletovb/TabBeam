@@ -1,8 +1,8 @@
-//! The providers as Pervue serves them.
+//! The providers as TabBeam serves them.
 //!
 //! The adapters and the runtime [`Provider`] contract they implement live in
 //! `seatline-providers`, and know nothing of conversations. This module is
-//! Pervue's side: the [`ConversationProvider`] the request loop drives (a
+//! TabBeam's side: the [`ConversationProvider`] the request loop drives (a
 //! conversation the extension names, with its history and browser context),
 //! the registry of what an installed host serves, and the `fake` scaffold.
 //! [`crate::conversations::Conversations`] implements the first over the
@@ -45,7 +45,7 @@ pub struct SendRequest {
     pub native_search: bool,
     /// Whether provider-native state may outlive this turn.
     pub session_policy: SessionPolicy,
-    /// Start a new native session even when this Pervue conversation already
+    /// Start a new native session even when this TabBeam conversation already
     /// has one. The host uses this for search isolation.
     pub fresh_session: bool,
     /// Where the conversation layer tells the host which conversation this
@@ -56,7 +56,7 @@ pub struct SendRequest {
 /// The conversation a request serves. The host creates one per request and
 /// reads it when the response starts; the layer that owns conversation IDs
 /// fills it in. It replaces the conversation events providers used to send,
-/// which are Pervue's protocol vocabulary, not the runtime's.
+/// which are TabBeam's protocol vocabulary, not the runtime's.
 #[derive(Debug, Clone, Default)]
 pub struct ConversationSlot(Rc<RefCell<SlotState>>);
 
@@ -123,7 +123,7 @@ pub trait ConversationProvider {
 
     /// Removes what this adapter keeps for a deleted conversation
     /// (`conversation.forget`): its native-session mapping and, where the
-    /// adapter can prove the provider wrote it for Pervue, the provider's own
+    /// adapter can prove the provider wrote it for TabBeam, the provider's own
     /// transcript. A conversation it doesn't know completes: there is nothing
     /// to remove. An adapter that keeps nothing uses this default.
     fn forget(&self, conversation_id: &str) -> Box<dyn Exchange> {

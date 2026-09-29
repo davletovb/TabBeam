@@ -25,14 +25,14 @@ export const INVALID_CONTEXT = Object.freeze({
 export const HOST_START_FAILED = Object.freeze({
   code: "HOST_UNAVAILABLE",
   reason: "HOST_START_FAILED",
-  message: "Pervue's companion app couldn't start. Try again.",
+  message: "TabBeam's companion app couldn't start. Try again.",
   retryable: true
 });
 
 const HOST_DISCONNECTED = Object.freeze({
   code: "HOST_UNAVAILABLE",
   reason: "HOST_DISCONNECTED",
-  message: "Pervue lost its connection to the companion app. Try again.",
+  message: "TabBeam lost its connection to the companion app. Try again.",
   retryable: true
 });
 
@@ -46,7 +46,7 @@ const HOST_ERRORS_BY_LAST_ERROR = new Map(
       Object.freeze({
         code: "HOST_NOT_INSTALLED",
         reason: "NATIVE_HOST_NOT_FOUND",
-        message: "Pervue's companion app isn't installed. Install it, then try again.",
+        message: "TabBeam's companion app isn't installed. Install it, then try again.",
         retryable: false
       })
     ],
@@ -56,7 +56,7 @@ const HOST_ERRORS_BY_LAST_ERROR = new Map(
         code: "HOST_NOT_INSTALLED",
         reason: "NATIVE_HOST_NOT_REGISTERED",
         message:
-          "Pervue's companion app isn't set up for this browser. Reinstall it, then try again.",
+          "TabBeam's companion app isn't set up for this browser. Reinstall it, then try again.",
         retryable: false
       })
     ],

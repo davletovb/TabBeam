@@ -132,7 +132,7 @@ function showTitle() {
   const active = view.getConversationId();
   const current = conversations.items().find((item) => item.id === active);
   title.textContent = current?.title ?? "New conversation";
-  document.title = current ? `${current.title} — Pervue` : "Pervue — Full view";
+  document.title = current ? `${current.title} — TabBeam` : "TabBeam — Full view";
 }
 
 // Another view saved or deleted a conversation: keep the list current.

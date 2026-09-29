@@ -23,6 +23,15 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
+      # Temporary, for the Pervue -> TabBeam cutover: the setup page links to
+      # github.com/davletovb/tabbeam, which exists only once the repository is
+      # renamed. This warns without failing; remove it after the rename.
+      - name: Warn while the repository is not renamed
+        run: |
+          repo_name="$(printf '%s' "${GITHUB_REPOSITORY##*/}" | tr '[:upper:]' '[:lower:]')"
+          if [ "$repo_name" != "tabbeam" ]; then
+            echo "::warning title=Repository not renamed yet::The extension's setup page links to github.com/davletovb/tabbeam, which does not exist until this repository is renamed to TabBeam. Rename it before merging or distributing."
+          fi
       - uses: actions/setup-node@v5
         with:
           node-version: "22"
@@ -80,29 +89,29 @@ jobs:
           exit 1
           SH
           chmod +x "$RUNNER_TEMP/provider-bin/codex"
-          PERVUE_PROVIDER_PATH="$RUNNER_TEMP/provider-bin" node packaging/macos/verify.mjs abcdefghijklmnopabcdefghijklmnop
-          codesign --verify --strict '/Applications/Uninstall Pervue.app'
+          TABBEAM_PROVIDER_PATH="$RUNNER_TEMP/provider-bin" node packaging/macos/verify.mjs abcdefghijklmnopabcdefghijklmnop
+          codesign --verify --strict '/Applications/Uninstall TabBeam.app'
       - name: Verify fixed applet destination and reinstall
         shell: bash
         run: |
-          pkgutil --expand out/macos/*.pkg "$RUNNER_TEMP/pervue-expanded"
-          python3 - "$RUNNER_TEMP/pervue-expanded/PackageInfo" <<'PY'
+          pkgutil --expand out/macos/*.pkg "$RUNNER_TEMP/tabbeam-expanded"
+          python3 - "$RUNNER_TEMP/tabbeam-expanded/PackageInfo" <<'PY'
           import sys
           import xml.etree.ElementTree as ET
           relocate = ET.parse(sys.argv[1]).getroot().find('relocate')
           assert relocate is None or len(relocate) == 0, 'uninstaller bundle is relocatable'
           PY
-          sudo mv '/Applications/Uninstall Pervue.app' "$RUNNER_TEMP/Uninstall Pervue.app"
+          sudo mv '/Applications/Uninstall TabBeam.app' "$RUNNER_TEMP/Uninstall TabBeam.app"
           sudo installer -pkg out/macos/*.pkg -target /
-          test -d '/Applications/Uninstall Pervue.app'
-          sudo rm -rf "$RUNNER_TEMP/Uninstall Pervue.app"
+          test -d '/Applications/Uninstall TabBeam.app'
+          sudo rm -rf "$RUNNER_TEMP/Uninstall TabBeam.app"
       - name: Remove and verify owned files
         shell: bash
         run: |
-          sudo '/Library/Application Support/Pervue/uninstall.sh'
-          test ! -e '/Library/Application Support/Pervue/pervue-host'
-          test ! -e '/Library/Google/Chrome/NativeMessagingHosts/com.pervue.host.json'
-          test ! -e '/Applications/Uninstall Pervue.app'
+          sudo '/Library/Application Support/TabBeam/uninstall.sh'
+          test ! -e '/Library/Application Support/TabBeam/tabbeam-host'
+          test ! -e '/Library/Google/Chrome/NativeMessagingHosts/com.tabbeam.host.json'
+          test ! -e '/Applications/Uninstall TabBeam.app'
 
   windows-package:
     name: Windows package install, upgrade and removal
@@ -140,19 +149,19 @@ jobs:
       - name: Reject install-directory overrides
         shell: pwsh
         run: |
-          $installer = Get-ChildItem out/windows/Pervue-*-windows-x64.exe | Select-Object -First 1
-          $unsafe = Join-Path $env:RUNNER_TEMP 'pervue-unsafe-dir'
+          $installer = Get-ChildItem out/windows/TabBeam-*-windows-x64.exe | Select-Object -First 1
+          $unsafe = Join-Path $env:RUNNER_TEMP 'tabbeam-unsafe-dir'
           $setup = Start-Process -FilePath $installer.FullName `
             -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',"/DIR=$unsafe" `
             -Wait -PassThru
           if ($setup.ExitCode -eq 0) { throw "/DIR override unexpectedly succeeded" }
-          if (Test-Path -LiteralPath (Join-Path $unsafe 'pervue-host.exe')) {
+          if (Test-Path -LiteralPath (Join-Path $unsafe 'tabbeam-host.exe')) {
             throw "installer wrote the host to the overridden directory"
           }
       - name: Install and verify Chrome registration and npm discovery
         shell: pwsh
         run: |
-          $installer = Get-ChildItem out/windows/Pervue-*-windows-x64.exe | Select-Object -First 1
+          $installer = Get-ChildItem out/windows/TabBeam-*-windows-x64.exe | Select-Object -First 1
           $setup = Start-Process -FilePath $installer.FullName `
             -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-' `
             -Wait -PassThru
@@ -177,8 +186,8 @@ jobs:
       - name: Upgrade while the native host is running
         shell: pwsh
         run: |
-          $installer = Get-ChildItem out/windows/Pervue-*-windows-x64.exe | Select-Object -First 1
-          $marker = Join-Path $env:RUNNER_TEMP 'pervue-host-ready'
+          $installer = Get-ChildItem out/windows/TabBeam-*-windows-x64.exe | Select-Object -First 1
+          $marker = Join-Path $env:RUNNER_TEMP 'tabbeam-host-ready'
           Remove-Item $marker -Force -ErrorAction SilentlyContinue
           $node = (Get-Command node).Source
           $holder = Start-Process -FilePath $node `
@@ -204,11 +213,36 @@ jobs:
       - name: Uninstall and verify owned registration
         shell: pwsh
         run: |
-          $installDir = Join-Path $env:LOCALAPPDATA 'Programs\Pervue'
-          $stateDir = Join-Path $env:LOCALAPPDATA 'Pervue'
+          $installDir = Join-Path $env:LOCALAPPDATA 'Programs\TabBeam'
+          $stateDir = Join-Path $env:LOCALAPPDATA 'TabBeam'
           New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
           $sentinel = Join-Path $stateDir 'package-uninstall-must-preserve.txt'
           Set-Content -LiteralPath $sentinel -Value 'preserve'
+
+          # Before uninstalling, the installer must have registered the key that
+          # is checked for removal below; otherwise that check proves nothing.
+          $hive = [Microsoft.Win32.RegistryHive]::CurrentUser
+          $uninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{E302F901-5CE0-4244-963F-875FD08058B1}_is1'
+          $registered = $false
+          foreach ($view in @(
+            [Microsoft.Win32.RegistryView]::Registry64,
+            [Microsoft.Win32.RegistryView]::Registry32
+          )) {
+            $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey($hive, $view)
+            try {
+              $key = $base.OpenSubKey($uninstallKey)
+              if ($null -ne $key) {
+                $key.Dispose()
+                $registered = $true
+              }
+            }
+            finally {
+              $base.Dispose()
+            }
+          }
+          if (-not $registered) {
+            throw "installer did not register its uninstall key: $uninstallKey"
+          }
 
           $uninstaller = Join-Path $installDir 'unins000.exe'
           if (-not (Test-Path -LiteralPath $uninstaller)) { throw "uninstaller not found" }
@@ -217,15 +251,13 @@ jobs:
             -Wait -PassThru
           if ($remove.ExitCode -ne 0) { throw "uninstaller failed with exit code $($remove.ExitCode)" }
           if (Test-Path -LiteralPath $installDir) {
-            throw "Pervue install directory still exists"
+            throw "TabBeam install directory still exists"
           }
           if (-not (Test-Path -LiteralPath $sentinel)) {
-            throw "uninstall removed Pervue runtime state"
+            throw "uninstall removed TabBeam runtime state"
           }
 
-          $hive = [Microsoft.Win32.RegistryHive]::CurrentUser
-          $nativeKey = 'Software\Google\Chrome\NativeMessagingHosts\com.pervue.host'
-          $uninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{D7A1D4E8-774F-4E2B-A745-04B43E51A93C}_is1'
+          $nativeKey = 'Software\Google\Chrome\NativeMessagingHosts\com.tabbeam.host'
           foreach ($view in @(
             [Microsoft.Win32.RegistryView]::Registry64,
             [Microsoft.Win32.RegistryView]::Registry32
@@ -265,7 +297,7 @@ jobs:
       - name: Build native host for contract conformance
         run: cargo build --manifest-path native/Cargo.toml --locked
       - name: Validate built host against golden protocol
-        run: npm --prefix scripts run validate:host -- --host native/target/debug/pervue-host
+        run: npm --prefix scripts run validate:host -- --host native/target/debug/tabbeam-host
 
   runtime-independence:
     name: Runtime independence
@@ -280,7 +312,7 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
-      - name: The provider runtime does not depend on Pervue
+      - name: The provider runtime does not depend on TabBeam
         run: node scripts/check-runtime-independence.mjs
 
   native-msrv:

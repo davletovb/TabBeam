@@ -61,12 +61,12 @@ chrome.runtime.onInstalled.addListener(async () => {
   await chrome.contextMenus.removeAll();
   chrome.contextMenus.create({
     id: MENU_SELECTION_ID,
-    title: "Ask Pervue about selection",
+    title: "Ask TabBeam about selection",
     contexts: ["selection"]
   });
   chrome.contextMenus.create({
     id: MENU_PAGE_ID,
-    title: "Ask Pervue about this page",
+    title: "Ask TabBeam about this page",
     contexts: ["page"]
   });
 });
@@ -83,7 +83,7 @@ chrome.runtime.onMessage.addListener(
     /** @type {any} */ sender,
     /** @type {(response: any) => void} */ sendResponse
   ) => {
-    if (message?.type === "pervue.health") {
+    if (message?.type === "tabbeam.health") {
       sendResponse({
         ok: true,
         surface: "background",
@@ -136,7 +136,7 @@ chrome.runtime.onMessage.addListener(
 );
 
 chrome.runtime.onConnect.addListener(
-  (/** @type {PervueChromeRuntimePort} */ port) => {
+  (/** @type {TabBeamChromeRuntimePort} */ port) => {
     if (port.name !== ASK_PORT_NAME) {
       return;
     }

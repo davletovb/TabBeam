@@ -6,18 +6,18 @@ import {
   utf8ByteLength
 } from "../shared/limits.js";
 
-export const CONTEXT_CAPTURE_MESSAGE = "pervue.context.capture";
+export const CONTEXT_CAPTURE_MESSAGE = "tabbeam.context.capture";
 const CONTENT_MESSAGES = Object.freeze({
-  selection: "pervue.selection.read",
-  page: "pervue.page.read"
+  selection: "tabbeam.selection.read",
+  page: "tabbeam.page.read"
 });
 
 const ERRORS = Object.freeze({
-  PAGE_ACCESS_DENIED: "Pervue cannot access this tab. Allow site access and try again.",
+  PAGE_ACCESS_DENIED: "TabBeam cannot access this tab. Allow site access and try again.",
   PAGE_NOT_SCRIPTABLE: "This page does not support context capture.",
   SELECTION_UNAVAILABLE: "Select some text on the page first.",
   PAGE_EXTRACTION_FAILED: "No readable text was found on this page.",
-  CONTEXT_TOO_LARGE: "The page returned more context than Pervue can accept."
+  CONTEXT_TOO_LARGE: "The page returned more context than TabBeam can accept."
 });
 
 /** @param {keyof typeof ERRORS} reason @param {"denied" | "unsupported" | "granted"} permission */

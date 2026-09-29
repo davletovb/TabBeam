@@ -6,7 +6,7 @@
 //! prompt text, page context, unknown payload members, raw frame bytes, or
 //! anything a provider wrote.
 //!
-//! A record copies only identifiers Pervue made itself (SEC-02): request IDs
+//! A record copies only identifiers TabBeam made itself (SEC-02): request IDs
 //! in the shape the extension gives every request ([`request_id`]), and the
 //! providers the host serves and conversations it created ([`issued_id`]).
 //! Any other identifier a request carries is written as [`REDACTED`]. So a

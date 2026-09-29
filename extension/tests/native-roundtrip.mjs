@@ -19,17 +19,17 @@ import {
 } from "../src/shared/performance.js";
 import { MockEvent } from "./support/mock-port.mjs";
 
-// This test uses the built pervue-host, not a mock of its JSON router or
+// This test uses the built tabbeam-host, not a mock of its JSON router or
 // Native Messaging framing. Browser-only ports and DOM elements are in memory.
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const hostPath = process.argv[2] ?? path.join(root, "native/target/debug/pervue-host");
+const hostPath = process.argv[2] ?? path.join(root, "native/target/debug/tabbeam-host");
 const origin = "chrome-extension://abcdefghijklmnopabcdefghijklmnop/";
 const littleEndian = new Uint8Array(new Uint32Array([1]).buffer)[0] === 1;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
 // An empty provider search path: whatever this machine has installed, the
 // host finds no Codex.
-const noProviders = fs.mkdtempSync(path.join(os.tmpdir(), "pervue-roundtrip-"));
+const noProviders = fs.mkdtempSync(path.join(os.tmpdir(), "tabbeam-roundtrip-"));
 
 /** @param {Uint8Array} bytes */
 function frame(bytes) {
@@ -44,7 +44,7 @@ class HostPort {
   constructor() {
     this.child = spawn(hostPath, [origin], {
       stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, PERVUE_PROVIDER_PATH: noProviders }
+      env: { ...process.env, TABBEAM_PROVIDER_PATH: noProviders }
     });
     this.onMessage = new MockEvent();
     this.onDisconnect = new MockEvent();
@@ -236,7 +236,7 @@ const store = createConversationStore({
 const inFlight = new Set();
 const manager = createNativeConnectionManager({
   connectNative(name) {
-    assert.equal(name, "com.pervue.host");
+    assert.equal(name, "com.tabbeam.host");
     assert.equal(native, undefined, "the host should be reused");
     native = new HostPort();
     return native;
@@ -309,7 +309,7 @@ function ask(text) {
 
 try {
   globalThis.performance.clearMeasures();
-  ask("What is Pervue?");
+  ask("What is TabBeam?");
   await until(() => events.at(-1)?.event === "response.completed");
   assert.deepEqual(
     lifecycle.map((event) => event.event),

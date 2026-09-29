@@ -1,7 +1,7 @@
-# Pervue Protocol v1 — Errors and Provider Capabilities
+# TabBeam Protocol v1 — Errors and Provider Capabilities
 
 **Status:** Frozen for implementation (DOC-02)  
-**Protocol:** Pervue Native Protocol v1  
+**Protocol:** TabBeam Native Protocol v1  
 **Scope:** Normalized application error taxonomy, provider-status vocabulary, and provider capability semantics.
 
 This document defines the provider-neutral values consumed by the extension and emitted by the native host. Raw provider errors MAY be retained as diagnostic metadata, but browser UI logic MUST branch only on the normalized fields defined here.
@@ -100,13 +100,13 @@ Retryability is reason-dependent:
 The Codex adapter reports `WORKSPACE_UNAVAILABLE` when the directory it runs Codex in can't be created, or other users could change it (SEC-02). It isn't retryable until the directory's owner or permissions change.
 
 ### `SEARCH_FAILED`
-The user requested web search, but Pervue could not start a supported native-search turn.
+The user requested web search, but TabBeam could not start a supported native-search turn.
 
 Current reasons:
 - `NATIVE_SEARCH_UNSUPPORTED` — the selected AI provider does not expose authenticated native web search.
-- `SEARCH_WITH_CONTEXT_UNSUPPORTED` — search was requested together with browser context. Pervue currently refuses that combination so attacker-controlled page text never gains live network access.
-- `NATIVE_SEARCH_CONFIGURATION_UNSAFE` — provider-local configuration would enable additional tool surfaces Pervue cannot safely bound for a native-search turn.
-- `NATIVE_SEARCH_NO_SOURCES` — the provider completed a search turn without any usable normalized sources. Pervue fails the turn instead of silently presenting an ungrounded answer.
+- `SEARCH_WITH_CONTEXT_UNSUPPORTED` — search was requested together with browser context. TabBeam currently refuses that combination so attacker-controlled page text never gains live network access.
+- `NATIVE_SEARCH_CONFIGURATION_UNSAFE` — provider-local configuration would enable additional tool surfaces TabBeam cannot safely bound for a native-search turn.
+- `NATIVE_SEARCH_NO_SOURCES` — the provider completed a search turn without any usable normalized sources. TabBeam fails the turn instead of silently presenting an ungrounded answer.
 
 Provider-native search runs inside the selected provider turn. Authentication, rate-limit, timeout, cancellation, and provider-service failures therefore keep their ordinary provider/request error categories rather than being reclassified as search-backend failures.
 
@@ -184,7 +184,7 @@ Default retryability: **false** unless the implementation explicitly knows the c
 4. The extension MUST NOT branch on `message` or raw provider metadata.
 5. Unknown provider failures map to `PROVIDER_FAILED`, not `INTERNAL_ERROR`.
 6. `SEARCH_FAILED` is reserved for search-mode capability/safety/grounding failures such as `NATIVE_SEARCH_UNSUPPORTED`, `SEARCH_WITH_CONTEXT_UNSUPPORTED`, `NATIVE_SEARCH_CONFIGURATION_UNSAFE`, or `NATIVE_SEARCH_NO_SOURCES`; provider service/authentication/rate-limit failures keep their ordinary provider/request categories.
-7. `INTERNAL_ERROR` is reserved for failures inside Pervue's own host/runtime where no more specific category applies.
+7. `INTERNAL_ERROR` is reserved for failures inside TabBeam's own host/runtime where no more specific category applies.
 8. Cancellation of a target request MUST terminate that target with `REQUEST_CANCELLED`.
 9. Unsupported versions, methods, fields, or payload shape errors MUST map to `INVALID_REQUEST`.
 
@@ -245,7 +245,7 @@ The v1 capability keys are:
 | `streaming` | Provider can emit incremental response chunks through the adapter. |
 | `continuation` | Provider supports safe continuation of an existing provider-side/session conversation. |
 | `web_search` | Provider can perform web-grounded retrieval through its authenticated native runtime. |
-| `page_context` | Adapter can accept browser page/selection context supplied by Pervue. |
+| `page_context` | Adapter can accept browser page/selection context supplied by TabBeam. |
 | `attachments` | Adapter can accept supported non-text attachments. |
 | `model_selection` | Adapter passes a chosen model (`conversation.send` `model`) to the provider. It MAY suggest models in `status.models`. |
 | `cancellation` | In-flight provider work can be actively cancelled rather than merely ignored. |

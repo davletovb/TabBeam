@@ -17,6 +17,15 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v5
+      # Temporary safety belt for the Pervue -> TabBeam cutover. Remove once
+      # the repository rename has landed and the first TabBeam release is cut.
+      - name: Verify TabBeam repository rename
+        shell: pwsh
+        run: |
+          $repoName = ($env:GITHUB_REPOSITORY -split '/')[-1]
+          if ($repoName.ToLowerInvariant() -ne 'tabbeam') {
+            throw 'Rename this repository to TabBeam before creating a TabBeam release candidate.'
+          }
       - uses: actions/cache@v4
         with:
           path: |
@@ -36,13 +45,13 @@ jobs:
           if (-not $env:PFX_BASE64 -or -not $env:PFX_PASSWORD) {
             throw "Windows code-signing secrets are required"
           }
-          $pfx = Join-Path $env:RUNNER_TEMP 'pervue-signing.pfx'
+          $pfx = Join-Path $env:RUNNER_TEMP 'tabbeam-signing.pfx'
           [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:PFX_BASE64))
           try {
             $password = ConvertTo-SecureString $env:PFX_PASSWORD -AsPlainText -Force
             $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password
             if (-not $cert.Thumbprint) { throw "code-signing certificate import failed" }
-            "PERVUE_SIGN_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
+            "TABBEAM_SIGN_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
           }
           finally {
             Remove-Item -LiteralPath $pfx -Force -ErrorAction SilentlyContinue
@@ -53,21 +62,21 @@ jobs:
           EXTENSION_ID: ${{ inputs.extension_id }}
         run: |
           $signtool = (Get-Command signtool.exe -ErrorAction Stop).Source
-          $env:PERVUE_WINDOWS_SIGN_COMMAND = (
-            '"' + $signtool + '" sign /sha1 ' + $env:PERVUE_SIGN_THUMBPRINT +
+          $env:TABBEAM_WINDOWS_SIGN_COMMAND = (
+            '"' + $signtool + '" sign /sha1 ' + $env:TABBEAM_SIGN_THUMBPRINT +
             ' /fd sha256 /tr http://timestamp.digicert.com /td sha256 ' + '$f'
           )
           packaging/windows/build.ps1 -ExtensionId $env:EXTENSION_ID
       - name: Verify Authenticode signature
         shell: pwsh
         run: |
-          $installer = Get-ChildItem out/windows/Pervue-*-windows-x64.exe | Select-Object -First 1
+          $installer = Get-ChildItem out/windows/TabBeam-*-windows-x64.exe | Select-Object -First 1
           $signature = Get-AuthenticodeSignature -LiteralPath $installer.FullName
           if ($signature.Status -ne 'Valid') {
             throw "installer signature is $($signature.Status): $($signature.StatusMessage)"
           }
       - uses: actions/upload-artifact@v4
         with:
-          name: pervue-windows-x64-${{ github.sha }}
-          path: out/windows/Pervue-*-windows-x64.exe
+          name: tabbeam-windows-x64-${{ github.sha }}
+          path: out/windows/TabBeam-*-windows-x64.exe
           if-no-files-found: error

@@ -12,28 +12,28 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use pervue_host::conversations::{Conversations, Durability, SessionStore};
-use pervue_host::diagnostics::Diagnostics;
-use pervue_host::framing;
-use pervue_host::host;
-use pervue_host::providers::claude::Claude;
-use pervue_host::providers::codex::{Codex, Limits};
-use pervue_host::providers::gemini::Gemini;
-use pervue_host::providers::grok::Grok;
-use pervue_host::providers::{ConversationProvider, Providers};
 use seatline_fake_provider::harness::{self, Fixtures};
 #[allow(unused_imports)]
 pub use seatline_fake_provider::harness::{PROMPT_STOP_GRACE, TEST_LIMITS};
 use serde_json::Value;
+use tabbeam_host::conversations::{Conversations, Durability, SessionStore};
+use tabbeam_host::diagnostics::Diagnostics;
+use tabbeam_host::framing;
+use tabbeam_host::host;
+use tabbeam_host::providers::claude::Claude;
+use tabbeam_host::providers::codex::{Codex, Limits};
+use tabbeam_host::providers::gemini::Gemini;
+use tabbeam_host::providers::grok::Grok;
+use tabbeam_host::providers::{ConversationProvider, Providers};
 
-pub const PROVIDER: &str = env!("CARGO_BIN_EXE_pervue-fake-provider");
+pub const PROVIDER: &str = env!("CARGO_BIN_EXE_tabbeam-fake-provider");
 pub const FIXTURES: Fixtures = Fixtures::new(
     PROVIDER,
     env!("CARGO_TARGET_TMPDIR"),
-    pervue_host::NAMESPACE,
+    tabbeam_host::NAMESPACE,
 );
 
-/// A directory holding a fake `codex`, served the way Pervue serves it:
+/// A directory holding a fake `codex`, served the way TabBeam serves it:
 /// conversations over the adapter, mapped to Codex threads in a directory
 /// beside the workspace.
 pub struct FakeCodex(harness::FakeCodex);
@@ -85,7 +85,7 @@ impl FakeCodex {
     }
 }
 
-/// A directory holding a fake `claude`, served the way Pervue serves it:
+/// A directory holding a fake `claude`, served the way TabBeam serves it:
 /// conversations over the adapter, mapped to Claude sessions in a directory
 /// beside the workspace.
 pub struct FakeClaude(harness::FakeClaude);
@@ -145,7 +145,7 @@ impl FakeClaude {
     }
 }
 
-/// A directory holding a fake `agy`, served the way Pervue serves it:
+/// A directory holding a fake `agy`, served the way TabBeam serves it:
 /// conversations over the adapter.
 pub struct FakeGemini(harness::FakeGemini);
 
@@ -172,7 +172,7 @@ impl FakeGemini {
     }
 }
 
-/// A directory holding a fake `grok`, served the way Pervue serves it:
+/// A directory holding a fake `grok`, served the way TabBeam serves it:
 /// conversations over the adapter.
 pub struct FakeGrok(harness::FakeGrok);
 

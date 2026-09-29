@@ -1,4 +1,4 @@
-//! Pervue's conversations over the Codex adapter, against a fake `codex` (this
+//! TabBeam's conversations over the Codex adapter, against a fake `codex` (this
 //! crate's binary, linked under that name): how a conversation maps to a Codex
 //! thread, how a lost one is rebuilt, what the host does with browser context,
 //! and what deleting a conversation removes. The adapter's own behaviour (its
@@ -11,17 +11,17 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use pervue_host::conversation::{
-    BrowserContext, BrowserContextMode, BrowserPageContext, HistoryMessage, Role,
-};
-use pervue_host::conversations::Conversations;
-use pervue_host::providers::codex::{Codex, Limits};
-use pervue_host::providers::{
-    ConversationProvider, ConversationSlot, Exchange, SendRequest, Timeouts, Update,
-};
 use seatline_core::protocol::{Capability, ErrorCode};
 use seatline_core::turn::SessionPolicy;
 use support::{FakeCodex, PacedInput, TEST_LIMITS, names, serve};
+use tabbeam_host::conversation::{
+    BrowserContext, BrowserContextMode, BrowserPageContext, HistoryMessage, Role,
+};
+use tabbeam_host::conversations::Conversations;
+use tabbeam_host::providers::codex::{Codex, Limits};
+use tabbeam_host::providers::{
+    ConversationProvider, ConversationSlot, Exchange, SendRequest, Timeouts, Update,
+};
 
 const DEADLINE: Duration = Duration::from_secs(20);
 
@@ -99,7 +99,7 @@ fn ask(text: &str) -> SendRequest {
         native_search: false,
         session_policy: SessionPolicy::Persistent,
         fresh_session: false,
-        conversation: pervue_host::providers::ConversationSlot::default(),
+        conversation: tabbeam_host::providers::ConversationSlot::default(),
     }
 }
 
@@ -633,7 +633,7 @@ fn rollout(path: &std::path::Path, thread: &str, cwd: &std::path::Path) {
 }
 
 #[test]
-fn forget_removes_the_mapping_and_only_pervues_codex_sessions() {
+fn forget_removes_the_mapping_and_only_tabbeams_codex_sessions() {
     let codex = FakeCodex::install("answers", "signed-in");
     let home = codex.dir.join("forget-codex-home");
     let adapter = codex.adapter_with_env([
@@ -656,7 +656,7 @@ fn forget_removes_the_mapping_and_only_pervues_codex_sessions() {
     let other = day.join("rollout-2026-09-26T12-00-00-thread-other.jsonl");
     rollout(&ours, &thread, &workspace(&codex));
     rollout(&archived, &thread, &workspace(&codex));
-    // The same thread ID, but run somewhere else: not Pervue's to remove.
+    // The same thread ID, but run somewhere else: not TabBeam's to remove.
     rollout(&elsewhere, &thread, std::path::Path::new("/somewhere/else"));
     rollout(&other, "thread-other", &workspace(&codex));
 

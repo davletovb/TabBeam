@@ -4,7 +4,7 @@ import {
   sanitizedHostReady
 } from "../shared/diagnostics.js";
 
-export const DIAGNOSTICS_STORAGE_KEY = "pervue.diagnostics";
+export const DIAGNOSTICS_STORAGE_KEY = "tabbeam.diagnostics";
 
 /** @param {string} extensionVersion */
 function emptySnapshot(extensionVersion) {

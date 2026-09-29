@@ -5,9 +5,9 @@ export const PERFORMANCE_BUDGETS_MS = Object.freeze({
 });
 
 export const PERFORMANCE_MARKS = Object.freeze({
-  popup_input_ready: "pervue.popup.input-ready",
-  native_connection: "pervue.native.connection",
-  first_response_chunk: "pervue.response.first-chunk"
+  popup_input_ready: "tabbeam.popup.input-ready",
+  native_connection: "tabbeam.native.connection",
+  first_response_chunk: "tabbeam.response.first-chunk"
 });
 
 /**

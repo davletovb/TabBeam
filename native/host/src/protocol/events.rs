@@ -97,9 +97,9 @@ pub struct HostCapabilities {
 }
 
 impl HostCapabilities {
-    /// What Pervue offers: page context wherever the provider can run a
+    /// What TabBeam offers: page context wherever the provider can run a
     /// tool-free turn, and no attachments yet.
-    pub const PERVUE: Self = Self {
+    pub const TABBEAM: Self = Self {
         page_context: Capability::Supported,
         attachments: Capability::Unsupported,
     };
@@ -171,7 +171,7 @@ impl ProviderState {
 }
 
 /// Protocol-v1 error body. Runtime failures are converted to this host-owned
-/// shape so provider-runtime crates never carry Pervue wording.
+/// shape so provider-runtime crates never carry TabBeam wording.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct ErrorBody<'a> {
     pub code: ErrorCode,
@@ -376,7 +376,7 @@ mod tests {
     fn the_wire_capability_set_keeps_its_v1_order() {
         let wire = serde_json::to_string(&Capabilities::new(
             runtime_capabilities(Capability::Supported),
-            HostCapabilities::PERVUE,
+            HostCapabilities::TABBEAM,
         ))
         .unwrap();
         assert_eq!(
@@ -392,7 +392,7 @@ mod tests {
                 runtime_capabilities(isolation),
                 HostCapabilities {
                     page_context: host,
-                    ..HostCapabilities::PERVUE
+                    ..HostCapabilities::TABBEAM
                 },
             )
             .page_context
@@ -436,7 +436,7 @@ mod tests {
                 models: std::borrow::Cow::Borrowed(&[]),
                 sign_in: Some(seatline_core::turn::SignInClassification::ApiKey),
             },
-            HostCapabilities::PERVUE,
+            HostCapabilities::TABBEAM,
         );
         let wire = serde_json::to_string(&state).unwrap();
         assert!(
@@ -516,12 +516,12 @@ mod tests {
         }];
         let mut state = crate::providers::fake::STATUS;
         let without =
-            serde_json::to_value(ProviderState::new(state.clone(), HostCapabilities::PERVUE))
+            serde_json::to_value(ProviderState::new(state.clone(), HostCapabilities::TABBEAM))
                 .unwrap();
         assert!(without.get("models").is_none());
         state.models = std::borrow::Cow::Borrowed(MODELS);
         let with =
-            serde_json::to_value(ProviderState::new(state, HostCapabilities::PERVUE)).unwrap();
+            serde_json::to_value(ProviderState::new(state, HostCapabilities::TABBEAM)).unwrap();
         assert_eq!(
             with["models"],
             serde_json::json!([{"id": "sonnet", "label": "Sonnet (latest)"}])

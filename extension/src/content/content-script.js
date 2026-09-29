@@ -151,7 +151,7 @@ chrome.runtime.onMessage.addListener(
     /** @type {any} */ _sender,
     /** @type {(response: any) => void} */ sendResponse
   ) => {
-    if (message?.type === "pervue.selection.read") {
+    if (message?.type === "tabbeam.selection.read") {
       const selection = selectedText();
       if (selection.trim() === "") {
         sendResponse({ ok: false, reason: "SELECTION_UNAVAILABLE" });
@@ -160,11 +160,11 @@ chrome.runtime.onMessage.addListener(
       }
       return;
     }
-    if (message?.type === "pervue.page.read") {
+    if (message?.type === "tabbeam.page.read") {
       sendResponse(readablePage());
       return;
     }
-    if (message?.type === "pervue.ping") {
+    if (message?.type === "tabbeam.ping") {
       sendResponse({
         ok: true,
         surface: "content"

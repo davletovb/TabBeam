@@ -8,7 +8,7 @@
  * choice is never silently dropped.
  */
 
-export const MODEL_PREFERENCES_KEY = "pervue.models";
+export const MODEL_PREFERENCES_KEY = "tabbeam.models";
 
 /** The host's rule for a model ID: it reaches a provider's command line. */
 export const MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$/;

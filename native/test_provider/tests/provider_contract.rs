@@ -1,17 +1,17 @@
 //! Provider-neutral contract cases run unchanged against all four providers as
-//! Pervue serves them (TST-10): a conversation the extension names, over an
+//! TabBeam serves them (TST-10): a conversation the extension names, over an
 //! adapter. The adapters themselves meet the runtime's own contract in
-//! `seatline-tests`; this is what Pervue's conversation layer adds to it.
+//! `seatline-tests`; this is what TabBeam's conversation layer adds to it.
 
 mod support;
 
 use seatline_core::turn::SessionPolicy;
 use std::time::{Duration, Instant};
 
-use pervue_host::conversation::{HistoryMessage, Role};
-use pervue_host::protocol::events::{Authentication, Availability, Capability};
-use pervue_host::providers::{ConversationProvider, Exchange, SendRequest, Update};
 use support::{FakeClaude, FakeCodex, FakeGemini, FakeGrok};
+use tabbeam_host::conversation::{HistoryMessage, Role};
+use tabbeam_host::protocol::events::{Authentication, Availability, Capability};
+use tabbeam_host::providers::{ConversationProvider, Exchange, SendRequest, Update};
 
 const DEADLINE: Duration = Duration::from_secs(20);
 
@@ -36,7 +36,7 @@ fn ask(provider: &dyn ConversationProvider, text: &str) -> SendRequest {
             SessionPolicy::Ephemeral
         },
         fresh_session: false,
-        conversation: pervue_host::providers::ConversationSlot::default(),
+        conversation: tabbeam_host::providers::ConversationSlot::default(),
     }
 }
 
@@ -145,7 +145,7 @@ fn common_contract(provider: &dyn ConversationProvider) {
     );
 
     // The follow-up continues that conversation, whichever way the provider
-    // does it: natively, or from the dialogue Pervue replays.
+    // does it: natively, or from the dialogue TabBeam replays.
     let second_request = SendRequest {
         conversation_id: Some(conversation_id.clone()),
         history: vec![
@@ -167,7 +167,7 @@ fn common_contract(provider: &dyn ConversationProvider) {
     assert_eq!(second.first(), Some(&Update::Started));
     assert_eq!(second.last(), Some(&Update::Completed));
 
-    // A conversation ID that Pervue never made, and that could be taken for
+    // A conversation ID that TabBeam never made, and that could be taken for
     // an option or a path, is refused without running anything.
     let unknown = SendRequest {
         conversation_id: Some("--latest".to_owned()),

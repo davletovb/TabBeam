@@ -1,17 +1,17 @@
 [package]
-name = "pervue-host"
-description = "Pervue Chrome Native Messaging host"
+name = "tabbeam-host"
+description = "TabBeam Chrome Native Messaging host"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
 [lib]
-name = "pervue_host"
+name = "tabbeam_host"
 path = "src/lib.rs"
 
 [[bin]]
-name = "pervue-host"
+name = "tabbeam-host"
 path = "src/main.rs"
 
 [dependencies]

@@ -1,7 +1,7 @@
 import { PROVIDER_STATUS_MESSAGE } from "./provider-status.js";
 import { DEFAULT_PROVIDER_ID, USER_PROVIDERS, providerLabel } from "./providers.js";
 
-export const PROVIDER_STORAGE_KEY = "pervue.provider";
+export const PROVIDER_STORAGE_KEY = "tabbeam.provider";
 
 /**
  * @typedef {{

@@ -1,11 +1,11 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use pervue_host::diagnostics::Diagnostics;
-use pervue_host::framing;
-use pervue_host::host;
-use pervue_host::limits::MAX_FRAME_SIZE;
-use pervue_host::providers::Providers;
+use tabbeam_host::diagnostics::Diagnostics;
+use tabbeam_host::framing;
+use tabbeam_host::host;
+use tabbeam_host::limits::MAX_FRAME_SIZE;
+use tabbeam_host::providers::Providers;
 
 // Treats the input as one request frame and runs it through the host: request
 // validation, routing, event emission, and diagnostics. Whatever the request

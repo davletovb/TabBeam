@@ -27,11 +27,11 @@ const INVALID_MODEL = Object.freeze({
 });
 const INVALID_SEARCH = Object.freeze({
   code: "INVALID_REQUEST", reason: "INVALID_PAYLOAD",
-  message: "Pervue couldn't send that question. Try again.", retryable: false
+  message: "TabBeam couldn't send that question. Try again.", retryable: false
 });
 const SEARCH_WITH_CONTEXT = Object.freeze({
   code: "SEARCH_FAILED", reason: "SEARCH_WITH_CONTEXT_UNSUPPORTED",
-  message: "Pervue won't combine web search with browser context yet. Choose No context or turn off Search.",
+  message: "TabBeam won't combine web search with browser context yet. Choose No context or turn off Search.",
   retryable: false
 });
 const STORAGE_FAILED = Object.freeze({
@@ -115,7 +115,7 @@ export function serveConversationAskPort(port, options) {
           cancelFailed({
             code: "HOST_UNAVAILABLE",
             reason: "HOST_DISCONNECTED",
-            message: "Pervue lost its connection to the companion app.",
+            message: "TabBeam lost its connection to the companion app.",
             retryable: true
           });
         }
@@ -124,7 +124,7 @@ export function serveConversationAskPort(port, options) {
       cancelFailed({
         code: "HOST_UNAVAILABLE",
         reason: "HOST_START_FAILED",
-        message: "Pervue couldn't send the stop request.",
+        message: "TabBeam couldn't send the stop request.",
         retryable: true
       });
     }
