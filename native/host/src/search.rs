@@ -1,6 +1,6 @@
 //! Pervue's side of web search: the request carries search intent, and the
 //! provider's own search does the rest. Normalizing what the provider returns
-//! belongs to the runtime ([`runtime_core::search`]).
+//! belongs to the runtime ([`seatline_core::search`]).
 
 /// Validated search intent carried by `conversation.send`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -11,7 +11,7 @@ pub const PROVIDER_BACKEND_ID: &str = "provider";
 
 #[cfg(test)]
 mod tests {
-    use runtime_core::search::valid_source_url;
+    use seatline_core::search::valid_source_url;
 
     /// The host accepts only what the browser also accepts, so a source it
     /// counts toward grounding is one the extension keeps.

@@ -16,9 +16,9 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::Duration;
 
-use provider_runtime_scheduler::{EndReason, Event, Supervisor, TurnId};
-use runtime_core::exchange::{Exchange, Timeouts, Update};
-use runtime_core::turn::{Namespace, Turn as TurnRequest};
+use seatline_core::exchange::{Exchange, Timeouts, Update};
+use seatline_core::turn::{Namespace, Turn as TurnRequest};
+use seatline_scheduler::{EndReason, Event, Supervisor, TurnId};
 
 pub trait TurnFactory: 'static {
     /// Construct one provider exchange. This runs on the service polling
@@ -280,7 +280,7 @@ mod tests {
     use std::collections::VecDeque;
     use std::time::Instant;
 
-    use runtime_core::exchange::Update;
+    use seatline_core::exchange::Update;
 
     use super::*;
 
@@ -321,13 +321,13 @@ mod tests {
         let mut turn = runtime
             .start_turn(TurnRequest {
                 system: None,
-                messages: vec![runtime_core::turn::Message {
-                    role: runtime_core::turn::Role::User,
+                messages: vec![seatline_core::turn::Message {
+                    role: seatline_core::turn::Role::User,
                     text: "hello".to_owned(),
                 }],
                 model: None,
-                tools: runtime_core::turn::ToolPolicy::None,
-                session: runtime_core::turn::SessionPolicy::Ephemeral,
+                tools: seatline_core::turn::ToolPolicy::None,
+                session: seatline_core::turn::SessionPolicy::Ephemeral,
                 continuation: None,
                 cleanup_group: None,
                 check_sign_in: false,
@@ -388,13 +388,13 @@ mod tests {
         let turn = runtime
             .start_turn(TurnRequest {
                 system: None,
-                messages: vec![runtime_core::turn::Message {
-                    role: runtime_core::turn::Role::User,
+                messages: vec![seatline_core::turn::Message {
+                    role: seatline_core::turn::Role::User,
                     text: "hello".to_owned(),
                 }],
                 model: None,
-                tools: runtime_core::turn::ToolPolicy::None,
-                session: runtime_core::turn::SessionPolicy::Ephemeral,
+                tools: seatline_core::turn::ToolPolicy::None,
+                session: seatline_core::turn::SessionPolicy::Ephemeral,
                 continuation: None,
                 cleanup_group: None,
                 check_sign_in: false,
@@ -451,13 +451,13 @@ mod tests {
     fn hello() -> TurnRequest {
         TurnRequest {
             system: None,
-            messages: vec![runtime_core::turn::Message {
-                role: runtime_core::turn::Role::User,
+            messages: vec![seatline_core::turn::Message {
+                role: seatline_core::turn::Role::User,
                 text: "hello".to_owned(),
             }],
             model: None,
-            tools: runtime_core::turn::ToolPolicy::None,
-            session: runtime_core::turn::SessionPolicy::Ephemeral,
+            tools: seatline_core::turn::ToolPolicy::None,
+            session: seatline_core::turn::SessionPolicy::Ephemeral,
             continuation: None,
             cleanup_group: None,
             check_sign_in: false,

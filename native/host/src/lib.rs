@@ -2,7 +2,7 @@
 //!
 //! The host owns Chrome Native Messaging framing and protocol-v1 encoding.
 //! It validates browser requests, applies product policy, and routes provider
-//! work through the reusable `runtime-core` primitives. Native Messaging is
+//! work through the reusable `seatline-core` primitives. Native Messaging is
 //! deliberately host-owned under ADR-0002; it is not part of the shared
 //! provider runtime boundary.
 
@@ -28,7 +28,7 @@ pub const NAMESPACE: &str = "pervue";
 /// The directories Pervue's provider adapters use.
 pub fn layout() -> providers::Layout {
     providers::Layout::new(
-        runtime_core::turn::Namespace::fixed(NAMESPACE).expect("Pervue's namespace is valid"),
+        seatline_core::turn::Namespace::fixed(NAMESPACE).expect("Pervue's namespace is valid"),
     )
 }
 
@@ -37,7 +37,7 @@ mod tests {
     use std::ffi::OsString;
     use std::path::PathBuf;
 
-    use runtime_providers::{gemini, grok};
+    use seatline_providers::{gemini, grok};
 
     use super::{NAMESPACE, layout};
 

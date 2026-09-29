@@ -29,10 +29,10 @@ use crate::providers::{
     Cleanup, ConversationProvider, ConversationSlot, Exchange, Provider, Scripted, SendRequest,
     Timeouts, Update,
 };
-use runtime_core::exchange::SessionLoss;
-use runtime_core::protocol::{Capabilities, ErrorCode, Failure};
-use runtime_core::turn::{Message, Role, SessionPolicy, ToolPolicy, Turn};
-use runtime_platform::forget;
+use seatline_core::exchange::SessionLoss;
+use seatline_core::protocol::{Capabilities, ErrorCode, Failure};
+use seatline_core::turn::{Message, Role, SessionPolicy, ToolPolicy, Turn};
+use seatline_platform::forget;
 
 mod store;
 

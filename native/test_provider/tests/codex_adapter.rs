@@ -3,7 +3,7 @@
 //! thread, how a lost one is rebuilt, what the host does with browser context,
 //! and what deleting a conversation removes. The adapter's own behaviour (its
 //! status, streaming, cancellation and how Codex is started) is tested at the
-//! runtime's level, in `runtime-tests`.
+//! runtime's level, in `seatline-tests`.
 
 mod support;
 
@@ -19,8 +19,8 @@ use pervue_host::providers::codex::{Codex, Limits};
 use pervue_host::providers::{
     ConversationProvider, ConversationSlot, Exchange, SendRequest, Timeouts, Update,
 };
-use runtime_core::protocol::{Capability, ErrorCode};
-use runtime_core::turn::SessionPolicy;
+use seatline_core::protocol::{Capability, ErrorCode};
+use seatline_core::turn::SessionPolicy;
 use support::{FakeCodex, PacedInput, TEST_LIMITS, names, serve};
 
 const DEADLINE: Duration = Duration::from_secs(20);

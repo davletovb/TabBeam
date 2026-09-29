@@ -1,8 +1,8 @@
 //! Policy for provider executable discovery. The reusable directory search
-//! lives in `runtime-core`; adapters use this entry point so every installed
+//! lives in `seatline-core`; adapters use this entry point so every installed
 //! provider honors the same override, including hermetic tests.
 
-use runtime_core::discovery::SearchPath;
+use seatline_core::discovery::SearchPath;
 
 use crate::layout::Layout;
 
@@ -16,7 +16,7 @@ pub fn installed(layout: &Layout) -> SearchPath {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use runtime_core::turn::Namespace;
+    use seatline_core::turn::Namespace;
 
     #[test]
     fn the_override_variable_is_named_after_the_namespace() {

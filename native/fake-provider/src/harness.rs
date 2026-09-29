@@ -17,13 +17,13 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use runtime_core::discovery::SearchPath;
-use runtime_core::exchange::Timeouts;
-use runtime_core::turn::Namespace;
-use runtime_providers::claude::{self, Claude};
-use runtime_providers::codex::{self, Codex};
-use runtime_providers::gemini::Gemini;
-use runtime_providers::grok::Grok;
+use seatline_core::discovery::SearchPath;
+use seatline_core::exchange::Timeouts;
+use seatline_core::turn::Namespace;
+use seatline_providers::claude::{self, Claude};
+use seatline_providers::codex::{self, Codex};
+use seatline_providers::gemini::Gemini;
+use seatline_providers::grok::Grok;
 
 /// Where a test package keeps the fake provider binary it built, and where it
 /// may put scratch directories. Both come from the package's own `env!`

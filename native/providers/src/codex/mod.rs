@@ -25,22 +25,22 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use crate::{Cleanup, Exchange, Provider, Scripted, Timeouts, Update};
-use runtime_core::discovery::SearchPath;
-use runtime_core::exchange::SessionLoss;
-use runtime_core::process::{Event, Exit, Process, ProcessSpec};
-use runtime_core::prompt;
-use runtime_core::protocol::Failure as ErrorBody;
-use runtime_core::protocol::{
+use seatline_core::discovery::SearchPath;
+use seatline_core::exchange::SessionLoss;
+use seatline_core::process::{Event, Exit, Process, ProcessSpec};
+use seatline_core::prompt;
+use seatline_core::protocol::Failure as ErrorBody;
+use seatline_core::protocol::{
     Authentication, Availability, Capabilities, Capability, ErrorCode, ProviderState,
 };
-use runtime_core::search::{NATIVE_SEARCH_NO_SOURCES, SourceCollector, codex_message_sources};
-use runtime_core::stream::{BUSY_LIMIT, LineStream, Output};
-use runtime_core::turn::{SessionPolicy, ToolPolicy, Turn as TurnRequest};
-use runtime_platform::discovery;
-use runtime_platform::environment;
-use runtime_platform::forget;
-use runtime_platform::layout::Layout;
-use runtime_platform::workspace;
+use seatline_core::search::{NATIVE_SEARCH_NO_SOURCES, SourceCollector, codex_message_sources};
+use seatline_core::stream::{BUSY_LIMIT, LineStream, Output};
+use seatline_core::turn::{SessionPolicy, ToolPolicy, Turn as TurnRequest};
+use seatline_platform::discovery;
+use seatline_platform::environment;
+use seatline_platform::forget;
+use seatline_platform::layout::Layout;
+use seatline_platform::workspace;
 
 pub mod output;
 
@@ -434,7 +434,7 @@ fn status_update(
     availability: Availability,
     authentication: Authentication,
     capabilities: Capabilities,
-    sign_in: Option<runtime_core::turn::SignInClassification>,
+    sign_in: Option<seatline_core::turn::SignInClassification>,
 ) -> Update {
     Update::Status {
         provider_id: ID.to_owned(),
@@ -542,7 +542,7 @@ fn exec_args(
 ) -> Vec<OsString> {
     exec_args_for_session(
         workspace,
-        runtime_core::turn::SessionPolicy::Persistent,
+        seatline_core::turn::SessionPolicy::Persistent,
         restrict_tools,
         context_turn,
         native_search,
@@ -553,7 +553,7 @@ fn exec_args(
 
 fn exec_args_for_session(
     workspace: &Path,
-    session_policy: runtime_core::turn::SessionPolicy,
+    session_policy: seatline_core::turn::SessionPolicy,
     restrict_tools: bool,
     context_turn: bool,
     native_search: bool,
@@ -569,7 +569,7 @@ fn exec_args_for_session(
     ]
     .map(OsString::from)
     .into();
-    if session_policy == runtime_core::turn::SessionPolicy::Ephemeral {
+    if session_policy == seatline_core::turn::SessionPolicy::Ephemeral {
         args.push("--ephemeral".into());
     }
     if restrict_tools {
@@ -703,17 +703,17 @@ const STATUS_OUTPUT_BYTES: usize = 4096;
 fn classify_sign_in(
     authentication: Authentication,
     output: &[u8],
-) -> Option<runtime_core::turn::SignInClassification> {
+) -> Option<seatline_core::turn::SignInClassification> {
     if authentication != Authentication::Authenticated {
         return None;
     }
     let text = String::from_utf8_lossy(output).to_ascii_lowercase();
     Some(if text.contains("api key") {
-        runtime_core::turn::SignInClassification::ApiKey
+        seatline_core::turn::SignInClassification::ApiKey
     } else if text.contains("chatgpt") || text.contains("subscription") {
-        runtime_core::turn::SignInClassification::Subscription
+        seatline_core::turn::SignInClassification::Subscription
     } else {
-        runtime_core::turn::SignInClassification::Unknown
+        seatline_core::turn::SignInClassification::Unknown
     })
 }
 
@@ -1041,7 +1041,7 @@ mod tests {
     fn ephemeral_turns_disable_codex_session_persistence() {
         let args = exec_args_for_session(
             Path::new("/tmp/my-app-workspace"),
-            runtime_core::turn::SessionPolicy::Ephemeral,
+            seatline_core::turn::SessionPolicy::Ephemeral,
             false,
             false,
             false,

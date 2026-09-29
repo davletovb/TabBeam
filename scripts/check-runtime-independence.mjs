@@ -16,18 +16,18 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MANIFESTS = [
   "native/Cargo.toml",
   "native/fuzz/Cargo.toml",
-  "native/runtime-fuzz/Cargo.toml",
+  "native/seatline-fuzz/Cargo.toml",
 ];
 const APPLICATION = /^pervue(-|$)/;
 const EXPECTED_RUNTIME_CRATES = [
-  "runtime-core",
-  "runtime-platform",
-  "runtime-providers",
-  "provider-runtime-scheduler",
-  "provider-runtime-service",
-  "runtime-fake-provider",
-  "runtime-tests",
-  "runtime-fuzz",
+  "seatline-core",
+  "seatline-platform",
+  "seatline-providers",
+  "seatline-scheduler",
+  "seatline-service",
+  "seatline-fake-provider",
+  "seatline-tests",
+  "seatline-fuzz",
 ];
 
 function packagesOf(manifest) {

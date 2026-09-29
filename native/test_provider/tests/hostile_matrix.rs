@@ -13,7 +13,7 @@
 //! measurements see only the case under way.
 //!
 //! The runtime runs the same misbehaviour under its own scheduler, with none
-//! of Pervue's host around it, in `runtime-tests`.
+//! of Pervue's host around it, in `seatline-tests`.
 
 mod support;
 
@@ -21,7 +21,7 @@ use std::time::Duration;
 
 use pervue_host::providers::Timeouts;
 use pervue_host::providers::codex::Limits;
-use runtime_fake_provider::resources::{held, peak_memory_growth, reset_peak_memory, settle};
+use seatline_fake_provider::resources::{held, peak_memory_growth, reset_peak_memory, settle};
 use serde_json::Value;
 use support::{FakeCodex, PacedInput, Session, TEST_LIMITS, request_id_for, serve_timed};
 

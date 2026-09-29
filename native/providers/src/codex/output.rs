@@ -21,9 +21,9 @@
 
 use serde_json::Value;
 
-use runtime_core::protocol::ErrorCode;
-use runtime_core::protocol::Failure as ErrorBody;
-use runtime_core::turn::Usage;
+use seatline_core::protocol::ErrorCode;
+use seatline_core::protocol::Failure as ErrorBody;
+use seatline_core::turn::Usage;
 
 /// One line of Codex output, reduced to what the adapter needs.
 #[derive(Debug, Clone, PartialEq, Eq)]

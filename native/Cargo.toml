@@ -1,9 +1,9 @@
 [workspace]
-members = ["runtime-core", "platform", "providers", "fake-provider", "runtime-tests", "scheduler", "service", "host", "test_provider"]
+members = ["seatline-core", "platform", "providers", "fake-provider", "seatline-tests", "scheduler", "service", "host", "test_provider"]
 # `cargo build` produces only the shippable host; the fake provider is a test
 # fixture and is built by `cargo test --workspace`.
 default-members = ["host"]
-exclude = ["fuzz", "runtime-fuzz"]
+exclude = ["fuzz", "seatline-fuzz"]
 resolver = "3"
 
 [workspace.package]

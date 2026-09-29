@@ -14,10 +14,10 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use runtime_platform::{forget, private_fs};
+use seatline_platform::{forget, private_fs};
 
 use super::is_conversation_id;
-use runtime_core::turn::{MAX_CONTINUATION_BYTES, is_session_handle};
+use seatline_core::turn::{MAX_CONTINUATION_BYTES, is_session_handle};
 
 /// What a new conversation needs of its mapping.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1,8 +1,8 @@
 # Deterministic fake provider
 
-`runtime-fake-provider` is a test-only library: the behaviour of a fake provider executable, and the harness that installs it. The executable is used to exercise provider process supervision without coupling tests to Codex, Claude, or any other real provider. Run under the name `codex`, `claude`, `agy` or `grok`, it acts as that provider's CLI instead (see [Fake Codex](#fake-codex) and [The other personas](#the-other-personas)).
+`seatline-fake-provider` is a test-only library: the behaviour of a fake provider executable, and the harness that installs it. The executable is used to exercise provider process supervision without coupling tests to Codex, Claude, or any other real provider. Run under the name `codex`, `claude`, `agy` or `grok`, it acts as that provider's CLI instead (see [Fake Codex](#fake-codex) and [The other personas](#the-other-personas)).
 
-A library cannot name the binary a test package builds, so each package that runs the fake builds a binary of its own around `runtime_fake_provider::run()`: `runtime-tests` (`runtime-tests/src/main.rs`, binary `runtime-fake-provider`) for the runtime's tests, and `test_provider` (binary `pervue-fake-provider`) for Pervue's. Each passes the paths its own `env!` values give to `harness::Fixtures`, with the namespace of the application it stands for (which names the Gemini agents and the Grok owner file). The library depends on `runtime-core` and `runtime-providers` only.
+A library cannot name the binary a test package builds, so each package that runs the fake builds a binary of its own around `seatline_fake_provider::run()`: `seatline-tests` (`seatline-tests/src/main.rs`, binary `seatline-fake-provider`) for the runtime's tests, and `test_provider` (binary `pervue-fake-provider`) for Pervue's. Each passes the paths its own `env!` values give to `harness::Fixtures`, with the namespace of the application it stands for (which names the Gemini agents and the Grok owner file). The library depends on `seatline-core` and `seatline-providers` only.
 
 It emits a deliberately small line-oriented JSON test stream on stdout. This is **not** the public Pervue Native Messaging protocol and is not a provider API contract.
 
@@ -38,17 +38,17 @@ Example:
 
 ```bash
 cd native
-cargo build -p runtime-tests
-./target/debug/runtime-fake-provider --mode normal
+cargo build -p seatline-tests
+./target/debug/seatline-fake-provider --mode normal
 ```
 
 The tests place strict timeouts around the non-terminating modes so CI never relies on manual cleanup.
 
 ## What the tests pin
 
-`runtime-tests/tests/modes.rs` verifies both completed-output and mid-stream behavior. Slow mode is run to completion, is separately required to still be running at one second, and is killed at 0.5 seconds to prove its first line was already flushed. On POSIX, `runtime-tests/tests/signals.rs` sends SIGTERM directly: `hang` must terminate on SIGTERM, while `ignore-cancel` must survive SIGTERM until the test escalates to SIGKILL and reaps it. `ignore-cancel` blocks SIGTERM before it prints its ready line, so a supervisor that signals right after readiness always hits the ignored state.
+`seatline-tests/tests/modes.rs` verifies both completed-output and mid-stream behavior. Slow mode is run to completion, is separately required to still be running at one second, and is killed at 0.5 seconds to prove its first line was already flushed. On POSIX, `seatline-tests/tests/signals.rs` sends SIGTERM directly: `hang` must terminate on SIGTERM, while `ignore-cancel` must survive SIGTERM until the test escalates to SIGKILL and reaps it. `ignore-cancel` blocks SIGTERM before it prints its ready line, so a supervisor that signals right after readiness always hits the ignored state.
 
-`runtime-tests/tests/process_manager.rs` and `runtime-tests/tests/process_stress.rs` test the runtime's provider process manager (NAT-04) against this binary, including the descendant modes; see "Provider processes" in `native/README.md`. `env` and `args` show what a process received: only the environment its spec sets, in the directory it names, with each argument whole (SEC-02). `runtime-tests/tests/stream_manager.rs` tests the stream manager (NAT-05) against the same modes, and `partial` exists for it: a stream cancelled while it holds an unfinished line must drop that line.
+`seatline-tests/tests/process_manager.rs` and `seatline-tests/tests/process_stress.rs` test the runtime's provider process manager (NAT-04) against this binary, including the descendant modes; see "Provider processes" in `native/README.md`. `env` and `args` show what a process received: only the environment its spec sets, in the directory it names, with each argument whole (SEC-02). `seatline-tests/tests/stream_manager.rs` tests the stream manager (NAT-05) against the same modes, and `partial` exists for it: a stream cancelled while it holds an unfinished line must drop that line.
 
 ## Fake Codex
 
@@ -101,7 +101,7 @@ The floods write many lines to a write, as fast as the pipe takes them. Every be
 
 Each run appends what the adapter sent next to the binary, so tests can check it: its arguments and the first `PATH` entry to `codex-invocations`, its working directory and whole environment to `codex-environment` (a JSON object per line), and each `exec`'s question to `codex-prompts` (NUL-separated) and its process ID to `codex-pids`.
 
-The hostile fake-process matrix (TST-04) runs the fake `codex` in each hostile behavior, alone and several at once, and checks the normalized outcome, the time it took, and that nothing was left behind; see "Hostile providers" in `native/README.md`. It runs twice: `runtime-tests/tests/hostile_matrix.rs` under the runtime's scheduler, and `test_provider/tests/hostile_matrix.rs` through the whole Pervue host. `harness` holds what the tests share: installing a fake CLI (`Fixtures`, `FakeCodex`, `FakeClaude`, `FakeGemini`, `FakeGrok`) and reading back what it recorded. `resources` measures the test process's threads, file descriptors and peak memory, for the matrices. Pervue's pacing of input frames and its host sessions are in `test_provider/tests/support/mod.rs`.
+The hostile fake-process matrix (TST-04) runs the fake `codex` in each hostile behavior, alone and several at once, and checks the normalized outcome, the time it took, and that nothing was left behind; see "Hostile providers" in `native/README.md`. It runs twice: `seatline-tests/tests/hostile_matrix.rs` under the runtime's scheduler, and `test_provider/tests/hostile_matrix.rs` through the whole Pervue host. `harness` holds what the tests share: installing a fake CLI (`Fixtures`, `FakeCodex`, `FakeClaude`, `FakeGemini`, `FakeGrok`) and reading back what it recorded. `resources` measures the test process's threads, file descriptors and peak memory, for the matrices. Pervue's pacing of input frames and its host sessions are in `test_provider/tests/support/mod.rs`.
 
 ## The other personas
 

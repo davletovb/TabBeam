@@ -14,7 +14,7 @@
   - Native Messaging, browser context, provider sessions, and protocol v1 stay in Pervue.
 - **Both apps now drive the same four CLIs:** Codex, Claude, Gemini (through Antigravity), and Grok. Each app has its own independent adapter for every one of them.
   - The runtime owns one shared adapter per supported execution mode: `codex exec`, Claude's print mode, Antigravity's one-shot mode, and Grok's one-shot headless mode.
-  - An application can keep a different mode of the same CLI outside the shared set, such as Codex app-server or Grok ACP, when that mode's capabilities differ materially. It builds that adapter on `runtime-core`.
+  - An application can keep a different mode of the same CLI outside the shared set, such as Codex app-server or Grok ACP, when that mode's capabilities differ materially. It builds that adapter on `seatline-core`.
 - **The runtime is a Rust crate workspace that applications use in-process.**
   - A single supervisor owns the scheduler.
   - `pervue-host` drives that supervisor from its own loop.
@@ -31,13 +31,13 @@
   2. **Extract it as a library, with all four adapters at once.** Pervue switches to the library first, and its full test suite passing against the library proves the extraction.
   3. **Conclave integrates all four providers** into its Rust server. That work is planned in Conclave's own proposal.
 - **Speed work comes after both applications run on the library** (§8).
-- **The library gets its own repository in Stage 2,** and `pervue-core` becomes `runtime-core` inside it. Both applications pin it to a git revision.
+- **The library gets its own repository in Stage 2,** and `pervue-core` becomes `seatline-core` inside it. Both applications pin it to a git revision.
 
 ## 1. What exists today
 
 ### Pervue
 
-`pervue-core` already holds the primitives the providers share ([core/README](../../native/runtime-core/README.md)): `process`, `stream`, `discovery`, `exchange`, `protocol`, and `framing`. The host holds the rest of the plumbing for its four real providers, and some of it is still copied between adapters:
+`pervue-core` already holds the primitives the providers share ([core/README](../../native/seatline-core/README.md)): `process`, `stream`, `discovery`, `exchange`, `protocol`, and `framing`. The host holds the rest of the plumbing for its four real providers, and some of it is still copied between adapters:
 
 | Host-owned piece | Where | Reuse today |
 |---|---|---|
@@ -136,7 +136,7 @@ In order of impact:
 - **A non-Rust application** would get a sidecar executable: a thin wrapper around the service API that speaks a versioned protocol over stdio. It is built only if a consumer needs it.
 - **Not planned:** a C ABI or a Node addon.
   - Both bring FFI, `unsafe` binding code, and in-process crashes into the host application.
-  - A C ABI also needs a versioned C façade ([core/README](../../native/runtime-core/README.md#compatibility-and-extraction)).
+  - A C ABI also needs a versioned C façade ([core/README](../../native/seatline-core/README.md#compatibility-and-extraction)).
   - A pure TypeScript port would duplicate the hardest code, and Node can't reproduce some of its guarantees. For example, it can't kill a process group before reaping the child.
 
 **ADR-0002** records:
@@ -154,7 +154,7 @@ The runtime owns **provider execution mechanics**. The applications keep **conve
 
 ```text
 provider-runtime workspace (working name)
-├─ runtime-core   process, stream, discovery; neutral turn, error, and usage types
+├─ seatline-core   process, stream, discovery; neutral turn, error, and usage types
 │                 (today's pervue-core, minus framing and Pervue's protocol vocabulary)
 ├─ platform       environment construction, private files and workspaces,
 │                 per-turn cleanup with its retry record
@@ -179,9 +179,9 @@ A second application (Conclave: see its adoption proposal)
 ```
 
 **Crate ownership.**
-- `pervue-core` doesn't survive as a name. Its reusable modules become `runtime-core`, inside the runtime workspace, and its Pervue-specific parts (framing and protocol-v1 vocabulary) move into `pervue-host`.
+- `pervue-core` doesn't survive as a name. Its reusable modules become `seatline-core`, inside the runtime workspace, and its Pervue-specific parts (framing and protocol-v1 vocabulary) move into `pervue-host`.
 - Applications depend only on runtime crates, never on Pervue's crates.
-- An application's own adapters build on `runtime-core`. Conclave-only adapters, such as an app-server client for Codex, fall under this rule.
+- An application's own adapters build on `seatline-core`. Conclave-only adapters, such as an app-server client for Codex, fall under this rule.
 - When the runtime gets its own repository, the whole workspace moves, and Pervue depends on it the same way Conclave does.
 
 **What moves, and why.**
@@ -432,7 +432,7 @@ The native code is reshaped into the future library while it still lives in Perv
 
 1. **Verify what's pending.** Move LIB-01 to LIB-05, PRO-05 to PRO-09, TST-10, and TST-11 to VERIFIED.
 2. **Reshape the workspace:**
-   - rename `pervue-core` to `runtime-core`;
+   - rename `pervue-core` to `seatline-core`;
    - move framing into `pervue-host`;
    - introduce the neutral turn, error, usage, and timeout types (§5);
    - move error wording into a message table in `pervue-host`.
@@ -462,7 +462,7 @@ The native code is reshaped into the future library while it still lives in Perv
 
 **Stage 2: extract the library, with all four adapters at once** (proposed LIB-10).
 1. Move these into a new repository with its own CI:
-   - the runtime crates: `runtime-core`, `platform`, `providers`, `scheduler`, and `service`;
+   - the runtime crates: `seatline-core`, `platform`, `providers`, `scheduler`, and `service`;
    - the test assets: the fake provider, the hostile matrix, the contract suite, the panic tests, and the fuzz targets.
 2. Switch Pervue to the library, pinned to a git revision. `pervue-host` keeps what §4 leaves it.
 3. Keep the library at version 0.x. Expect API changes during Stage 3, and have both applications bump their pin deliberately.
@@ -534,7 +534,7 @@ Long-lived provider processes stay out of scope (§4) unless the measurements sh
 - **Regressions from extracting the scheduler.**
   - `host.rs` holds protocol v1's lifecycle guarantees, so move it without changing behavior.
   - Keep TST-03, TST-04, and the golden fixtures as the gate.
-- **The rename touches every import.** Renaming `pervue-core` to `runtime-core` is mechanical but broad. Do it in one change, and coordinate it with open branches.
+- **The rename touches every import.** Renaming `pervue-core` to `seatline-core` is mechanical but broad. Do it in one change, and coordinate it with open branches.
 - **Supervision is only as good as its tests.** The panic tests (§6) are part of Stage 1, not a follow-up.
 - **Stricter checks on Gemini and Grok.**
   - Failing on anything the boundary doesn't expect is the right default: an undocumented Antigravity step type, or a Grok `init` field that doesn't match. But it broke real Gemini turns in Pervue until the 2026-09-28 fix, and any consumer inherits the behavior.
@@ -582,7 +582,7 @@ Long-lived provider processes stay out of scope (§4) unless the measurements sh
 - **Sign-in checks.** They never run alongside a turn. Caching is an explicit policy of the application, invalidated by any failure, with its billing tradeoff stated (§5, §8).
 - **Supervision.** A supervisor outside the scheduler thread, and `catch_unwind` around each adapter, produce the runtime-loss outcomes. Panic tests are part of Phase 1 (§6).
 - **IDs.** The runtime generates turn IDs, so no history of used IDs builds up (§6).
-- **Crate ownership.** `pervue-core` becomes `runtime-core` inside the runtime workspace. Applications never depend on Pervue's crates (§4).
+- **Crate ownership.** `pervue-core` becomes `seatline-core` inside the runtime workspace. Applications never depend on Pervue's crates (§4).
 - **Events.** `Started` keeps its current meaning, "the provider accepted the turn", because the start limit depends on it. A new `Launched` event marks the moment the process starts (§6).
 - **Grok.** It landed in Pervue in one-shot headless mode, so it now moves into the runtime as the second stateless provider. The evidence is updated to Pervue `fc7284b` (§1, §7).
 
@@ -624,8 +624,8 @@ Long-lived provider processes stay out of scope (§4) unless the measurements sh
 - **Cleanup.** Per-turn cleanup records are grouped by an opaque `cleanup_group` the application supplies, which keeps Gemini's record layout (§4).
 
 **2026-09-29, LIB-10 step 2 (in-tree).**
-- **Crates.** The platform layer is `runtime-platform` and the adapters are `runtime-providers`, beside `runtime-core`, the scheduler and the service. None depends on `pervue-host`, and a CI job (`scripts/check-runtime-independence.mjs`) fails if any crate not named `pervue*` depends on one that is.
-- **Tests and fuzzing.** The fake provider is a library (`runtime-fake-provider`) with a small binary in each package that runs it. `runtime-tests` holds the adapter tests at the runtime's level (a `Turn` in, `Update`s out), a provider contract that all four adapters meet through the `Provider` trait alone, the hostile matrix under the scheduler's supervisor, the threaded service against real adapters, and the process and stream tests. Pervue's `test_provider` keeps what maps conversations onto turns, the host's hostile matrix, and the contract as Pervue serves the providers. `stream_lines` moved to `runtime-fuzz`, which depends on `runtime-core` alone; `frame_reader` and `protocol` stay with Pervue.
+- **Crates.** The platform layer is `seatline-platform` and the adapters are `seatline-providers`, beside `seatline-core`, the scheduler and the service. None depends on `pervue-host`, and a CI job (`scripts/check-runtime-independence.mjs`) fails if any crate not named `pervue*` depends on one that is.
+- **Tests and fuzzing.** The fake provider is a library (`seatline-fake-provider`) with a small binary in each package that runs it. `seatline-tests` holds the adapter tests at the runtime's level (a `Turn` in, `Update`s out), a provider contract that all four adapters meet through the `Provider` trait alone, the hostile matrix under the scheduler's supervisor, the threaded service against real adapters, and the process and stream tests. Pervue's `test_provider` keeps what maps conversations onto turns, the host's hostile matrix, and the contract as Pervue serves the providers. `stream_lines` moved to `seatline-fuzz`, which depends on `seatline-core` alone; `frame_reader` and `protocol` stay with Pervue.
 
 [p-claude]: ../../native/providers/src/claude/mod.rs
 [p-claude-output]: ../../native/providers/src/claude/output.rs
@@ -638,7 +638,7 @@ Long-lived provider processes stay out of scope (§4) unless the measurements sh
 [p-workspace]: ../../native/platform/src/workspace.rs
 [p-forget]: ../../native/platform/src/forget.rs
 [p-host]: ../../native/host/src/host.rs
-[p-process]: ../../native/runtime-core/src/process.rs
+[p-process]: ../../native/seatline-core/src/process.rs
 [p-native-connection]: ../../extension/src/background/native-connection.js
 [p-perf]: ../../extension/src/shared/performance.js
 [c-core]: https://github.com/davletovb/conclave/blob/1379a37ccb13d484247122ee215257e642b166fc/packages/core/src/index.ts
