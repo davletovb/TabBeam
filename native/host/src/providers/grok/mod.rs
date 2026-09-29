@@ -29,12 +29,11 @@ use super::private_fs;
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
 use crate::conversation::provider_prompt;
 use crate::protocol::events::{
-    Authentication, Availability, Capabilities, Capability, ErrorCode, ModelOption,
-    ProviderState,
+    Authentication, Availability, Capabilities, Capability, ErrorCode, ModelOption, ProviderState,
 };
-use runtime_core::protocol::Failure as ErrorBody;
 use runtime_core::discovery::SearchPath;
 use runtime_core::process::{Event, Exit, Process, ProcessSpec};
+use runtime_core::protocol::Failure as ErrorBody;
 use runtime_core::stream::{BUSY_LIMIT, LineStream, Output};
 
 pub mod output;
@@ -301,19 +300,34 @@ impl Provider for Grok {
     fn status(&self) -> Box<dyn Exchange> {
         let Some(executable) = self.executable() else {
             return Box::new(Scripted::new([
-                status_update(Availability::NotFound, Authentication::Unknown, Vec::new(), None),
+                status_update(
+                    Availability::NotFound,
+                    Authentication::Unknown,
+                    Vec::new(),
+                    None,
+                ),
                 Update::Completed,
             ]));
         };
         let Ok(base) = self.launch.base_workspace() else {
             return Box::new(Scripted::new([
-                status_update(Availability::Unavailable, Authentication::Unknown, Vec::new(), None),
+                status_update(
+                    Availability::Unavailable,
+                    Authentication::Unknown,
+                    Vec::new(),
+                    None,
+                ),
                 Update::Completed,
             ]));
         };
         let Ok(workspace) = ProbeWorkspace::create(&base) else {
             return Box::new(Scripted::new([
-                status_update(Availability::Unavailable, Authentication::Unknown, Vec::new(), None),
+                status_update(
+                    Availability::Unavailable,
+                    Authentication::Unknown,
+                    Vec::new(),
+                    None,
+                ),
                 Update::Completed,
             ]));
         };
@@ -335,7 +349,12 @@ impl Provider for Grok {
                 }
             }
             Err(_) => StatusCheck::Done(VecDeque::from([
-                status_update(Availability::Unavailable, Authentication::Unknown, Vec::new(), None),
+                status_update(
+                    Availability::Unavailable,
+                    Authentication::Unknown,
+                    Vec::new(),
+                    None,
+                ),
                 Update::Completed,
             ])),
         })
@@ -540,7 +559,12 @@ impl Exchange for StatusCheck {
                             process.kill();
                             workspace.take();
                             *self = Self::Done(VecDeque::from([
-                                status_update(Availability::Unavailable, Authentication::Unknown, Vec::new(), None),
+                                status_update(
+                                    Availability::Unavailable,
+                                    Authentication::Unknown,
+                                    Vec::new(),
+                                    None,
+                                ),
                                 Update::Completed,
                             ]));
                         }
