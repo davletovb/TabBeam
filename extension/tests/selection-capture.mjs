@@ -98,29 +98,29 @@ function contentScript() {
   assert.equal(page.reads, 0);
   assert.equal(page.request("other"), undefined);
   assert.equal(page.reads, 0, "an unrelated message cannot read selection");
-  assert.equal(page.request("pervue.selection.read").reason, "SELECTION_UNAVAILABLE");
+  assert.equal(page.request("tabbeam.selection.read").reason, "SELECTION_UNAVAILABLE");
   page.setSelection("Quote from page");
   assert.deepEqual(
-    { ...page.request("pervue.selection.read") },
+    { ...page.request("tabbeam.selection.read") },
     { ok: true, text: "Quote from page", truncated: false }
   );
   page.document.activeElement = {
     tagName: "TEXTAREA", value: "before selected after",
     selectionStart: 7, selectionEnd: 15
   };
-  assert.equal(page.request("pervue.selection.read").text, "selected");
+  assert.equal(page.request("tabbeam.selection.read").text, "selected");
   page.document.activeElement = null;
   page.setSelection("x".repeat(MAX_SELECTION_BYTES - 1) + "😀");
-  const bounded = page.request("pervue.selection.read");
+  const bounded = page.request("tabbeam.selection.read");
   assert.equal(bounded.truncated, true);
   assert.equal(new TextEncoder().encode(bounded.text).length, MAX_SELECTION_BYTES - 1);
   assert.equal(bounded.text.endsWith("\ud83d"), false);
   page.setSelection("a\ud800b\udc00c\ud83d\ude00");
-  assert.equal(page.request("pervue.selection.read").text, "a\ufffdb\ufffdc😀");
+  assert.equal(page.request("tabbeam.selection.read").text, "a\ufffdb\ufffdc😀");
   page.document.activeElement = {
     tagName: "TEXTAREA", value: "x\ud800y", selectionStart: 0, selectionEnd: 3
   };
-  assert.equal(page.request("pervue.selection.read").text, "x\ufffdy");
+  assert.equal(page.request("tabbeam.selection.read").text, "x\ufffdy");
 }
 
 {
@@ -131,7 +131,7 @@ function contentScript() {
     { text: " Second paragraph " }
   ]);
   assert.equal(page.reads, 0, "page extraction is not a selection read");
-  const extracted = page.request("pervue.page.read");
+  const extracted = page.request("tabbeam.page.read");
   assert.equal(extracted.text, "Main article\nSecond paragraph");
   assert.equal(extracted.truncated, false);
   assert.equal(extracted.inspected, 3);
@@ -140,22 +140,22 @@ function contentScript() {
     { text: "non-editable island", editable: false },
     { text: "article with \ud800 malformed UTF-16" }
   ]);
-  const readable = page.request("pervue.page.read");
+  const readable = page.request("tabbeam.page.read");
   assert.equal(readable.text, "non-editable island\narticle with \ufffd malformed UTF-16");
   page.setNodes([{ text: "😀".repeat(MAX_PAGE_BYTES / 4) + "x" }]);
-  const capped = page.request("pervue.page.read");
+  const capped = page.request("tabbeam.page.read");
   assert.equal(capped.truncated, true);
   assert.equal(new TextEncoder().encode(capped.text).length, MAX_PAGE_BYTES);
   page.setNodes(Array.from({ length: MAX_PAGE_TEXT_NODES + 1 }, () => ({ text: "a" })));
-  const nodeCap = page.request("pervue.page.read");
+  const nodeCap = page.request("tabbeam.page.read");
   assert.equal(nodeCap.inspected, MAX_PAGE_TEXT_NODES);
   assert.equal(nodeCap.truncated, true);
   page.setNodes([{ text: "hidden", excluded: true }]);
-  assert.equal(page.request("pervue.page.read").reason, "PAGE_EXTRACTION_FAILED");
+  assert.equal(page.request("tabbeam.page.read").reason, "PAGE_EXTRACTION_FAILED");
   page.setNodes([{ text: "CSS secret", cssHidden: true }, { text: "Visible paragraph" }]);
-  assert.equal(page.request("pervue.page.read").text, "Visible paragraph");
+  assert.equal(page.request("tabbeam.page.read").text, "Visible paragraph");
   page.setNodes([{ text: "First" }, { text: " ".repeat(MAX_PAGE_SCAN_CHARS) + "hidden tail" }]);
-  const scanCap = page.request("pervue.page.read");
+  const scanCap = page.request("tabbeam.page.read");
   assert.equal(scanCap.text, "First");
   assert.equal(scanCap.truncated, true);
   assert.ok(!scanCap.text.includes("hidden tail"));
@@ -168,14 +168,14 @@ function contentScript() {
   page.setNodes([{ text: "Body paragraph" }]);
   page.setMainNodes([{ text: " " }]);
   page.setArticleNodes([{ text: "Article paragraph" }]);
-  assert.equal(page.request("pervue.page.read").text, "Article paragraph");
+  assert.equal(page.request("tabbeam.page.read").text, "Article paragraph");
   page.setArticleNodes([{ text: "hidden", excluded: true }]);
-  const body = page.request("pervue.page.read");
+  const body = page.request("tabbeam.page.read");
   assert.equal(body.text, "Body paragraph");
   assert.equal(body.inspected, 3);
   page.setMainNodes(Array.from({ length: MAX_PAGE_TEXT_NODES }, () => ({ text: " " })));
-  assert.equal(page.request("pervue.page.read").reason, "PAGE_EXTRACTION_FAILED");
-  assert.deepEqual({ ...page.request("pervue.ping") }, { ok: true, surface: "content" });
+  assert.equal(page.request("tabbeam.page.read").reason, "PAGE_EXTRACTION_FAILED");
+  assert.deepEqual({ ...page.request("tabbeam.ping") }, { ok: true, surface: "content" });
 }
 
 const popupUrl = "chrome-extension://test/src/popup/index.html";
@@ -232,9 +232,9 @@ function workerRequest(message, sender, tabs) {
   const captured = await workerRequest(request, { url: popupUrl }, tabs);
   assert.equal(captured.context.text, "Selected");
   assert.equal(captured.context.page.url, "https://example.com/path");
-  assert.deepEqual(sent, [[42, { type: "pervue.selection.read" }, { frameId: 0 }]]);
+  assert.deepEqual(sent, [[42, { type: "tabbeam.selection.read" }, { frameId: 0 }]]);
   await workerRequest({ ...request, mode: "page" }, { url: popupUrl }, tabs);
-  assert.deepEqual(sent[1], [42, { type: "pervue.page.read" }, { frameId: 0 }]);
+  assert.deepEqual(sent[1], [42, { type: "tabbeam.page.read" }, { frameId: 0 }]);
 }
 
 {
