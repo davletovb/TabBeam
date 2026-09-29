@@ -18,6 +18,20 @@ assert.doesNotMatch(windows, /\{param:/i);
 assert.match(windows, /CompareText\(WizardDirValue, ExpectedDir\)/);
 assert.match(windows, /#ifdef TabBeamSignTool[\s\S]*SignTool=tabbeam[\s\S]*SignedUninstaller=yes/);
 
+// The installer's AppId names its uninstall key, and CI checks that key by
+// name. A typo in either would leave that check looking at the wrong key.
+const appId = /^AppId=\{\{([0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12})\}$/im.exec(windows)?.[1];
+assert.ok(appId, "TabBeam.iss must declare a well-formed AppId GUID");
+// Pervue's development installer used this AppId. Reusing it would make a
+// locally installed Pervue build look like a TabBeam upgrade.
+assert.notEqual(appId.toUpperCase(), "D7A1D4E8-774F-4E2B-A745-04B43E51A93C");
+const ci = read("../.github/workflows/ci.yml");
+const uninstallKeys = [...ci.matchAll(/Uninstall\\\{([0-9A-F-]{36})\}_is1/gi)].map((match) => match[1]);
+assert.ok(uninstallKeys.length > 0, "CI must check the installer's uninstall key");
+for (const guid of uninstallKeys) {
+  assert.equal(guid.toUpperCase(), appId.toUpperCase(), "CI's uninstall key must match TabBeam.iss's AppId");
+}
+
 const windowsBuild = read("./windows/build.ps1");
 assert.match(windowsBuild, /ValidatePattern\('\^\[a-p\]\{32\}\$', Options = 'None'\)/);
 assert.match(windowsBuild, /--target\s+\$target/);
