@@ -87,7 +87,7 @@ impl Turn {
         let _ = self.commands.send(Command::Cancel(self.id));
     }
 
-    pub fn next(&mut self) -> Option<Event> {
+    pub fn recv(&mut self) -> Option<Event> {
         if self.ended {
             return None;
         }
@@ -230,7 +230,7 @@ mod tests {
             })
             .unwrap();
         let mut ended = 0;
-        while let Some(event) = turn.next() {
+        while let Some(event) = turn.recv() {
             if matches!(event, Event::Ended { .. }) {
                 ended += 1;
             }

@@ -313,7 +313,7 @@ mod tests {
             label: std::borrow::Cow::Borrowed("Sonnet (latest)"),
         }];
         let mut state = crate::providers::fake::STATUS;
-        let without = serde_json::to_value(state).unwrap();
+        let without = serde_json::to_value(&state).unwrap();
         assert!(without.get("models").is_none());
         state.models = std::borrow::Cow::Borrowed(MODELS);
         let with = serde_json::to_value(state).unwrap();

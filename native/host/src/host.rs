@@ -108,11 +108,6 @@ const SHUTDOWN_GRACE: Duration = Duration::from_millis(250);
 /// How long a cancelled `provider.status` check gets to stop.
 const STATUS_STOP_GRACE: Duration = Duration::from_millis(250);
 
-/// How long past its grace period a stopping request may take before the host
-/// drops it, which kills its processes. Adapters stop within the grace
-/// period; this bounds a broken one.
-const STOP_SLACK: Duration = Duration::from_secs(1);
-
 const PROVIDER_NOT_INSTALLED: Failure = Failure {
     code: ErrorCode::ProviderNotFound,
     reason: "PROVIDER_NOT_INSTALLED",
@@ -340,16 +335,6 @@ impl Canceller {
         record.error = error.as_ref().map(logged);
         record
     }
-}
-
-/// What one turn of [`Session::pump_one`] left a request doing.
-enum Pumped {
-    /// It ended and was removed.
-    Finished,
-    /// It had nothing more ready.
-    Waiting,
-    /// Its slice ran out while it had more ready.
-    Busy,
 }
 
 /// Why a running request is being stopped.
@@ -1416,6 +1401,7 @@ mod tests {
             Timeouts {
                 start: Duration::from_secs(60),
                 idle: Duration::from_secs(60),
+                max_turn: Duration::from_secs(180),
                 stop_grace: Duration::ZERO,
             }
         }

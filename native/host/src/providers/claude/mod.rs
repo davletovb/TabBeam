@@ -721,6 +721,7 @@ impl Exchange for StatusCheck {
 /// The `claude -p` command line for one turn; the question goes on stdin.
 /// A model is one `--model=<id>` argument, so the ID can never be read as an
 /// option of its own.
+#[cfg(test)]
 fn claude_args(resume: Option<&str>, model: Option<&str>, native_search: bool) -> Vec<OsString> {
     claude_args_for_session(
         resume,
@@ -1303,7 +1304,7 @@ mod tests {
         assert!(!MODELS.is_empty());
         for model in MODELS {
             assert!(
-                crate::protocol::request::is_model_id(model.id),
+                crate::protocol::request::is_model_id(&model.id),
                 "{}",
                 model.id
             );

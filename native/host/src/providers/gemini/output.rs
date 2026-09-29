@@ -277,6 +277,7 @@ mod tests {
             Ok(Line::ResultSuccess {
                 conversation_id: Some("agy-123".to_owned()),
                 response: "done".to_owned(),
+                usage: Usage::default(),
             })
         );
     }
@@ -306,7 +307,7 @@ mod tests {
         ] {
             let failure = provider_failure(message);
             assert_eq!(failure.reason, reason);
-            assert!(!failure.message.contains("secret"));
+            assert_eq!(failure.code, ErrorCode::ProviderFailed);
         }
     }
 

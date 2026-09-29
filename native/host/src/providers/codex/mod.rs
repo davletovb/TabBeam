@@ -749,6 +749,7 @@ fn save_thread(dir: &Path, id: &str, thread: &str) -> io::Result<()> {
 /// stdin (`-`). `--model` is a global `exec` option, so it applies to
 /// `resume` too; it is one `--model=<id>` argument, so the ID can never be
 /// read as an option of its own.
+#[cfg(test)]
 fn exec_args(
     workspace: &Path,
     restrict_tools: bool,
