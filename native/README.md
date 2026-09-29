@@ -272,14 +272,16 @@ TABBEAM_LIVE_CLAUDE=1 cargo test -p tabbeam-host --test live_claude -- --nocaptu
 
 Set `TABBEAM_LIVE_CLAUDE=required` when Claude is expected to be installed and authenticated.
 
-The opt-in live smoke tests of the four providers run at the runtime's level, through the adapter and nothing of TabBeam's (`seatline-tests/tests/live_gemini.rs`, `live_grok.rs`, `live_codex.rs` and `live_claude.rs`); the two host-level tests above cover TabBeam's own layer on top of the same Codex and Claude adapters:
+The opt-in live smoke tests of the four providers run at the runtime's level in the standalone Seatline repository, through the adapter and nothing of TabBeam's; the two host-level tests above cover TabBeam's own layer on top of the same Codex and Claude adapters:
 
 ```bash
-cd native
-SEATLINE_LIVE_GEMINI=1 cargo test -p seatline-tests --test live_gemini -- --nocapture
-SEATLINE_LIVE_GROK=1 cargo test -p seatline-tests --test live_grok -- --nocapture
-SEATLINE_LIVE_CODEX=1 cargo test -p seatline-tests --test live_codex -- --nocapture
-SEATLINE_LIVE_CLAUDE=1 cargo test -p seatline-tests --test live_claude -- --nocapture
+git clone https://github.com/davletovb/seatline.git
+cd seatline
+git checkout e021c2acf05132073d82bf3e2149f1ff64f1f49f
+SEATLINE_LIVE_GEMINI=1 cargo test --locked -p seatline-tests --test live_gemini -- --nocapture
+SEATLINE_LIVE_GROK=1 cargo test --locked -p seatline-tests --test live_grok -- --nocapture
+SEATLINE_LIVE_CODEX=1 cargo test --locked -p seatline-tests --test live_codex -- --nocapture
+SEATLINE_LIVE_CLAUDE=1 cargo test --locked -p seatline-tests --test live_claude -- --nocapture
 ```
 
 Unset, each passes at once; `1` runs it when the CLI is installed and signed in and skips it otherwise; `required` fails when it isn't. Each checks the status and sign-in, a plain answer, that a system prompt is followed, and a web search with its sources (Gemini, Codex, Claude) or the refusal of search (Grok); and that nothing holding the prompt outlives an ephemeral turn, in the private workspaces and in what the CLI keeps of its own: Antigravity's `~/.gemini/antigravity-cli` (its transcript under `brain` and the conversation database under `conversations`), Grok's `~/.grok`, Codex's `CODEX_HOME` (`~/.codex`) and Claude's `CLAUDE_CONFIG_DIR` (`~/.claude`). The search of those directories reads the files modified since the run began (a file that holds the run's marker was written during it), so a home of any size is searched in full; it reads at most 20,000 of them, skips any over 16 MiB, and says so when it left files unread. What a model says is checked for credentials before it is printed, a system-prompt check gets a second try (a model's compliance is not certain), and `required` Grok needs a fresh cached sign-in (`grok models` refreshes an expired one). Codex's plain and system-prompt turns run with tools off, so a user's own Codex configuration that exposes tools Codex can't switch off makes the test skip (or fail, in `required`) with that reason. Seatline's manual `live-gemini.yml`, `live-grok.yml`, `live-codex.yml`, and `live-claude.yml` workflows run those runtime-level checks. TabBeam's `live-codex.yml` now runs only the host-level Codex check. The owner has run all four for real (`agy` 1.2.13, `grok` 1.0.41, `codex` 0.154.0, `claude` 2.1.236, macOS, signed in) and they pass: Codex and Claude follow the shared introduction on the first attempt, Gemini follows its agent file, and Grok follows its own introduction (19 of 20 attempts, every run passing).
