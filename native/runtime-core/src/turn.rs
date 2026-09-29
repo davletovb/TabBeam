@@ -71,7 +71,10 @@ impl Turn {
         if self.messages.is_empty() {
             return Err(TurnError::NoMessages);
         }
-        if self.system.as_ref().is_some_and(|text| text.as_bytes().contains(&0))
+        if self
+            .system
+            .as_ref()
+            .is_some_and(|text| text.as_bytes().contains(&0))
             || self
                 .messages
                 .iter()
@@ -79,7 +82,11 @@ impl Turn {
         {
             return Err(TurnError::InvalidText);
         }
-        if self.model.as_deref().is_some_and(|model| !is_model_id(model)) {
+        if self
+            .model
+            .as_deref()
+            .is_some_and(|model| !is_model_id(model))
+        {
             return Err(TurnError::InvalidModel);
         }
         if self
@@ -235,9 +242,29 @@ mod tests {
             continuation: None,
             check_sign_in: false,
         };
-        assert!(Turn { model: Some("--help".to_owned()), ..base.clone() }.validate().is_err());
-        assert!(Turn { continuation: Some("--resume".to_owned()), ..base.clone() }.validate().is_err());
-        assert!(Turn { system: Some("bad\0system".to_owned()), ..base }.validate().is_err());
+        assert!(
+            Turn {
+                model: Some("--help".to_owned()),
+                ..base.clone()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            Turn {
+                continuation: Some("--resume".to_owned()),
+                ..base.clone()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            Turn {
+                system: Some("bad\0system".to_owned()),
+                ..base
+            }
+            .validate()
+            .is_err()
+        );
     }
-
 }

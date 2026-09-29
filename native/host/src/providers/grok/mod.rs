@@ -1043,7 +1043,10 @@ mod tests {
         input.push_str("* --danger\n");
         let models = parse_models(input.as_bytes());
         assert_eq!(models.len(), runtime_core::turn::MAX_MODEL_OPTIONS);
-        assert!(models.iter().all(|model| runtime_core::turn::is_model_id(&model.id)));
+        assert!(
+            models
+                .iter()
+                .all(|model| runtime_core::turn::is_model_id(&model.id))
+        );
     }
-
 }

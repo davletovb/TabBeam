@@ -226,11 +226,7 @@ impl Scheduler {
             if let Some(kind) = self.running[index].timeout(now) {
                 if self.running[index].stop.is_none() {
                     let grace = self.running[index].stop_grace;
-                    let _ = self.running[index].begin_stop(
-                        StopReason::Timeout(kind),
-                        grace,
-                        now,
-                    );
+                    let _ = self.running[index].begin_stop(StopReason::Timeout(kind), grace, now);
                 }
             }
 
@@ -419,7 +415,8 @@ impl Supervisor {
 
     #[cfg(test)]
     fn inject_scheduler_panic_after_events_for_test(&mut self, count: usize) {
-        self.scheduler.inject_scheduler_panic_after_events_for_test(count);
+        self.scheduler
+            .inject_scheduler_panic_after_events_for_test(count);
     }
 }
 
