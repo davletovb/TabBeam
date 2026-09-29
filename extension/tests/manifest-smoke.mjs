@@ -28,7 +28,12 @@ assert.deepEqual([...manifest.permissions].sort(), [
 assert.equal("host_permissions" in manifest, false);
 assert.equal("optional_host_permissions" in manifest, false);
 assert.equal("externally_connectable" in manifest, false);
-assert.ok(manifest.commands._execute_action?.suggested_key);
+// The keys date from before the rename (P was Pervue's mnemonic) and were left
+// as they are. If they change, change the manifest and this pin together.
+assert.deepEqual(manifest.commands._execute_action?.suggested_key, {
+  default: "Alt+Shift+P",
+  mac: "Command+Shift+P"
+});
 assert.equal(manifest.commands["open-tabbeam-full-page"], undefined);
 const popupMarkup = fs.readFileSync(path.join(root, manifest.action.default_popup), "utf8");
 for (const id of ["context-none", "context-selection", "context-page", "context-preview"]) {
