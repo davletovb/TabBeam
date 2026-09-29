@@ -462,6 +462,32 @@ mod tests {
         }
     }
 
+    struct TalksAfterCancel {
+        started: bool,
+        cancelled: bool,
+        talked: bool,
+    }
+
+    impl Exchange for TalksAfterCancel {
+        fn next(&mut self, _deadline: Instant) -> Option<Update> {
+            if !self.started {
+                self.started = true;
+                return Some(Update::Started {
+                    conversation_id: None,
+                });
+            }
+            if self.cancelled && !self.talked {
+                self.talked = true;
+                return Some(Update::Delta("late".to_owned()));
+            }
+            None
+        }
+
+        fn cancel(&mut self, _grace: Duration) {
+            self.cancelled = true;
+        }
+    }
+
     fn limits() -> Timeouts {
         Timeouts {
             start: Duration::from_secs(1),
@@ -547,6 +573,46 @@ mod tests {
             Event::Ended { turn_id, reason: EndReason::SchedulerPanicked { .. } }
                 if *turn_id == still_running
         )));
+    }
+
+    #[test]
+    fn timeout_suppresses_late_updates_and_cannot_be_replaced_by_cancel() {
+        let mut scheduler = Scheduler::new();
+        let id = scheduler.start(
+            Box::new(TalksAfterCancel {
+                started: false,
+                cancelled: false,
+                talked: false,
+            }),
+            Some(Timeouts {
+                start: Duration::from_secs(1),
+                idle: Duration::ZERO,
+                max_turn: Duration::from_secs(2),
+                stop_grace: Duration::from_secs(1),
+            }),
+            Duration::ZERO,
+        );
+        let first = scheduler.poll(Duration::ZERO);
+        assert!(first.iter().any(|event| matches!(
+            event,
+            Event::Update {
+                turn_id,
+                update: Update::Started { .. }
+            } if *turn_id == id
+        )));
+
+        let timed_out = scheduler.poll(Duration::from_millis(1));
+        assert!(
+            !timed_out.iter().any(|event| matches!(
+                event,
+                Event::Update {
+                    update: Update::Delta(_),
+                    ..
+                }
+            )),
+            "{timed_out:?}"
+        );
+        assert!(!scheduler.cancel(id));
     }
 
 }
