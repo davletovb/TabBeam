@@ -1,9 +1,6 @@
 name: Live Codex smoke test
 
-# TST-05: the opt-in smoke tests against the real Codex CLI: TabBeam's host on
-# top of it (native/host/tests/live_codex.rs) and the runtime's Codex adapter
-# alone (native/seatline-tests/tests/live_codex.rs). It runs only when started by
-# hand. With a repository secret OPENAI_API_KEY, Codex signs in with it and the
+# TST-05: the opt-in smoke test against the real Codex CLI through TabBeam's host. The provider-runtime-level smoke test lives in the Seatline repository. It runs only when started by hand. With a repository secret OPENAI_API_KEY, Codex signs in with it and the
 # tests must pass; without one, they are skipped.
 on:
   workflow_dispatch:
@@ -55,7 +52,3 @@ jobs:
           # With a sign-in, a missing or signed-out Codex fails the test.
           TABBEAM_LIVE_CODEX: ${{ secrets.OPENAI_API_KEY != '' && 'required' || '1' }}
         run: cargo +stable test --manifest-path native/Cargo.toml --locked -p tabbeam-host --test live_codex -- --nocapture
-      - name: Run the runtime's smoke test
-        env:
-          SEATLINE_LIVE_CODEX: ${{ secrets.OPENAI_API_KEY != '' && 'required' || '1' }}
-        run: cargo +stable test --manifest-path native/Cargo.toml --locked -p seatline-tests --test live_codex -- --nocapture

@@ -1525,7 +1525,7 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 **Milestone:** ADR-002 Stage 2  
 **Area:** Native Library  
 **Dependencies:** LIB-09  
-**Status:** IN PROGRESS
+**Status:** IMPLEMENTED — VERIFY
 
 **Acceptance criteria**
 - `seatline-core`, `platform`, `providers`, `scheduler`, and `service` move with shared tests/fuzzing into the runtime repository.
@@ -1534,10 +1534,15 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 **Plan (four steps, each green on its own)**
 1. Prepare the boundary in-tree, so the move is a change of location. *Done, below.*
 2. Create the `platform` and `providers` crates in-tree, and move the adapter, contract, hostile-matrix and process tests and the `stream_lines` fuzz target beside them. The fake provider becomes a library with a small binary in each repository. *Done, below.*
-3. Create the library repository (history kept with `git filter-repo`), with CI on Linux, macOS and Windows, a Rust 1.85 job, a fuzz smoke run and manually started live workflows for all four providers.
-4. Switch TabBeam to an exact pinned revision, and remove the in-tree crates.
+3. Create the library repository with CI on Linux, macOS and Windows, a Rust 1.85 job, a fuzz smoke run and manually started live workflows for all four providers. *Repository and workflows created; see extraction note below.*
+4. Switch TabBeam to an exact pinned revision, and remove the in-tree crates. *Implemented on `extract/seatline-runtime`; verification pending.*
 
-**Open before step 3:** the license files and notice for `MIT OR Apache-2.0` (decided; the crates' manifests already say so), which need the new repository and a holder name. LIB-06 to LIB-09 have their live evidence: all four live suites pass against the real CLIs (see the live findings below), and whether to start step 3 is the owner's call. The crates carry the library's name, `seatline` (renamed in this repository on 2026-09-29; see the crate rename below). Done since: the runtime crates no longer use application names in what they do. The Gemini agent names and the Grok owner file and agent name come from the namespace, the thread names are neutral, and comments/tests may name the application only as documentation or negative checks. Before the split, run both `rg -i pervue` and `rg -i tabbeam` over `native/{seatline-core,platform,providers,scheduler,service,fake-provider,seatline-tests,seatline-fuzz}` once more: the CI check reads the crate graph only.
+**Step 3/4 extraction note (2026-09-30):** `https://github.com/davletovb/seatline` now contains the standalone runtime at `e021c2acf05132073d82bf3e2149f1ff64f1f49f`, including `MIT OR Apache-2.0` license files, CI for Linux/macOS/Windows + Rust 1.85 + fuzz smoke, and manual live workflows for Codex, Claude, Gemini and Grok. The 73 transferred runtime/test/fuzz files were materialized from TabBeam source commit `b4bfd5bd0f3ca9db461963b971b8af0177754e5d` and retain identical Git blob SHAs. The connected GitHub tooling did not expose authenticated Git transport or a history-filter operation equivalent to `git filter-repo`; rather than invent rewritten author/date history, Seatline records the exact source commit in README/PROVENANCE and pre-extraction history remains in TabBeam. TabBeam's migration branch pins `e021c2acf05132073d82bf3e2149f1ff64f1f49f` exactly, removes the in-tree runtime, and runs the pinned Seatline workspace in TabBeam CI.  LIB-06 to LIB-09 have their live evidence: all four live suites pass against the real CLIs (see the live findings below), and whether to start step 3 is the owner's call. The crates carry the library's name, `seatline` (renamed in this repository on 2026-09-29; see the crate rename below). Done since: the runtime crates no longer use application names in what they do. The Gemini agent names and the Grok owner file and agent name come from the namespace, the thread names are neutral, and comments/tests may name the application only as documentation or negative checks. Before extraction, GitHub code search over the eight runtime directories found application-name hits only in documentation/negative assertions; runtime behavior derives names from `Namespace`. The standalone repository contains no TabBeam application crate.
+
+**Extraction verification (2026-09-30)**
+- Standalone Seatline PR #2 passed all six CI jobs: runtime independence, Rust 1.85, Linux, macOS, Windows, and fuzz smoke.
+- TabBeam PR #46 passed all twelve CI jobs against the external exact Seatline pin, including Linux/macOS/Windows native tests, Rust 1.85, host fuzzing, protocol fixtures, browser↔host round trip, both macOS package variants, Windows package install/upgrade/removal, and the external Seatline validation job.
+- All review findings on the extraction PR are resolved. The four real-provider live suites passed before extraction against the same runtime blobs; because their source/test/fuzz Git blobs were transferred byte-for-byte, no provider implementation changed in the move. A fresh manual run from the standalone repository remains the final verification action before promoting this item to `VERIFIED`.
 
 **Implementation evidence (step 1)**
 - Every directory the adapters choose comes from one `Layout` derived from a `Namespace`; `tabbeam` resolves to the new TabBeam paths established by this pre-release clean break, pinned by tests.

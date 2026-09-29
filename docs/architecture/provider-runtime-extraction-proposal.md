@@ -40,7 +40,7 @@
 
 ### Pervue
 
-`pervue-core` already holds the primitives the providers share ([core/README](../../native/seatline-core/README.md)): `process`, `stream`, `discovery`, `exchange`, `protocol`, and `framing`. The host holds the rest of the plumbing for its four real providers, and some of it is still copied between adapters:
+`pervue-core` already holds the primitives the providers share ([core/README](https://github.com/davletovb/seatline/blob/e021c2acf05132073d82bf3e2149f1ff64f1f49f/seatline-core/README.md)): `process`, `stream`, `discovery`, `exchange`, `protocol`, and `framing`. The host holds the rest of the plumbing for its four real providers, and some of it is still copied between adapters:
 
 | Host-owned piece | Where | Reuse today |
 |---|---|---|
@@ -139,7 +139,7 @@ In order of impact:
 - **A non-Rust application** would get a sidecar executable: a thin wrapper around the service API that speaks a versioned protocol over stdio. It is built only if a consumer needs it.
 - **Not planned:** a C ABI or a Node addon.
   - Both bring FFI, `unsafe` binding code, and in-process crashes into the host application.
-  - A C ABI also needs a versioned C façade ([core/README](../../native/seatline-core/README.md#compatibility-and-extraction)).
+  - A C ABI also needs a versioned C façade ([core/README](https://github.com/davletovb/seatline/blob/e021c2acf05132073d82bf3e2149f1ff64f1f49f/seatline-core/README.md#compatibility-and-extraction)).
   - A pure TypeScript port would duplicate the hardest code, and Node can't reproduce some of its guarantees. For example, it can't kill a process group before reaping the child.
 
 **ADR-0002** records:
@@ -630,18 +630,18 @@ Long-lived provider processes stay out of scope (§4) unless the measurements sh
 - **Crates.** The platform layer is `seatline-platform` and the adapters are `seatline-providers`, beside `seatline-core`, the scheduler and the service. None depends on `pervue-host`, and a CI job (`scripts/check-runtime-independence.mjs`) fails if any `seatline-*` crate depends on another crate of the workspaces, which are the application's.
 - **Tests and fuzzing.** The fake provider is a library (`seatline-fake-provider`) with a small binary in each package that runs it. `seatline-tests` holds the adapter tests at the runtime's level (a `Turn` in, `Update`s out), a provider contract that all four adapters meet through the `Provider` trait alone, the hostile matrix under the scheduler's supervisor, the threaded service against real adapters, and the process and stream tests. Pervue's `test_provider` keeps what maps conversations onto turns, the host's hostile matrix, and the contract as Pervue serves the providers. `stream_lines` moved to `seatline-fuzz`, which depends on `seatline-core` alone; `frame_reader` and `protocol` stay with Pervue.
 
-[p-claude]: ../../native/providers/src/claude/mod.rs
-[p-claude-output]: ../../native/providers/src/claude/output.rs
-[p-codex]: ../../native/providers/src/codex/mod.rs
-[p-codex-output]: ../../native/providers/src/codex/output.rs
-[p-gemini]: ../../native/providers/src/gemini/mod.rs
-[p-grok]: ../../native/providers/src/grok/mod.rs
-[p-private-fs]: ../../native/platform/src/private_fs.rs
-[p-env]: ../../native/platform/src/environment.rs
-[p-workspace]: ../../native/platform/src/workspace.rs
-[p-forget]: ../../native/platform/src/forget.rs
+[p-claude]: https://github.com/davletovb/seatline/blob/e021c2acf05132073d82bf3e2149f1ff64f1f49f/providers/src/claude/mod.rs
+[p-claude-output]: https://github.com/davletovb/seatline/blob/e021c2acf05132073d82bf3e2149f1ff64f1f49f/providers/src/claude/output.rs
+[p-codex]: https://github.com/davletovb/seatline/blob/e021c2acf05132073d82bf3e2149f1ff64f1f49f/providers/src/codex/mod.rs
+[p-codex-output]: https://github.com/davletovb/seatline/blob/e021c2acf05132073d82bf3e2149f1ff64f1f49f/providers/src/codex/output.rs
+[p-gemini]: https://github.com/davletovb/seatline/blob/e021c2acf05132073d82bf3e2149f1ff64f1f49f/providers/src/gemini/mod.rs
+[p-grok]: https://github.com/davletovb/seatline/blob/e021c2acf05132073d82bf3e2149f1ff64f1f49f/providers/src/grok/mod.rs
+[p-private-fs]: https://github.com/davletovb/seatline/blob/e021c2acf05132073d82bf3e2149f1ff64f1f49f/platform/src/private_fs.rs
+[p-env]: https://github.com/davletovb/seatline/blob/e021c2acf05132073d82bf3e2149f1ff64f1f49f/platform/src/environment.rs
+[p-workspace]: https://github.com/davletovb/seatline/blob/e021c2acf05132073d82bf3e2149f1ff64f1f49f/platform/src/workspace.rs
+[p-forget]: https://github.com/davletovb/seatline/blob/e021c2acf05132073d82bf3e2149f1ff64f1f49f/platform/src/forget.rs
 [p-host]: ../../native/host/src/host.rs
-[p-process]: ../../native/seatline-core/src/process.rs
+[p-process]: https://github.com/davletovb/seatline/blob/e021c2acf05132073d82bf3e2149f1ff64f1f49f/seatline-core/src/process.rs
 [p-native-connection]: ../../extension/src/background/native-connection.js
 [p-perf]: ../../extension/src/shared/performance.js
 [c-core]: https://github.com/davletovb/conclave/blob/1379a37ccb13d484247122ee215257e642b166fc/packages/core/src/index.ts
@@ -655,3 +655,6 @@ Long-lived provider processes stay out of scope (§4) unless the measurements sh
 [c-grok-kill]: https://github.com/davletovb/conclave/blob/1379a37ccb13d484247122ee215257e642b166fc/apps/server/src/grok/acp-client.ts#L150
 [c-codex-env]: https://github.com/davletovb/conclave/blob/1379a37ccb13d484247122ee215257e642b166fc/apps/server/src/codex/app-server-client.ts#L64
 [conclave-adoption]: https://github.com/davletovb/conclave/blob/claude/eloquent-franklin-8qo1f1/docs/proposals/provider-runtime-adoption.md
+
+
+**2026-09-30, LIB-10 steps 3–4.** The standalone repository is https://github.com/davletovb/seatline, and TabBeam's migration branch pins revision `e021c2acf05132073d82bf3e2149f1ff64f1f49f` while removing the in-tree runtime. The transferred source/test/fuzz blobs match TabBeam source commit `b4bfd5bd0f3ca9db461963b971b8af0177754e5d`. Because the available GitHub connector could create Git objects and refs but could not perform a filtered Git push, pre-extraction history remains linked in TabBeam rather than being rewritten with synthetic metadata.
