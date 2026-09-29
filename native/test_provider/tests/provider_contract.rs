@@ -19,8 +19,8 @@ fn ask(text: &str) -> SendRequest {
         context: None,
         model: None,
         native_search: false,
-    session_policy: SessionPolicy::Persistent,
-    fresh_session: false,
+        session_policy: SessionPolicy::Persistent,
+        fresh_session: false,
     }
 }
 

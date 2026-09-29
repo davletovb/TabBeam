@@ -138,8 +138,8 @@ fn request(conversation_id: Option<String>, native_search: bool, model: &str) ->
         context: None,
         model: Some(model.to_owned()),
         native_search,
-    session_policy: SessionPolicy::Ephemeral,
-    fresh_session: false,
+        session_policy: SessionPolicy::Ephemeral,
+        fresh_session: false,
     }
 }
 
