@@ -1,8 +1,8 @@
 //! Bounded-deadline provider exchange events, shared by every adapter.
 //!
 //! The events are the runtime's own: an application maps them to whatever it
-//! sends its users. Pervue's protocol v1 does so in `pervue-host`, which also
-//! owns the conversations the runtime knows nothing about.
+//! sends its users, and it owns the conversations the runtime knows nothing
+//! about.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};

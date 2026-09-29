@@ -1,10 +1,10 @@
 //! Google Gemini adapter through Antigravity CLI ('agy') (PRO-08).
 //!
-//! Each Pervue turn is a one-shot Antigravity run in a private workspace with
-//! a workspace-local agent. Ordinary turns have no tools; Web turns allow only
-//! 'search_web'. Pervue sends bounded conversation history every turn instead
-//! of depending on Antigravity's native continuation state, then removes the
-//! Antigravity transcript once the child has exited.
+//! Each turn is a one-shot Antigravity run in a private workspace with a
+//! workspace-local agent. Ordinary turns have no tools; Web turns allow only
+//! 'search_web'. The application sends bounded conversation history every turn
+//! instead of depending on Antigravity's native continuation state, and the
+//! adapter removes the Antigravity transcript once the child has exited.
 
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -26,7 +26,9 @@ use runtime_core::protocol::{
 };
 use runtime_core::search::{NATIVE_SEARCH_NO_SOURCES, SourceCollector, codex_message_sources};
 use runtime_core::stream::{BUSY_LIMIT, LineStream, Output};
-use runtime_core::turn::{SessionPolicy, ToolPolicy, Turn as TurnRequest, is_cleanup_group};
+use runtime_core::turn::{
+    Namespace, SessionPolicy, ToolPolicy, Turn as TurnRequest, is_cleanup_group,
+};
 use runtime_platform::discovery;
 use runtime_platform::environment;
 use runtime_platform::forget;
@@ -40,8 +42,6 @@ use output::Line;
 
 pub const ID: &str = "gemini";
 const EXECUTABLE: &str = "agy";
-const PLAIN_AGENT: &str = "pervue-text";
-const SEARCH_AGENT: &str = "pervue-search";
 const MAX_LINE_BYTES: usize = 8 * 1024 * 1024;
 const STDERR_TAIL_BYTES: usize = 8 * 1024;
 const STATUS_OUTPUT_BYTES: usize = 16 * 1024;
@@ -115,9 +115,10 @@ const MODEL_NOT_SUPPORTED: ErrorBody = ErrorBody {
     retryable: false,
 };
 
+/// The agent of a turn with no tools, where `{name}` is its name.
 const PLAIN_AGENT_DEFINITION: &str = r#"---
-name: pervue-text
-description: Text-only Pervue Gemini responder with no local or external tools.
+name: {name}
+description: Text-only Gemini responder with no local or external tools.
 tools: []
 mainAgent: true
 subagent: false
@@ -135,9 +136,10 @@ hooks: []
 Answer the user's request directly as text. Do not use tools, subagents, files, commands, browsers, MCP servers, skills, plugins, hooks, or external side effects.
 "#;
 
+/// The agent of a web-search turn, where `{name}` is its name.
 const SEARCH_AGENT_DEFINITION: &str = r#"---
-name: pervue-search
-description: Pervue Gemini web responder allowed to use only Antigravity's native web search.
+name: {name}
+description: Gemini web responder allowed to use only Antigravity's native web search.
 tools:
   - search_web
 mainAgent: true
@@ -155,6 +157,28 @@ hooks: []
 # System Prompt
 Use search_web when answering. Do not use any other tool, subagent, file, command, browser automation, MCP server, skill, plugin, hook, or external side effect. Cite the pages you use as Markdown links.
 "#;
+
+/// The names of the workspace-local agents a turn runs as: the application's
+/// namespace, then `-text` for a turn with no tools and `-search` for a web
+/// turn. Antigravity reports the agent it ran, and the adapter refuses a turn
+/// that ran as any other.
+pub fn agent_name(namespace: &Namespace, search: bool) -> String {
+    format!(
+        "{}-{}",
+        namespace.as_str(),
+        if search { "search" } else { "text" }
+    )
+}
+
+/// The definition of the agent named `name`, for a turn that may search or not.
+fn agent_definition(name: &str, search: bool) -> String {
+    let template = if search {
+        SEARCH_AGENT_DEFINITION
+    } else {
+        PLAIN_AGENT_DEFINITION
+    };
+    template.replace("{name}", name)
+}
 
 type PendingCleanups = Rc<RefCell<HashMap<String, Vec<String>>>>;
 
@@ -196,7 +220,8 @@ impl Launch {
 pub struct Gemini {
     search: SearchPath,
     launch: Rc<Launch>,
-    /// Pervue-owned cleanup records kept across host restarts.
+    namespace: Namespace,
+    /// The application's cleanup records, kept across restarts.
     cleanup_dir: Option<PathBuf>,
     timeouts: Timeouts,
     pending_cleanups: PendingCleanups,
@@ -206,6 +231,7 @@ impl Gemini {
     pub fn installed(layout: &Layout) -> Self {
         let host: Vec<_> = std::env::vars_os().collect();
         let mut gemini = Self::new(
+            layout.namespace(),
             discovery::installed(layout),
             layout.workspace(&host, "antigravity"),
         );
@@ -213,11 +239,14 @@ impl Gemini {
         gemini
     }
 
-    pub fn new(search: SearchPath, work_dir: PathBuf) -> Self {
+    /// The adapter for the application `namespace` names, which gives its
+    /// agents their names ([`agent_name`]).
+    pub fn new(namespace: &Namespace, search: SearchPath, work_dir: PathBuf) -> Self {
         let cleanup_dir = Some(work_dir.with_extension("cleanups"));
         Self {
             search,
             launch: Rc::new(Launch::new(work_dir, std::env::vars_os().collect())),
+            namespace: namespace.clone(),
             cleanup_dir,
             timeouts: TIMEOUTS,
             pending_cleanups: Rc::new(RefCell::new(HashMap::new())),
@@ -339,7 +368,8 @@ impl Provider for Gemini {
         let Ok(base) = self.launch.base_workspace() else {
             return Box::new(Scripted::failed(NO_WORKSPACE));
         };
-        let workspace = match TurnWorkspace::create(&base, native_search) {
+        let agent = agent_name(&self.namespace, native_search);
+        let workspace = match TurnWorkspace::create(&base, &agent, native_search) {
             Ok(workspace) => workspace,
             Err(_) => return Box::new(Scripted::failed(NO_WORKSPACE)),
         };
@@ -348,11 +378,6 @@ impl Provider for Gemini {
             .cleanup_group
             .clone()
             .unwrap_or_else(|| UNGROUPED.to_owned());
-        let agent = if native_search {
-            SEARCH_AGENT
-        } else {
-            PLAIN_AGENT
-        };
         let prompt = prompt::render(&request.messages, request.tools);
         let input = serde_json::json!({
             "event": "user",
@@ -361,7 +386,7 @@ impl Provider for Gemini {
         .to_string()
             + "
 ";
-        let args = agy_args(agent, request.model.as_deref());
+        let args = agy_args(&agent, request.model.as_deref());
         let spec = self.launch.command(workspace.path(), &executable, args);
         let Ok(mut process) = Process::spawn(&spec) else {
             return Box::new(Scripted::failed(START_FAILED));
@@ -588,15 +613,10 @@ struct TurnWorkspace {
 }
 
 impl TurnWorkspace {
-    fn create(base: &Path, search: bool) -> io::Result<Self> {
+    fn create(base: &Path, agent: &str, search: bool) -> io::Result<Self> {
         let path = private_fs::unique_child(base, "turn");
         private_fs::create_private_dir(&path)?;
-        let agent = if search { SEARCH_AGENT } else { PLAIN_AGENT };
-        let definition = if search {
-            SEARCH_AGENT_DEFINITION
-        } else {
-            PLAIN_AGENT_DEFINITION
-        };
+        let definition = agent_definition(agent, search);
         let agent_dir = path.join(".agents/agents").join(agent);
         private_fs::create_private_dir(&agent_dir)?;
         private_fs::write_private_file(&agent_dir.join("agent.md"), definition.as_bytes())?;
@@ -628,7 +648,7 @@ struct Turn {
     queue: VecDeque<Update>,
     /// Groups this turn's cleanup records with the others of its group.
     cleanup_group: String,
-    expected_agent: &'static str,
+    expected_agent: String,
     initialized: bool,
     antigravity_conversation: Option<String>,
     cancelled: bool,
@@ -750,7 +770,7 @@ impl Turn {
             }
             Ok(Line::OtherStep { .. }) => {
                 // The prompt echoed back, a system message, or an unclassified
-                // step: not answer text, and nothing Pervue lets act. The
+                // step: not answer text, and nothing the adapter lets act. The
                 // prompt is echoed before or after `init`, so either is fine.
                 self.queue.push_back(Update::Activity);
             }
@@ -885,7 +905,7 @@ impl Turn {
     }
 
     /// Removes provider transcripts only after the child is gone. When init
-    /// was never consumed (stop/malformed output), identify Pervue-owned
+    /// was never consumed (stop/malformed output), identify this application's
     /// transcripts by the unique private workspace path recorded in them.
     fn cleanup_runtime(&mut self) {
         let mut ids = Vec::new();
@@ -1040,7 +1060,7 @@ fn cleanup_conversation_dir(base: &Path, conversation_id: &str) -> io::Result<Pa
     if !is_cleanup_group(conversation_id) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "unsafe Pervue conversation id",
+            "unsafe cleanup group",
         ));
     }
     Ok(base.join(conversation_id))
@@ -1099,7 +1119,7 @@ fn antigravity_brain(home: &Path) -> PathBuf {
 }
 
 /// Finds only transcripts that prove they came from this turn's unique
-/// Pervue-owned workspace. This is the fallback when cancellation/malformed
+/// private workspace. This is the fallback when cancellation/malformed
 /// output prevents the adapter from consuming Antigravity's init event.
 fn antigravity_transcripts_for_workspace(home: &Path, workspace: &Path) -> io::Result<Vec<String>> {
     let brain = antigravity_brain(home);
@@ -1180,12 +1200,13 @@ mod tests {
 
     #[test]
     fn arguments_use_stream_json_a_private_agent_and_keep_prompt_out_of_argv() {
-        let args = agy_args(SEARCH_AGENT, Some("gemini-3-pro"));
+        let search_agent = agent_name(&Namespace::fixed("my-app").unwrap(), true);
+        let args = agy_args(&search_agent, Some("gemini-3-pro"));
         let strings: Vec<_> = args.iter().map(|arg| arg.to_string_lossy()).collect();
         assert!(
             strings
                 .windows(2)
-                .any(|pair| pair == ["--agent", SEARCH_AGENT])
+                .any(|pair| pair == ["--agent", "my-app-search"])
         );
         assert!(
             strings
@@ -1216,9 +1237,11 @@ mod tests {
 
     #[test]
     fn agent_definitions_fail_closed_except_for_native_search() {
-        assert!(PLAIN_AGENT_DEFINITION.contains("tools: []"));
-        assert!(SEARCH_AGENT_DEFINITION.contains("  - search_web"));
-        for definition in [PLAIN_AGENT_DEFINITION, SEARCH_AGENT_DEFINITION] {
+        let plain = agent_definition("my-app-text", false);
+        let search = agent_definition("my-app-search", true);
+        assert!(plain.contains("tools: []"));
+        assert!(search.contains("  - search_web"));
+        for definition in [&plain, &search] {
             assert!(definition.contains("inheritCustomizations: false"));
             assert!(definition.contains("inheritMcp: false"));
             assert!(definition.contains("commandExecutionPolicy: \"off\""));

@@ -2,8 +2,8 @@
 //! the runtime's level: a `Turn` goes in and `Update`s come out. It covers
 //! status and the cached sign-in, the answer, every boundary that fails closed,
 //! and the per-turn workspaces. The adapter knows no conversations, so the
-//! tests that pin how Pervue maps its own to Grok's stateless turns are
-//! Pervue's, in `test_provider`.
+//! tests that pin how an application maps its own to Grok's stateless turns
+//! belong to that application (Pervue's are in `test_provider`).
 
 mod support;
 
@@ -220,6 +220,33 @@ fn a_second_host_does_not_remove_a_live_turn_workspace() {
     running.cancel(Duration::from_millis(100));
     let updates = run_to_end(running.as_mut());
     assert_eq!(updates.last(), Some(&Update::Stopped));
+}
+
+#[test]
+fn a_turn_is_owned_and_named_after_the_applications_namespace() {
+    let fake = FakeGrok::install(FIXTURES);
+    let adapter = fake.adapter();
+
+    // While it runs, the turn's workspace holds the owner file of its
+    // namespace, and that alone.
+    let mut running = adapter.send(model("grok-hang"));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while let Some(update) = running.next(deadline) {
+        if matches!(update, Update::Started) {
+            break;
+        }
+    }
+    let live = fake.turn_dirs();
+    assert_eq!(live.len(), 1);
+    assert!(live[0].join(".runtime-tests-owner").exists());
+    assert!(!live[0].join(".pervue-owner").exists());
+    running.cancel(Duration::from_millis(100));
+    run_to_end(running.as_mut());
+
+    // The agent it runs as is named the same way.
+    let agents = fake.read("grok-agents");
+    assert!(agents.contains("name: runtime-tests-text\n"), "{agents}");
+    assert!(!agents.contains("pervue"), "{agents}");
 }
 
 #[test]

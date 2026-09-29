@@ -11,7 +11,7 @@
 //! behind, so a provider uses its own stored sign-in, the one its status check
 //! reports, however Chrome was started. So do variables that change how
 //! programs load code, such as `NODE_OPTIONS`, `LD_PRELOAD`, and
-//! `DYLD_INSERT_LIBRARIES`, and Pervue's own settings.
+//! `DYLD_INSERT_LIBRARIES`, and the application's own settings.
 
 use std::ffi::{OsStr, OsString};
 
@@ -164,7 +164,7 @@ mod tests {
             ("NODE_OPTIONS", "--require /tmp/evil.js"),
             ("LD_PRELOAD", "/tmp/evil.so"),
             ("DYLD_INSERT_LIBRARIES", "/tmp/evil.dylib"),
-            ("PERVUE_PROVIDER_PATH", "/opt/bin"),
+            ("MY_APP_PROVIDER_PATH", "/opt/bin"),
             ("PATH", "/usr/bin"),
             ("HTTPS_PROXY", "http://proxy:3128"),
             ("SSL_CERT_FILE", "/etc/corp.pem"),

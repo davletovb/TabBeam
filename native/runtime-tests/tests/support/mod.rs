@@ -18,6 +18,7 @@ pub use runtime_fake_provider::harness::{
 pub const FIXTURES: Fixtures = Fixtures::new(
     env!("CARGO_BIN_EXE_runtime-fake-provider"),
     env!("CARGO_TARGET_TMPDIR"),
+    "runtime-tests",
 );
 
 /// How long a test waits for an exchange before it calls the exchange hung.

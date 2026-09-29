@@ -1,4 +1,4 @@
-//! Antigravity CLI stream-json output reduced to Pervue's provider-neutral events.
+//! Antigravity CLI stream-json output reduced to provider-neutral events.
 
 use serde_json::Value;
 
@@ -246,12 +246,12 @@ mod tests {
     fn parses_antigravity_stream_json_events() {
         assert_eq!(
             parse(
-                r#"{"event":"init","conversation_id":"agy-123","init":{"permission_mode":"request-review","agent":"pervue-text","tools":[]}}"#
+                r#"{"event":"init","conversation_id":"agy-123","init":{"permission_mode":"request-review","agent":"my-app-text","tools":[]}}"#
             ),
             Ok(Line::Init {
                 conversation_id: "agy-123".to_owned(),
                 permission_mode: "request-review".to_owned(),
-                agent: "pervue-text".to_owned(),
+                agent: "my-app-text".to_owned(),
             })
         );
         assert_eq!(
@@ -288,7 +288,7 @@ mod tests {
             let line = serde_json::json!({
                 "event":"init",
                 "conversation_id":id,
-                "init":{"permission_mode":"request-review","agent":"pervue-text"}
+                "init":{"permission_mode":"request-review","agent":"my-app-text"}
             });
             assert_eq!(parse(&line.to_string()), Err(Malformed));
         }

@@ -27,7 +27,11 @@ pub use runtime_fake_provider::harness::{PROMPT_STOP_GRACE, TEST_LIMITS};
 use serde_json::Value;
 
 pub const PROVIDER: &str = env!("CARGO_BIN_EXE_pervue-fake-provider");
-pub const FIXTURES: Fixtures = Fixtures::new(PROVIDER, env!("CARGO_TARGET_TMPDIR"));
+pub const FIXTURES: Fixtures = Fixtures::new(
+    PROVIDER,
+    env!("CARGO_TARGET_TMPDIR"),
+    pervue_host::NAMESPACE,
+);
 
 /// A directory holding a fake `codex`, served the way Pervue serves it:
 /// conversations over the adapter, mapped to Codex threads in a directory

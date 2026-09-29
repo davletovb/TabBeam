@@ -86,9 +86,9 @@ impl Mode {
 }
 
 /// The fake provider's `main`.
-/// Records that this process ran a turn, as one line in `<cli>-pids` beside
-/// the executable, for a test to check that it was reaped.
-fn record_launch(cli: &str) {
+/// Appends `text` to `<cli>-<what>` beside the executable, for a test to read
+/// back what the adapter sent.
+fn record(cli: &str, what: &str, text: &str) {
     use std::io::Write as _;
 
     let Some(dir) = std::env::current_exe()
@@ -100,10 +100,16 @@ fn record_launch(cli: &str) {
     if let Ok(mut file) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(dir.join(format!("{cli}-pids")))
+        .open(dir.join(format!("{cli}-{what}")))
     {
-        let _ = writeln!(file, "{}", std::process::id());
+        let _ = file.write_all(text.as_bytes());
     }
+}
+
+/// Records that this process ran a turn, as one line in `<cli>-pids`, for a
+/// test to check that it was reaped.
+fn record_launch(cli: &str) {
+    record(cli, "pids", &format!("{}\n", std::process::id()));
 }
 
 pub fn run() -> ExitCode {

@@ -10,8 +10,8 @@
 //! where they were, and its peak memory must stay within a bound far below
 //! what the provider wrote.
 //!
-//! Pervue runs the same misbehaviour through its whole host, in
-//! `test_provider`; this is the same through nothing of Pervue's. The cases
+//! An application runs the same misbehaviour through its whole host (Pervue's is
+//! in `test_provider`); this is the same through no application at all. The cases
 //! run one after another in a single test, so the resource measurements see
 //! only the case under way.
 

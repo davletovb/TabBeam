@@ -1,7 +1,7 @@
 //! Claude adapter tests against the fake Claude Code CLI, at the runtime's
 //! level: a `Turn` goes in and `Update`s come out. The adapter knows no
-//! conversations, so the tests that pin how Pervue maps them to Claude sessions
-//! are Pervue's, in `test_provider`.
+//! conversations, so the tests that pin how an application maps its own to Claude
+//! sessions belong to that application (Pervue's are in `test_provider`).
 
 mod support;
 
@@ -926,7 +926,7 @@ fn cleanup_removes_only_the_claude_files_written_for_this_workspace() {
     let session = session_of(&run_to_end(adapter.send(ask("first")).as_mut())).unwrap();
     let workspace = std::fs::canonicalize(claude.dir.join("claude-work")).unwrap();
 
-    let ours = config.join("projects/-pervue-claude-workspace");
+    let ours = config.join("projects/-my-app-claude-workspace");
     let theirs = config.join("projects/-home-someone-project");
     transcript(&ours.join(format!("{session}.jsonl")), &session, &workspace);
     std::fs::create_dir_all(ours.join(&session).join("subagents")).unwrap();
@@ -969,7 +969,7 @@ fn a_failed_removal_keeps_the_proof_it_was_the_runtimes_so_it_can_be_retried() {
     let session = session_of(&run_to_end(adapter.send(ask("first")).as_mut())).unwrap();
     let workspace = std::fs::canonicalize(claude.dir.join("claude-work")).unwrap();
     let saved = config
-        .join("projects/-pervue-claude-workspace")
+        .join("projects/-my-app-claude-workspace")
         .join(format!("{session}.jsonl"));
     transcript(&saved, &session, &workspace);
     // A file where Claude keeps its session-env directories: removing the

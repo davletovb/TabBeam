@@ -19,6 +19,7 @@ use std::time::Duration;
 
 use runtime_core::discovery::SearchPath;
 use runtime_core::exchange::Timeouts;
+use runtime_core::turn::Namespace;
 use runtime_providers::claude::{self, Claude};
 use runtime_providers::codex::{self, Codex};
 use runtime_providers::gemini::Gemini;
@@ -31,13 +32,28 @@ use runtime_providers::grok::Grok;
 pub struct Fixtures {
     provider: &'static str,
     scratch: &'static str,
+    namespace: &'static str,
 }
 
 impl Fixtures {
     /// `provider` is `env!("CARGO_BIN_EXE_<the binary>")` and `scratch` is
     /// `env!("CARGO_TARGET_TMPDIR")`, on the same file system as the binary.
-    pub const fn new(provider: &'static str, scratch: &'static str) -> Self {
-        Self { provider, scratch }
+    /// `namespace` names the application the adapters run for.
+    pub const fn new(
+        provider: &'static str,
+        scratch: &'static str,
+        namespace: &'static str,
+    ) -> Self {
+        Self {
+            provider,
+            scratch,
+            namespace,
+        }
+    }
+
+    /// The namespace of the application the adapters run for.
+    pub fn namespace(&self) -> Namespace {
+        Namespace::fixed(self.namespace).expect("the fixtures name a valid namespace")
     }
 
     /// The fake provider binary.
@@ -287,17 +303,22 @@ impl Drop for FakeClaude {
 pub struct FakeGemini {
     pub dir: PathBuf,
     pub home: PathBuf,
+    namespace: Namespace,
 }
 
 impl FakeGemini {
-    launched!("agy");
+    recorded!("agy");
 
     pub fn install(fixtures: Fixtures) -> Self {
         let dir = fixtures.directory("agy");
         fixtures.install(&dir, if cfg!(windows) { "agy.exe" } else { "agy" });
         let home = dir.join("home");
         std::fs::create_dir_all(&home).unwrap();
-        Self { dir, home }
+        Self {
+            dir,
+            home,
+            namespace: fixtures.namespace(),
+        }
     }
 
     /// The environment the adapter gets: this home, and this `PATH`.
@@ -315,6 +336,7 @@ impl FakeGemini {
     /// The Gemini adapter, pointed at this directory.
     pub fn adapter(&self) -> Gemini {
         Gemini::new(
+            &self.namespace,
             SearchPath::new([self.dir.clone()]),
             self.dir.join("workspace"),
         )
@@ -337,10 +359,11 @@ impl Drop for FakeGemini {
 pub struct FakeGrok {
     pub dir: PathBuf,
     pub home: PathBuf,
+    namespace: Namespace,
 }
 
 impl FakeGrok {
-    launched!("grok");
+    recorded!("grok");
 
     pub fn install(fixtures: Fixtures) -> Self {
         let dir = fixtures.directory("grok");
@@ -348,7 +371,11 @@ impl FakeGrok {
         let home = dir.join("home");
         std::fs::create_dir_all(home.join(".grok")).unwrap();
         std::fs::write(home.join(".grok/auth.json"), "{}").unwrap();
-        Self { dir, home }
+        Self {
+            dir,
+            home,
+            namespace: fixtures.namespace(),
+        }
     }
 
     /// The environment the adapter gets: this home, this `PATH`, and an API
@@ -382,6 +409,7 @@ impl FakeGrok {
                 .map(|(name, value)| (OsString::from(name), value.as_os_str().to_os_string())),
         );
         Grok::new(
+            &self.namespace,
             SearchPath::new([self.dir.clone()]),
             self.dir.join("workspace"),
         )

@@ -33,6 +33,17 @@ fn run(args: Vec<OsString>) -> Result<(), ()> {
     }
 
     crate::record_launch("agy");
+    crate::record(
+        "agy",
+        "invocations",
+        &format!(
+            "{}\n",
+            args.iter()
+                .map(|arg| arg.to_string_lossy())
+                .collect::<Vec<_>>()
+                .join(" ")
+        ),
+    );
     let agent = value_after(&args, "--agent").ok_or(())?;
     let model = value_after(&args, "--model");
     if !has_pair(&args, "--input-format", "stream-json")
@@ -55,7 +66,7 @@ fn run(args: Vec<OsString>) -> Result<(), ()> {
     {
         return Err(());
     }
-    let search = agent == "pervue-search";
+    let search = agent.ends_with("-search");
     if search && !definition.contains("  - search_web") {
         return Err(());
     }
@@ -78,6 +89,7 @@ fn run(args: Vec<OsString>) -> Result<(), ()> {
         .pointer("/message/content")
         .and_then(serde_json::Value::as_str)
         .ok_or(())?;
+    crate::record("agy", "prompts", &format!("{prompt}\0"));
 
     let session = format!(
         "agy-test-{}-{}",

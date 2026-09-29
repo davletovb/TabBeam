@@ -385,11 +385,11 @@ fn claude_config_dir(launch: &Launch) -> Option<PathBuf> {
 }
 
 /// Removes Claude Code's saved files for `session` when Claude wrote them for
-/// Pervue: `projects/<project>/<session>.jsonl` transcripts that name the
-/// session and record Pervue's workspace as where they ran, the directory
+/// this application: `projects/<project>/<session>.jsonl` transcripts that name
+/// the session and record the application's workspace as where they ran, the directory
 /// beside each, and the session's own `session-env`, `tasks`, and
 /// `file-history` directories. The transcripts, which prove the session is
-/// Pervue's, go last, so a removal that fails can be retried.
+/// the application's, go last, so a removal that fails can be retried.
 fn forget_transcript(config: &Path, workspace: &Path, session: &str) -> io::Result<()> {
     let projects = match std::fs::read_dir(config.join("projects")) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
@@ -402,7 +402,7 @@ fn forget_transcript(config: &Path, workspace: &Path, session: &str) -> io::Resu
             continue;
         }
         let transcript = project.path().join(format!("{session}.jsonl"));
-        if transcript_written_for_pervue(&transcript, session, workspace) {
+        if transcript_written_for_workspace(&transcript, session, workspace) {
             transcripts.push((transcript, project.path().join(session)));
         }
     }
@@ -422,8 +422,8 @@ fn forget_transcript(config: &Path, workspace: &Path, session: &str) -> io::Resu
 }
 
 /// Whether the first record of `transcript` that says where it ran names
-/// `session` and Pervue's `workspace`.
-fn transcript_written_for_pervue(transcript: &Path, session: &str, workspace: &Path) -> bool {
+/// `session` and the application's `workspace`.
+fn transcript_written_for_workspace(transcript: &Path, session: &str, workspace: &Path) -> bool {
     forget::head_lines(transcript).is_some_and(|lines| {
         lines
             .iter()
@@ -509,7 +509,7 @@ fn claude_args_for_session(
         "--include-partial-messages",
         "--permission-mode",
         "default",
-        // Pervue is conversational, not an agent. Plain turns expose no
+        // The adapter is conversational, not an agent. Plain turns expose no
         // built-in tools. Search turns expose and auto-approve only WebSearch;
         // WebFetch remains unavailable because it can fetch arbitrary URLs
         // from the user's machine.

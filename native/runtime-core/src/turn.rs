@@ -77,14 +77,14 @@ pub struct Turn {
     pub continuation: Option<String>,
     /// Groups this turn's per-turn cleanup records with the others of the same
     /// group, so the application can retry a group's failed deletions
-    /// together (Pervue: one conversation). Opaque to the runtime.
+    /// together (one conversation, say). Opaque to the runtime.
     pub cleanup_group: Option<String>,
     /// Whether the caller requires a fresh sign-in classification before the
     /// provider process starts. No adapter keeps a classification from one turn
     /// to the next, so every turn that asks starts a probe first; an
     /// application that wants fewer probes decides for itself which turns need
-    /// one (Pervue asks before every turn it sends, except the turn that
-    /// rebuilds a lost session, whose request has just passed the check).
+    /// one (an application that rebuilds a lost session, for one, leaves it
+    /// off for the rebuilt turn, whose request has just passed the check).
     pub check_sign_in: bool,
 }
 
@@ -284,8 +284,8 @@ mod tests {
 
     #[test]
     fn namespaces_are_fixed_safe_path_components() {
-        assert_eq!(Namespace::fixed("pervue").unwrap().as_str(), "pervue");
-        for value in ["", "Pervue", "../pervue", "per vue"] {
+        assert_eq!(Namespace::fixed("my-app").unwrap().as_str(), "my-app");
+        for value in ["", "My-app", "../my-app", "my app"] {
             assert!(Namespace::fixed(value).is_err(), "{value}");
         }
     }

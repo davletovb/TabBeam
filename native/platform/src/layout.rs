@@ -8,8 +8,9 @@
 //! files. This protects against accidents, not attacks: any process running as
 //! the user can already write to both applications' directories.
 //!
-//! The `pervue` namespace resolves to the paths Pervue has always used, so
-//! installed hosts keep finding their existing files.
+//! The paths follow each platform's convention, and an application's are fixed
+//! by its namespace: an application that has installed files there keeps
+//! finding them, so the layout, like the namespace, never changes for it.
 
 use std::ffi::OsString;
 use std::hash::{BuildHasher, RandomState};
@@ -37,7 +38,7 @@ impl Layout {
 
     /// The environment variable that replaces the executable lookup for this
     /// application: the namespace in capitals with `_` for `-`, then
-    /// `_PROVIDER_PATH` (`PERVUE_PROVIDER_PATH` for `pervue`). Set to a list
+    /// `_PROVIDER_PATH` (`MY_APP_PROVIDER_PATH` for `my-app`). Set to a list
     /// of directories in `PATH` form, it names the only places providers are
     /// looked for, for unusual installs and hermetic tests.
     pub fn search_path_variable(&self) -> String {
@@ -71,11 +72,11 @@ impl Layout {
     /// The application's directory in the user's cache.
     ///
     /// macOS and Windows name application directories with a capital letter
-    /// (`Pervue`); other Unix systems use the namespace as it is. The data
+    /// (`My-app`); other Unix systems use the namespace as it is. The data
     /// directory ([`Layout::data_dir`]) uses the namespace as it is everywhere,
-    /// so on Windows the two differ in case (`%LOCALAPPDATA%\Pervue` and
-    /// `%LOCALAPPDATA%\pervue`). That is how installed hosts have always laid
-    /// them out, and tests pin it; changing either would strand their files.
+    /// so on Windows the two differ in case (`%LOCALAPPDATA%\My-app` and
+    /// `%LOCALAPPDATA%\my-app`). That is how installed applications have
+    /// always laid them out; changing either would strand their files.
     #[cfg(target_vendor = "apple")]
     pub fn cache_dir(&self, host: &[(OsString, OsString)]) -> Option<PathBuf> {
         absolute(host, "HOME").map(|home| home.join("Library/Caches").join(self.title()))
@@ -149,97 +150,97 @@ mod tests {
         Layout::new(Namespace::fixed(name).unwrap())
     }
 
-    /// Installed hosts keep finding the directories Pervue has always used.
+    /// An installed application keeps finding the directories it has always used.
     #[cfg(target_vendor = "apple")]
     #[test]
-    fn pervue_keeps_its_cache_directory() {
+    fn the_cache_directory_follows_the_platforms_convention() {
         assert_eq!(
-            layout("pervue").workspace(&vars(&[("HOME", "/Users/me")]), "codex"),
-            PathBuf::from("/Users/me/Library/Caches/Pervue/codex-workspace")
+            layout("my-app").workspace(&vars(&[("HOME", "/Users/me")]), "codex"),
+            PathBuf::from("/Users/me/Library/Caches/My-app/codex-workspace")
         );
     }
 
     #[cfg(all(unix, not(target_vendor = "apple")))]
     #[test]
-    fn pervue_keeps_its_cache_directory() {
-        let pervue = layout("pervue");
+    fn the_cache_directory_follows_the_platforms_convention() {
+        let app = layout("my-app");
         assert_eq!(
-            pervue.workspace(&vars(&[("HOME", "/home/me")]), "codex"),
-            PathBuf::from("/home/me/.cache/pervue/codex-workspace")
+            app.workspace(&vars(&[("HOME", "/home/me")]), "codex"),
+            PathBuf::from("/home/me/.cache/my-app/codex-workspace")
         );
         assert_eq!(
-            pervue.workspace(
+            app.workspace(
                 &vars(&[("HOME", "/home/me"), ("XDG_CACHE_HOME", "/cache")]),
                 "claude"
             ),
-            PathBuf::from("/cache/pervue/claude-workspace")
+            PathBuf::from("/cache/my-app/claude-workspace")
         );
         // A relative cache directory would depend on the working directory.
         assert_eq!(
-            pervue.workspace(
+            app.workspace(
                 &vars(&[("HOME", "/home/me"), ("XDG_CACHE_HOME", "cache")]),
                 "codex"
             ),
-            PathBuf::from("/home/me/.cache/pervue/codex-workspace")
+            PathBuf::from("/home/me/.cache/my-app/codex-workspace")
         );
     }
 
     #[cfg(not(unix))]
     #[test]
-    fn pervue_keeps_its_cache_directory() {
+    fn the_cache_directory_follows_the_platforms_convention() {
         assert_eq!(
-            layout("pervue").workspace(
+            layout("my-app").workspace(
                 &vars(&[("LOCALAPPDATA", r"C:\Users\me\AppData\Local")]),
                 "codex"
             ),
-            PathBuf::from(r"C:\Users\me\AppData\Local\Pervue\codex-workspace")
+            PathBuf::from(r"C:\Users\me\AppData\Local\My-app\codex-workspace")
         );
     }
 
     #[cfg(not(windows))]
     #[test]
-    fn pervue_keeps_its_data_directory() {
-        let pervue = layout("pervue");
+    fn the_data_directory_follows_the_platforms_convention() {
+        let app = layout("my-app");
         assert_eq!(
-            pervue.data_dir_in(&vars(&[("HOME", "/home/me")])),
-            Some(PathBuf::from("/home/me/.local/share/pervue"))
+            app.data_dir_in(&vars(&[("HOME", "/home/me")])),
+            Some(PathBuf::from("/home/me/.local/share/my-app"))
         );
         assert_eq!(
-            pervue.data_dir_in(&vars(&[("HOME", "/home/me"), ("XDG_DATA_HOME", "/data")])),
-            Some(PathBuf::from("/data/pervue"))
+            app.data_dir_in(&vars(&[("HOME", "/home/me"), ("XDG_DATA_HOME", "/data")])),
+            Some(PathBuf::from("/data/my-app"))
         );
         // A relative data directory would depend on the working directory.
         assert_eq!(
-            pervue.data_dir_in(&vars(&[("HOME", "/home/me"), ("XDG_DATA_HOME", "data")])),
-            Some(PathBuf::from("/home/me/.local/share/pervue"))
+            app.data_dir_in(&vars(&[("HOME", "/home/me"), ("XDG_DATA_HOME", "data")])),
+            Some(PathBuf::from("/home/me/.local/share/my-app"))
         );
-        assert_eq!(pervue.data_dir_in(&[]), None);
+        assert_eq!(app.data_dir_in(&[]), None);
     }
 
     #[cfg(windows)]
     #[test]
-    fn pervue_keeps_its_data_directory() {
-        let pervue = layout("pervue");
+    fn the_data_directory_follows_the_platforms_convention() {
+        let app = layout("my-app");
         assert_eq!(
-            pervue.data_dir_in(&vars(&[("LOCALAPPDATA", r"C:\Users\me\AppData\Local")])),
-            Some(PathBuf::from(r"C:\Users\me\AppData\Local\pervue"))
+            app.data_dir_in(&vars(&[("LOCALAPPDATA", r"C:\Users\me\AppData\Local")])),
+            Some(PathBuf::from(r"C:\Users\me\AppData\Local\my-app"))
         );
         assert_eq!(
-            pervue.data_dir_in(&vars(&[("APPDATA", r"C:\Users\me\AppData\Roaming")])),
-            Some(PathBuf::from(r"C:\Users\me\AppData\Roaming\pervue"))
+            app.data_dir_in(&vars(&[("APPDATA", r"C:\Users\me\AppData\Roaming")])),
+            Some(PathBuf::from(r"C:\Users\me\AppData\Roaming\my-app"))
         );
     }
 
     #[test]
     fn a_namespace_separates_every_directory() {
         let host = vars(&[("HOME", "/home/me"), ("LOCALAPPDATA", r"C:\Local")]);
-        let (pervue, conclave) = (layout("pervue"), layout("conclave"));
+        let (app, other) = (layout("my-app"), layout("other-app"));
         assert_ne!(
-            pervue.workspace(&host, "claude"),
-            conclave.workspace(&host, "claude")
+            app.workspace(&host, "claude"),
+            other.workspace(&host, "claude")
         );
-        assert_ne!(pervue.data_dir_in(&host), conclave.data_dir_in(&host));
-        for layout in [&pervue, &conclave] {
+        assert_ne!(app.data_dir_in(&host), other.data_dir_in(&host));
+        for layout in [&app, &other] {
             let name = layout.namespace().as_str();
             let contains = |path: PathBuf| path.to_string_lossy().to_lowercase().contains(name);
             assert!(contains(layout.workspace(&host, "claude")));
@@ -249,13 +250,13 @@ mod tests {
 
     #[test]
     fn without_a_cache_the_workspace_gets_a_new_name() {
-        let conclave = layout("conclave");
-        let first = conclave.workspace(&vars(&[("HOME", "relative")]), "codex");
-        let second = conclave.workspace(&[], "codex");
+        let app = layout("my-app");
+        let first = app.workspace(&vars(&[("HOME", "relative")]), "codex");
+        let second = app.workspace(&[], "codex");
         for dir in [&first, &second] {
             assert_eq!(dir.parent(), Some(std::env::temp_dir().as_path()));
             let name = dir.file_name().unwrap().to_str().unwrap();
-            assert!(name.starts_with("conclave-codex-"), "{name}");
+            assert!(name.starts_with("my-app-codex-"), "{name}");
         }
         assert_ne!(first, second);
     }

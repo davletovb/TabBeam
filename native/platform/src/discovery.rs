@@ -19,9 +19,9 @@ mod tests {
     use runtime_core::turn::Namespace;
 
     #[test]
-    fn pervues_override_is_the_variable_it_has_always_had() {
-        let layout = Layout::new(Namespace::fixed("pervue").unwrap());
-        assert_eq!(layout.search_path_variable(), "PERVUE_PROVIDER_PATH");
+    fn the_override_variable_is_named_after_the_namespace() {
+        let layout = Layout::new(Namespace::fixed("app").unwrap());
+        assert_eq!(layout.search_path_variable(), "APP_PROVIDER_PATH");
         // A namespace with a hyphen still names a legal variable.
         let layout = Layout::new(Namespace::fixed("my-app").unwrap());
         assert_eq!(layout.search_path_variable(), "MY_APP_PROVIDER_PATH");

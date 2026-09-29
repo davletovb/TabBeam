@@ -1,9 +1,9 @@
 //! Failures, capabilities and provider status shared by adapters.
 //!
 //! These are runtime concepts only. An application maps them to its own wire
-//! vocabulary and wording: Pervue's protocol v1 adds error categories for the
-//! browser and native host, and capabilities for page context and attachments,
-//! in `pervue-host`.
+//! vocabulary and wording: a browser application's protocol can add error
+//! categories for its transport, and capabilities such as page context and
+//! attachments, on top of these.
 
 use std::borrow::Cow;
 
@@ -128,7 +128,6 @@ pub struct ProviderState {
     /// catalogs use the owned form.
     pub models: Cow<'static, [ModelOption]>,
     /// How the provider is signed in, when the adapter can tell. Applications
-    /// decide whether to accept it; Pervue protocol v1 deliberately doesn't
-    /// expose account or billing mode.
+    /// decide whether to accept it, and whether to show account or billing mode.
     pub sign_in: Option<SignInClassification>,
 }

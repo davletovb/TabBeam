@@ -2,8 +2,8 @@
 //! the runtime's level: a `Turn` goes in and `Update`s come out. It covers
 //! status, the answer and the sources, what fails closed, and that no
 //! Antigravity transcript outlives a turn. The adapter knows no conversations,
-//! so the tests that pin how Pervue maps its own to Gemini's stateless turns
-//! are Pervue's, in `test_provider`.
+//! so the tests that pin how an application maps its own to Gemini's stateless
+//! turns belong to that application (Pervue's are in `test_provider`).
 
 mod support;
 
@@ -257,6 +257,26 @@ fn narration_before_each_search_is_not_saved_into_the_answer() {
     );
     assert!(!answer.contains("Let me check"));
     assert_eq!(updates.last(), Some(&Update::Completed));
+}
+
+#[test]
+fn a_turn_runs_as_an_agent_named_after_the_applications_namespace() {
+    let fake = FakeGemini::install(FIXTURES);
+    let adapter = fake.adapter();
+    run_to_end(adapter.send(ask("Say hello")).as_mut());
+    run_to_end(adapter.send(search()).as_mut());
+
+    let agents: Vec<String> = fake
+        .invocations()
+        .iter()
+        .filter_map(|line| {
+            let mut words = line.split(' ');
+            words.find(|word| *word == "--agent")?;
+            words.next().map(str::to_owned)
+        })
+        .collect();
+    assert_eq!(agents, ["runtime-tests-text", "runtime-tests-search"]);
+    assert!(!fake.invocations().concat().contains("pervue"));
 }
 
 #[test]

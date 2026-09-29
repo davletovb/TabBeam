@@ -1,9 +1,9 @@
 //! Removing what a provider keeps for a deleted conversation
 //! (`conversation.forget`, v1 §5.4).
 //!
-//! Only files a provider wrote for Pervue are removed: a transcript counts as
-//! Pervue's when it names the session being forgotten and records Pervue's
-//! private working directory as the place it ran. Nothing is followed through
+//! Only files a provider wrote for the application are removed: a transcript
+//! counts as the application's when it names the session being forgotten and
+//! records the application's private working directory as the place it ran. Nothing is followed through
 //! a symbolic link: a link is removed itself, never what it points to.
 
 use std::fs;
@@ -35,7 +35,7 @@ pub fn in_background(
 ) -> Box<dyn Exchange> {
     let (done, outcome) = mpsc::channel();
     let spawned = thread::Builder::new()
-        .name("pervue-forget".to_owned())
+        .name("provider-forget".to_owned())
         .spawn(move || {
             let _ = done.send(work());
         });
@@ -87,7 +87,7 @@ impl Exchange for Background {
 /// preserve its durable retry record when it fails.
 pub fn work_in_background(work: impl FnOnce() + Send + 'static) {
     let _ = thread::Builder::new()
-        .name("pervue-provider-cleanup".to_owned())
+        .name("provider-cleanup".to_owned())
         .spawn(work);
 }
 
@@ -155,7 +155,7 @@ pub fn remove(path: &Path) -> io::Result<()> {
 
 pub fn remove_in_background(path: std::path::PathBuf) {
     let _ = thread::Builder::new()
-        .name("pervue-provider-cleanup".to_owned())
+        .name("provider-cleanup".to_owned())
         .spawn(move || {
             let _ = remove(&path);
         });
@@ -166,7 +166,7 @@ mod tests {
     use super::*;
 
     fn scratch(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("pervue-forget-{name}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("forget-test-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir

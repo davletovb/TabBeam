@@ -171,3 +171,18 @@ fn answer_text(updates: &[Update]) -> String {
         })
         .collect()
 }
+
+#[test]
+fn pervue_runs_its_turns_as_agents_named_pervue() {
+    // The agent definitions live in per-turn workspaces, so nothing installed
+    // depends on these names, but they are what Pervue has always used.
+    let fake = FakeGemini::install();
+    collect(fake.adapter().send(request(None, false)));
+    collect(fake.adapter().send(request(None, true)));
+    let invocations = fake.invocations().concat();
+    assert!(invocations.contains("--agent pervue-text"), "{invocations}");
+    assert!(
+        invocations.contains("--agent pervue-search"),
+        "{invocations}"
+    );
+}

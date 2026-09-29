@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::json;
 
-/// A fake credential, written to stderr: it must never reach Pervue's events
+/// A fake credential, written to stderr: it must never reach an application's events
 /// or logs.
 const SECRET: &str = "sk-live-SECRET-9d2f";
 
@@ -161,7 +161,7 @@ fn exec(dir: &Path, args: &[String], behavior: &str) -> io::Result<ExitCode> {
     if matches!(behavior, "ignores-cancel" | "floods-and-ignores-cancel") {
         ignore_termination_signal();
     }
-    // Secrets on stderr must never reach Pervue's events or logs.
+    // Secrets on stderr must never reach an application's events or logs.
     let _ = writeln!(io::stderr(), "fake codex: token {SECRET}");
 
     if behavior == "dribble" {
@@ -249,7 +249,7 @@ fn exec(dir: &Path, args: &[String], behavior: &str) -> io::Result<ExitCode> {
             flood(&mut out, &progress(0), usize::MAX)?;
             return Ok(ExitCode::SUCCESS);
         }
-        // Events Pervue doesn't know, without end: not progress either.
+        // Events the adapter doesn't know, without end: not progress either.
         "unknown-flood" => {
             flood(
                 &mut out,
