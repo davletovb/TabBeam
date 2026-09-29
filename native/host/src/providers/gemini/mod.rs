@@ -484,7 +484,7 @@ fn parse_models(bytes: &[u8]) -> Vec<ModelOption> {
             (id.starts_with("gemini-")
                 && runtime_core::turn::is_model_id(id)
                 && !label.is_empty()
-                && label.len() <= runtime_core::turn::MAX_MODEL_LABEL_BYTES)
+                && label.chars().count() <= runtime_core::turn::MAX_MODEL_LABEL_BYTES)
                 .then(|| ModelOption {
                     id: Cow::Owned(id.to_owned()),
                     label: Cow::Owned(label.to_owned()),
