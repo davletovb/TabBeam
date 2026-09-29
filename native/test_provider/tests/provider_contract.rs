@@ -69,7 +69,22 @@ fn common_contract(provider: &dyn Provider) {
     assert_eq!(state.capabilities.web_search, Capability::Supported);
     assert_eq!(state.capabilities.cancellation, Capability::Supported);
 
-    let first = visible(&run_to_end(provider.send(ask("first")).as_mut()));
+    let first_raw = run_to_end(provider.send(ask("first")).as_mut());
+    let launched = first_raw
+        .iter()
+        .position(|update| matches!(update, Update::Launched))
+        .expect("missing Launched");
+    let session = first_raw
+        .iter()
+        .position(|update| matches!(update, Update::Session(_)))
+        .expect("missing Session");
+    let started = first_raw
+        .iter()
+        .position(|update| matches!(update, Update::Started { .. }))
+        .expect("missing Started");
+    assert!(launched < started);
+    assert!(session < started);
+    let first = visible(&first_raw);
     let Update::ConversationCreated(conversation_id) = first[0].clone() else {
         panic!("missing conversation: {first:?}");
     };

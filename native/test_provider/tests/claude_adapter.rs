@@ -819,6 +819,39 @@ fn result_session_id_replaces_the_mapping_for_the_next_turn() {
 }
 
 #[test]
+fn search_retry_without_completed_history_starts_a_fresh_claude_session() {
+    let claude = FakeClaude::install("answers", "signed-in");
+    let adapter = claude.adapter();
+    let first = visible(&run_to_end(adapter.send(ask("first")).as_mut()));
+    let Update::ConversationCreated(conversation_id) = first[0].clone() else {
+        panic!("missing conversation: {first:?}");
+    };
+
+    claude.set("search-no-links", "signed-in");
+    let before = claude.invocations().len();
+    let updates = run_to_end(
+        adapter
+            .send(SendRequest {
+                conversation_id: Some(conversation_id),
+                native_search: true,
+                fresh_session: true,
+                ..ask("retry search")
+            })
+            .as_mut(),
+    );
+    assert_eq!(
+        failure(&updates),
+        (ErrorCode::SearchFailed, "NATIVE_SEARCH_NO_SOURCES")
+    );
+    assert!(
+        claude.invocations()[before..]
+            .iter()
+            .any(|line| line.starts_with("-p "))
+    );
+}
+
+
+#[test]
 fn missing_native_session_rebuilds_from_bounded_history() {
     let claude = FakeClaude::install("no-partial", "signed-in");
     let updates = visible(&run_to_end(

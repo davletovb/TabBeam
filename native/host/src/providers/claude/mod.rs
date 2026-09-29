@@ -1304,6 +1304,17 @@ mod tests {
     }
 
     #[test]
+    fn ephemeral_turns_disable_claude_session_persistence() {
+        let args = claude_args_for_session(
+            None,
+            None,
+            false,
+            runtime_core::turn::SessionPolicy::Ephemeral,
+        );
+        assert!(args.iter().any(|arg| arg == "--no-session-persistence"));
+    }
+
+    #[test]
     fn suggested_models_are_valid_model_ids() {
         assert_eq!(CAPABILITIES.model_selection, Capability::Supported);
         assert!(!MODELS.is_empty());

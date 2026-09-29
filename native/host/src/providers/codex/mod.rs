@@ -1347,6 +1347,20 @@ mod tests {
     }
 
     #[test]
+    fn ephemeral_turns_disable_codex_session_persistence() {
+        let args = exec_args_for_session(
+            Path::new("/tmp/pervue-workspace"),
+            runtime_core::turn::SessionPolicy::Ephemeral,
+            false,
+            false,
+            false,
+            None,
+            None,
+        );
+        assert!(args.iter().any(|arg| arg == "--ephemeral"));
+    }
+
+    #[test]
     fn codex_s_directory_comes_first_on_its_path() {
         let (codex, inherited) = if cfg!(unix) {
             ("/opt/codex/bin/codex", "/usr/bin:/bin")

@@ -1261,4 +1261,21 @@ mod tests {
             assert!(definition.contains("hooks: []"));
         }
     }
+    #[test]
+    fn live_model_catalog_is_protocol_bounded() {
+        let mut input = String::new();
+        for index in 0..40 {
+            input.push_str(&format!("gemini-{index}\tGemini {index}\n"));
+        }
+        input.push_str("--danger\tBad\n");
+        input.push_str(&format!(
+            "gemini-too-long\t{}\n",
+            "x".repeat(runtime_core::turn::MAX_MODEL_LABEL_BYTES + 1)
+        ));
+        let models = parse_models(input.as_bytes());
+        assert_eq!(models.len(), runtime_core::turn::MAX_MODEL_OPTIONS);
+        assert!(models.iter().all(|model| runtime_core::turn::is_model_id(&model.id)));
+        assert!(models.iter().all(|model| model.label.chars().count() <= runtime_core::turn::MAX_MODEL_LABEL_BYTES));
+    }
+
 }

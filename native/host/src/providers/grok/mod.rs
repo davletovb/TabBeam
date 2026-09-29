@@ -1033,4 +1033,17 @@ mod tests {
         assert!(!model_matches(Some("grok-4"), "grok-40"));
         assert!(!model_matches(Some("grok-4"), "claude-grok-4"));
     }
+    #[test]
+    fn live_model_catalog_is_protocol_bounded() {
+        let mut input = String::new();
+        for index in 0..40 {
+            input.push_str(&format!("* grok-{index} (available)\n"));
+        }
+        input.push_str("* grok bad\n");
+        input.push_str("* --danger\n");
+        let models = parse_models(input.as_bytes());
+        assert_eq!(models.len(), runtime_core::turn::MAX_MODEL_OPTIONS);
+        assert!(models.iter().all(|model| runtime_core::turn::is_model_id(&model.id)));
+    }
+
 }

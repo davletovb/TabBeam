@@ -972,6 +972,39 @@ fn a_new_host_recovers_the_codex_thread_without_exposing_it() {
 }
 
 #[test]
+fn search_retry_without_completed_history_starts_a_fresh_codex_session() {
+    let codex = FakeCodex::install("answers", "signed-in");
+    let adapter = codex.adapter();
+    let first = visible(&run_to_end(adapter.send(ask("first")).as_mut()));
+    let Update::ConversationCreated(conversation_id) = first[0].clone() else {
+        panic!("missing conversation: {first:?}");
+    };
+
+    codex.set("search-no-links", "signed-in");
+    let before = codex.invocations().len();
+    let updates = run_to_end(
+        adapter
+            .send(SendRequest {
+                conversation_id: Some(conversation_id),
+                native_search: true,
+                fresh_session: true,
+                ..ask("retry search")
+            })
+            .as_mut(),
+    );
+    assert_eq!(
+        failure(&updates),
+        (ErrorCode::SearchFailed, "NATIVE_SEARCH_NO_SOURCES")
+    );
+    assert!(
+        codex.invocations()[before..]
+            .iter()
+            .any(|line| line.starts_with("exec "))
+    );
+}
+
+
+#[test]
 fn a_missing_native_session_uses_the_bounded_dialogue() {
     let codex = FakeCodex::install("answers", "signed-in");
     let updates = visible(&run_to_end(

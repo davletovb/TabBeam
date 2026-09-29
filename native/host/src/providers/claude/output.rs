@@ -417,4 +417,19 @@ mod tests {
             );
         }
     }
+    #[test]
+    fn usage_includes_cache_creation_and_cache_reads() {
+        let line = r#"{"type":"result","subtype":"success","is_error":false,"result":"done","session_id":"abc-123","usage":{"input_tokens":10,"cache_creation_input_tokens":4,"cache_read_input_tokens":6,"output_tokens":3}}"#;
+        assert!(matches!(
+            parse(line),
+            Ok(Line::ResultSuccess {
+                usage: Usage {
+                    input_tokens: Some(20),
+                    output_tokens: Some(3)
+                },
+                ..
+            })
+        ));
+    }
+
 }
