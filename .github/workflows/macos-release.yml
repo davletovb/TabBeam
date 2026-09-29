@@ -17,6 +17,12 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
+      - name: Verify TabBeam repository rename
+        run: |
+          if [[ "$GITHUB_REPOSITORY" != "davletovb/tabbeam" ]]; then
+            echo "Rename the repository to davletovb/tabbeam before creating a TabBeam release candidate." >&2
+            exit 1
+          fi
       - name: Import Developer ID certificates
         env:
           APP_P12: ${{ secrets.MACOS_DEVELOPER_ID_APP_P12 }}

@@ -17,6 +17,12 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v5
+      - name: Verify TabBeam repository rename
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REPOSITORY -ne 'davletovb/tabbeam') {
+            throw 'Rename the repository to davletovb/tabbeam before creating a TabBeam release candidate.'
+          }
       - uses: actions/cache@v4
         with:
           path: |

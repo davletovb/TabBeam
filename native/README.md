@@ -208,7 +208,7 @@ Two contracts sit one on top of the other (ADR-0002): the runtime `Provider` in 
 
 The layer tells the request loop which conversation a request serves, and whether it just created it, through a `ConversationSlot` the loop puts in the request. The loop announces a new conversation (`conversation.created`) right before the `response.started` that names it.
 
-`Providers::installed(layout)` is the registry of an installed host: `fake`, `codex`, `claude`, `gemini`, and `grok`. `provider.status` can query any real adapter through the same request shape. `Providers::scaffold()` holds only `fake`, which starts no processes, for fuzzing and protocol tests. The `layout` names the application's namespace: every workspace, mapping and cleanup record lives under it (`platform/src/layout.rs`), and `tabbeam` resolves to the directories TabBeam has always used.
+`Providers::installed(layout)` is the registry of an installed host: `fake`, `codex`, `claude`, `gemini`, and `grok`. `provider.status` can query any real adapter through the same request shape. `Providers::scaffold()` holds only `fake`, which starts no processes, for fuzzing and protocol tests. The `layout` names the application's namespace: every workspace, mapping and cleanup record lives under it (`platform/src/layout.rs`), and `tabbeam` resolves to TabBeam's clean-break directories established before the first release.
 
 ### Codex
 
