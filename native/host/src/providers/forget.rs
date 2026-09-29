@@ -14,12 +14,12 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use super::{Exchange, Scripted, Update};
-use crate::protocol::events::{ErrorBody, ErrorCode};
+use crate::protocol::events::{ErrorCode};
+use runtime_core::protocol::Failure as ErrorBody;
 
-pub const SESSION_FORGET_FAILED: ErrorBody<'static> = ErrorBody {
+pub const SESSION_FORGET_FAILED: ErrorBody = ErrorBody {
     code: ErrorCode::InternalError,
     reason: "SESSION_FORGET_FAILED",
-    message: "Pervue couldn't remove everything this conversation left behind. Delete it again to retry.",
     retryable: true,
 };
 

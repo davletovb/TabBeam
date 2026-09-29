@@ -5,7 +5,7 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use crate::protocol::{ErrorBody, ProviderState, Source};
+use crate::protocol::{Failure, ProviderState, Source};
 use crate::turn::Usage;
 
 /// What an exchange reports, in protocol order. After a terminal update
@@ -39,7 +39,7 @@ pub enum Update {
     /// Terminal: the request succeeded.
     Completed,
     /// Terminal: the request failed.
-    Failed(ErrorBody<'static>),
+    Failed(Failure),
     /// Terminal: the exchange stopped after [`Exchange::cancel`].
     Stopped,
 }
@@ -86,7 +86,7 @@ impl Scripted {
     }
 
     /// An exchange that fails at once with `error`.
-    pub fn failed(error: ErrorBody<'static>) -> Self {
+    pub fn failed(error: Failure) -> Self {
         Self::new([Update::Failed(error)])
     }
 }

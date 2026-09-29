@@ -33,8 +33,9 @@ use super::forget;
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
 use crate::conversation::{provider_prompt, search_prompt};
 use crate::protocol::events::{
-    Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ProviderState,
+    Authentication, Availability, Capabilities, Capability, ErrorCode, ProviderState,
 };
+use runtime_core::protocol::Failure as ErrorBody;
 use crate::search::{NATIVE_SEARCH_NO_SOURCES, SourceCollector, codex_message_sources};
 use runtime_core::discovery::SearchPath;
 use runtime_core::process::{Event, Exit, Process, ProcessSpec};
@@ -99,73 +100,63 @@ pub const CAPABILITIES: Capabilities = Capabilities {
     cancellation: Capability::Supported,
 };
 
-const NOT_INSTALLED: ErrorBody<'static> = ErrorBody {
+const NOT_INSTALLED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderNotFound,
     reason: "EXECUTABLE_NOT_FOUND",
-    message: "Codex isn't installed. Install the Codex CLI, then try again.",
     retryable: false,
 };
 
-const NOT_SIGNED_IN: ErrorBody<'static> = ErrorBody {
+const NOT_SIGNED_IN: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderNotAuthenticated,
     reason: "LOGIN_REQUIRED",
-    message: "Codex isn't signed in. Run \"codex login\" in a terminal, then try again.",
     retryable: false,
 };
 
-const CONTEXT_TOOLS_ENABLED: ErrorBody<'static> = ErrorBody {
+const CONTEXT_TOOLS_ENABLED: ErrorBody = ErrorBody {
     code: ErrorCode::InvalidRequest,
     reason: "PAGE_CONTEXT_TOOLS_ENABLED",
-    message: "Pervue won't send browser context to Codex while user-configured MCP servers are enabled. Disable them or choose No context.",
     retryable: false,
 };
 
-const SEARCH_TOOLS_ENABLED: ErrorBody<'static> = ErrorBody {
+const SEARCH_TOOLS_ENABLED: ErrorBody = ErrorBody {
     code: ErrorCode::SearchFailed,
     reason: "NATIVE_SEARCH_CONFIGURATION_UNSAFE",
-    message: "Pervue won't enable Codex web search while user-configured MCP servers are enabled. Disable them or use a plain Ask turn.",
     retryable: false,
 };
 
-const UNKNOWN_CONVERSATION: ErrorBody<'static> = ErrorBody {
+const UNKNOWN_CONVERSATION: ErrorBody = ErrorBody {
     code: ErrorCode::InvalidRequest,
     reason: "UNKNOWN_CONVERSATION",
-    message: "This conversation can't be continued. Start a new one.",
     retryable: false,
 };
 
-const START_FAILED: ErrorBody<'static> = ErrorBody {
+const START_FAILED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROVIDER_UNAVAILABLE",
-    message: "Codex couldn't start. Reinstall the Codex CLI, then try again.",
     retryable: false,
 };
 
-const NO_WORKSPACE: ErrorBody<'static> = ErrorBody {
+const NO_WORKSPACE: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "WORKSPACE_UNAVAILABLE",
-    message: "Pervue couldn't prepare a private folder for Codex. Make sure your cache folder exists and only you can change it, then try again.",
     retryable: false,
 };
 
-const PROCESS_EXITED: ErrorBody<'static> = ErrorBody {
+const PROCESS_EXITED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROCESS_EXITED",
-    message: "Codex stopped unexpectedly. Try again.",
     retryable: true,
 };
 
-const MALFORMED_OUTPUT: ErrorBody<'static> = ErrorBody {
+const MALFORMED_OUTPUT: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "MALFORMED_PROVIDER_OUTPUT",
-    message: "Codex answered in a way Pervue doesn't understand. Update Codex and Pervue, then try again.",
     retryable: false,
 };
 
-const SESSION_STORE_FAILED: ErrorBody<'static> = ErrorBody {
+const SESSION_STORE_FAILED: ErrorBody = ErrorBody {
     code: ErrorCode::InternalError,
     reason: "SESSION_STORE_FAILED",
-    message: "Codex's conversation could not be saved. Check available disk space and try again.",
     retryable: true,
 };
 
@@ -281,7 +272,7 @@ impl Codex {
         self.search.find(EXECUTABLE)
     }
 
-    fn validate_request(&self, request: &SendRequest) -> Result<(), ErrorBody<'static>> {
+    fn validate_request(&self, request: &SendRequest) -> Result<(), ErrorBody> {
         let context_turn = request.context.is_some();
         let reference_turn = context_turn || request.native_search;
         if reference_turn && !context_configuration_is_safe(&self.launch) {
@@ -998,7 +989,7 @@ struct Turn {
     /// ("I'll look that up"), not answer, and is dropped.
     held: Option<String>,
     /// How the turn ended, once Codex said so.
-    outcome: Option<Result<(), ErrorBody<'static>>>,
+    outcome: Option<Result<(), ErrorBody>>,
     /// When to stop waiting for Codex to exit after the turn ended.
     finish_by: Option<Instant>,
 }
@@ -1190,7 +1181,7 @@ impl Turn {
         });
     }
 
-    fn turn_ended(&mut self, outcome: Result<(), ErrorBody<'static>>) {
+    fn turn_ended(&mut self, outcome: Result<(), ErrorBody>) {
         let outcome = if outcome.is_ok() && self.native_search && self.sources.count() == 0 {
             Err(NATIVE_SEARCH_NO_SOURCES)
         } else {

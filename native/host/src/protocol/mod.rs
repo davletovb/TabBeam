@@ -9,3 +9,5 @@ pub mod request;
 
 /// The protocol version this host speaks.
 pub const PROTOCOL_VERSION: i64 = 1;
+
+pub mod messages;

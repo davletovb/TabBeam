@@ -29,9 +29,10 @@ use super::private_fs;
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
 use crate::conversation::provider_prompt;
 use crate::protocol::events::{
-    Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ModelOption,
+    Authentication, Availability, Capabilities, Capability, ErrorCode, ModelOption,
     ProviderState,
 };
+use runtime_core::protocol::Failure as ErrorBody;
 use runtime_core::discovery::SearchPath;
 use runtime_core::process::{Event, Exit, Process, ProcessSpec};
 use runtime_core::stream::{BUSY_LIMIT, LineStream, Output};
@@ -68,100 +69,84 @@ pub const TIMEOUTS: Timeouts = Timeouts {
     stop_grace: Duration::from_secs(2),
 };
 
-const NOT_INSTALLED: ErrorBody<'static> = ErrorBody {
+const NOT_INSTALLED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderNotFound,
     reason: "EXECUTABLE_NOT_FOUND",
-    message: "Grok Build isn't installed. Install the Grok CLI, then try again.",
     retryable: false,
 };
-const START_FAILED: ErrorBody<'static> = ErrorBody {
+const START_FAILED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROVIDER_UNAVAILABLE",
-    message: "Grok Build couldn't start. Reinstall it, then try again.",
     retryable: false,
 };
-const NO_WORKSPACE: ErrorBody<'static> = ErrorBody {
+const NO_WORKSPACE: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "WORKSPACE_UNAVAILABLE",
-    message: "Pervue couldn't prepare a private folder for Grok. Check your cache folder, then try again.",
     retryable: false,
 };
-const PROCESS_EXITED: ErrorBody<'static> = ErrorBody {
+const PROCESS_EXITED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROCESS_EXITED",
-    message: "Grok stopped unexpectedly. Try again.",
     retryable: true,
 };
-const MALFORMED_OUTPUT: ErrorBody<'static> = ErrorBody {
+const MALFORMED_OUTPUT: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "MALFORMED_PROVIDER_OUTPUT",
-    message: "Grok answered in a way Pervue doesn't understand. Update Grok Build and Pervue, then try again.",
     retryable: false,
 };
-const BOUNDARY_VIOLATION: ErrorBody<'static> = ErrorBody {
+const BOUNDARY_VIOLATION: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROVIDER_BOUNDARY_VIOLATION",
-    message: "Grok exposed or used a tool Pervue doesn't allow, so the turn was stopped.",
     retryable: false,
 };
-const AUTH_MODE_REJECTED: ErrorBody<'static> = ErrorBody {
+const AUTH_MODE_REJECTED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderNotAuthenticated,
     reason: "AUTH_REJECTED",
-    message: "Pervue uses Grok/X account sign-in, not API-key billing. Run grok login, then try again.",
     retryable: false,
 };
-const UNKNOWN_CONVERSATION: ErrorBody<'static> = ErrorBody {
+const UNKNOWN_CONVERSATION: ErrorBody = ErrorBody {
     code: ErrorCode::InvalidRequest,
     reason: "UNKNOWN_CONVERSATION",
-    message: "This Grok conversation ID is not one Pervue issued. Start a new conversation.",
     retryable: false,
 };
-const PERSISTENT_SESSION_UNSUPPORTED: ErrorBody<'static> = ErrorBody {
+const PERSISTENT_SESSION_UNSUPPORTED: ErrorBody = ErrorBody {
     code: ErrorCode::InvalidRequest,
     reason: "PERSISTENT_SESSION_UNSUPPORTED",
-    message: "Grok runs statelessly in Pervue; provider-native session persistence is unavailable.",
     retryable: false,
 };
-const MODEL_NOT_SUPPORTED: ErrorBody<'static> = ErrorBody {
+const MODEL_NOT_SUPPORTED: ErrorBody = ErrorBody {
     code: ErrorCode::InvalidRequest,
     reason: "MODEL_NOT_SUPPORTED",
-    message: "The Grok provider accepts Grok model IDs only.",
     retryable: false,
 };
-const SEARCH_UNSUPPORTED: ErrorBody<'static> = ErrorBody {
+const SEARCH_UNSUPPORTED: ErrorBody = ErrorBody {
     code: ErrorCode::InvalidRequest,
     reason: "SEARCH_UNSUPPORTED",
-    message: "Grok Build's shipped headless CLI doesn't expose a Pervue-safe native web-search surface yet. Turn Web off and try again.",
     retryable: false,
 };
-const MODEL_MISMATCH: ErrorBody<'static> = ErrorBody {
+const MODEL_MISMATCH: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "MODEL_MISMATCH",
-    message: "Grok started a different model than Pervue requested. Update Grok Build or choose its default model, then try again.",
     retryable: false,
 };
-const WORKSPACE_MISMATCH: ErrorBody<'static> = ErrorBody {
+const WORKSPACE_MISMATCH: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "WORKSPACE_MISMATCH",
-    message: "Grok didn't stay in Pervue's private workspace, so the turn was stopped.",
     retryable: false,
 };
-const TOOLSET_MISMATCH: ErrorBody<'static> = ErrorBody {
+const TOOLSET_MISMATCH: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "TOOLSET_MISMATCH",
-    message: "Grok exposed tools in a text-only Pervue turn, so the turn was stopped.",
     retryable: false,
 };
-const SKILLS_MISMATCH: ErrorBody<'static> = ErrorBody {
+const SKILLS_MISMATCH: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "SKILLS_MISMATCH",
-    message: "Grok loaded skills in Pervue's isolated turn, so the turn was stopped.",
     retryable: false,
 };
-const MCP_MISMATCH: ErrorBody<'static> = ErrorBody {
+const MCP_MISMATCH: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "MCP_MISMATCH",
-    message: "Grok connected an MCP server in Pervue's isolated turn, so the turn was stopped.",
     retryable: false,
 };
 
@@ -709,13 +694,13 @@ struct Turn {
     initialized: bool,
     cancelled: bool,
     saw_text: bool,
-    outcome: Option<Result<(), ErrorBody<'static>>>,
+    outcome: Option<Result<(), ErrorBody>>,
     finish_by: Option<Instant>,
     done: bool,
 }
 
 impl Turn {
-    fn fail(&mut self, error: ErrorBody<'static>) {
+    fn fail(&mut self, error: ErrorBody) {
         self.queue.clear();
         self.outcome = Some(Err(error));
         self.finish_by = None;

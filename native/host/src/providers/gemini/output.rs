@@ -2,7 +2,8 @@
 
 use serde_json::Value;
 
-use crate::protocol::events::{ErrorBody, ErrorCode};
+use crate::protocol::events::{ErrorCode};
+use runtime_core::protocol::Failure as ErrorBody;
 use runtime_core::turn::Usage;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,7 +42,7 @@ pub enum Line {
         response: String,
         usage: Usage,
     },
-    ResultFailed(ErrorBody<'static>),
+    ResultFailed(ErrorBody),
     Ignored,
 }
 
@@ -179,24 +180,21 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
     })
 }
 
-const AUTH_REJECTED: ErrorBody<'static> = ErrorBody {
+const AUTH_REJECTED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderNotAuthenticated,
     reason: "AUTH_REJECTED",
-    message: "Gemini isn't signed in through Antigravity. Run \"agy\" in a terminal, sign in, then try again.",
     retryable: false,
 };
 
-const RATE_LIMITED: ErrorBody<'static> = ErrorBody {
+const RATE_LIMITED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROVIDER_RATE_LIMITED",
-    message: "Gemini has reached a usage or rate limit. Try again later.",
     retryable: true,
 };
 
-const UNAVAILABLE: ErrorBody<'static> = ErrorBody {
+const UNAVAILABLE: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROVIDER_UNAVAILABLE",
-    message: "Gemini couldn't answer through Antigravity right now. Try again.",
     retryable: true,
 };
 
@@ -216,7 +214,7 @@ pub fn authentication_failure(message: &str) -> bool {
     .any(|phrase| lower.contains(phrase))
 }
 
-pub fn provider_failure(message: &str) -> ErrorBody<'static> {
+pub fn provider_failure(message: &str) -> ErrorBody {
     let lower = message.to_ascii_lowercase();
     if authentication_failure(message) {
         AUTH_REJECTED

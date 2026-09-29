@@ -22,9 +22,10 @@ use super::forget;
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
 use crate::conversation::{provider_prompt, search_prompt};
 use crate::protocol::events::{
-    Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ModelOption,
+    Authentication, Availability, Capabilities, Capability, ErrorCode, ModelOption,
     ProviderState,
 };
+use runtime_core::protocol::Failure as ErrorBody;
 use crate::search::{NATIVE_SEARCH_NO_SOURCES, SourceCollector, claude_tool_result_sources};
 use runtime_core::discovery::SearchPath;
 use runtime_core::process::{Event, Exit, Process, ProcessSpec};
@@ -104,24 +105,21 @@ pub const MODELS: &[ModelOption] = &[
     },
 ];
 
-const NOT_INSTALLED: ErrorBody<'static> = ErrorBody {
+const NOT_INSTALLED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderNotFound,
     reason: "EXECUTABLE_NOT_FOUND",
-    message: "Claude isn't installed. Install Claude Code, then try again.",
     retryable: false,
 };
 
-const NOT_SIGNED_IN: ErrorBody<'static> = ErrorBody {
+const NOT_SIGNED_IN: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderNotAuthenticated,
     reason: "LOGIN_REQUIRED",
-    message: "Claude isn't signed in. Run \"claude auth login\" in a terminal, then try again.",
     retryable: false,
 };
 
-const UNKNOWN_CONVERSATION: ErrorBody<'static> = ErrorBody {
+const UNKNOWN_CONVERSATION: ErrorBody = ErrorBody {
     code: ErrorCode::InvalidRequest,
     reason: "UNKNOWN_CONVERSATION",
-    message: "This conversation can't be continued. Start a new one.",
     retryable: false,
 };
 
@@ -130,45 +128,39 @@ const UNKNOWN_CONVERSATION: ErrorBody<'static> = ErrorBody {
 /// two; past this, the answer streams live.
 const HELD_TEXT_LIMIT: usize = 600;
 
-const START_FAILED: ErrorBody<'static> = ErrorBody {
+const START_FAILED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROVIDER_UNAVAILABLE",
-    message: "Claude couldn't start. Reinstall Claude Code, then try again.",
     retryable: false,
 };
 
-const NO_WORKSPACE: ErrorBody<'static> = ErrorBody {
+const NO_WORKSPACE: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "WORKSPACE_UNAVAILABLE",
-    message: "Pervue couldn't prepare a private folder for Claude. Check your cache folder and try again.",
     retryable: false,
 };
 
-const PROCESS_EXITED: ErrorBody<'static> = ErrorBody {
+const PROCESS_EXITED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROCESS_EXITED",
-    message: "Claude stopped unexpectedly. Try again.",
     retryable: true,
 };
 
-const MALFORMED_OUTPUT: ErrorBody<'static> = ErrorBody {
+const MALFORMED_OUTPUT: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "MALFORMED_PROVIDER_OUTPUT",
-    message: "Claude answered in a way Pervue doesn't understand. Update Claude Code and Pervue, then try again.",
     retryable: false,
 };
 
-const SESSION_GONE: ErrorBody<'static> = ErrorBody {
+const SESSION_GONE: ErrorBody = ErrorBody {
     code: ErrorCode::InvalidRequest,
     reason: "UNKNOWN_CONVERSATION",
-    message: "Claude's saved session no longer exists. Start a new conversation.",
     retryable: false,
 };
 
-const SESSION_STORE_FAILED: ErrorBody<'static> = ErrorBody {
+const SESSION_STORE_FAILED: ErrorBody = ErrorBody {
     code: ErrorCode::InternalError,
     reason: "SESSION_STORE_FAILED",
-    message: "Claude's conversation could not be saved. Check available disk space and try again.",
     retryable: true,
 };
 
@@ -279,7 +271,7 @@ impl Claude {
         self.search.find(EXECUTABLE)
     }
 
-    fn validate_request(&self, request: &SendRequest) -> Result<(), ErrorBody<'static>> {
+    fn validate_request(&self, request: &SendRequest) -> Result<(), ErrorBody> {
         if let Some(conversation_id) = request.conversation_id.as_deref() {
             let known = self.conversations.borrow().contains_key(conversation_id)
                 || self
@@ -822,7 +814,7 @@ struct Turn {
     held: String,
     /// The message being streamed has shown its text; the rest streams live.
     live: bool,
-    outcome: Option<Result<(), ErrorBody<'static>>>,
+    outcome: Option<Result<(), ErrorBody>>,
     finish_by: Option<Instant>,
 }
 
@@ -1136,7 +1128,7 @@ impl Turn {
         }
     }
 
-    fn turn_ended(&mut self, outcome: Result<(), ErrorBody<'static>>) {
+    fn turn_ended(&mut self, outcome: Result<(), ErrorBody>) {
         self.outcome = Some(outcome);
         self.finish_by = Some(after(self.finish_grace));
     }

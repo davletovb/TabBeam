@@ -37,6 +37,7 @@ use crate::protocol::events::{
     self, Capability, ConversationCreated, ErrorBody, ErrorCode, Event, ProviderStatus,
     RequestCancelled, ResponseCompleted, ResponseDelta, ResponseSource, ResponseStarted,
 };
+use crate::protocol::messages;
 use crate::protocol::request::{self, Method, RequestFailure, RequestId};
 use crate::providers::{Exchange, Providers, Scripted, SendRequest, StatusOfAll, Timeouts, Update};
 use runtime_core::stream::split_text;
@@ -746,7 +747,9 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
             (Some(Stop::Cancelled(_)), _) => Some(CANCELLED),
             (Some(Stop::InputClosed), _) => Some(INPUT_CLOSED),
             (None, SchedulerEnd::Completed) => None,
-            (None, SchedulerEnd::Failed(error)) => Some(error),
+            (None, SchedulerEnd::Failed(error)) => {
+                Some(messages::provider_failure(running.provider_id.as_deref(), error))
+            },
             (None, SchedulerEnd::Timeout(TimeoutKind::Start)) => Some(START_TIMEOUT),
             (None, SchedulerEnd::Timeout(TimeoutKind::Idle)) => Some(RESPONSE_TIMEOUT),
             (None, SchedulerEnd::Timeout(TimeoutKind::Absolute)) => Some(TURN_TIMEOUT),

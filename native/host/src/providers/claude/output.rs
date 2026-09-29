@@ -2,7 +2,8 @@
 
 use serde_json::Value;
 
-use crate::protocol::events::{ErrorBody, ErrorCode};
+use crate::protocol::events::{ErrorCode};
+use runtime_core::protocol::Failure as ErrorBody;
 use runtime_core::turn::Usage;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,7 +22,7 @@ pub enum Line {
         text: String,
         usage: Usage,
     },
-    ResultFailed(ErrorBody<'static>),
+    ResultFailed(ErrorBody),
     Ignored,
 }
 
@@ -170,31 +171,27 @@ fn tool_event(block: &Value) -> Option<ToolEvent> {
     }
 }
 
-const AUTH_REJECTED: ErrorBody<'static> = ErrorBody {
+const AUTH_REJECTED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderNotAuthenticated,
     reason: "AUTH_REJECTED",
-    message: "Claude's sign-in was rejected. Run \"claude auth login\" in a terminal, then try again.",
     retryable: false,
 };
 
-const RATE_LIMITED: ErrorBody<'static> = ErrorBody {
+const RATE_LIMITED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROVIDER_RATE_LIMITED",
-    message: "Claude has reached a usage or rate limit. Try again later.",
     retryable: true,
 };
 
-const UNKNOWN_CONVERSATION: ErrorBody<'static> = ErrorBody {
+const UNKNOWN_CONVERSATION: ErrorBody = ErrorBody {
     code: ErrorCode::InvalidRequest,
     reason: "UNKNOWN_CONVERSATION",
-    message: "Claude's saved session no longer exists. Pervue will rebuild it from conversation history when possible.",
     retryable: false,
 };
 
-const UNAVAILABLE: ErrorBody<'static> = ErrorBody {
+const UNAVAILABLE: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROVIDER_UNAVAILABLE",
-    message: "Claude couldn't answer right now. Try again.",
     retryable: true,
 };
 
@@ -218,7 +215,7 @@ pub fn names_unknown_session(message: &str) -> bool {
 /// "rate" or "auth". Besides Claude's own wording, this covers the raw API
 /// errors it passes on, such as `API Error: 429 {"type":"error","error":{"type":
 /// "rate_limit_error",…}}`.
-pub fn result_failure(message: &str) -> ErrorBody<'static> {
+pub fn result_failure(message: &str) -> ErrorBody {
     let lower = message.to_ascii_lowercase();
     if names_unknown_session(message) {
         UNKNOWN_CONVERSATION

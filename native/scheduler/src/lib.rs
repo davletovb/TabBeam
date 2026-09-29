@@ -9,7 +9,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::time::{Duration, Instant};
 
 use runtime_core::exchange::{Exchange, Timeouts, Update};
-use runtime_core::protocol::ErrorBody;
+use runtime_core::protocol::Failure;
 
 const STOP_SLACK: Duration = Duration::from_secs(1);
 
@@ -25,7 +25,7 @@ pub enum TimeoutKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EndReason {
     Completed,
-    Failed(ErrorBody<'static>),
+    Failed(Failure),
     Cancelled,
     Timeout(TimeoutKind),
     StoppedUnexpectedly,

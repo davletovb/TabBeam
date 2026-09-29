@@ -49,9 +49,19 @@ pub enum EventError {
 }
 
 pub use runtime_core::protocol::{
-    Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ModelOption,
-    ProviderState, Source,
+    Authentication, Availability, Capabilities, Capability, ErrorCode, ModelOption, ProviderState,
+    Source,
 };
+
+/// Protocol-v1 error body. Runtime failures are converted to this host-owned
+/// shape so provider-runtime crates never carry Pervue wording.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct ErrorBody<'a> {
+    pub code: ErrorCode,
+    pub reason: &'a str,
+    pub message: &'a str,
+    pub retryable: bool,
+}
 
 /// Payload of a `provider.status` event.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

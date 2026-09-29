@@ -24,9 +24,10 @@ use super::private_fs;
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
 use crate::conversation::{SEARCH_INSTRUCTIONS, provider_prompt};
 use crate::protocol::events::{
-    Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ModelOption,
+    Authentication, Availability, Capabilities, Capability, ErrorCode, ModelOption,
     ProviderState,
 };
+use runtime_core::protocol::Failure as ErrorBody;
 use crate::search::{NATIVE_SEARCH_NO_SOURCES, SourceCollector, codex_message_sources};
 use runtime_core::discovery::SearchPath;
 use runtime_core::process::{Event, Exit, Process, ProcessSpec};
@@ -63,70 +64,59 @@ pub const TIMEOUTS: Timeouts = Timeouts {
     stop_grace: Duration::from_secs(2),
 };
 
-const NOT_INSTALLED: ErrorBody<'static> = ErrorBody {
+const NOT_INSTALLED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderNotFound,
     reason: "EXECUTABLE_NOT_FOUND",
-    message: "Antigravity CLI isn't installed. Install Antigravity CLI, then try again.",
     retryable: false,
 };
-const START_FAILED: ErrorBody<'static> = ErrorBody {
+const START_FAILED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROVIDER_UNAVAILABLE",
-    message: "Antigravity CLI couldn't start. Reinstall it, then try again.",
     retryable: false,
 };
-const NO_WORKSPACE: ErrorBody<'static> = ErrorBody {
+const NO_WORKSPACE: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "WORKSPACE_UNAVAILABLE",
-    message: "Pervue couldn't prepare a private folder for Antigravity. Check your cache folder, then try again.",
     retryable: false,
 };
-const PROCESS_EXITED: ErrorBody<'static> = ErrorBody {
+const PROCESS_EXITED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROCESS_EXITED",
-    message: "Antigravity stopped unexpectedly. Try again.",
     retryable: true,
 };
-const MALFORMED_OUTPUT: ErrorBody<'static> = ErrorBody {
+const MALFORMED_OUTPUT: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "MALFORMED_PROVIDER_OUTPUT",
-    message: "Antigravity answered in a way Pervue doesn't understand. Update Antigravity CLI and Pervue, then try again.",
     retryable: false,
 };
-const BOUNDARY_VIOLATION: ErrorBody<'static> = ErrorBody {
+const BOUNDARY_VIOLATION: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROVIDER_BOUNDARY_VIOLATION",
-    message: "Antigravity tried to use a tool or step Pervue doesn't allow, so the turn was stopped.",
     retryable: false,
 };
-const AGENT_NOT_USED: ErrorBody<'static> = ErrorBody {
+const AGENT_NOT_USED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROVIDER_AGENT_NOT_USED",
-    message: "Antigravity didn't use Pervue's restricted agent, so the turn was stopped. Update Antigravity CLI, then try again.",
     retryable: false,
 };
-const PERMISSIONS_TOO_OPEN: ErrorBody<'static> = ErrorBody {
+const PERMISSIONS_TOO_OPEN: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROVIDER_PERMISSIONS_TOO_OPEN",
-    message: "Antigravity is set to run tools without asking, so Pervue stopped the turn. Set Antigravity's tool permission to review requests, then try again.",
     retryable: false,
 };
-const UNKNOWN_CONVERSATION: ErrorBody<'static> = ErrorBody {
+const UNKNOWN_CONVERSATION: ErrorBody = ErrorBody {
     code: ErrorCode::InvalidRequest,
     reason: "UNKNOWN_CONVERSATION",
-    message: "This Gemini conversation ID is not one Pervue issued. Start a new conversation.",
     retryable: false,
 };
-const PERSISTENT_SESSION_UNSUPPORTED: ErrorBody<'static> = ErrorBody {
+const PERSISTENT_SESSION_UNSUPPORTED: ErrorBody = ErrorBody {
     code: ErrorCode::InvalidRequest,
     reason: "PERSISTENT_SESSION_UNSUPPORTED",
-    message: "Gemini runs statelessly in Pervue; provider-native session persistence is unavailable.",
     retryable: false,
 };
-const MODEL_NOT_SUPPORTED: ErrorBody<'static> = ErrorBody {
+const MODEL_NOT_SUPPORTED: ErrorBody = ErrorBody {
     code: ErrorCode::InvalidRequest,
     reason: "MODEL_NOT_SUPPORTED",
-    message: "The Gemini provider accepts Gemini model IDs only.",
     retryable: false,
 };
 
@@ -647,13 +637,13 @@ struct Turn {
     step_text: String,
     messages: usize,
     sources: SourceCollector,
-    outcome: Option<Result<(), ErrorBody<'static>>>,
+    outcome: Option<Result<(), ErrorBody>>,
     finish_by: Option<Instant>,
     done: bool,
 }
 
 impl Turn {
-    fn fail(&mut self, error: ErrorBody<'static>) {
+    fn fail(&mut self, error: ErrorBody) {
         self.queue.clear();
         self.outcome = Some(Err(error));
         self.finish_by = Some(Instant::now());

@@ -39,12 +39,11 @@ pub struct Source {
     pub age: Option<String>,
 }
 
-/// The `error` object of a `response.failed` event (DOC-02 §1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub struct ErrorBody<'a> {
+/// Provider-runtime failure. Applications own user-facing wording.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Failure {
     pub code: ErrorCode,
-    pub reason: &'a str,
-    pub message: &'a str,
+    pub reason: &'static str,
     pub retryable: bool,
 }
 

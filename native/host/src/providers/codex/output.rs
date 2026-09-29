@@ -21,7 +21,8 @@
 
 use serde_json::Value;
 
-use crate::protocol::events::{ErrorBody, ErrorCode};
+use crate::protocol::events::{ErrorCode};
+use runtime_core::protocol::Failure as ErrorBody;
 
 /// One line of Codex output, reduced to what the adapter needs.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,24 +101,21 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
     })
 }
 
-const AUTH_REJECTED: ErrorBody<'static> = ErrorBody {
+const AUTH_REJECTED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderNotAuthenticated,
     reason: "AUTH_REJECTED",
-    message: "Codex's sign-in was rejected. Run \"codex login\" in a terminal, then try again.",
     retryable: false,
 };
 
-const RATE_LIMITED: ErrorBody<'static> = ErrorBody {
+const RATE_LIMITED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROVIDER_RATE_LIMITED",
-    message: "Codex has reached a usage or rate limit. Try again later.",
     retryable: true,
 };
 
-const UNAVAILABLE: ErrorBody<'static> = ErrorBody {
+const UNAVAILABLE: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROVIDER_UNAVAILABLE",
-    message: "Codex couldn't answer right now. Try again.",
     retryable: true,
 };
 
@@ -125,7 +123,7 @@ const UNAVAILABLE: ErrorBody<'static> = ErrorBody {
 /// the reason comes from the status it names; anything else counts as the
 /// service being unavailable. The message itself is never forwarded: it can
 /// contain URLs and masked keys.
-pub fn turn_failure(message: &str) -> ErrorBody<'static> {
+pub fn turn_failure(message: &str) -> ErrorBody {
     let message = message.to_ascii_lowercase();
     let mentions = |needles: &[&str]| needles.iter().any(|needle| message.contains(needle));
     if mentions(&[
@@ -303,6 +301,5 @@ mod tests {
         let secret = "unexpected status 401 Unauthorized: Incorrect API key provided: sk-abc***xyz";
         let error = turn_failure(secret);
         assert_eq!(error.code, ErrorCode::ProviderNotAuthenticated);
-        assert!(!error.message.contains("sk-"));
     }
 }
