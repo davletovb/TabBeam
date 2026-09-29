@@ -194,10 +194,10 @@ Reached after **Milestone H**:
 | LIB-03 | Extract reusable stream primitives | F | Native Library | NAT-05, TST-10 | IMPLEMENTED — VERIFY |
 | LIB-04 | Extract reusable provider/protocol primitives | F | Native Library | PRO-07, LIB-01, LIB-03 | IMPLEMENTED — VERIFY |
 | LIB-05 | Extract reusable platform/diagnostics primitives where justified | F | Native Library | OBS-01, PRO-05 | IMPLEMENTED — VERIFY |
-| LIB-06 | Reshape native workspace for shared provider runtime | ADR-002 Stage 1 | Native Library | LIB-01–LIB-05, PRO-07, TST-10, TST-11 | IN PROGRESS |
-| LIB-07 | Extract scheduler and absolute turn limits | ADR-002 Stage 1 | Native Runtime | LIB-06 | READY |
-| LIB-08 | Add service API and supervisor panic boundaries | ADR-002 Stage 1 | Native Runtime | LIB-07 | READY |
-| LIB-09 | Harden four-provider execution for shared runtime | ADR-002 Stage 1 | Provider / Testing | LIB-08, PRO-08, PRO-09 | READY |
+| LIB-06 | Reshape native workspace for shared provider runtime | ADR-002 Stage 1 | Native Library | LIB-01–LIB-05, PRO-07, TST-10, TST-11 | IMPLEMENTED — VERIFY |
+| LIB-07 | Extract scheduler and absolute turn limits | ADR-002 Stage 1 | Native Runtime | LIB-06 | IMPLEMENTED — VERIFY |
+| LIB-08 | Add service API and supervisor panic boundaries | ADR-002 Stage 1 | Native Runtime | LIB-07 | IMPLEMENTED — VERIFY |
+| LIB-09 | Harden four-provider execution for shared runtime | ADR-002 Stage 1 | Provider / Testing | LIB-08, PRO-08, PRO-09 | IMPLEMENTED — VERIFY |
 | LIB-10 | Extract provider runtime to standalone repository | ADR-002 Stage 2 | Native Library | LIB-09 | BACKLOG |
 | DOC-03 | Document reusable library ownership/API boundaries | F | Documentation | LIB-01, LIB-02, LIB-03, LIB-04 | IMPLEMENTED — VERIFY |
 | TST-11 | Add standalone native-library unit/ABI tests | F | Testing | LIB-01, LIB-02, LIB-03, LIB-04 | IMPLEMENTED — VERIFY |
@@ -1366,7 +1366,7 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 **Status:** IMPLEMENTED — VERIFY
 
 **Implementation evidence**
-- `native/runtime-core/src/framing.rs` owns bounded 1 MiB Native Messaging framing, with original wire tests moved into the standalone crate and the frame fuzz target using its public API.
+- Native Messaging framing is now deliberately host-owned at `native/host/src/framing.rs`, where its bounded 1 MiB API and wire tests live; the `frame_reader` fuzz target imports that host framing API. This keeps browser transport out of the reusable runtime.
 
 ### LIB-03 — Extract reusable stream primitives
 **Area:** Native Library  
@@ -1435,7 +1435,7 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 **Status:** IMPLEMENTED — VERIFY
 
 **Implementation evidence**
-- `native/runtime-core/tests/public_api.rs` exercises the independent public crate, including exchange cancellation; existing framing/process/stream/discovery unit tests now run in the core. The frame and stream fuzz targets compile directly against core and run in CI. The stream target compares different chunk boundaries to one-shot parsing and a line-ending oracle, with generated seeds at and beyond its configured line limit; provider and host integration tests remain in the workspace.
+- `native/runtime-core/tests/public_api.rs` exercises the independent public crate, including exchange cancellation; process/stream/discovery unit tests run in `runtime-core`. The `stream_lines` fuzz target compiles directly against `runtime_core::stream`, while `frame_reader` intentionally compiles against the host-owned `pervue_host::framing` boundary. Both run in CI. Provider and host integration tests remain in the workspace.
 
 ---
 
@@ -1448,53 +1448,73 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 **Goal:** Establish the neutral runtime boundary before scheduler/service extraction.
 
 **Acceptance criteria**
-- `runtime-core` is renamed to `runtime-core`.
+- `pervue-core` is renamed to `runtime-core`.
 - Native Messaging framing is owned by `pervue-host`, not the shared runtime.
 - Neutral turn/error/usage/session-policy/timeout types replace browser vocabulary in the runtime.
 - Pervue user-facing error wording remains host-owned.
 - Existing provider/process/stream/protocol/fuzz coverage stays green.
 
-**Status:** IN PROGRESS
+**Status:** IMPLEMENTED — VERIFY
 
 **Implementation evidence**
 - `native/runtime-core` is now the shared crate name/path and current workspace consumers import `runtime_core`.
 - Native Messaging framing moved to `native/host/src/framing.rs`; host and fuzz framing callers now use the host-owned module.
-- Neutral turn/error/usage/session-policy/timeout types and the host error-message table remain to complete this item.
-- Verification of the prerequisite `IMPLEMENTED — VERIFY` items remains required before Stage 1 can be called complete.
+- `native/runtime-core/src/turn.rs` defines neutral turn, session-policy, usage, sign-in, namespace, model/continuation validation, and `exchange.rs` owns neutral timeout/lifecycle events.
+- `runtime_core::protocol::Failure` carries only code/reason/retryability; `native/host/src/protocol/messages.rs` owns Pervue's provider-specific protocol-v1 wording.
+- `native/runtime-core/README.md` restores the ownership/lifetime, cleanup, extraction, and Rust source-compatibility contract for the new boundary.
+- Full workspace verification remains the exit gate before this item is moved from `IMPLEMENTED — VERIFY` to verified.
 
 ### LIB-07 — Extract scheduler and absolute turn limits
 **Milestone:** ADR-002 Stage 1  
 **Area:** Native Runtime  
 **Dependencies:** LIB-06  
-**Status:** READY
+**Status:** IMPLEMENTED — VERIFY
 
 **Acceptance criteria**
 - Scheduler owns concurrent turns, fairness, cancellation, delta splitting, and start/idle/absolute/stop-grace limits.
 - Only recognized work events reset the idle timer.
 - Every accepted turn ends exactly once.
 
+**Implementation evidence**
+- `native/scheduler` owns turn IDs, fairness slices, start/idle/absolute limits, cancel/stop-grace handling, terminal classification, and the supervisor used by both entry points.
+- Turn IDs remain monotonic across scheduler recovery; scheduler-initiated stops suppress late nonterminal updates and stale cancellation cannot replace an existing timeout.
+- Panic recovery preserves events already produced in the panicking poll and terminates every still-owned turn exactly once.
+- The scheduler supports an explicit absolute limit, while Pervue provider defaults preserve the pre-ADR effective no-absolute-limit behavior with `Duration::MAX` until ADR-0002's default-limit decision is resolved.
+
 ### LIB-08 — Add service API and supervisor panic boundaries
 **Milestone:** ADR-002 Stage 1  
 **Area:** Native Runtime  
 **Dependencies:** LIB-07  
-**Status:** READY
+**Status:** IMPLEMENTED — VERIFY
 
 **Acceptance criteria**
 - The same supervisor sits beneath the Pervue host loop and service thread.
 - Adapter and scheduler panics are isolated with `catch_unwind`.
 - Affected turns end exactly once and owned provider processes are reaped.
 
+**Implementation evidence**
+- `native/service` owns the threaded Runtime/Turn API on the same `provider-runtime-scheduler::Supervisor` used by the Pervue host.
+- The service blocks while idle, cancels a provider turn when its `Turn` handle is dropped, and cancels delivery whose consumer disappears.
+- `TurnFactory::start` is explicitly required to return promptly; slow provider discovery/sign-in work belongs in the returned exchange so in-flight polling is not blocked.
+- Adapter entry points and scheduler steps are unwind-isolated, with scheduler generation recovery retaining process-lifetime turn-ID uniqueness.
+
 ### LIB-09 — Harden four-provider execution for shared runtime
 **Milestone:** ADR-002 Stage 1  
 **Area:** Provider / Testing  
 **Dependencies:** LIB-08, PRO-08, PRO-09  
-**Status:** READY
+**Status:** IMPLEMENTED — VERIFY
 
 **Acceptance criteria**
 - Usage, live model lists, sign-in classification, namespace-scoped cleanup, and explicit session policy work across shared modes.
 - Search turns never resume Claude/Codex sessions that may contain browser page context.
 - Gemini and Grok have opt-in live smoke tests.
 - Ephemeral turns are verified against real CLI persistence.
+
+**Implementation evidence**
+- Claude, Codex, Gemini and Grok emit the Stage 1 lifecycle contract; Claude and Codex report persistent native session handles, and Gemini/Grok reject persistent-session requests.
+- Claude/Codex search turns fork fresh native sessions, retain superseded handles durably for deletion/retry, and permit a fresh retry when no completed dialogue history exists yet.
+- Codex and Claude emit cumulative usage snapshots (Claude includes cache-creation/read input); Gemini/Grok live catalogs are ID/label/count bounded before protocol emission; sign-in classifications are runtime-only in protocol v1.
+- Ephemeral CLI flags are covered by unit tests for Claude/Codex, fresh-session/lifecycle behavior by provider contract regression tests, and opt-in live suites remain the final real-CLI verification gate.
 
 ### LIB-10 — Extract provider runtime to standalone repository
 **Milestone:** ADR-002 Stage 2  
