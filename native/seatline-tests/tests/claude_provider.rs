@@ -1,7 +1,7 @@
 //! Claude adapter tests against the fake Claude Code CLI, at the runtime's
 //! level: a `Turn` goes in and `Update`s come out. The adapter knows no
 //! conversations, so the tests that pin how an application maps its own to Claude
-//! sessions belong to that application (Pervue's are in `test_provider`).
+//! sessions belong to that application (TabBeam's are in `test_provider`).
 
 mod support;
 
