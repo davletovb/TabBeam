@@ -88,7 +88,7 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
                                 .to_owned(),
                         )
                     } else {
-                        Line::Progress
+                        Line::Ignored
                     }
                 }
                 "content_block_start"
@@ -100,7 +100,7 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
                     Line::ToolUseStart
                 }
                 "message_stop" => Line::MessageStop,
-                _ => Line::Progress,
+                _ => Line::Ignored,
             }
         }
         "assistant" | "user" => event
@@ -109,7 +109,7 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
             .map(|blocks| blocks.iter().filter_map(tool_event).collect::<Vec<_>>())
             .filter(|events| !events.is_empty())
             .map(Line::ToolEvents)
-            .unwrap_or(Line::Progress),
+            .unwrap_or(Line::Ignored),
         "result" => {
             let failed = event
                 .get("is_error")
@@ -319,6 +319,18 @@ mod tests {
         assert_eq!(
             parse(r#"{"type":"stream_event","event":{"type":"message_stop"}}"#),
             Ok(Line::MessageStop)
+        );
+    }
+
+    #[test]
+    fn unknown_stream_events_do_not_count_as_progress() {
+        assert_eq!(
+            parse(r#"{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"x"}}}"#),
+            Ok(Line::Ignored)
+        );
+        assert_eq!(
+            parse(r#"{"type":"stream_event","event":{"type":"future_event"}}"#),
+            Ok(Line::Ignored)
         );
     }
 

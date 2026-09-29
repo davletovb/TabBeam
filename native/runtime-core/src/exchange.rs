@@ -60,8 +60,10 @@ pub trait Exchange {
 pub struct Timeouts {
     /// From the request to `response.started`.
     pub start: Duration,
-    /// Between updates once the response has started.
+    /// Between recognized work updates once the response has started.
     pub idle: Duration,
+    /// Absolute wall-clock bound for the whole turn, including provider start.
+    pub max_turn: Duration,
     /// How long a cancelled or timed-out request may take to stop before its
     /// process is killed.
     pub stop_grace: Duration,

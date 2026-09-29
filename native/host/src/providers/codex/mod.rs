@@ -75,6 +75,7 @@ pub const LIMITS: Limits = Limits {
     timeouts: Timeouts {
         start: Duration::from_secs(60),
         idle: Duration::from_secs(300),
+        max_turn: Duration::from_secs(180),
         stop_grace: Duration::from_secs(2),
     },
     probe: Duration::from_secs(10),

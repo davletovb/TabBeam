@@ -184,6 +184,13 @@ const RESPONSE_TIMEOUT: ErrorBody<'static> = ErrorBody {
     retryable: true,
 };
 
+const TURN_TIMEOUT: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::RequestTimeout,
+    reason: "PROVIDER_TURN_TIMEOUT",
+    message: "The provider took too long to finish. Try again.",
+    retryable: true,
+};
+
 /// An exchange ended as if cancelled when nothing cancelled it: a bug in
 /// the adapter.
 const STOPPED_UNASKED: ErrorBody<'static> = ErrorBody {
@@ -395,6 +402,9 @@ impl Running {
     /// The timeout this request has run into, if any.
     fn expired(&self, now: Instant) -> Option<ErrorBody<'static>> {
         let timeouts = self.timeouts?;
+        if now.saturating_duration_since(self.started_at) >= timeouts.max_turn {
+            return Some(TURN_TIMEOUT);
+        }
         if self.response_started {
             (now.saturating_duration_since(self.last_update) >= timeouts.idle)
                 .then_some(RESPONSE_TIMEOUT)
@@ -735,7 +745,15 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                 }
                 return Ok(Pumped::Waiting);
             };
-            running.last_update = Instant::now();
+            if matches!(
+                update,
+                Update::Started { .. }
+                    | Update::Activity
+                    | Update::Delta(_)
+                    | Update::Source(_)
+            ) {
+                running.last_update = Instant::now();
+            }
             if let Update::ConversationCreated(conversation_id) = &update {
                 self.conversations.insert(conversation_id.clone());
             }
@@ -1238,6 +1256,7 @@ mod tests {
                 timeouts: Timeouts {
                     start: Duration::from_secs(60),
                     idle: Duration::from_secs(60),
+                    max_turn: Duration::from_secs(180),
                     stop_grace: Duration::ZERO,
                 },
                 capabilities: fake::STATUS.capabilities,
@@ -2101,6 +2120,21 @@ mod tests {
         );
         // A timed-out request can't be cancelled any more.
         assert_eq!(session.records[1]["error"]["code"], "REQUEST_TIMEOUT");
+    }
+
+    #[test]
+    fn a_turn_hits_its_absolute_limit_even_when_activity_keeps_arriving() {
+        let mut provider = TestProvider::new("busy", Script::waits());
+        provider.timeouts.idle = Duration::from_secs(60);
+        provider.timeouts.max_turn = Duration::from_millis(50);
+        let session = run_session(
+            &with(provider),
+            lingering(&[&send("req_busy", "busy")], Duration::from_millis(500)),
+        );
+        assert_eq!(
+            session.events().last().unwrap()["payload"]["error"]["reason"],
+            "PROVIDER_TURN_TIMEOUT"
+        );
     }
 
     #[test]

@@ -47,6 +47,7 @@ impl Provider for Fake {
         Timeouts {
             start: Duration::from_secs(5),
             idle: Duration::from_secs(5),
+            max_turn: Duration::from_secs(180),
             stop_grace: Duration::ZERO,
         }
     }

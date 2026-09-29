@@ -28,6 +28,7 @@ pub const TEST_LIMITS: Limits = Limits {
     timeouts: Timeouts {
         start: Duration::from_secs(10),
         idle: Duration::from_secs(10),
+        max_turn: Duration::from_secs(30),
         stop_grace: Duration::from_millis(300),
     },
     probe: Duration::from_secs(5),
@@ -146,6 +147,7 @@ pub const CLAUDE_TEST_LIMITS: ClaudeLimits = ClaudeLimits {
     timeouts: Timeouts {
         start: Duration::from_secs(10),
         idle: Duration::from_secs(10),
+        max_turn: Duration::from_secs(30),
         stop_grace: Duration::from_millis(300),
     },
     probe: Duration::from_secs(5),
