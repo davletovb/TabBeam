@@ -1,7 +1,7 @@
 #define HostName "com.tabbeam.host"
 
 [Setup]
-AppId={{D7A1D4E8-774F-4E2B-A745-04B43E51A93C}
+AppId={{E302F901-5CE0-4244-963F-875FD08058B1}
 AppName=TabBeam Companion
 AppVersion={#HostVersion}
 AppVerName=TabBeam Companion {#HostVersion}

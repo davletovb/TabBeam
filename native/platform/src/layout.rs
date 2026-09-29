@@ -8,9 +8,11 @@
 //! files. This protects against accidents, not attacks: any process running as
 //! the user can already write to both applications' directories.
 //!
-//! The paths follow each platform's convention, and an application's are fixed
-//! by its namespace: an application that has installed files there keeps
-//! finding them, so the layout, like the namespace, never changes for it.
+//! The paths follow each platform's convention. The namespace fixes the
+//! logical identity everywhere; on macOS and Windows an application may also
+//! supply the exact display casing of that same namespace for its cache
+//! directory. Once an application ships, both are compatibility contracts:
+//! changing either can strand files that an installed application expects.
 
 use std::ffi::OsString;
 use std::hash::{BuildHasher, RandomState};
@@ -25,43 +27,32 @@ use crate::environment;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Layout {
     namespace: Namespace,
-    #[cfg(any(target_vendor = "apple", not(unix)))]
-    cache_title: Option<String>,
+    #[cfg_attr(all(unix, not(target_vendor = "apple")), allow(dead_code))]
+    cache_title: String,
 }
 
 impl Layout {
     pub fn new(namespace: Namespace) -> Self {
+        let cache_title = default_cache_title(&namespace);
         Self {
             namespace,
-            #[cfg(any(target_vendor = "apple", not(unix)))]
-            cache_title: None,
+            cache_title,
         }
     }
 
-    /// Builds a layout whose macOS/Windows cache directory uses the
-    /// application's exact display capitalization instead of deriving it from
-    /// the lowercase namespace. The title is application-owned metadata, not
-    /// request input, and must be one path component.
+    /// Builds a layout whose macOS/Windows cache directory uses an
+    /// application's exact display capitalization. The title must be the same
+    /// fixed namespace with ASCII case changed only, so two namespaces cannot
+    /// be made to share one cache directory. Validation runs on every platform
+    /// even though Linux cache paths use the lowercase namespace directly.
     pub fn with_cache_title(namespace: Namespace, title: &str) -> Self {
-        #[cfg(any(target_vendor = "apple", not(unix)))]
-        {
-            assert!(
-                !title.is_empty()
-                    && title != "."
-                    && title != ".."
-                    && !title.contains('/')
-                    && !title.contains('\\'),
-                "cache title must be one path component"
-            );
-            Self {
-                namespace,
-                cache_title: Some(title.to_owned()),
-            }
-        }
-        #[cfg(all(unix, not(target_vendor = "apple")))]
-        {
-            let _ = title;
-            Self { namespace }
+        assert!(
+            title.eq_ignore_ascii_case(namespace.as_str()),
+            "cache title must equal the namespace ignoring ASCII case"
+        );
+        Self {
+            namespace,
+            cache_title: title.to_owned(),
         }
     }
 
@@ -104,12 +95,12 @@ impl Layout {
 
     /// The application's directory in the user's cache.
     ///
-    /// macOS and Windows name application directories with a capital letter
-    /// (`My-app`); other Unix systems use the namespace as it is. The data
-    /// directory ([`Layout::data_dir`]) uses the namespace as it is everywhere,
-    /// so on Windows the two differ in case (`%LOCALAPPDATA%\My-app` and
-    /// `%LOCALAPPDATA%\my-app`). That is how installed applications have
-    /// always laid them out; changing either would strand their files.
+    /// macOS and Windows use the cache title: by default the namespace with
+    /// its first letter capitalized (`My-app`), or the exact casing supplied
+    /// by [`Layout::with_cache_title`]. Other Unix systems use the lowercase
+    /// namespace directly. The data directory ([`Layout::data_dir`]) uses the
+    /// namespace everywhere. Once an application ships, changing either its
+    /// namespace or cache-title casing can strand files it expects.
     #[cfg(target_vendor = "apple")]
     pub fn cache_dir(&self, host: &[(OsString, OsString)]) -> Option<PathBuf> {
         absolute(host, "HOME").map(|home| home.join("Library/Caches").join(self.title()))
@@ -151,17 +142,18 @@ impl Layout {
         base.map(|base| base.join(self.namespace.as_str()))
     }
 
-    /// The namespace with a capital first letter.
+    /// The cache-directory display casing of the namespace.
     #[cfg(any(target_vendor = "apple", not(unix)))]
-    fn title(&self) -> String {
-        if let Some(title) = &self.cache_title {
-            return title.clone();
-        }
-        let name = self.namespace.as_str();
-        let mut title = name[..1].to_ascii_uppercase();
-        title.push_str(&name[1..]);
-        title
+    fn title(&self) -> &str {
+        &self.cache_title
     }
+}
+
+fn default_cache_title(namespace: &Namespace) -> String {
+    let name = namespace.as_str();
+    let mut title = name[..1].to_ascii_uppercase();
+    title.push_str(&name[1..]);
+    title
 }
 
 /// The variable `name` as a path, if it is set to an absolute one.
@@ -186,7 +178,7 @@ mod tests {
         Layout::new(Namespace::fixed(name).unwrap())
     }
 
-    /// An installed application keeps finding the directories it has always used.
+    /// A shipped application keeps finding the cache layout it established.
     #[cfg(target_vendor = "apple")]
     #[test]
     fn the_cache_directory_follows_the_platforms_convention() {
@@ -221,19 +213,22 @@ mod tests {
         );
     }
 
-    #[cfg(any(target_vendor = "apple", not(unix)))]
+    #[test]
+    fn the_default_cache_title_capitalizes_only_the_first_letter() {
+        assert_eq!(layout("myapp").cache_title, "Myapp");
+        assert_eq!(layout("my-app").cache_title, "My-app");
+    }
+
     #[test]
     fn a_custom_cache_title_preserves_application_branding() {
         let app = Layout::with_cache_title(Namespace::fixed("myapp").unwrap(), "MyApp");
-        let host = vars(&[
-            ("HOME", "/Users/me"),
-            ("LOCALAPPDATA", r"C:\Users\me\AppData\Local"),
-        ]);
-        assert!(
-            app.workspace(&host, "codex")
-                .to_string_lossy()
-                .contains("MyApp")
-        );
+        assert_eq!(app.cache_title, "MyApp");
+    }
+
+    #[test]
+    #[should_panic(expected = "cache title must equal the namespace ignoring ASCII case")]
+    fn a_custom_cache_title_cannot_name_another_application() {
+        let _ = Layout::with_cache_title(Namespace::fixed("myapp").unwrap(), "OtherApp");
     }
 
     #[cfg(not(unix))]

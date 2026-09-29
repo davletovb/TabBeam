@@ -178,8 +178,9 @@ fn answer_text(updates: &[Update]) -> String {
 
 #[test]
 fn tabbeam_runs_its_turns_as_agents_named_tabbeam() {
-    // The agent definitions live in per-turn workspaces, so nothing installed
-    // pins these names as part of TabBeam's clean-break namespace.
+    // Agent definitions live only in per-turn workspaces, so no installed file
+    // depends on these names. Pin them here so changing TabBeam's application
+    // namespace is always an explicit, reviewed change.
     let fake = FakeGemini::install();
     collect(fake.adapter().send(request(None, false)));
     collect(fake.adapter().send(request(None, true)));

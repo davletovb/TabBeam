@@ -34,6 +34,20 @@ const popupMarkup = fs.readFileSync(path.join(root, manifest.action.default_popu
 for (const id of ["context-none", "context-selection", "context-page", "context-preview"]) {
   assert.ok(popupMarkup.includes(`id="${id}"`), `missing popup context control: ${id}`);
 }
+assert.ok(popupMarkup.includes(">Ask Beam anything</h1>"));
+assert.ok(popupMarkup.includes(">Ask Beam</label>"));
+assert.ok(popupMarkup.includes('placeholder="Ask Beam…"'));
+assert.ok(popupMarkup.includes("TabBeam only sees a page when you share it."));
+
+const fullpageMarkup = fs.readFileSync(path.join(root, "src/fullpage/index.html"), "utf8");
+assert.ok(fullpageMarkup.includes(">Ask Beam anything</h2>"));
+assert.ok(fullpageMarkup.includes(">Ask Beam</label>"));
+assert.ok(fullpageMarkup.includes('placeholder="Ask Beam…"'));
+
+const askFormSource = fs.readFileSync(path.join(root, "src/popup/ask-form.js"), "utf8");
+const sharedCss = fs.readFileSync(path.join(root, "src/shared/ui.css"), "utf8");
+assert.ok(askFormSource.includes('role === "user" ? "You" : "Beam"'));
+assert.ok(sharedCss.includes('content: "Beam";'));
 
 const contentScript = manifest.content_scripts[0];
 assert.deepEqual(contentScript.matches, ["http://*/*", "https://*/*"]);

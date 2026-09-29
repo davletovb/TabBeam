@@ -225,7 +225,7 @@ jobs:
 
           $hive = [Microsoft.Win32.RegistryHive]::CurrentUser
           $nativeKey = 'Software\Google\Chrome\NativeMessagingHosts\com.tabbeam.host'
-          $uninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{D7A1D4E8-774F-4E2B-A745-04B43E51A93C}_is1'
+          $uninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{E302F901-5CE0-4244-963F-875FD08058B1}_is1'
           foreach ($view in @(
             [Microsoft.Win32.RegistryView]::Registry64,
             [Microsoft.Win32.RegistryView]::Registry32

@@ -1,6 +1,6 @@
 # TabBeam
 
-**TabBeam: On-demand AI for your active tab.**
+**TabBeam: On-demand, provider-independent AI for the tab or selection you explicitly share.**
 
 TabBeam is a lightweight, provider-independent browser AI command layer.
 

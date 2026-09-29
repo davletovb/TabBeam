@@ -17,11 +17,14 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v5
+      # Temporary safety belt for the Pervue -> TabBeam cutover. Remove once
+      # the repository rename has landed and the first TabBeam release is cut.
       - name: Verify TabBeam repository rename
         shell: pwsh
         run: |
-          if ($env:GITHUB_REPOSITORY -ne 'davletovb/tabbeam') {
-            throw 'Rename the repository to davletovb/tabbeam before creating a TabBeam release candidate.'
+          $repoName = ($env:GITHUB_REPOSITORY -split '/')[-1]
+          if ($repoName.ToLowerInvariant() -ne 'tabbeam') {
+            throw 'Rename this repository to TabBeam before creating a TabBeam release candidate.'
           }
       - uses: actions/cache@v4
         with:
