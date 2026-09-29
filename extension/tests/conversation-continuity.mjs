@@ -168,6 +168,9 @@ await settle();
 assert.equal(popup.view.getConversationId(), id);
 assert.deepEqual(popup.elements.history.children.map((item) => item.children[1].textContent),
   ["First question", "First answer", "Follow up in popup", "Second answer"]);
+// Each turn is labelled by who spoke, and the assistant is the Beam persona.
+assert.deepEqual(popup.elements.history.children.map((item) => item.children[0].textContent),
+  ["You", "Beam", "You", "Beam"]);
 
 // Closing the popup and restarting the worker keeps the recent index and ID.
 store = createConversationStore(storage, uuid);
