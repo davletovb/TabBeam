@@ -274,6 +274,7 @@ mod tests {
                 tools: runtime_core::turn::ToolPolicy::None,
                 session: runtime_core::turn::SessionPolicy::Ephemeral,
                 continuation: None,
+                cleanup_group: None,
                 check_sign_in: false,
             })
             .unwrap();
@@ -340,6 +341,7 @@ mod tests {
                 tools: runtime_core::turn::ToolPolicy::None,
                 session: runtime_core::turn::SessionPolicy::Ephemeral,
                 continuation: None,
+                cleanup_group: None,
                 check_sign_in: false,
             })
             .unwrap();

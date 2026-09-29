@@ -892,6 +892,7 @@ fn forward<W: Write + ?Sized>(
         }
         Update::Launched
         | Update::Session(_)
+        | Update::SessionLost(_)
         | Update::Usage(_)
         | Update::Activity
         | Update::Completed

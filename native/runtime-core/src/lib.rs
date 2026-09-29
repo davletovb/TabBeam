@@ -5,6 +5,7 @@
 pub mod discovery;
 pub mod exchange;
 pub mod process;
+pub mod prompt;
 pub mod protocol;
 pub mod stream;
 pub mod turn;

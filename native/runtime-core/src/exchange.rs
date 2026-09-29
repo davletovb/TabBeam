@@ -8,6 +8,18 @@ use std::time::{Duration, Instant};
 use crate::protocol::{Failure, ProviderState, Source};
 use crate::turn::Usage;
 
+/// How sure an adapter is that a session it was asked to resume is gone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionLoss {
+    /// The provider said the session doesn't exist. The application can drop
+    /// what it kept for it and rebuild the dialogue in a new session.
+    Confirmed,
+    /// The resumed run ended before the turn started, and the adapter can't
+    /// tell why: a lost session, or a crash. The application decides whether
+    /// to start over from its own history.
+    Suspected,
+}
+
 /// What an exchange reports, in protocol order. After a terminal update
 /// (`Completed`, `Failed`, or `Stopped`), the exchange is finished.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,6 +31,11 @@ pub enum Update {
     Session(String),
     /// A cumulative usage snapshot for this turn.
     Usage(Usage),
+    /// The session the turn was asked to resume can't be used. Sent at most
+    /// once, only before any answer text, and followed by the turn's own
+    /// terminal `Failed`: an application that can start over discards that
+    /// failure, and one that can't reports it.
+    SessionLost(SessionLoss),
     /// A new provider-neutral conversation (`conversation.created`). Comes
     /// before `Started`.
     ConversationCreated(String),
