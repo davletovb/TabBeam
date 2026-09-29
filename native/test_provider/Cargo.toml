@@ -11,15 +11,15 @@ name = "pervue-fake-provider"
 path = "src/main.rs"
 
 [dependencies]
-runtime-fake-provider = { path = "../fake-provider" }
+seatline-fake-provider = { path = "../fake-provider" }
 
 [dev-dependencies]
 # Pervue's tests run the host, and the adapters it serves, against the fake
 # provider this package builds a binary of.
 pervue-host = { path = "../host" }
-runtime-core = { path = "../runtime-core" }
-runtime-platform = { path = "../platform" }
-runtime-providers = { path = "../providers" }
+seatline-core = { path = "../seatline-core" }
+seatline-platform = { path = "../platform" }
+seatline-providers = { path = "../providers" }
 serde_json = "1.0"
 
 [target.'cfg(unix)'.dev-dependencies]

@@ -1,6 +1,6 @@
 //! Pervue-owned wording for neutral runtime failures.
 
-use runtime_core::protocol::Failure;
+use seatline_core::protocol::Failure;
 
 use super::events::ErrorBody;
 
@@ -217,7 +217,7 @@ fn message(provider: Option<&str>, reason: &str, retryable: bool) -> &'static st
 #[cfg(test)]
 mod tests {
     use super::*;
-    use runtime_core::protocol::ErrorCode;
+    use seatline_core::protocol::ErrorCode;
 
     fn failure(reason: &'static str, retryable: bool) -> Failure {
         Failure {

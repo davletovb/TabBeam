@@ -21,10 +21,10 @@
 
 use std::io;
 
-pub use runtime_core::exchange::{Exchange, Scripted, Timeouts, Update};
-use runtime_core::protocol::{Capabilities, ErrorCode, Failure};
-pub use runtime_core::stream::BUSY_LIMIT;
-use runtime_core::turn::Turn;
+pub use seatline_core::exchange::{Exchange, Scripted, Timeouts, Update};
+use seatline_core::protocol::{Capabilities, ErrorCode, Failure};
+pub use seatline_core::stream::BUSY_LIMIT;
+use seatline_core::turn::Turn;
 
 pub mod claude;
 pub mod codex;

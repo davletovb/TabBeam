@@ -8,7 +8,7 @@ use std::time::{Duration, SystemTime};
 
 use super::*;
 use crate::conversation::HistoryMessage;
-use runtime_core::protocol::Capability;
+use seatline_core::protocol::Capability;
 
 struct Scratch(PathBuf);
 
@@ -803,7 +803,7 @@ fn cancelling_stops_the_run_and_ends_once() {
 mod prompts_match_what_the_adapters_used_to_build {
     use super::*;
     use crate::conversation::{BrowserContextMode, provider_prompt};
-    use runtime_core::prompt::{SEARCH_INSTRUCTIONS, render};
+    use seatline_core::prompt::{SEARCH_INSTRUCTIONS, render};
 
     fn context() -> BrowserContext {
         BrowserContext {

@@ -1,8 +1,8 @@
 # Pervue Native Host
 
 Reusable primitives and their API/compatibility policy live in
-[`runtime-core/README.md`](runtime-core/README.md). The host owns browser policy and provider
-adapters; `runtime-core` can be tested independently of the host.
+[`seatline-core/README.md`](seatline-core/README.md). The host owns browser policy and provider
+adapters; `seatline-core` can be tested independently of the host.
 
 This directory contains the native Rust companion/host.
 
@@ -14,16 +14,16 @@ The host serves the Chrome extension over Native Messaging. It validates each pr
 native/
 ├── Cargo.toml       Cargo workspace: shared version, Rust 1.85+, `unsafe` forbidden
 │
-│   The provider runtime (ADR-0002). None of these crates may depend on a `pervue*` crate
+│   The provider runtime (ADR-0002). None of these crates may depend on an application's crate
 │   (`scripts/check-runtime-independence.mjs`); they are meant to move to a repository of their own.
-├── runtime-core/    runtime-core: reusable process, stream, discovery, turn, prompt, and search primitives
-├── platform/        runtime-platform: environment allow-lists, private files and workspaces, discovery policy, layout
-├── providers/       runtime-providers: the `Provider` trait and the Codex, Claude, Gemini and Grok adapters
-├── scheduler/       provider-runtime-scheduler: fair, bounded turn scheduling and the panic-isolating supervisor
-├── service/         provider-runtime-service: threaded in-process entry point for async servers
-├── fake-provider/   runtime-fake-provider: the fake Codex, Claude, Antigravity and Grok CLIs and the harness that installs them
-├── runtime-tests/   runtime-tests: adapter, contract, hostile-matrix, service and process tests, at the runtime's level
-├── runtime-fuzz/    runtime-fuzz: the runtime's cargo-fuzz target (`stream_lines`) and its seed-corpus generator
+├── seatline-core/    seatline-core: reusable process, stream, discovery, turn, prompt, and search primitives
+├── platform/        seatline-platform: environment allow-lists, private files and workspaces, discovery policy, layout
+├── providers/       seatline-providers: the `Provider` trait and the Codex, Claude, Gemini and Grok adapters
+├── scheduler/       seatline-scheduler: fair, bounded turn scheduling and the panic-isolating supervisor
+├── service/         seatline-service: threaded in-process entry point for async servers
+├── fake-provider/   seatline-fake-provider: the fake Codex, Claude, Antigravity and Grok CLIs and the harness that installs them
+├── seatline-tests/   seatline-tests: adapter, contract, hostile-matrix, service and process tests, at the runtime's level
+├── seatline-fuzz/    seatline-fuzz: the runtime's cargo-fuzz target (`stream_lines`) and its seed-corpus generator
 │
 │   Pervue: the application over the runtime.
 ├── host/            pervue-host: the Native Messaging host (binary + library)
@@ -34,7 +34,7 @@ native/
 │   │   ├── conversations/  conversation IDs, session store, recovery and forget over a provider
 │   │   ├── providers/   the conversation-level provider contract, the registry of an installed host, and the `fake` scaffold
 │   │   ├── protocol/    strict request validation and event emission
-│   │   ├── search.rs    the search request's options (result normalization is in runtime-core)
+│   │   ├── search.rs    the search request's options (result normalization is in seatline-core)
 │   │   ├── host.rs      request loop: requests side by side, cancellation, timeouts
 │   │   └── main.rs      command-line entry point
 │   └── tests/       command-line tests and the opt-in live Codex test
@@ -54,9 +54,9 @@ cargo build
 cargo test --workspace
 ```
 
-`cargo build` builds only the host (`target/debug/pervue-host`); the fake provider is a test fixture, so `cargo test --workspace` builds and tests it. The runtime's own tests are `cargo test -p runtime-tests`; they use nothing of Pervue's.
+`cargo build` builds only the host (`target/debug/pervue-host`); the fake provider is a test fixture, so `cargo test --workspace` builds and tests it. The runtime's own tests are `cargo test -p seatline-tests`; they use nothing of Pervue's.
 
-All project crates forbid `unsafe` code. The shared `clippy.toml` bans `std::process::Command::new` in both crates; only the provider process manager (`runtime-core/src/process.rs`, NAT-04) starts processes, through one explicitly allowed call (see `docs/security/trust-boundaries.md`). CI treats compiler and Clippy warnings as errors and checks formatting:
+All project crates forbid `unsafe` code. The shared `clippy.toml` bans `std::process::Command::new` in both crates; only the provider process manager (`seatline-core/src/process.rs`, NAT-04) starts processes, through one explicitly allowed call (see `docs/security/trust-boundaries.md`). CI treats compiler and Clippy warnings as errors and checks formatting:
 
 ```bash
 cargo fmt --all --check
@@ -177,7 +177,7 @@ Pervue uses the selected AI provider's own authenticated native web-search capab
 - **Context isolation.** Search and browser context cannot be combined. The host returns `SEARCH_FAILED / SEARCH_WITH_CONTEXT_UNSUPPORTED` before a provider runs.
 - **Grounding requirement.** A native-search turn must produce at least one usable normalized source or it fails with `NATIVE_SEARCH_NO_SOURCES` instead of silently completing with an ungrounded answer.
 
-Claude's real CLI emits WebSearch results as a `tool_result` text payload with a `Links:` JSON array; the adapter correlates it with the matching `WebSearch` tool-use ID. Current Codex `web_search` items expose only query/action metadata, so the adapter normalizes HTTP(S) links cited in completed agent messages. Both become the same `response.source` shape. Both providers decide for themselves whether to search and cite, so a search turn's prompt starts with the same instructions (`SEARCH_INSTRUCTIONS` in `runtime-core/src/prompt.rs`): search before answering, cite every page used as a Markdown link, answer the likely meanings of an ambiguous question instead of asking which was meant, and don't narrate the search. Narration a provider writes before searching anyway is dropped: Codex's message just before a `web_search` item, and Claude's text in a message that goes on to call a tool. Provider authentication, rate limits, cancellation, and timeouts stay in the existing provider/request error categories because retrieval and synthesis are one provider turn.
+Claude's real CLI emits WebSearch results as a `tool_result` text payload with a `Links:` JSON array; the adapter correlates it with the matching `WebSearch` tool-use ID. Current Codex `web_search` items expose only query/action metadata, so the adapter normalizes HTTP(S) links cited in completed agent messages. Both become the same `response.source` shape. Both providers decide for themselves whether to search and cite, so a search turn's prompt starts with the same instructions (`SEARCH_INSTRUCTIONS` in `seatline-core/src/prompt.rs`): search before answering, cite every page used as a Markdown link, answer the likely meanings of an ambiguous question instead of asking which was meant, and don't narrate the search. Narration a provider writes before searching anyway is dropped: Codex's message just before a `web_search` item, and Claude's text in a message that goes on to call a tool. Provider authentication, rate limits, cancellation, and timeouts stay in the existing provider/request error categories because retrieval and synthesis are one provider turn.
 
 
 ## Providers
@@ -196,7 +196,7 @@ Two contracts sit one on top of the other (ADR-0002): the runtime `Provider` in 
 - `cancel(grace)` stops the work. The exchange then ends with `Stopped`, or with the terminal update it had already reached, and kills any process still running after `grace`.
 - `cleanup_sessions(sessions)` and `cleanup_group(group)` give the file work that removes what a provider saved: the transcripts of native sessions, only those the provider provably wrote for Pervue (the transcript must name the session and record Pervue's private workspace as the directory it ran in; symbolic links are removed, never followed), and the per-turn cleanup records a turn's `cleanup_group` names. An adapter that saves nothing uses the defaults.
 
-- A turn's `system` prompt is the application's own instructions, as opposed to what its user said. Every adapter sends it on a channel that is not a command line, each in the way its model was seen to follow it. Codex and Claude: first in the prompt on stdin, after an introduction that tells the model to follow the application's instructions for the whole conversation (`runtime_core::prompt::SYSTEM_INTRO`). Gemini: in the system prompt of the agent the adapter writes for the turn, because Antigravity's model refused instructions in the prompt that claimed precedence over the messages, taking them for a prompt injection. Grok: first in the prompt, under an introduction of its own that says the instructions come before, and take precedence over, the messages (`grok::SYSTEM_INTRO`); real runs followed it 16 of 16 times, a plainer header 1 of 7, and the same text in Grok's agent file, which Grok ignores, 2 of 5. It goes with every turn that carries it, so an application that resumes a native session sends it on the first turn only, and one that sets it and asks for web search means the two to agree. Pervue sets none.
+- A turn's `system` prompt is the application's own instructions, as opposed to what its user said. Every adapter sends it on a channel that is not a command line, each in the way its model was seen to follow it. Codex and Claude: first in the prompt on stdin, after an introduction that tells the model to follow the application's instructions for the whole conversation (`seatline_core::prompt::SYSTEM_INTRO`). Gemini: in the system prompt of the agent the adapter writes for the turn, because Antigravity's model refused instructions in the prompt that claimed precedence over the messages, taking them for a prompt injection. Grok: first in the prompt, under an introduction of its own that says the instructions come before, and take precedence over, the messages (`grok::SYSTEM_INTRO`); real runs followed it 16 of 16 times, a plainer header 1 of 7, and the same text in Grok's agent file, which Grok ignores, 2 of 5. It goes with every turn that carries it, so an application that resumes a native session sends it on the first turn only, and one that sets it and asks for web search means the two to agree. Pervue sets none.
 
 **`ConversationProvider`** is what the request loop drives: `send(SendRequest)` and `forget(conversation_id)`, in terms of the conversations the extension names, with history and browser context. `conversations::Conversations` implements it once for every runtime provider, and owns what the runtime doesn't:
 
@@ -248,7 +248,7 @@ Failures map to the normalized errors of `docs/protocol/errors-and-capabilities-
 | Native session mapping cannot be stored | `INTERNAL_ERROR` / `SESSION_STORE_FAILED` | yes |
 | Browser context with user-configured standalone MCP servers | `INVALID_REQUEST` / `PAGE_CONTEXT_TOOLS_ENABLED` | no |
 
-`runtime-tests/tests/codex_provider.rs` runs the adapter against a fake `codex`: the fake provider binary, linked under that name (see `fake-provider/README.md`), at the runtime's level, where a `Turn` goes in and `Update`s come out. The tests cover discovery and sign-in status, a Codex that can't start, a workspace that can't be made or that other users could change, a workspace reached through a link, the exact command line and the question on stdin, the exact environment and working directory Codex gets, streaming, resuming the thread a turn reported, how much of Codex's own configuration may apply to a turn, browser context delivered as untrusted reference data, failed turns, crashes, malformed and oversized output, cancellation, both timeouts, and what cleanup removes. `test_provider/tests/codex_adapter.rs` covers what Pervue adds, through the whole host: the thread a conversation continues, a thread a new host recovers without exposing it, the bounded dialogue that rebuilds a lost one, conversation IDs that never reach the command line, and deleting a conversation. `providers/src/codex/fixtures/` holds `codex exec --json` output captured from Codex CLI 0.156.1, and `output.rs`'s tests parse it.
+`seatline-tests/tests/codex_provider.rs` runs the adapter against a fake `codex`: the fake provider binary, linked under that name (see `fake-provider/README.md`), at the runtime's level, where a `Turn` goes in and `Update`s come out. The tests cover discovery and sign-in status, a Codex that can't start, a workspace that can't be made or that other users could change, a workspace reached through a link, the exact command line and the question on stdin, the exact environment and working directory Codex gets, streaming, resuming the thread a turn reported, how much of Codex's own configuration may apply to a turn, browser context delivered as untrusted reference data, failed turns, crashes, malformed and oversized output, cancellation, both timeouts, and what cleanup removes. `test_provider/tests/codex_adapter.rs` covers what Pervue adds, through the whole host: the thread a conversation continues, a thread a new host recovers without exposing it, the bounded dialogue that rebuilds a lost one, conversation IDs that never reach the command line, and deleting a conversation. `providers/src/codex/fixtures/` holds `codex exec --json` output captured from Codex CLI 0.156.1, and `output.rs`'s tests parse it.
 
 `host/tests/live_codex.rs` is the opt-in smoke test against the real Codex (TST-05). Through the built host, it checks Codex's status, asks it one question, and checks that the answer streams to completion: discovery → send → stream → completion. `PERVUE_LIVE_CODEX` turns it on:
 
@@ -273,7 +273,7 @@ Unset, as in CI's usual runs, the test passes at once. Set to `1`, it is skipped
 - **Cancellation and failures.** Cancellation uses the shared process/stream manager. Authentication, rate-limit, process-exit, malformed-output, and availability failures map into the same normalized error vocabulary as Codex.
 - **Capabilities.** `streaming`, `continuation`, `web_search`, `page_context`, `model_selection`, and `cancellation` are `true`; `attachments` is `false`. Selection/page context is framed in the prompt as untrusted JSON reference data, separate from the question, exactly as for Codex. A context turn is a plain turn: `--tools ""` gives Claude no tools, MCP stays blocked, and the host refuses context combined with search, so page text can only inform an answer, never make Claude act. Like any prompt, it is visible to the user's own prompt hooks.
 
-`runtime-tests/tests/claude_provider.rs` runs the adapter against a fake `claude` at the runtime's level, and `test_provider/tests/claude_adapter.rs` covers Pervue's conversations over it. The provider-neutral contract (TST-10) runs against every adapter twice: `runtime-tests/tests/provider_contract.rs` through the runtime's `Provider` alone, for Codex, Claude, Gemini and Grok (lifecycle and ordering of updates, sessions, search, refusals, cancellation, deadlines, cleanup), and `test_provider/tests/provider_contract.rs` as Pervue serves them, over conversations.
+`seatline-tests/tests/claude_provider.rs` runs the adapter against a fake `claude` at the runtime's level, and `test_provider/tests/claude_adapter.rs` covers Pervue's conversations over it. The provider-neutral contract (TST-10) runs against every adapter twice: `seatline-tests/tests/provider_contract.rs` through the runtime's `Provider` alone, for Codex, Claude, Gemini and Grok (lifecycle and ordering of updates, sessions, search, refusals, cancellation, deadlines, cleanup), and `test_provider/tests/provider_contract.rs` as Pervue serves them, over conversations.
 
 The opt-in live smoke test exercises the built host against the installed Claude CLI:
 
@@ -284,21 +284,21 @@ PERVUE_LIVE_CLAUDE=1 cargo test -p pervue-host --test live_claude -- --nocapture
 
 Set `PERVUE_LIVE_CLAUDE=required` when Claude is expected to be installed and authenticated.
 
-The opt-in live smoke tests of the four providers run at the runtime's level, through the adapter and nothing of Pervue's (`runtime-tests/tests/live_gemini.rs`, `live_grok.rs`, `live_codex.rs` and `live_claude.rs`); the two host-level tests above cover Pervue's own layer on top of the same Codex and Claude adapters:
+The opt-in live smoke tests of the four providers run at the runtime's level, through the adapter and nothing of Pervue's (`seatline-tests/tests/live_gemini.rs`, `live_grok.rs`, `live_codex.rs` and `live_claude.rs`); the two host-level tests above cover Pervue's own layer on top of the same Codex and Claude adapters:
 
 ```bash
 cd native
-RUNTIME_LIVE_GEMINI=1 cargo test -p runtime-tests --test live_gemini -- --nocapture
-RUNTIME_LIVE_GROK=1 cargo test -p runtime-tests --test live_grok -- --nocapture
-RUNTIME_LIVE_CODEX=1 cargo test -p runtime-tests --test live_codex -- --nocapture
-RUNTIME_LIVE_CLAUDE=1 cargo test -p runtime-tests --test live_claude -- --nocapture
+SEATLINE_LIVE_GEMINI=1 cargo test -p seatline-tests --test live_gemini -- --nocapture
+SEATLINE_LIVE_GROK=1 cargo test -p seatline-tests --test live_grok -- --nocapture
+SEATLINE_LIVE_CODEX=1 cargo test -p seatline-tests --test live_codex -- --nocapture
+SEATLINE_LIVE_CLAUDE=1 cargo test -p seatline-tests --test live_claude -- --nocapture
 ```
 
 Unset, each passes at once; `1` runs it when the CLI is installed and signed in and skips it otherwise; `required` fails when it isn't. Each checks the status and sign-in, a plain answer, that a system prompt is followed, and a web search with its sources (Gemini, Codex, Claude) or the refusal of search (Grok); and that nothing holding the prompt outlives an ephemeral turn, in the private workspaces and in what the CLI keeps of its own: Antigravity's `~/.gemini/antigravity-cli` (its transcript under `brain` and the conversation database under `conversations`), Grok's `~/.grok`, Codex's `CODEX_HOME` (`~/.codex`) and Claude's `CLAUDE_CONFIG_DIR` (`~/.claude`). The search of those directories reads the files modified since the run began (a file that holds the run's marker was written during it), so a home of any size is searched in full; it reads at most 20,000 of them, skips any over 16 MiB, and says so when it left files unread. What a model says is checked for credentials before it is printed, a system-prompt check gets a second try (a model's compliance is not certain), and `required` Grok needs a fresh cached sign-in (`grok models` refreshes an expired one). Codex's plain and system-prompt turns run with tools off, so a user's own Codex configuration that exposes tools Codex can't switch off makes the test skip (or fail, in `required`) with that reason. `live-gemini.yml` and `live-grok.yml` start theirs by hand on a runner that has the CLI installed and signed in, and `live-codex.yml` runs the runtime-level test after Pervue's. The owner has run all four for real (`agy` 1.2.13, `grok` 1.0.41, `codex` 0.154.0, `claude` 2.1.236, macOS, signed in) and they pass: Codex and Claude follow the shared introduction on the first attempt, Gemini follows its agent file, and Grok follows its own introduction (19 of 20 attempts, every run passing).
 
 ### Stream manager
 
-`runtime-core/src/stream.rs` is the stream manager (NAT-05). `LineStream` reads a provider process's stdout as lines. `next(deadline)` returns one complete line at a time, and then exactly one terminal state, which later calls repeat:
+`seatline-core/src/stream.rs` is the stream manager (NAT-05). `LineStream` reads a provider process's stdout as lines. `next(deadline)` returns one complete line at a time, and then exactly one terminal state, which later calls repeat:
 
 - `Final(exit)` when stdout ended and the process exited. A last line without a line ending is still delivered.
 - `Error` when a line grew past the stream's limit or wasn't UTF-8. The process is killed at once.
@@ -310,11 +310,11 @@ Output that arrives without completing a line, such as stderr, the start of a lo
 
 `split_text` cuts outgoing text into pieces of bounded size, never inside a character; the host uses it for `response.delta`.
 
-The unit tests in `runtime-core/src/stream.rs` pin the line splitting: characters cut between chunks, CRLF endings, a last line without an ending, the limit, and invalid UTF-8. `runtime-tests/tests/stream_manager.rs` runs the stream manager on real processes: 2,000 lines full of multi-byte characters, stderr, a line over the limit, a 2 MiB line read slowly, a crash, and cancelling between lines, mid-line, and against a provider that ignores SIGTERM.
+The unit tests in `seatline-core/src/stream.rs` pin the line splitting: characters cut between chunks, CRLF endings, a last line without an ending, the limit, and invalid UTF-8. `seatline-tests/tests/stream_manager.rs` runs the stream manager on real processes: 2,000 lines full of multi-byte characters, stderr, a line over the limit, a 2 MiB line read slowly, a crash, and cancelling between lines, mid-line, and against a provider that ignores SIGTERM.
 
 ### Provider processes
 
-`runtime-core/src/process.rs` is the provider process manager (NAT-04). It is the only code in the native workspace that starts a provider process; the Codex adapter reaches it through the stream manager.
+`seatline-core/src/process.rs` is the provider process manager (NAT-04). It is the only code in the native workspace that starts a provider process; the Codex adapter reaches it through the stream manager.
 
 ```rust
 let mut process = Process::spawn(&ProcessSpec::new(executable).args(["exec", "--json"]))?;
@@ -347,7 +347,7 @@ What it can't do yet:
 - On Windows only the provider process itself is stopped; stopping its descendants too needs a Job Object (ADR-0001). Windows has no SIGTERM, so closing stdin is the only stop request there.
 - If the host itself is killed outright, it can't clean up. A provider that reads stdin sees end of file.
 
-The package that builds the fake provider tests the manager, because only it can locate the fake provider binary: `runtime-tests/tests/process_manager.rs` covers success, a nonzero exit, a crash, a timeout, a graceful stop, an ignored stop escalated to SIGKILL, input written while output flows, a process that sees only the environment its spec sets and runs where its spec says, arguments holding spaces, quotes, and shell syntax that each arrive whole, and descendants that stay in the group, outlive the provider, or leave the group. `runtime-tests/tests/process_stress.rs` spawns and stops 120 providers at different points and checks that each was reaped and that no pipe or thread was left behind.
+The package that builds the fake provider tests the manager, because only it can locate the fake provider binary: `seatline-tests/tests/process_manager.rs` covers success, a nonzero exit, a crash, a timeout, a graceful stop, an ignored stop escalated to SIGKILL, input written while output flows, a process that sees only the environment its spec sets and runs where its spec says, arguments holding spaces, quotes, and shell syntax that each arrive whole, and descendants that stay in the group, outlive the provider, or leave the group. `seatline-tests/tests/process_stress.rs` spawns and stops 120 providers at different points and checks that each was reaped and that no pipe or thread was left behind.
 
 ### Hostile providers
 
@@ -373,7 +373,7 @@ The package that builds the fake provider tests the manager, because only it can
 
 Every request ends exactly once, with a matching diagnostics record, every process is reaped, and neither the provider's stderr nor any question reaches the events or the diagnostics. On Linux the test also checks that the host's threads and file descriptors return to where they were after each case, and that its peak memory grows by at most 64 MiB, far less than the floods write; the longest line held is 8 MiB. The matrix found that a provider writing fast enough could keep the loop busy indefinitely, holding up other requests, cancellations, and timeouts, which the fairness limits above now prevent. A stopped process, or a sign-in check past its time limit, is also cut off on time however fast it writes.
 
-`runtime-tests/tests/hostile_matrix.rs` runs the same misbehaviour through none of Pervue's code. Each case runs an adapter (Codex for every case above, and Claude for silence, unknown events, malformed output, an exit without a result, and ignored cancellation) under the scheduler's supervisor, which owns the lifecycle limits and the panic boundary. The endings are the scheduler's: `Completed` with the whole answer, `Failed` with the normalized code and reason, `Cancelled`, and `Timeout` naming the limit (`Start` or `Idle`). Each turn ends exactly once, every process is reaped, nothing the provider wrote to stderr reaches the events, and on Linux the same thread, file-descriptor and peak-memory bounds hold (`runtime-fake-provider::resources` measures them for both matrices). `runtime-tests/tests/service.rs` drives real adapters through the threaded service: an answer, a refused turn, a cancelled turn, a dropped turn and a stopped service each stop their provider process, and one silent turn holds up no other.
+`seatline-tests/tests/hostile_matrix.rs` runs the same misbehaviour through none of Pervue's code. Each case runs an adapter (Codex for every case above, and Claude for silence, unknown events, malformed output, an exit without a result, and ignored cancellation) under the scheduler's supervisor, which owns the lifecycle limits and the panic boundary. The endings are the scheduler's: `Completed` with the whole answer, `Failed` with the normalized code and reason, `Cancelled`, and `Timeout` naming the limit (`Start` or `Idle`). Each turn ends exactly once, every process is reaped, nothing the provider wrote to stderr reaches the events, and on Linux the same thread, file-descriptor and peak-memory bounds hold (`seatline-fake-provider::resources` measures them for both matrices). `seatline-tests/tests/service.rs` drives real adapters through the threaded service: an answer, a refused turn, a cancelled turn, a dropped turn and a stopped service each stop their provider process, and one silent turn holds up no other.
 
 ## Fuzz targets
 
@@ -386,11 +386,11 @@ node fuzz/fuzz-support.mjs protocol-corpus fuzz/corpus/protocol
 cargo +nightly fuzz run frame_reader fuzz/corpus/frame_reader -- -runs=1000 -max_len="$(node fuzz/fuzz-support.mjs max-len frame_reader)"
 cargo +nightly fuzz run protocol fuzz/corpus/protocol -- -runs=2000 -max_len="$(node fuzz/fuzz-support.mjs max-len protocol)"
 
-node runtime-fuzz/fuzz-support.mjs stream-corpus runtime-fuzz/corpus/stream_lines
-cargo +nightly fuzz run --fuzz-dir runtime-fuzz stream_lines runtime-fuzz/corpus/stream_lines -- -runs=1000 -max_len="$(node runtime-fuzz/fuzz-support.mjs max-len stream_lines)"
+node seatline-fuzz/fuzz-support.mjs stream-corpus seatline-fuzz/corpus/stream_lines
+cargo +nightly fuzz run --fuzz-dir seatline-fuzz stream_lines seatline-fuzz/corpus/stream_lines -- -runs=1000 -max_len="$(node seatline-fuzz/fuzz-support.mjs max-len stream_lines)"
 ```
 
-cargo-fuzz builds the targets with AddressSanitizer. `frame_reader` reads frames from memory until the first non-frame result. `protocol` runs each input through the whole host as one request frame and fails if any emitted frame is not a JSON object. Both belong to Pervue (`fuzz/`, package `pervue-host-fuzz`). `stream_lines` belongs to the runtime (`runtime-fuzz/`, package `runtime-fuzz`, which depends on `runtime-core` alone): it splits its input into lines under a byte limit, once in chunks whose sizes the input chooses and once whole, and fails if the two disagree or a line breaks the limit.
+cargo-fuzz builds the targets with AddressSanitizer. `frame_reader` reads frames from memory until the first non-frame result. `protocol` runs each input through the whole host as one request frame and fails if any emitted frame is not a JSON object. Both belong to Pervue (`fuzz/`, package `pervue-host-fuzz`). `stream_lines` belongs to the runtime (`seatline-fuzz/`, package `seatline-fuzz`, which depends on `seatline-core` alone): it splits its input into lines under a byte limit, once in chunks whose sizes the input chooses and once whole, and fails if the two disagree or a line breaks the limit.
 
 The harnesses read directly from memory rather than creating a temporary file per input. The generated corpora seed empty, small valid, exact-maximum, oversized-prefix, truncated-prefix, and truncated-payload frames, plus requests derived from the golden protocol fixtures, and lines at, over and cut across the limit, so smoke runs start from structurally meaningful inputs.
 

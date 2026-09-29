@@ -17,7 +17,7 @@ use std::hash::{BuildHasher, RandomState};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use runtime_core::turn::Namespace;
+use seatline_core::turn::Namespace;
 
 use crate::environment;
 

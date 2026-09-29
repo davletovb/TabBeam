@@ -56,10 +56,10 @@ version = "0.1.0-dev"
 dependencies = [
  "nix",
  "pervue-host",
- "runtime-core",
- "runtime-fake-provider",
- "runtime-platform",
- "runtime-providers",
+ "seatline-core",
+ "seatline-fake-provider",
+ "seatline-platform",
+ "seatline-providers",
  "serde_json",
 ]
 
@@ -67,10 +67,10 @@ dependencies = [
 name = "pervue-host"
 version = "0.1.0-dev"
 dependencies = [
- "provider-runtime-scheduler",
- "runtime-core",
- "runtime-platform",
- "runtime-providers",
+ "seatline-core",
+ "seatline-platform",
+ "seatline-providers",
+ "seatline-scheduler",
  "serde",
  "serde_json",
 ]
@@ -85,21 +85,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "provider-runtime-scheduler"
-version = "0.1.0-dev"
-dependencies = [
- "runtime-core",
-]
-
-[[package]]
-name = "provider-runtime-service"
-version = "0.1.0-dev"
-dependencies = [
- "provider-runtime-scheduler",
- "runtime-core",
-]
-
-[[package]]
 name = "quote"
 version = "1.0.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -109,7 +94,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "runtime-core"
+name = "seatline-core"
 version = "0.1.0-dev"
 dependencies = [
  "nix",
@@ -118,43 +103,58 @@ dependencies = [
 ]
 
 [[package]]
-name = "runtime-fake-provider"
+name = "seatline-fake-provider"
 version = "0.1.0-dev"
 dependencies = [
  "nix",
- "runtime-core",
- "runtime-providers",
+ "seatline-core",
+ "seatline-providers",
  "serde_json",
 ]
 
 [[package]]
-name = "runtime-platform"
+name = "seatline-platform"
 version = "0.1.0-dev"
 dependencies = [
  "nix",
- "runtime-core",
+ "seatline-core",
 ]
 
 [[package]]
-name = "runtime-providers"
+name = "seatline-providers"
 version = "0.1.0-dev"
 dependencies = [
- "runtime-core",
- "runtime-platform",
+ "seatline-core",
+ "seatline-platform",
  "serde_json",
 ]
 
 [[package]]
-name = "runtime-tests"
+name = "seatline-scheduler"
+version = "0.1.0-dev"
+dependencies = [
+ "seatline-core",
+]
+
+[[package]]
+name = "seatline-service"
+version = "0.1.0-dev"
+dependencies = [
+ "seatline-core",
+ "seatline-scheduler",
+]
+
+[[package]]
+name = "seatline-tests"
 version = "0.1.0-dev"
 dependencies = [
  "nix",
- "provider-runtime-scheduler",
- "provider-runtime-service",
- "runtime-core",
- "runtime-fake-provider",
- "runtime-platform",
- "runtime-providers",
+ "seatline-core",
+ "seatline-fake-provider",
+ "seatline-platform",
+ "seatline-providers",
+ "seatline-scheduler",
+ "seatline-service",
  "serde_json",
 ]
 

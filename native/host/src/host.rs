@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
-use provider_runtime_scheduler::{
+use seatline_scheduler::{
     EndReason as SchedulerEnd, Event as SchedulerEvent, Supervisor, TimeoutKind, TurnId,
 };
 
@@ -43,8 +43,8 @@ use crate::protocol::request::{self, Method, RequestFailure, RequestId};
 use crate::providers::{
     ConversationSlot, Exchange, Providers, Scripted, SendRequest, StatusOfAll, Timeouts, Update,
 };
-use runtime_core::protocol::{ErrorCode as FailureCode, Failure};
-use runtime_core::stream::split_text;
+use seatline_core::protocol::{ErrorCode as FailureCode, Failure};
+use seatline_core::stream::split_text;
 
 /// Why the host stopped before a clean end of stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -580,9 +580,9 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                             model,
                             native_search,
                             session_policy: if persistent {
-                                runtime_core::turn::SessionPolicy::Persistent
+                                seatline_core::turn::SessionPolicy::Persistent
                             } else {
-                                runtime_core::turn::SessionPolicy::Ephemeral
+                                seatline_core::turn::SessionPolicy::Ephemeral
                             },
                             fresh_session: native_search && persistent,
                         };
@@ -988,7 +988,7 @@ mod tests {
     use crate::framing::PREFIX_SIZE;
     use crate::limits::MAX_FRAME_SIZE;
     use crate::providers::{ConversationProvider, fake};
-    use runtime_core::protocol::Capabilities;
+    use seatline_core::protocol::Capabilities;
 
     fn framed(payloads: &[&str]) -> Vec<u8> {
         let mut wire = Vec::new();

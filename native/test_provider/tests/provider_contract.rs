@@ -1,11 +1,11 @@
 //! Provider-neutral contract cases run unchanged against all four providers as
 //! Pervue serves them (TST-10): a conversation the extension names, over an
 //! adapter. The adapters themselves meet the runtime's own contract in
-//! `runtime-tests`; this is what Pervue's conversation layer adds to it.
+//! `seatline-tests`; this is what Pervue's conversation layer adds to it.
 
 mod support;
 
-use runtime_core::turn::SessionPolicy;
+use seatline_core::turn::SessionPolicy;
 use std::time::{Duration, Instant};
 
 use pervue_host::conversation::{HistoryMessage, Role};

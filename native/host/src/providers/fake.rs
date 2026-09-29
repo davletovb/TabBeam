@@ -6,7 +6,7 @@ use std::borrow::Cow;
 use std::time::Duration;
 
 use super::{ConversationProvider, Exchange, Scripted, SendRequest, Timeouts, Update};
-use runtime_core::protocol::{
+use seatline_core::protocol::{
     Authentication, Availability, Capabilities, Capability, ProviderState,
 };
 

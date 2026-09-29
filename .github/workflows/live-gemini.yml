@@ -1,7 +1,7 @@
 name: Live Gemini smoke test
 
 # The opt-in smoke test against the real Antigravity CLI (`agy`), through the
-# runtime's Gemini adapter (native/runtime-tests/tests/live_gemini.rs). It runs
+# runtime's Gemini adapter (native/seatline-tests/tests/live_gemini.rs). It runs
 # only when started by hand, on a machine where `agy` is installed and signed in
 # to a Google account: the adapter uses Antigravity's own cached sign-in and
 # passes no API key, so there is nothing to install or sign in with from a
@@ -45,5 +45,5 @@ jobs:
           rustup default stable
       - name: Run the smoke test
         env:
-          RUNTIME_LIVE_GEMINI: ${{ inputs.mode }}
-        run: cargo +stable test --manifest-path native/Cargo.toml --locked -p runtime-tests --test live_gemini -- --nocapture
+          SEATLINE_LIVE_GEMINI: ${{ inputs.mode }}
+        run: cargo +stable test --manifest-path native/Cargo.toml --locked -p seatline-tests --test live_gemini -- --nocapture

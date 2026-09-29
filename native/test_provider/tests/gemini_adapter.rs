@@ -2,7 +2,7 @@
 //! keeps no session, so a conversation continues from the dialogue Pervue
 //! replays; this tests that mapping, that a failed first turn's conversation
 //! can be retried, and what deleting a conversation removes. The adapter's own
-//! behaviour is tested at the runtime's level, in `runtime-tests`.
+//! behaviour is tested at the runtime's level, in `seatline-tests`.
 
 mod support;
 
@@ -13,7 +13,7 @@ use pervue_host::conversations::{Conversations, SessionStore};
 use pervue_host::providers::{
     ConversationProvider, ConversationSlot, Exchange, SendRequest, Update,
 };
-use runtime_core::turn::SessionPolicy;
+use seatline_core::turn::SessionPolicy;
 
 use support::FakeGemini;
 

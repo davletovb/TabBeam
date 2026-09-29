@@ -22,21 +22,21 @@ use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::{Exchange, Provider, Scripted, Timeouts, Update};
-use runtime_core::discovery::SearchPath;
-use runtime_core::process::{Event, Exit, Process, ProcessSpec};
-use runtime_core::prompt;
-use runtime_core::protocol::Failure as ErrorBody;
-use runtime_core::protocol::{
+use seatline_core::discovery::SearchPath;
+use seatline_core::process::{Event, Exit, Process, ProcessSpec};
+use seatline_core::prompt;
+use seatline_core::protocol::Failure as ErrorBody;
+use seatline_core::protocol::{
     Authentication, Availability, Capabilities, Capability, ErrorCode, ModelOption, ProviderState,
 };
-use runtime_core::stream::{BUSY_LIMIT, LineStream, Output};
-use runtime_core::turn::{Namespace, SessionPolicy, ToolPolicy, Turn as TurnRequest};
-use runtime_platform::discovery;
-use runtime_platform::environment;
-use runtime_platform::forget;
-use runtime_platform::layout::Layout;
-use runtime_platform::private_fs;
-use runtime_platform::workspace;
+use seatline_core::stream::{BUSY_LIMIT, LineStream, Output};
+use seatline_core::turn::{Namespace, SessionPolicy, ToolPolicy, Turn as TurnRequest};
+use seatline_platform::discovery;
+use seatline_platform::environment;
+use seatline_platform::forget;
+use seatline_platform::layout::Layout;
+use seatline_platform::private_fs;
+use seatline_platform::workspace;
 
 pub mod output;
 
@@ -454,7 +454,7 @@ fn status_update(
     availability: Availability,
     authentication: Authentication,
     models: Vec<ModelOption>,
-    sign_in: Option<runtime_core::turn::SignInClassification>,
+    sign_in: Option<seatline_core::turn::SignInClassification>,
 ) -> Update {
     Update::Status {
         provider_id: ID.to_owned(),
@@ -477,13 +477,13 @@ fn parse_models(bytes: &[u8]) -> Vec<ModelOption> {
             continue;
         };
         if !id.starts_with("grok-")
-            || !runtime_core::turn::is_model_id(id)
-            || id.len() > runtime_core::turn::MAX_MODEL_LABEL_BYTES
+            || !seatline_core::turn::is_model_id(id)
+            || id.len() > seatline_core::turn::MAX_MODEL_LABEL_BYTES
             || models.iter().any(|model: &ModelOption| model.id == id)
         {
             continue;
         }
-        if models.len() == runtime_core::turn::MAX_MODEL_OPTIONS {
+        if models.len() == seatline_core::turn::MAX_MODEL_OPTIONS {
             break;
         }
         models.push(ModelOption {
@@ -497,12 +497,12 @@ fn parse_models(bytes: &[u8]) -> Vec<ModelOption> {
 fn classify_sign_in(
     authentication: Authentication,
     stdout: &[u8],
-) -> Option<runtime_core::turn::SignInClassification> {
+) -> Option<seatline_core::turn::SignInClassification> {
     let text = String::from_utf8_lossy(stdout).to_ascii_lowercase();
     if text.contains("api key") || text.contains("deployment key") {
-        Some(runtime_core::turn::SignInClassification::ApiKey)
+        Some(seatline_core::turn::SignInClassification::ApiKey)
     } else if authentication == Authentication::Authenticated {
-        Some(runtime_core::turn::SignInClassification::Subscription)
+        Some(seatline_core::turn::SignInClassification::Subscription)
     } else {
         None
     }
@@ -1014,7 +1014,7 @@ mod tests {
         // A claim Antigravity read as an injection, and Grok follows: which is
         // why this adapter words its introduction for itself.
         assert!(SYSTEM_INTRO.contains("take precedence over"));
-        assert_ne!(SYSTEM_INTRO, runtime_core::prompt::SYSTEM_INTRO);
+        assert_ne!(SYSTEM_INTRO, seatline_core::prompt::SYSTEM_INTRO);
     }
 
     #[test]
@@ -1087,11 +1087,11 @@ mod tests {
         input.push_str("* grok bad\n");
         input.push_str("* --danger\n");
         let models = parse_models(input.as_bytes());
-        assert_eq!(models.len(), runtime_core::turn::MAX_MODEL_OPTIONS);
+        assert_eq!(models.len(), seatline_core::turn::MAX_MODEL_OPTIONS);
         assert!(
             models
                 .iter()
-                .all(|model| runtime_core::turn::is_model_id(&model.id))
+                .all(|model| seatline_core::turn::is_model_id(&model.id))
         );
     }
 }

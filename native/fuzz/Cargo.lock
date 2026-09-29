@@ -109,10 +109,10 @@ dependencies = [
 name = "pervue-host"
 version = "0.1.0-dev"
 dependencies = [
- "provider-runtime-scheduler",
- "runtime-core",
- "runtime-platform",
- "runtime-providers",
+ "seatline-core",
+ "seatline-platform",
+ "seatline-providers",
+ "seatline-scheduler",
  "serde",
  "serde_json",
 ]
@@ -136,13 +136,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "provider-runtime-scheduler"
-version = "0.1.0-dev"
-dependencies = [
- "runtime-core",
-]
-
-[[package]]
 name = "quote"
 version = "1.0.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -158,7 +151,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
-name = "runtime-core"
+name = "seatline-core"
 version = "0.1.0-dev"
 dependencies = [
  "nix",
@@ -167,20 +160,27 @@ dependencies = [
 ]
 
 [[package]]
-name = "runtime-platform"
+name = "seatline-platform"
 version = "0.1.0-dev"
 dependencies = [
  "nix",
- "runtime-core",
+ "seatline-core",
 ]
 
 [[package]]
-name = "runtime-providers"
+name = "seatline-providers"
 version = "0.1.0-dev"
 dependencies = [
- "runtime-core",
- "runtime-platform",
+ "seatline-core",
+ "seatline-platform",
  "serde_json",
+]
+
+[[package]]
+name = "seatline-scheduler"
+version = "0.1.0-dev"
+dependencies = [
+ "seatline-core",
 ]
 
 [[package]]

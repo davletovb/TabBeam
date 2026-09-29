@@ -21,9 +21,9 @@ use pervue_host::providers::codex::{Codex, Limits};
 use pervue_host::providers::gemini::Gemini;
 use pervue_host::providers::grok::Grok;
 use pervue_host::providers::{ConversationProvider, Providers};
-use runtime_fake_provider::harness::{self, Fixtures};
+use seatline_fake_provider::harness::{self, Fixtures};
 #[allow(unused_imports)]
-pub use runtime_fake_provider::harness::{PROMPT_STOP_GRACE, TEST_LIMITS};
+pub use seatline_fake_provider::harness::{PROMPT_STOP_GRACE, TEST_LIMITS};
 use serde_json::Value;
 
 pub const PROVIDER: &str = env!("CARGO_BIN_EXE_pervue-fake-provider");

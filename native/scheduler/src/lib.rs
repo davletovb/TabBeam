@@ -7,8 +7,8 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::time::{Duration, Instant};
 
-use runtime_core::exchange::{Exchange, Timeouts, Update};
-use runtime_core::protocol::Failure;
+use seatline_core::exchange::{Exchange, Timeouts, Update};
+use seatline_core::protocol::Failure;
 
 const STOP_SLACK: Duration = Duration::from_secs(1);
 

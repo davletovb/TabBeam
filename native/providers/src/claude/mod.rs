@@ -15,22 +15,24 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use crate::{Cleanup, Exchange, Provider, Scripted, Timeouts, Update};
-use runtime_core::discovery::SearchPath;
-use runtime_core::exchange::SessionLoss;
-use runtime_core::process::{Event, Exit, Process, ProcessSpec};
-use runtime_core::prompt;
-use runtime_core::protocol::Failure as ErrorBody;
-use runtime_core::protocol::{
+use seatline_core::discovery::SearchPath;
+use seatline_core::exchange::SessionLoss;
+use seatline_core::process::{Event, Exit, Process, ProcessSpec};
+use seatline_core::prompt;
+use seatline_core::protocol::Failure as ErrorBody;
+use seatline_core::protocol::{
     Authentication, Availability, Capabilities, Capability, ErrorCode, ModelOption, ProviderState,
 };
-use runtime_core::search::{NATIVE_SEARCH_NO_SOURCES, SourceCollector, claude_tool_result_sources};
-use runtime_core::stream::{BUSY_LIMIT, LineStream, Output};
-use runtime_core::turn::{SessionPolicy, ToolPolicy, Turn as TurnRequest};
-use runtime_platform::discovery;
-use runtime_platform::environment;
-use runtime_platform::forget;
-use runtime_platform::layout::Layout;
-use runtime_platform::workspace;
+use seatline_core::search::{
+    NATIVE_SEARCH_NO_SOURCES, SourceCollector, claude_tool_result_sources,
+};
+use seatline_core::stream::{BUSY_LIMIT, LineStream, Output};
+use seatline_core::turn::{SessionPolicy, ToolPolicy, Turn as TurnRequest};
+use seatline_platform::discovery;
+use seatline_platform::environment;
+use seatline_platform::forget;
+use seatline_platform::layout::Layout;
+use seatline_platform::workspace;
 
 pub mod output;
 
@@ -348,7 +350,7 @@ fn status_update(availability: Availability, authentication: Authentication) -> 
             capabilities: CAPABILITIES,
             models: Cow::Borrowed(MODELS),
             sign_in: (authentication == Authentication::Authenticated)
-                .then_some(runtime_core::turn::SignInClassification::Unknown),
+                .then_some(seatline_core::turn::SignInClassification::Unknown),
         },
     }
 }
@@ -486,7 +488,7 @@ fn claude_args(resume: Option<&str>, model: Option<&str>, native_search: bool) -
         resume,
         model,
         native_search,
-        runtime_core::turn::SessionPolicy::Persistent,
+        seatline_core::turn::SessionPolicy::Persistent,
     )
 }
 
@@ -494,7 +496,7 @@ fn claude_args_for_session(
     resume: Option<&str>,
     model: Option<&str>,
     native_search: bool,
-    session_policy: runtime_core::turn::SessionPolicy,
+    session_policy: seatline_core::turn::SessionPolicy,
 ) -> Vec<OsString> {
     let mut args: Vec<OsString> = [
         "-p",
@@ -521,7 +523,7 @@ fn claude_args_for_session(
     if native_search {
         args.extend(["--allowedTools", "WebSearch"].map(OsString::from));
     }
-    if session_policy == runtime_core::turn::SessionPolicy::Ephemeral {
+    if session_policy == seatline_core::turn::SessionPolicy::Ephemeral {
         args.push("--no-session-persistence".into());
     }
     if let Some(model) = model {
@@ -908,7 +910,7 @@ mod tests {
             None,
             None,
             false,
-            runtime_core::turn::SessionPolicy::Ephemeral,
+            seatline_core::turn::SessionPolicy::Ephemeral,
         );
         assert!(args.iter().any(|arg| arg == "--no-session-persistence"));
     }
@@ -918,7 +920,7 @@ mod tests {
         assert_eq!(CAPABILITIES.model_selection, Capability::Supported);
         assert!(!MODELS.is_empty());
         for model in MODELS {
-            assert!(runtime_core::turn::is_model_id(&model.id), "{}", model.id);
+            assert!(seatline_core::turn::is_model_id(&model.id), "{}", model.id);
         }
     }
 }

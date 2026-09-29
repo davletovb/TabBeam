@@ -13,9 +13,9 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use runtime_core::exchange::{Exchange, Scripted, Update};
-use runtime_core::protocol::ErrorCode;
-use runtime_core::protocol::Failure as ErrorBody;
+use seatline_core::exchange::{Exchange, Scripted, Update};
+use seatline_core::protocol::ErrorCode;
+use seatline_core::protocol::Failure as ErrorBody;
 
 pub const SESSION_FORGET_FAILED: ErrorBody = ErrorBody {
     code: ErrorCode::InternalError,

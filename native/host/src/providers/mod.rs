@@ -1,7 +1,7 @@
 //! The providers as Pervue serves them.
 //!
 //! The adapters and the runtime [`Provider`] contract they implement live in
-//! `runtime-providers`, and know nothing of conversations. This module is
+//! `seatline-providers`, and know nothing of conversations. This module is
 //! Pervue's side: the [`ConversationProvider`] the request loop drives (a
 //! conversation the extension names, with its history and browser context),
 //! the registry of what an installed host serves, and the `fake` scaffold.
@@ -15,15 +15,15 @@ use std::time::{Duration, Instant};
 
 use crate::conversation::{BrowserContext, HistoryMessage};
 use crate::conversations::{Conversations, Durability, SessionStore};
-use runtime_core::protocol::Capabilities;
-pub use runtime_core::stream::BUSY_LIMIT;
-use runtime_core::turn::SessionPolicy;
+use seatline_core::protocol::Capabilities;
+pub use seatline_core::stream::BUSY_LIMIT;
+use seatline_core::turn::SessionPolicy;
 
 pub mod fake;
 
-pub use runtime_providers::{Cleanup, INVALID_TURN, Provider, claude, codex, gemini, grok};
+pub use seatline_providers::{Cleanup, INVALID_TURN, Provider, claude, codex, gemini, grok};
 
-pub use runtime_platform::layout::Layout;
+pub use seatline_platform::layout::Layout;
 
 /// One `conversation.send`, in provider-neutral terms.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,7 +94,7 @@ impl PartialEq for ConversationSlot {
 
 impl Eq for ConversationSlot {}
 
-pub use runtime_core::exchange::{Exchange, Scripted, Timeouts, Update};
+pub use seatline_core::exchange::{Exchange, Scripted, Timeouts, Update};
 
 /// A provider as the host serves it: a conversation the extension names, with
 /// its history and browser context, over a runtime [`Provider`].

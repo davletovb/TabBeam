@@ -351,15 +351,15 @@ jobs:
         run: |
           node fuzz/fuzz-support.mjs frame-corpus fuzz/corpus/frame_reader
           node fuzz/fuzz-support.mjs protocol-corpus fuzz/corpus/protocol
-          node runtime-fuzz/fuzz-support.mjs stream-corpus runtime-fuzz/corpus/stream_lines
+          node seatline-fuzz/fuzz-support.mjs stream-corpus seatline-fuzz/corpus/stream_lines
       - name: Smoke-run frame fuzz target
         run: |
           max_len=$(node fuzz/fuzz-support.mjs max-len frame_reader)
           cargo +nightly fuzz run frame_reader fuzz/corpus/frame_reader -- -runs=1000 -max_len="$max_len"
       - name: Smoke-run the runtime's stream fuzz target
         run: |
-          max_len=$(node runtime-fuzz/fuzz-support.mjs max-len stream_lines)
-          cargo +nightly fuzz run --fuzz-dir runtime-fuzz stream_lines runtime-fuzz/corpus/stream_lines -- -runs=1000 -max_len="$max_len"
+          max_len=$(node seatline-fuzz/fuzz-support.mjs max-len stream_lines)
+          cargo +nightly fuzz run --fuzz-dir seatline-fuzz stream_lines seatline-fuzz/corpus/stream_lines -- -runs=1000 -max_len="$max_len"
       - name: Smoke-run protocol fuzz target
         run: |
           max_len=$(node fuzz/fuzz-support.mjs max-len protocol)

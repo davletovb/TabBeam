@@ -2,7 +2,7 @@
 
 mod support;
 
-use runtime_core::turn::SessionPolicy;
+use seatline_core::turn::SessionPolicy;
 use std::ffi::OsString;
 use std::time::{Duration, Instant};
 
@@ -14,7 +14,7 @@ use pervue_host::providers::claude::Claude;
 use pervue_host::providers::{
     ConversationProvider, ConversationSlot, Exchange, SendRequest, Update,
 };
-use runtime_core::protocol::ErrorCode;
+use seatline_core::protocol::ErrorCode;
 use support::FakeClaude;
 
 const DEADLINE: Duration = Duration::from_secs(20);

@@ -1,7 +1,7 @@
 name: Live Grok smoke test
 
 # The opt-in smoke test against the real Grok Build CLI (`grok`), through the
-# runtime's Grok adapter (native/runtime-tests/tests/live_grok.rs). It runs only
+# runtime's Grok adapter (native/seatline-tests/tests/live_grok.rs). It runs only
 # when started by hand, on a machine where `grok` is installed and signed in to
 # an account: the adapter uses Grok's cached OAuth file (`GROK_AUTH_PATH`, or
 # `~/.grok/auth.json`) and turns API-key billing off on purpose, so there is
@@ -47,5 +47,5 @@ jobs:
           rustup default stable
       - name: Run the smoke test
         env:
-          RUNTIME_LIVE_GROK: ${{ inputs.mode }}
-        run: cargo +stable test --manifest-path native/Cargo.toml --locked -p runtime-tests --test live_grok -- --nocapture
+          SEATLINE_LIVE_GROK: ${{ inputs.mode }}
+        run: cargo +stable test --manifest-path native/Cargo.toml --locked -p seatline-tests --test live_grok -- --nocapture

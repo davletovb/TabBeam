@@ -2,7 +2,7 @@
 //! keeps no session, so a conversation continues from the dialogue Pervue
 //! replays; this tests that mapping, and that a conversation the host never
 //! made is refused before Grok runs. The adapter's own behaviour is tested at
-//! the runtime's level, in `runtime-tests`.
+//! the runtime's level, in `seatline-tests`.
 
 mod support;
 
@@ -12,7 +12,7 @@ use pervue_host::conversation::{HistoryMessage, Role};
 use pervue_host::providers::{
     ConversationProvider, ConversationSlot, Exchange, SendRequest, Update,
 };
-use runtime_core::turn::SessionPolicy;
+use seatline_core::turn::SessionPolicy;
 
 use support::FakeGrok;
 

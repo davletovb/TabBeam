@@ -17,24 +17,24 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use crate::{Cleanup, Exchange, Provider, Scripted, Timeouts, Update};
-use runtime_core::discovery::SearchPath;
-use runtime_core::process::{Event, Exit, Process, ProcessSpec};
-use runtime_core::prompt;
-use runtime_core::protocol::Failure as ErrorBody;
-use runtime_core::protocol::{
+use seatline_core::discovery::SearchPath;
+use seatline_core::process::{Event, Exit, Process, ProcessSpec};
+use seatline_core::prompt;
+use seatline_core::protocol::Failure as ErrorBody;
+use seatline_core::protocol::{
     Authentication, Availability, Capabilities, Capability, ErrorCode, ModelOption, ProviderState,
 };
-use runtime_core::search::{NATIVE_SEARCH_NO_SOURCES, SourceCollector, codex_message_sources};
-use runtime_core::stream::{BUSY_LIMIT, LineStream, Output};
-use runtime_core::turn::{
+use seatline_core::search::{NATIVE_SEARCH_NO_SOURCES, SourceCollector, codex_message_sources};
+use seatline_core::stream::{BUSY_LIMIT, LineStream, Output};
+use seatline_core::turn::{
     Namespace, SessionPolicy, ToolPolicy, Turn as TurnRequest, is_cleanup_group,
 };
-use runtime_platform::discovery;
-use runtime_platform::environment;
-use runtime_platform::forget;
-use runtime_platform::layout::Layout;
-use runtime_platform::private_fs;
-use runtime_platform::workspace;
+use seatline_platform::discovery;
+use seatline_platform::environment;
+use seatline_platform::forget;
+use seatline_platform::layout::Layout;
+use seatline_platform::private_fs;
+use seatline_platform::workspace;
 
 pub mod output;
 
@@ -485,7 +485,7 @@ fn status_update(
     availability: Availability,
     authentication: Authentication,
     models: Vec<ModelOption>,
-    sign_in: Option<runtime_core::turn::SignInClassification>,
+    sign_in: Option<seatline_core::turn::SignInClassification>,
 ) -> Update {
     Update::Status {
         provider_id: ID.to_owned(),
@@ -507,15 +507,15 @@ fn parse_models(bytes: &[u8]) -> Vec<ModelOption> {
             let id = id.trim();
             let label = label.trim();
             (id.starts_with("gemini-")
-                && runtime_core::turn::is_model_id(id)
+                && seatline_core::turn::is_model_id(id)
                 && !label.is_empty()
-                && label.chars().count() <= runtime_core::turn::MAX_MODEL_LABEL_BYTES)
+                && label.chars().count() <= seatline_core::turn::MAX_MODEL_LABEL_BYTES)
                 .then(|| ModelOption {
                     id: Cow::Owned(id.to_owned()),
                     label: Cow::Owned(label.to_owned()),
                 })
         })
-        .take(runtime_core::turn::MAX_MODEL_OPTIONS)
+        .take(seatline_core::turn::MAX_MODEL_OPTIONS)
         .collect()
 }
 
@@ -580,7 +580,7 @@ impl Exchange for StatusCheck {
                                 Vec::new()
                             };
                             let sign_in = (authentication == Authentication::Authenticated)
-                                .then_some(runtime_core::turn::SignInClassification::Cloud);
+                                .then_some(seatline_core::turn::SignInClassification::Cloud);
                             *self = Self::Done(VecDeque::from([
                                 status_update(availability, authentication, models, sign_in),
                                 Update::Completed,
@@ -1299,20 +1299,20 @@ mod tests {
         input.push_str("--danger\tBad\n");
         input.push_str(&format!(
             "gemini-too-long\t{}\n",
-            "x".repeat(runtime_core::turn::MAX_MODEL_LABEL_BYTES + 1)
+            "x".repeat(seatline_core::turn::MAX_MODEL_LABEL_BYTES + 1)
         ));
         let models = parse_models(input.as_bytes());
-        assert_eq!(models.len(), runtime_core::turn::MAX_MODEL_OPTIONS);
+        assert_eq!(models.len(), seatline_core::turn::MAX_MODEL_OPTIONS);
         assert!(
             models
                 .iter()
-                .all(|model| runtime_core::turn::is_model_id(&model.id))
+                .all(|model| seatline_core::turn::is_model_id(&model.id))
         );
         assert!(
             models
                 .iter()
                 .all(|model| model.label.chars().count()
-                    <= runtime_core::turn::MAX_MODEL_LABEL_BYTES)
+                    <= seatline_core::turn::MAX_MODEL_LABEL_BYTES)
         );
     }
 }

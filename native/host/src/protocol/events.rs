@@ -48,10 +48,10 @@ pub enum EventError {
     Frame(FrameError),
 }
 
-pub use runtime_core::protocol::{Authentication, Availability, Capability, ModelOption, Source};
+pub use seatline_core::protocol::{Authentication, Availability, Capability, ModelOption, Source};
 
 /// The v1 error categories (`errors-and-capabilities-v1.md` §2). The runtime
-/// reports a smaller set of its own ([`runtime_core::protocol::ErrorCode`]);
+/// reports a smaller set of its own ([`seatline_core::protocol::ErrorCode`]);
 /// the host adds the categories that belong to the browser and the host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -69,9 +69,9 @@ pub enum ErrorCode {
     InternalError,
 }
 
-impl From<runtime_core::protocol::ErrorCode> for ErrorCode {
-    fn from(code: runtime_core::protocol::ErrorCode) -> Self {
-        use runtime_core::protocol::ErrorCode as Runtime;
+impl From<seatline_core::protocol::ErrorCode> for ErrorCode {
+    fn from(code: seatline_core::protocol::ErrorCode) -> Self {
+        use seatline_core::protocol::ErrorCode as Runtime;
         match code {
             Runtime::ProviderNotFound => Self::ProviderNotFound,
             Runtime::ProviderNotAuthenticated => Self::ProviderNotAuthenticated,
@@ -130,7 +130,7 @@ pub struct Capabilities {
 
 impl Capabilities {
     pub const fn new(
-        provider: runtime_core::protocol::Capabilities,
+        provider: seatline_core::protocol::Capabilities,
         host: HostCapabilities,
     ) -> Self {
         Self {
@@ -146,7 +146,7 @@ impl Capabilities {
 }
 
 /// The v1 `provider.status` state. Account and billing mode
-/// ([`runtime_core::protocol::ProviderState::sign_in`]) are deliberately not
+/// ([`seatline_core::protocol::ProviderState::sign_in`]) are deliberately not
 /// part of it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ProviderState {
@@ -160,7 +160,7 @@ pub struct ProviderState {
 }
 
 impl ProviderState {
-    pub fn new(state: runtime_core::protocol::ProviderState, host: HostCapabilities) -> Self {
+    pub fn new(state: seatline_core::protocol::ProviderState, host: HostCapabilities) -> Self {
         Self {
             availability: state.availability,
             authentication: state.authentication,
@@ -361,8 +361,8 @@ mod tests {
         frames
     }
 
-    fn runtime_capabilities(tool_isolation: Capability) -> runtime_core::protocol::Capabilities {
-        runtime_core::protocol::Capabilities {
+    fn runtime_capabilities(tool_isolation: Capability) -> seatline_core::protocol::Capabilities {
+        seatline_core::protocol::Capabilities {
             streaming: Capability::Supported,
             continuation: Capability::Supported,
             web_search: Capability::Unsupported,
@@ -407,7 +407,7 @@ mod tests {
 
     #[test]
     fn a_runtime_error_code_keeps_its_v1_name() {
-        use runtime_core::protocol::ErrorCode as Runtime;
+        use seatline_core::protocol::ErrorCode as Runtime;
         for (runtime, wire) in [
             (Runtime::ProviderNotFound, r#""PROVIDER_NOT_FOUND""#),
             (
@@ -429,12 +429,12 @@ mod tests {
     #[test]
     fn a_status_never_carries_the_sign_in_classification() {
         let state = ProviderState::new(
-            runtime_core::protocol::ProviderState {
+            seatline_core::protocol::ProviderState {
                 availability: Availability::Available,
                 authentication: Authentication::Authenticated,
                 capabilities: runtime_capabilities(Capability::Supported),
                 models: std::borrow::Cow::Borrowed(&[]),
-                sign_in: Some(runtime_core::turn::SignInClassification::ApiKey),
+                sign_in: Some(seatline_core::turn::SignInClassification::ApiKey),
             },
             HostCapabilities::PERVUE,
         );
