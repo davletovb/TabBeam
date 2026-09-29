@@ -62,6 +62,7 @@ pub const CAPABILITIES: Capabilities = Capabilities {
 pub const TIMEOUTS: Timeouts = Timeouts {
     start: Duration::from_secs(60),
     idle: Duration::from_secs(300),
+    max_turn: Duration::from_secs(180),
     stop_grace: Duration::from_secs(2),
 };
 
