@@ -4,6 +4,31 @@ use std::fmt;
 
 use serde::Serialize;
 
+pub const MAX_MODEL_ID_BYTES: usize = 128;
+pub const MAX_MODEL_LABEL_BYTES: usize = 64;
+pub const MAX_MODEL_OPTIONS: usize = 32;
+pub const MAX_CONTINUATION_BYTES: usize = 256;
+
+pub fn is_model_id(model: &str) -> bool {
+    let bytes = model.as_bytes();
+    !bytes.is_empty()
+        && bytes.len() <= MAX_MODEL_ID_BYTES
+        && bytes[0].is_ascii_alphanumeric()
+        && bytes
+            .iter()
+            .all(|&byte| byte.is_ascii_alphanumeric() || b"._-:/@".contains(&byte))
+}
+
+fn is_continuation(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    !bytes.is_empty()
+        && bytes.len() <= MAX_CONTINUATION_BYTES
+        && bytes[0] != b'-'
+        && bytes
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
     User,
@@ -46,12 +71,23 @@ impl Turn {
         if self.messages.is_empty() {
             return Err(TurnError::NoMessages);
         }
-        if self
-            .messages
-            .iter()
-            .any(|message| message.text.as_bytes().contains(&0))
+        if self.system.as_ref().is_some_and(|text| text.as_bytes().contains(&0))
+            || self
+                .messages
+                .iter()
+                .any(|message| message.text.as_bytes().contains(&0))
         {
             return Err(TurnError::InvalidText);
+        }
+        if self.model.as_deref().is_some_and(|model| !is_model_id(model)) {
+            return Err(TurnError::InvalidModel);
+        }
+        if self
+            .continuation
+            .as_deref()
+            .is_some_and(|continuation| !is_continuation(continuation))
+        {
+            return Err(TurnError::InvalidContinuation);
         }
         if self.continuation.is_some() && self.session != SessionPolicy::Persistent {
             return Err(TurnError::ContinuationRequiresPersistentSession);
@@ -64,6 +100,8 @@ impl Turn {
 pub enum TurnError {
     NoMessages,
     InvalidText,
+    InvalidModel,
+    InvalidContinuation,
     ContinuationRequiresPersistentSession,
 }
 
@@ -95,12 +133,6 @@ pub enum SignInClassification {
     ApiKey,
     Cloud,
     Unknown,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ModelOption {
-    pub id: String,
-    pub label: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -189,4 +221,23 @@ mod tests {
             assert!(Namespace::fixed(value).is_err(), "{value}");
         }
     }
+    #[test]
+    fn argv_bound_fields_are_validated() {
+        let base = Turn {
+            system: None,
+            messages: vec![Message {
+                role: Role::User,
+                text: "hello".to_owned(),
+            }],
+            model: None,
+            tools: ToolPolicy::None,
+            session: SessionPolicy::Persistent,
+            continuation: None,
+            check_sign_in: false,
+        };
+        assert!(Turn { model: Some("--help".to_owned()), ..base.clone() }.validate().is_err());
+        assert!(Turn { continuation: Some("--resume".to_owned()), ..base.clone() }.validate().is_err());
+        assert!(Turn { system: Some("bad\0system".to_owned()), ..base }.validate().is_err());
+    }
+
 }

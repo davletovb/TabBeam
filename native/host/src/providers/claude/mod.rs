@@ -65,7 +65,7 @@ pub const LIMITS: Limits = Limits {
     timeouts: Timeouts {
         start: Duration::from_secs(60),
         idle: Duration::from_secs(300),
-        max_turn: Duration::from_secs(180),
+        max_turn: Duration::MAX,
         stop_grace: Duration::from_secs(2),
     },
     probe: Duration::from_secs(10),
@@ -419,10 +419,7 @@ impl Provider for Claude {
                 },
             }
         };
-        if request.fresh_session && prior_session.is_some() {
-            if request.history.is_empty() {
-                return Box::new(Scripted::failed(UNKNOWN_CONVERSATION));
-            }
+        if request.fresh_session && prior_session.is_some() && !request.history.is_empty() {
             prompt = fallback_prompt.take().expect("history is present");
         } else if resume.is_none() && !request.history.is_empty() {
             prompt = fallback_prompt.take().expect("history is present");
@@ -1079,7 +1076,7 @@ impl Turn {
     /// doesn't fail the turn: the new session is kept in memory, and the stale
     /// mapping is dropped so a restarted host rebuilds from history instead of
     /// resuming the wrong session.
-    fn follow_session(&self, conversation: &str, session: String) {
+    fn follow_session(&mut self, conversation: &str, session: String) {
         let current = self
             .conversations
             .borrow()
@@ -1089,36 +1086,42 @@ impl Turn {
         if current.as_deref() == Some(session.as_str()) {
             return;
         }
-        if let Some(old) = current {
-            if let Some(dir) = self.session_dir.as_deref() {
-                if record_superseded_session(dir, conversation, &old).is_err() {
-                    return;
-                }
-            }
-            let config = claude_config_dir(&self.launch);
-            let workspace = self.launch.work_dir.clone();
-            let marker = self
-                .session_dir
-                .as_deref()
-                .map(|dir| superseded_session_dir(dir, conversation).join(&old));
-            forget::work_in_background(move || {
-                let removed = config
-                    .as_deref()
-                    .map_or(Ok(()), |config| forget_transcript(config, &workspace, &old));
-                if removed.is_ok() {
-                    if let Some(marker) = marker {
-                        let _ = forget::remove(&marker);
-                    }
-                }
-            });
-        }
+
         if self.remember(conversation, session.clone()).is_err() {
             if let Some(dir) = &self.session_dir {
                 let _ = forget_session(dir, conversation);
             }
             self.conversations
                 .borrow_mut()
-                .insert(conversation.to_owned(), session);
+                .insert(conversation.to_owned(), session.clone());
+        }
+        if self.session_policy == runtime_core::turn::SessionPolicy::Persistent {
+            self.queue.push_back(Update::Session(session));
+        }
+
+        if let Some(old) = current {
+            let marker = self
+                .session_dir
+                .as_deref()
+                .and_then(|dir| {
+                    record_superseded_session(dir, conversation, &old)
+                        .ok()
+                        .map(|()| superseded_session_dir(dir, conversation).join(&old))
+                });
+            if self.session_dir.is_none() || marker.is_some() {
+                let config = claude_config_dir(&self.launch);
+                let workspace = self.launch.work_dir.clone();
+                forget::work_in_background(move || {
+                    let removed = config
+                        .as_deref()
+                        .map_or(Ok(()), |config| forget_transcript(config, &workspace, &old));
+                    if removed.is_ok() {
+                        if let Some(marker) = marker {
+                            let _ = forget::remove(&marker);
+                        }
+                    }
+                });
+            }
         }
     }
 

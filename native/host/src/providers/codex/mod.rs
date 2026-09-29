@@ -77,7 +77,7 @@ pub const LIMITS: Limits = Limits {
     timeouts: Timeouts {
         start: Duration::from_secs(60),
         idle: Duration::from_secs(300),
-        max_turn: Duration::from_secs(180),
+        max_turn: Duration::MAX,
         stop_grace: Duration::from_secs(2),
     },
     probe: Duration::from_secs(10),
@@ -456,10 +456,7 @@ impl Provider for Codex {
                 },
             }
         };
-        if request.fresh_session && prior_session.is_some() {
-            if request.history.is_empty() {
-                return Box::new(Scripted::failed(UNKNOWN_CONVERSATION));
-            }
+        if request.fresh_session && prior_session.is_some() && !request.history.is_empty() {
             prompt = fallback_prompt.take().expect("history is present");
         } else if resume.is_none() && !request.history.is_empty() {
             // If a provider has no native session (or its mapping was lost),

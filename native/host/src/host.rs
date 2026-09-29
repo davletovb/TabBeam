@@ -1120,6 +1120,8 @@ mod tests {
         answer: Option<&'static str>,
         /// Reports `Stopped` without being cancelled.
         stops_unasked: bool,
+        /// Reports recognized work continuously until it is cancelled.
+        activity: bool,
         /// After a cancel, still reports a delta.
         talks_after_cancel: bool,
         /// After a cancel, takes this long to report `Stopped`; `None` never.
@@ -1151,6 +1153,11 @@ mod tests {
                 answer: Some(text),
                 ..Self::default()
             }
+        }
+
+        fn active(mut self) -> Self {
+            self.activity = true;
+            self
         }
 
         fn stopping_after(mut self, delay: Option<Duration>) -> Self {
@@ -1194,6 +1201,9 @@ mod tests {
             if self.script.stops_unasked {
                 self.done = true;
                 return Some(Update::Stopped);
+            }
+            if self.script.activity {
+                return Some(Update::Activity);
             }
             let answer = self.script.answer?;
             if !self.answered {
@@ -2097,7 +2107,7 @@ mod tests {
 
     #[test]
     fn a_turn_hits_its_absolute_limit_even_when_activity_keeps_arriving() {
-        let mut provider = TestProvider::new("busy", Script::waits());
+        let mut provider = TestProvider::new("busy", Script::waits().active());
         provider.timeouts.idle = Duration::from_secs(60);
         provider.timeouts.max_turn = Duration::from_millis(50);
         let session = run_session(

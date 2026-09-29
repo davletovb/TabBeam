@@ -64,7 +64,7 @@ pub const CAPABILITIES: Capabilities = Capabilities {
 pub const TIMEOUTS: Timeouts = Timeouts {
     start: Duration::from_secs(60),
     idle: Duration::from_secs(300),
-    max_turn: Duration::from_secs(180),
+    max_turn: Duration::MAX,
     stop_grace: Duration::from_secs(2),
 };
 
@@ -452,8 +452,15 @@ fn parse_models(bytes: &[u8]) -> Vec<ModelOption> {
         let Some(id) = trimmed.split_whitespace().next() else {
             continue;
         };
-        if !id.starts_with("grok-") || models.iter().any(|model: &ModelOption| model.id == id) {
+        if !id.starts_with("grok-")
+            || !runtime_core::turn::is_model_id(id)
+            || id.len() > runtime_core::turn::MAX_MODEL_LABEL_BYTES
+            || models.iter().any(|model: &ModelOption| model.id == id)
+        {
             continue;
+        }
+        if models.len() == runtime_core::turn::MAX_MODEL_OPTIONS {
+            break;
         }
         models.push(ModelOption {
             id: Cow::Owned(id.to_owned()),

@@ -59,7 +59,7 @@ pub const CAPABILITIES: Capabilities = Capabilities {
 pub const TIMEOUTS: Timeouts = Timeouts {
     start: Duration::from_secs(60),
     idle: Duration::from_secs(300),
-    max_turn: Duration::from_secs(180),
+    max_turn: Duration::MAX,
     stop_grace: Duration::from_secs(2),
 };
 
@@ -481,11 +481,16 @@ fn parse_models(bytes: &[u8]) -> Vec<ModelOption> {
             let (id, label) = line.split_once('\t')?;
             let id = id.trim();
             let label = label.trim();
-            (id.starts_with("gemini-") && !label.is_empty()).then(|| ModelOption {
-                id: Cow::Owned(id.to_owned()),
-                label: Cow::Owned(label.to_owned()),
-            })
+            (id.starts_with("gemini-")
+                && runtime_core::turn::is_model_id(id)
+                && !label.is_empty()
+                && label.len() <= runtime_core::turn::MAX_MODEL_LABEL_BYTES)
+                .then(|| ModelOption {
+                    id: Cow::Owned(id.to_owned()),
+                    label: Cow::Owned(label.to_owned()),
+                })
         })
+        .take(runtime_core::turn::MAX_MODEL_OPTIONS)
         .collect()
 }
 

@@ -139,7 +139,7 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
                         .unwrap_or_default()
                         .to_owned(),
                     usage: Usage {
-                        input_tokens: event.pointer("/usage/input_tokens").and_then(Value::as_u64),
+                        input_tokens: total_input_tokens(event.get("usage")),
                         output_tokens: event
                             .pointer("/usage/output_tokens")
                             .and_then(Value::as_u64),
@@ -149,6 +149,25 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
         }
         _ => Line::Ignored,
     })
+}
+
+fn total_input_tokens(usage: Option<&Value>) -> Option<u64> {
+    let usage = usage?;
+    let input = usage.get("input_tokens").and_then(Value::as_u64);
+    let cache_creation = usage
+        .get("cache_creation_input_tokens")
+        .and_then(Value::as_u64);
+    let cache_read = usage.get("cache_read_input_tokens").and_then(Value::as_u64);
+    if input.is_none() && cache_creation.is_none() && cache_read.is_none() {
+        None
+    } else {
+        Some(
+            input
+                .unwrap_or(0)
+                .saturating_add(cache_creation.unwrap_or(0))
+                .saturating_add(cache_read.unwrap_or(0)),
+        )
+    }
 }
 
 fn tool_event(block: &Value) -> Option<ToolEvent> {
