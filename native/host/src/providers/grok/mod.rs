@@ -27,7 +27,7 @@ use super::environment;
 use super::forget;
 use super::layout::Layout;
 use super::private_fs;
-use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
+use super::{ConversationProvider, Exchange, Scripted, SendRequest, Timeouts, Update};
 use crate::conversation::provider_prompt;
 use runtime_core::discovery::SearchPath;
 use runtime_core::process::{Event, Exit, Process, ProcessSpec};
@@ -281,7 +281,7 @@ impl Grok {
     }
 }
 
-impl Provider for Grok {
+impl ConversationProvider for Grok {
     fn id(&self) -> &str {
         ID
     }

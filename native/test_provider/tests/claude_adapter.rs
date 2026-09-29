@@ -11,7 +11,7 @@ use pervue_host::conversation::{
     SEARCH_INSTRUCTIONS,
 };
 use pervue_host::providers::claude::Claude;
-use pervue_host::providers::{Exchange, Provider, SendRequest, Update};
+use pervue_host::providers::{ConversationProvider, Exchange, SendRequest, Update};
 use runtime_core::protocol::{Authentication, Availability, Capability, ErrorCode};
 use serde_json::Value;
 use support::FakeClaude;

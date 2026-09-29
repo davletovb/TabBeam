@@ -31,7 +31,7 @@ use super::discovery;
 use super::environment;
 use super::forget;
 use super::layout::Layout;
-use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
+use super::{ConversationProvider, Exchange, Scripted, SendRequest, Timeouts, Update};
 use crate::conversation::{provider_prompt, search_prompt};
 use crate::search::{NATIVE_SEARCH_NO_SOURCES, SourceCollector, codex_message_sources};
 use runtime_core::discovery::SearchPath;
@@ -297,7 +297,7 @@ impl Codex {
     }
 }
 
-impl Provider for Codex {
+impl ConversationProvider for Codex {
     fn id(&self) -> &str {
         ID
     }

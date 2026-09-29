@@ -16,7 +16,7 @@ use pervue_host::conversation::{
 };
 use pervue_host::providers::codex::{CODEX_VARIABLES, Codex, LIMITS, Limits};
 use pervue_host::providers::environment::INHERITED;
-use pervue_host::providers::{Exchange, Provider, SendRequest, Timeouts, Update};
+use pervue_host::providers::{ConversationProvider, Exchange, SendRequest, Timeouts, Update};
 use runtime_core::protocol::{Authentication, Availability, Capability, ErrorCode};
 use runtime_core::turn::SessionPolicy;
 use serde_json::Value;

@@ -961,7 +961,7 @@ mod tests {
     use crate::HOST_VERSION;
     use crate::framing::PREFIX_SIZE;
     use crate::limits::MAX_FRAME_SIZE;
-    use crate::providers::{Provider, fake};
+    use crate::providers::{ConversationProvider, fake};
     use runtime_core::protocol::Capabilities;
 
     fn framed(payloads: &[&str]) -> Vec<u8> {
@@ -1259,7 +1259,7 @@ mod tests {
         }
     }
 
-    impl Provider for TestProvider {
+    impl ConversationProvider for TestProvider {
         fn id(&self) -> &str {
             self.id
         }
@@ -1408,7 +1408,7 @@ mod tests {
     /// Serves `flood` requests with a [`Flooding`] exchange.
     struct FloodingProvider;
 
-    impl Provider for FloodingProvider {
+    impl ConversationProvider for FloodingProvider {
         fn id(&self) -> &str {
             "flood"
         }

@@ -22,7 +22,7 @@ use super::environment;
 use super::forget;
 use super::layout::Layout;
 use super::private_fs;
-use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
+use super::{ConversationProvider, Exchange, Scripted, SendRequest, Timeouts, Update};
 use crate::conversation::{SEARCH_INSTRUCTIONS, provider_prompt};
 use crate::search::{NATIVE_SEARCH_NO_SOURCES, SourceCollector, codex_message_sources};
 use runtime_core::discovery::SearchPath;
@@ -258,7 +258,7 @@ impl Gemini {
     }
 }
 
-impl Provider for Gemini {
+impl ConversationProvider for Gemini {
     fn id(&self) -> &str {
         ID
     }

@@ -17,7 +17,7 @@ use pervue_host::framing;
 use pervue_host::host;
 use pervue_host::providers::claude::{Claude, Limits as ClaudeLimits};
 use pervue_host::providers::codex::{Codex, Limits};
-use pervue_host::providers::{Provider, Providers, Timeouts};
+use pervue_host::providers::{ConversationProvider, Providers, Timeouts};
 use runtime_core::discovery::SearchPath;
 use serde_json::Value;
 
@@ -435,7 +435,7 @@ impl Write for TimedSink {
 /// Runs a host serving only `provider` on `input`, whose end comes as soon as
 /// every request in `waiting` has ended, and records when each event came.
 pub fn serve_timed(
-    provider: impl Provider + 'static,
+    provider: impl ConversationProvider + 'static,
     mut input: PacedInput,
     waiting: &[&str],
 ) -> Session {

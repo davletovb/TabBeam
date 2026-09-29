@@ -65,7 +65,7 @@ pub(crate) fn keep_bounded_output(output: &mut Vec<u8>, bytes: &[u8], limit: usi
 }
 
 /// A provider adapter.
-pub trait Provider {
+pub trait ConversationProvider {
     /// The provider ID requests name, such as `codex`.
     fn id(&self) -> &str;
 
@@ -100,10 +100,10 @@ pub trait Provider {
 }
 
 /// The providers a host serves, in the order `provider.status` reports them.
-pub struct Providers(Vec<Box<dyn Provider>>);
+pub struct Providers(Vec<Box<dyn ConversationProvider>>);
 
 impl Providers {
-    pub fn new(providers: Vec<Box<dyn Provider>>) -> Self {
+    pub fn new(providers: Vec<Box<dyn ConversationProvider>>) -> Self {
         Self(providers)
     }
 
@@ -126,14 +126,14 @@ impl Providers {
         Self(vec![Box::new(fake::Fake)])
     }
 
-    pub fn get(&self, id: &str) -> Option<&dyn Provider> {
+    pub fn get(&self, id: &str) -> Option<&dyn ConversationProvider> {
         self.0
             .iter()
             .map(Box::as_ref)
             .find(|provider| provider.id() == id)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &dyn Provider> {
+    pub fn iter(&self) -> impl Iterator<Item = &dyn ConversationProvider> {
         self.0.iter().map(Box::as_ref)
     }
 }
@@ -148,7 +148,7 @@ pub struct StatusOfAll {
 impl StatusOfAll {
     pub fn new(providers: &Providers) -> Self {
         Self {
-            pending: providers.iter().map(Provider::status).collect(),
+            pending: providers.iter().map(ConversationProvider::status).collect(),
             current: None,
         }
     }

@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use pervue_host::conversation::{HistoryMessage, Role};
 use pervue_host::providers::gemini::Gemini;
-use pervue_host::providers::{Exchange, Provider, SendRequest, Update};
+use pervue_host::providers::{ConversationProvider, Exchange, SendRequest, Update};
 use runtime_core::discovery::SearchPath;
 use runtime_core::turn::SessionPolicy;
 

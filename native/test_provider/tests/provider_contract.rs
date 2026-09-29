@@ -6,7 +6,7 @@ use runtime_core::turn::SessionPolicy;
 use std::time::{Duration, Instant};
 
 use pervue_host::protocol::events::{Authentication, Availability, Capability};
-use pervue_host::providers::{Exchange, Provider, SendRequest, Update};
+use pervue_host::providers::{ConversationProvider, Exchange, SendRequest, Update};
 use support::{FakeClaude, FakeCodex};
 
 const DEADLINE: Duration = Duration::from_secs(20);
@@ -52,7 +52,7 @@ fn visible(updates: &[Update]) -> Vec<Update> {
         .collect()
 }
 
-fn common_contract(provider: &dyn Provider) {
+fn common_contract(provider: &dyn ConversationProvider) {
     let status = run_to_end(provider.status().as_mut());
     let Update::Status {
         provider_id,
@@ -125,8 +125,8 @@ fn codex_and_claude_run_the_same_provider_neutral_contract() {
     let claude_adapter = claude.adapter();
 
     for provider in [
-        &codex_adapter as &dyn Provider,
-        &claude_adapter as &dyn Provider,
+        &codex_adapter as &dyn ConversationProvider,
+        &claude_adapter as &dyn ConversationProvider,
     ] {
         common_contract(provider);
     }

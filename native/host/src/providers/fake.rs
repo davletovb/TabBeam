@@ -5,7 +5,7 @@
 use std::borrow::Cow;
 use std::time::Duration;
 
-use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
+use super::{ConversationProvider, Exchange, Scripted, SendRequest, Timeouts, Update};
 use runtime_core::protocol::{
     Authentication, Availability, Capabilities, Capability, ProviderState,
 };
@@ -35,7 +35,7 @@ pub const STATUS: ProviderState = ProviderState {
 
 pub struct Fake;
 
-impl Provider for Fake {
+impl ConversationProvider for Fake {
     fn id(&self) -> &str {
         ID
     }
