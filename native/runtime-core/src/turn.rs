@@ -112,9 +112,7 @@ impl Namespace {
         if value.is_empty()
             || value.len() > 64
             || !value.bytes().all(|byte| {
-                byte.is_ascii_lowercase()
-                    || byte.is_ascii_digit()
-                    || matches!(byte, b'-' | b'_')
+                byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_')
             })
         {
             return Err(NamespaceError);
@@ -168,16 +166,20 @@ mod tests {
             input_tokens: Some(10),
             output_tokens: Some(3),
         };
-        assert!(Usage {
-            input_tokens: Some(10),
-            output_tokens: Some(4),
-        }
-        .is_monotonic_after(first));
-        assert!(!Usage {
-            input_tokens: Some(9),
-            output_tokens: Some(4),
-        }
-        .is_monotonic_after(first));
+        assert!(
+            Usage {
+                input_tokens: Some(10),
+                output_tokens: Some(4),
+            }
+            .is_monotonic_after(first)
+        );
+        assert!(
+            !Usage {
+                input_tokens: Some(9),
+                output_tokens: Some(4),
+            }
+            .is_monotonic_after(first)
+        );
     }
 
     #[test]

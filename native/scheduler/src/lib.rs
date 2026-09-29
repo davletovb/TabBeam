@@ -422,9 +422,17 @@ mod tests {
     #[test]
     fn ids_never_repeat_within_a_scheduler_lifetime() {
         let mut scheduler = Scheduler::new();
-        let a = scheduler.start(Box::new(Scripted::new([Update::Completed])), Some(limits()), Duration::ZERO);
+        let a = scheduler.start(
+            Box::new(Scripted::new([Update::Completed])),
+            Some(limits()),
+            Duration::ZERO,
+        );
         let _ = scheduler.poll(Duration::from_millis(1));
-        let b = scheduler.start(Box::new(Scripted::new([Update::Completed])), Some(limits()), Duration::ZERO);
+        let b = scheduler.start(
+            Box::new(Scripted::new([Update::Completed])),
+            Some(limits()),
+            Duration::ZERO,
+        );
         assert_ne!(a, b);
     }
 
@@ -433,7 +441,12 @@ mod tests {
         let mut scheduler = Scheduler::new();
         let bad = scheduler.start(Box::new(Scripted::panics()), Some(limits()), Duration::ZERO);
         let good = scheduler.start(
-            Box::new(Scripted::new([Update::Started { conversation_id: None }, Update::Completed])),
+            Box::new(Scripted::new([
+                Update::Started {
+                    conversation_id: None,
+                },
+                Update::Completed,
+            ])),
             Some(limits()),
             Duration::ZERO,
         );
@@ -451,7 +464,11 @@ mod tests {
         assert!(events.iter().any(|event| matches!(event, Event::Ended { turn_id, reason: EndReason::SchedulerPanicked { .. } } if *turn_id == first)));
         assert_eq!(supervisor.generation(), 2);
 
-        let second = supervisor.start(Box::new(Scripted::new([Update::Completed])), Some(limits()), Duration::ZERO);
+        let second = supervisor.start(
+            Box::new(Scripted::new([Update::Completed])),
+            Some(limits()),
+            Duration::ZERO,
+        );
         assert!(supervisor.poll(Duration::ZERO).iter().any(|event| matches!(event, Event::Ended { turn_id, reason: EndReason::Completed } if *turn_id == second)));
     }
 }

@@ -14,7 +14,10 @@ use runtime_core::exchange::{Exchange, Timeouts};
 use runtime_core::turn::{Namespace, Turn as TurnRequest};
 
 pub trait TurnFactory: 'static {
-    fn start(&mut self, request: TurnRequest) -> Result<(Box<dyn Exchange>, Option<Timeouts>), String>;
+    fn start(
+        &mut self,
+        request: TurnRequest,
+    ) -> Result<(Box<dyn Exchange>, Option<Timeouts>), String>;
 }
 
 enum Command {
@@ -45,7 +48,9 @@ impl Runtime {
     }
 
     pub fn start_turn(&self, request: TurnRequest) -> Result<Turn, String> {
-        request.validate().map_err(|error| format!("invalid turn: {error:?}"))?;
+        request
+            .validate()
+            .map_err(|error| format!("invalid turn: {error:?}"))?;
         let (reply, answer) = mpsc::channel();
         self.commands
             .send(Command::Start { request, reply })
@@ -121,7 +126,9 @@ fn service_loop(
     loop {
         match commands.recv_timeout(Duration::from_millis(10)) {
             Ok(Command::Start { request, reply }) => {
-                let started = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| factory.start(request)));
+                let started = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    factory.start(request)
+                }));
                 match started {
                     Ok(Ok((exchange, limits))) => {
                         let (sender, events) = mpsc::channel();
@@ -193,10 +200,15 @@ mod tests {
     }
 
     impl TurnFactory for Factory {
-        fn start(&mut self, _request: TurnRequest) -> Result<(Box<dyn Exchange>, Option<Timeouts>), String> {
+        fn start(
+            &mut self,
+            _request: TurnRequest,
+        ) -> Result<(Box<dyn Exchange>, Option<Timeouts>), String> {
             Ok((
                 Box::new(One(VecDeque::from([
-                    Update::Started { conversation_id: None },
+                    Update::Started {
+                        conversation_id: None,
+                    },
                     Update::Completed,
                 ]))),
                 Some(Timeouts {
@@ -211,10 +223,7 @@ mod tests {
 
     #[test]
     fn service_turn_ends_once() {
-        let runtime = Runtime::start(
-            Namespace::fixed("test").unwrap(),
-            || Box::new(Factory),
-        );
+        let runtime = Runtime::start(Namespace::fixed("test").unwrap(), || Box::new(Factory));
         let mut turn = runtime
             .start_turn(TurnRequest {
                 system: None,
