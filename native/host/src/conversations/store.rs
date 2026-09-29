@@ -5,7 +5,9 @@
 //! directory of markers for sessions a conversation left behind, whose saved
 //! transcripts still have to be removed. Files are private to the user on
 //! Unix. This is the layout the adapters kept before the mapping moved out of
-//! them, so a host that already has files here keeps finding them.
+//! them, so a host whose namespace has not changed keeps finding its files. A
+//! new namespace starts a new store: the pre-release rename from Pervue to
+//! TabBeam moved it and migrated nothing.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
