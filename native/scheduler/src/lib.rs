@@ -75,7 +75,11 @@ impl Running {
     fn recognized_work(update: &Update) -> bool {
         matches!(
             update,
-            Update::Started { .. } | Update::Activity | Update::Delta(_) | Update::Source(_)
+            Update::Started { .. }
+                | Update::Activity
+                | Update::Delta(_)
+                | Update::Source(_)
+                | Update::Usage(_)
         )
     }
 

@@ -894,7 +894,13 @@ fn forward<W: Write + ?Sized>(
             };
             write_event(output, raw, Event::ProviderStatus, &payload)
         }
-        Update::Activity | Update::Completed | Update::Failed(_) | Update::Stopped => Ok(()),
+        Update::Launched
+        | Update::Session(_)
+        | Update::Usage(_)
+        | Update::Activity
+        | Update::Completed
+        | Update::Failed(_)
+        | Update::Stopped => Ok(()),
     }
 }
 

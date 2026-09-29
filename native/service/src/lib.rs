@@ -11,14 +11,15 @@ use std::time::Duration;
 
 use provider_runtime_scheduler::{EndReason, Event, Supervisor, TurnId};
 use runtime_core::exchange::{Exchange, Timeouts};
+use runtime_core::turn::{Namespace, Turn as TurnRequest};
 
 pub trait TurnFactory: 'static {
-    fn start(&mut self, request: Vec<u8>) -> Result<(Box<dyn Exchange>, Option<Timeouts>), String>;
+    fn start(&mut self, request: TurnRequest) -> Result<(Box<dyn Exchange>, Option<Timeouts>), String>;
 }
 
 enum Command {
     Start {
-        request: Vec<u8>,
+        request: TurnRequest,
         reply: Sender<Result<(TurnId, Receiver<Event>), String>>,
     },
     Cancel(TurnId),
@@ -31,19 +32,20 @@ pub struct Runtime {
 }
 
 impl Runtime {
-    pub fn start<F>(factory: F) -> Self
+    pub fn start<F>(namespace: Namespace, factory: F) -> Self
     where
         F: FnOnce() -> Box<dyn TurnFactory> + Send + 'static,
     {
         let (commands, receiver) = mpsc::channel();
-        let thread = thread::spawn(move || service_loop(factory(), receiver));
+        let thread = thread::spawn(move || service_loop(namespace, factory(), receiver));
         Self {
             commands,
             thread: Some(thread),
         }
     }
 
-    pub fn start_turn(&self, request: Vec<u8>) -> Result<Turn, String> {
+    pub fn start_turn(&self, request: TurnRequest) -> Result<Turn, String> {
+        request.validate().map_err(|error| format!("invalid turn: {error:?}"))?;
         let (reply, answer) = mpsc::channel();
         self.commands
             .send(Command::Start { request, reply })
@@ -108,7 +110,11 @@ impl Turn {
     }
 }
 
-fn service_loop(mut factory: Box<dyn TurnFactory>, commands: Receiver<Command>) {
+fn service_loop(
+    _namespace: Namespace,
+    mut factory: Box<dyn TurnFactory>,
+    commands: Receiver<Command>,
+) {
     let mut supervisor = Supervisor::new();
     let mut outputs: HashMap<TurnId, Sender<Event>> = HashMap::new();
 
@@ -187,7 +193,7 @@ mod tests {
     }
 
     impl TurnFactory for Factory {
-        fn start(&mut self, _request: Vec<u8>) -> Result<(Box<dyn Exchange>, Option<Timeouts>), String> {
+        fn start(&mut self, _request: TurnRequest) -> Result<(Box<dyn Exchange>, Option<Timeouts>), String> {
             Ok((
                 Box::new(One(VecDeque::from([
                     Update::Started { conversation_id: None },
@@ -205,8 +211,24 @@ mod tests {
 
     #[test]
     fn service_turn_ends_once() {
-        let runtime = Runtime::start(|| Box::new(Factory));
-        let mut turn = runtime.start_turn(b"hello".to_vec()).unwrap();
+        let runtime = Runtime::start(
+            Namespace::fixed("test").unwrap(),
+            || Box::new(Factory),
+        );
+        let mut turn = runtime
+            .start_turn(TurnRequest {
+                system: None,
+                messages: vec![runtime_core::turn::Message {
+                    role: runtime_core::turn::Role::User,
+                    text: "hello".to_owned(),
+                }],
+                model: None,
+                tools: runtime_core::turn::ToolPolicy::None,
+                session: runtime_core::turn::SessionPolicy::Ephemeral,
+                continuation: None,
+                check_sign_in: false,
+            })
+            .unwrap();
         let mut ended = 0;
         while let Some(event) = turn.next() {
             if matches!(event, Event::Ended { .. }) {

@@ -6,11 +6,19 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use crate::protocol::{ErrorBody, ProviderState, Source};
+use crate::turn::Usage;
 
 /// What an exchange reports, in protocol order. After a terminal update
 /// (`Completed`, `Failed`, or `Stopped`), the exchange is finished.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Update {
+    /// The provider process was successfully spawned.
+    Launched,
+    /// A resumable provider's opaque native session handle. Persistent turns
+    /// emit this before `Started`, and again if the provider changes it.
+    Session(String),
+    /// A cumulative usage snapshot for this turn.
+    Usage(Usage),
     /// A new provider-neutral conversation (`conversation.created`). Comes
     /// before `Started`.
     ConversationCreated(String),
