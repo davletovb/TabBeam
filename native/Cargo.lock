@@ -88,6 +88,7 @@ name = "pervue-host"
 version = "0.1.0-dev"
 dependencies = [
  "nix",
+ "provider-runtime-scheduler",
  "runtime-core",
  "serde",
  "serde_json",

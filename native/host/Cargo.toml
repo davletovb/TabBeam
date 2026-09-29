@@ -15,6 +15,7 @@ name = "pervue-host"
 path = "src/main.rs"
 
 [dependencies]
+provider-runtime-scheduler = { path = "../scheduler" }
 runtime-core = { path = "../runtime-core" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

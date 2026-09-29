@@ -114,10 +114,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "provider-runtime-scheduler"
+version = "0.1.0-dev"
+dependencies = [
+ "runtime-core",
+]
+
+[[package]]
 name = "pervue-host"
 version = "0.1.0-dev"
 dependencies = [
  "nix",
+ "provider-runtime-scheduler",
  "runtime-core",
  "serde",
  "serde_json",

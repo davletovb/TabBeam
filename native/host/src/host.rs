@@ -23,6 +23,10 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
+use provider_runtime_scheduler::{
+    EndReason as SchedulerEnd, Event as SchedulerEvent, Supervisor, TimeoutKind, TurnId,
+};
+
 use crate::HOST_VERSION;
 use crate::diagnostics::{
     self, Diagnostics, LifecycleEvent, LoggedError, Record, issued_id, millis,
@@ -191,6 +195,13 @@ const TURN_TIMEOUT: ErrorBody<'static> = ErrorBody {
     retryable: true,
 };
 
+const RUNTIME_FAILED: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::InternalError,
+    reason: "RUNTIME_FAILED",
+    message: "The provider runtime stopped unexpectedly. Try again.",
+    retryable: true,
+};
+
 /// An exchange ended as if cancelled when nothing cancelled it: a bug in
 /// the adapter.
 const STOPPED_UNASKED: ErrorBody<'static> = ErrorBody {
@@ -249,6 +260,7 @@ where
             log: &mut *log,
             counts: &mut counts,
             running: Vec::new(),
+            supervisor: Supervisor::new(),
             conversations: HashSet::new(),
         };
         session.serve(&frames)
@@ -346,81 +358,41 @@ enum Pumped {
 /// Why a running request is being stopped.
 enum Stop {
     Cancelled(Vec<Canceller>),
-    TimedOut(ErrorBody<'static>),
     InputClosed,
 }
 
 /// A request being served.
 struct Running {
+    turn_id: TurnId,
     id: Id,
     method: &'static str,
     provider_id: Option<String>,
     /// Whether the host serves the provider the request names.
     provider_served: bool,
     conversation_id: Option<String>,
-    /// The active phase's limits for a `conversation.send`; none for status checks.
-    timeouts: Option<Timeouts>,
-    stop_grace: Duration,
     started_at: Instant,
-    last_update: Instant,
-    response_started: bool,
     stop: Option<Stop>,
-    /// When a stopping request is dropped if it still hasn't ended.
-    stop_limit: Option<Instant>,
-    exchange: Box<dyn Exchange>,
 }
 
 impl Running {
     fn new(
+        turn_id: TurnId,
         id: Id,
         method: &'static str,
         provider: Option<(String, bool)>,
         conversation_id: Option<String>,
-        timeouts: Option<Timeouts>,
-        exchange: Box<dyn Exchange>,
     ) -> Self {
-        let now = Instant::now();
         let (provider_id, provider_served) =
             provider.map_or((None, false), |(id, served)| (Some(id), served));
         Self {
+            turn_id,
             id,
             method,
             provider_id,
             provider_served,
             conversation_id,
-            timeouts,
-            stop_grace: timeouts.map_or(STATUS_STOP_GRACE, |timeouts| timeouts.stop_grace),
-            started_at: now,
-            last_update: now,
-            response_started: false,
+            started_at: Instant::now(),
             stop: None,
-            stop_limit: None,
-            exchange,
-        }
-    }
-
-    /// The timeout this request has run into, if any.
-    fn expired(&self, now: Instant) -> Option<ErrorBody<'static>> {
-        let timeouts = self.timeouts?;
-        if now.saturating_duration_since(self.started_at) >= timeouts.max_turn {
-            return Some(TURN_TIMEOUT);
-        }
-        if self.response_started {
-            (now.saturating_duration_since(self.last_update) >= timeouts.idle)
-                .then_some(RESPONSE_TIMEOUT)
-        } else {
-            (now.saturating_duration_since(self.started_at) >= timeouts.start)
-                .then_some(START_TIMEOUT)
-        }
-    }
-
-    /// Stops the request for `stop`, unless it is already stopping.
-    fn stop(&mut self, stop: Stop, grace: Duration) {
-        if self.stop.is_none() {
-            self.exchange.cancel(grace);
-            self.stop = Some(stop);
-            let now = Instant::now();
-            self.stop_limit = Some(now.checked_add(grace + STOP_SLACK).unwrap_or(now));
         }
     }
 
@@ -463,6 +435,7 @@ struct Session<'a, W: ?Sized, L: Write> {
     log: &'a mut Diagnostics<L>,
     counts: &'a mut Counts,
     running: Vec<Running>,
+    supervisor: Supervisor,
     /// The conversations the host's providers created, whose IDs records may
     /// hold.
     conversations: HashSet<String>,
@@ -510,6 +483,21 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
             }
             busy = self.pump()?;
         }
+    }
+
+    fn start_running(
+        &mut self,
+        id: Id,
+        method: &'static str,
+        provider: Option<(String, bool)>,
+        conversation_id: Option<String>,
+        timeouts: Option<Timeouts>,
+        exchange: Box<dyn Exchange>,
+    ) -> Running {
+        let turn_id = self
+            .supervisor
+            .start(exchange, timeouts, STATUS_STOP_GRACE);
+        Running::new(turn_id, id, method, provider, conversation_id)
     }
 
     /// Validates one frame and starts serving it.
@@ -606,7 +594,7 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                     }
                     None => (Box::new(Scripted::failed(PROVIDER_NOT_INSTALLED)), None),
                 };
-                Running::new(
+                self.start_running(
                     id,
                     "conversation.send",
                     Some((provider_id, provider_served)),
@@ -624,7 +612,7 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                         None => (Box::new(Scripted::failed(PROVIDER_NOT_INSTALLED)), false),
                     },
                 };
-                Running::new(
+                self.start_running(
                     id,
                     "provider.status",
                     provider_id.map(|id| (id, served)),
@@ -645,7 +633,7 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                     Some(provider) => provider.forget(&conversation_id),
                     None => Box::new(Scripted::failed(PROVIDER_NOT_INSTALLED)),
                 };
-                Running::new(
+                self.start_running(
                     id,
                     "conversation.forget",
                     Some((provider_id, served)),
@@ -686,14 +674,19 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
             Some(target) if matches!(target.stop, None | Some(Stop::Cancelled(_))) => {
                 match &mut target.stop {
                     Some(Stop::Cancelled(cancellers)) => cancellers.push(canceller),
+                    _ if self.supervisor.cancel(target.turn_id) => {
+                        target.stop = Some(Stop::Cancelled(vec![canceller]));
+                    }
                     _ => {
-                        let grace = target.stop_grace;
-                        target.stop(Stop::Cancelled(vec![canceller]), grace);
+                        let written =
+                            write_failure(self.output, &canceller.id.raw, UNKNOWN_TARGET_REQUEST);
+                        let record = canceller
+                            .record(LifecycleEvent::RequestFailed, Some(UNKNOWN_TARGET_REQUEST));
+                        return log_outcome(self.log, record, written);
                     }
                 }
                 Ok(())
             }
-            // Not running, or already ending for another reason.
             _ => {
                 let written = write_failure(self.output, &canceller.id.raw, UNKNOWN_TARGET_REQUEST);
                 let record =
@@ -703,81 +696,60 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
         }
     }
 
-    /// Delivers what every running request has ready, a slice at a time, and
-    /// applies timeouts. Returns whether a request had more ready when its
-    /// slice ran out.
+    /// Delivers a fair slice of scheduler events. Returns whether the
+    /// scheduler produced work immediately, so the reader loop can avoid an
+    /// unnecessary sleep while output is flowing.
     fn pump(&mut self) -> Result<bool, Undeliverable> {
-        let mut busy = false;
-        let mut index = 0;
-        while index < self.running.len() {
-            match self.pump_one(index)? {
-                Pumped::Finished => {}
-                Pumped::Waiting => index += 1,
-                Pumped::Busy => {
-                    busy = true;
-                    index += 1;
+        let events = self.supervisor.poll(SLICE);
+        let busy = !events.is_empty();
+        for event in events {
+            match event {
+                SchedulerEvent::Update { turn_id, update } => {
+                    let Some(index) = self
+                        .running
+                        .iter()
+                        .position(|running| running.turn_id == turn_id)
+                    else {
+                        continue;
+                    };
+                    if let Update::ConversationCreated(conversation_id) = &update {
+                        self.conversations.insert(conversation_id.clone());
+                    }
+                    forward(&mut *self.output, &mut self.running[index], update)?;
+                }
+                SchedulerEvent::Ended { turn_id, reason } => {
+                    let Some(index) = self
+                        .running
+                        .iter()
+                        .position(|running| running.turn_id == turn_id)
+                    else {
+                        continue;
+                    };
+                    let running = self.running.remove(index);
+                    self.finish(running, reason)?;
                 }
             }
         }
         Ok(busy)
     }
 
-    /// Delivers what request `index` has ready, for one slice at most.
-    fn pump_one(&mut self, index: usize) -> Result<Pumped, Undeliverable> {
-        let now = Instant::now();
-        let slice_end = now.checked_add(SLICE).unwrap_or(now);
-        let running = &mut self.running[index];
-        if let Some(error) = running.expired(now) {
-            let grace = running.stop_grace;
-            running.stop(Stop::TimedOut(error), grace);
-        }
-        loop {
-            let running = &mut self.running[index];
-            let Some(update) = running.exchange.next(now) else {
-                if running
-                    .stop_limit
-                    .is_some_and(|limit| Instant::now() >= limit)
-                {
-                    // The adapter didn't stop in time: end the request anyway.
-                    let running = self.running.remove(index);
-                    self.finish(running, Update::Stopped)?;
-                    return Ok(Pumped::Finished);
-                }
-                return Ok(Pumped::Waiting);
-            };
-            if matches!(
-                update,
-                Update::Started { .. }
-                    | Update::Activity
-                    | Update::Delta(_)
-                    | Update::Source(_)
-            ) {
-                running.last_update = Instant::now();
-            }
-            if let Update::ConversationCreated(conversation_id) = &update {
-                self.conversations.insert(conversation_id.clone());
-            }
-            if update.is_terminal() {
-                let running = self.running.remove(index);
-                self.finish(running, update)?;
-                return Ok(Pumped::Finished);
-            }
-            forward(&mut *self.output, &mut self.running[index], update)?;
-            if Instant::now() >= slice_end {
-                return Ok(Pumped::Busy);
-            }
-        }
-    }
-
     /// Writes the terminal event of `running`, and confirms its cancellations.
-    fn finish(&mut self, running: Running, update: Update) -> Result<(), Undeliverable> {
-        let failure = match (&running.stop, update) {
+    fn finish(&mut self, running: Running, reason: SchedulerEnd) -> Result<(), Undeliverable> {
+        let failure = match (&running.stop, reason) {
             (Some(Stop::Cancelled(_)), _) => Some(CANCELLED),
-            (Some(Stop::TimedOut(error)), _) => Some(*error),
             (Some(Stop::InputClosed), _) => Some(INPUT_CLOSED),
-            (None, Update::Failed(error)) => Some(error),
-            (None, Update::Completed) => None,
-            (None, _) => Some(STOPPED_UNASKED),
+            (None, SchedulerEnd::Completed) => None,
+            (None, SchedulerEnd::Failed(error)) => Some(error),
+            (None, SchedulerEnd::Timeout(TimeoutKind::Start)) => Some(START_TIMEOUT),
+            (None, SchedulerEnd::Timeout(TimeoutKind::Idle)) => Some(RESPONSE_TIMEOUT),
+            (None, SchedulerEnd::Timeout(TimeoutKind::Absolute)) => Some(TURN_TIMEOUT),
+            (
+                None,
+                SchedulerEnd::AdapterPanicked { .. } | SchedulerEnd::SchedulerPanicked { .. },
+            ) => Some(RUNTIME_FAILED),
+            (None, SchedulerEnd::Cancelled | SchedulerEnd::StoppedUnexpectedly) => {
+                Some(STOPPED_UNASKED)
+            }
         };
         let (written, record) = match failure {
             None => (
@@ -827,8 +799,11 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
     /// them to finish.
     fn shut_down(&mut self) -> Result<(), Undeliverable> {
         for running in &mut self.running {
-            running.stop(Stop::InputClosed, SHUTDOWN_GRACE);
+            if running.stop.is_none() {
+                running.stop = Some(Stop::InputClosed);
+            }
         }
+        self.supervisor.shutdown(SHUTDOWN_GRACE);
         loop {
             let busy = self.pump()?;
             if self.running.is_empty() {
@@ -844,6 +819,8 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
     /// extension can no longer be reached. Dropping each exchange kills its
     /// processes.
     fn abort(&mut self) -> HostError {
+        self.supervisor.shutdown(Duration::ZERO);
+        let _ = self.supervisor.poll(Duration::ZERO);
         for running in self.running.drain(..) {
             let record = running.record(LifecycleEvent::RequestAborted, None, &self.conversations);
             let _ = log_outcome(self.log, record, Err(Undeliverable));
@@ -879,7 +856,6 @@ fn forward<W: Write + ?Sized>(
             written
         }
         Update::Started { conversation_id } => {
-            running.response_started = true;
             let payload = ResponseStarted {
                 provider_id: running.provider_id.as_deref().unwrap_or_default(),
                 conversation_id: conversation_id.as_deref(),
