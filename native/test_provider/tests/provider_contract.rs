@@ -1,3 +1,4 @@
+use runtime_core::turn::SessionPolicy;
 //! Provider-neutral contract cases run unchanged against Codex and Claude (TST-10).
 
 mod support;
@@ -18,6 +19,8 @@ fn ask(text: &str) -> SendRequest {
         context: None,
         model: None,
         native_search: false,
+    session_policy: SessionPolicy::Persistent,
+    fresh_session: false,
     }
 }
 

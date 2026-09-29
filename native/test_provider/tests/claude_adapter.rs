@@ -1,3 +1,4 @@
+use runtime_core::turn::SessionPolicy;
 //! Claude adapter tests against the fake Claude Code CLI.
 
 mod support;
@@ -25,6 +26,8 @@ fn ask(text: &str) -> SendRequest {
         context: None,
         model: None,
         native_search: false,
+    session_policy: SessionPolicy::Persistent,
+    fresh_session: false,
     }
 }
 

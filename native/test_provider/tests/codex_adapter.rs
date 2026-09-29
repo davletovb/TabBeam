@@ -31,6 +31,8 @@ fn ask(text: &str) -> SendRequest {
         context: None,
         model: None,
         native_search: false,
+    session_policy: SessionPolicy::Persistent,
+    fresh_session: false,
     }
 }
 
@@ -848,6 +850,7 @@ fn codex_runs_in_its_own_workspace() {
 #[test]
 fn codex_gets_the_workspace_s_real_path() {
     use runtime_core::discovery::SearchPath;
+use runtime_core::turn::SessionPolicy;
     use std::path::Path;
 
     // Reached through a link, the workspace is checked, and given to Codex,
