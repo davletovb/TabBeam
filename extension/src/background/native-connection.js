@@ -3,16 +3,16 @@ import { recordDuration } from "../shared/performance.js";
 import { PROTOCOL_VERSION } from "../shared/diagnostics.js";
 import { failed } from "./ask-bridge.js";
 
-export const NATIVE_HOST_NAME = "com.pervue.host";
+export const NATIVE_HOST_NAME = "com.tabbeam.host";
 export const HOST_READY_TIMEOUT_MS = 5_000;
 export const HOST_PROTOCOL_MISMATCH = Object.freeze({
   code: "HOST_UNAVAILABLE", reason: "HOST_PROTOCOL_MISMATCH",
-  message: "Pervue's companion app needs an update. Open setup to install the matching version.",
+  message: "TabBeam's companion app needs an update. Open setup to install the matching version.",
   retryable: false
 });
 export const HOST_READY_TIMEOUT = Object.freeze({
   code: "HOST_UNAVAILABLE", reason: "HOST_READY_TIMEOUT",
-  message: "Pervue's companion app did not start. Open setup and reinstall it.",
+  message: "TabBeam's companion app did not start. Open setup and reinstall it.",
   retryable: true
 });
 
@@ -98,7 +98,7 @@ export class NativeConnectionManager {
       ((_context, _error) => {
         // Callback errors may contain page text in their messages or stacks.
         // Default diagnostics record the failure only, never raw content.
-        console.error("Pervue native connection callback failed.");
+        console.error("TabBeam native connection callback failed.");
       });
 
     /** @type {NativePort | null} */

@@ -2,7 +2,7 @@ import { createRequestId } from "./ask-bridge.js";
 import { HOST_PROTOCOL_MISMATCH, HOST_READY_TIMEOUT } from "./native-connection.js";
 
 /** Provider sessions still to forget, kept across service-worker restarts. */
-export const PENDING_FORGETS_KEY = "pervue.pendingForgets";
+export const PENDING_FORGETS_KEY = "tabbeam.pendingForgets";
 
 /** How long the host gets to forget one conversation. */
 export const FORGET_TIMEOUT_MS = 15_000;
@@ -12,7 +12,7 @@ export const FORGET_TIMEOUT_MS = 15_000;
  *   send(request: any, owner?: import("./native-connection.js").RequestOwner): void,
  *   forget(requestId: string): void
  * }} ForgetManager
- * @typedef {{provider_id: string, conversation_id: string, pervue_id?: string}} PendingForget
+ * @typedef {{provider_id: string, conversation_id: string, tabbeam_id?: string}} PendingForget
  * @typedef {"forgotten" | "failed" | "unreachable"} ForgetOutcome
  * @typedef {{
  *   schedule?: (callback: () => void, ms: number) => any,
@@ -90,7 +90,7 @@ export function forgetProviderSession(options) {
 function isPendingForget(entry) {
   return typeof entry?.provider_id === "string" && entry.provider_id !== "" &&
     typeof entry?.conversation_id === "string" && entry.conversation_id !== "" &&
-    (entry.pervue_id === undefined || typeof entry.pervue_id === "string");
+    (entry.tabbeam_id === undefined || typeof entry.tabbeam_id === "string");
 }
 
 /** @param {PendingForget} a @param {PendingForget} b */
@@ -107,16 +107,16 @@ function sameEntry(a, b) {
  * outside them, so recording never waits on it. A flush that can't reach the
  * host stops there rather than trying every session in turn.
  *
- * A session is recorded before its Pervue conversation is removed, so the
+ * A session is recorded before its TabBeam conversation is removed, so the
  * record is a tombstone: it is acted on only once `conversationExists` says
- * the conversation (`pervue_id`) is gone. Until then, or while that can't be
+ * the conversation (`tabbeam_id`) is gone. Until then, or while that can't be
  * read, it waits: a deletion still in progress, or one that failed, never
  * costs a conversation that is still there its provider session.
  *
  * @param {{
  *   manager: ForgetManager,
  *   storage: {get(key: string): Promise<any>, set(values: object): Promise<void>},
- *   conversationExists?: (pervueId: string) => Promise<boolean>,
+ *   conversationExists?: (tabbeamId: string) => Promise<boolean>,
  *   createRequestId?: () => string,
  *   timers?: Timers
  * }} options
@@ -160,8 +160,8 @@ export function createSessionForgetter(options) {
         /** @type {PendingForget[]} */
         const forgotten = [];
         for (const entry of pending) {
-          if (entry.pervue_id !== undefined && conversationExists) {
-            const removed = await conversationExists(entry.pervue_id).then((exists) => !exists, () => false);
+          if (entry.tabbeam_id !== undefined && conversationExists) {
+            const removed = await conversationExists(entry.tabbeam_id).then((exists) => !exists, () => false);
             if (!removed) continue;
           }
           const outcome = await forgetProviderSession({
@@ -196,15 +196,15 @@ export function createSessionForgetter(options) {
      * rejects when it couldn't be.
      * @param {string} providerId
      * @param {string} conversationId the host's conversation ID
-     * @param {string} [pervueId] the Pervue conversation being deleted: the
+     * @param {string} [tabbeamId] the TabBeam conversation being deleted: the
      *   session is forgotten only once that conversation is gone
      */
-    queue(providerId, conversationId, pervueId) {
+    queue(providerId, conversationId, tabbeamId) {
       /** @type {PendingForget} */
       const entry = {
         provider_id: providerId,
         conversation_id: conversationId,
-        ...(pervueId === undefined ? {} : { pervue_id: pervueId })
+        ...(tabbeamId === undefined ? {} : { tabbeam_id: tabbeamId })
       };
       return update((pending) => [...pending.filter((other) => !sameEntry(other, entry)), entry]);
     },

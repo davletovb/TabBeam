@@ -5,8 +5,8 @@ import {
 import { boundedUtf8Text, utf8ByteLength } from "../shared/limits.js";
 import { MAX_SOURCES_PER_ANSWER } from "../shared/sources.js";
 
-export const CONVERSATIONS_KEY = "pervue.conversations";
-const RECORD_PREFIX = "pervue.conversation.";
+export const CONVERSATIONS_KEY = "tabbeam.conversations";
+const RECORD_PREFIX = "tabbeam.conversation.";
 const MAX_RECENT = 30;
 // Chrome's default local-storage quota is 10 MiB. Leave room for settings and overhead.
 const MAX_STORED_BYTES = 6 * 1024 * 1024;
@@ -61,7 +61,7 @@ export function createConversationStore(storage, newId = () => crypto.randomUUID
     if (value?.schema_version !== CONVERSATION_SCHEMA_VERSION ||
         !Array.isArray(value.recent_ids) || !value.items || !value.sizes ||
         typeof value.items !== "object" || typeof value.sizes !== "object") {
-      throw new Error("Stored conversations need a compatible Pervue version.");
+      throw new Error("Stored conversations need a compatible TabBeam version.");
     }
     return /** @type {ConversationIndex} */ (value);
   }

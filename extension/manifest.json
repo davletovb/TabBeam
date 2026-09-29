@@ -1,11 +1,11 @@
 {
   "manifest_version": 3,
-  "name": "Pervue",
+  "name": "TabBeam",
   "description": "A lightweight, provider-independent browser AI command layer.",
   "version": "0.1.0",
   "minimum_chrome_version": "123",
   "action": {
-    "default_title": "Pervue",
+    "default_title": "TabBeam",
     "default_popup": "src/popup/index.html"
   },
   "background": {
