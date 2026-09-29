@@ -14,6 +14,9 @@ use runtime_core::exchange::{Exchange, Timeouts};
 use runtime_core::turn::{Namespace, Turn as TurnRequest};
 
 pub trait TurnFactory: 'static {
+    /// Construct one provider exchange. This runs on the service polling
+    /// thread and must return promptly; slow provider discovery or sign-in
+    /// probes belong inside the returned exchange so other turns keep moving.
     fn start(
         &mut self,
         request: TurnRequest,
@@ -89,7 +92,9 @@ impl Turn {
     }
 
     pub fn cancel(&self) {
-        let _ = self.commands.send(Command::Cancel(self.id));
+        if !self.ended {
+            let _ = self.commands.send(Command::Cancel(self.id));
+        }
     }
 
     pub fn recv(&mut self) -> Option<Event> {
@@ -115,6 +120,14 @@ impl Turn {
     }
 }
 
+impl Drop for Turn {
+    fn drop(&mut self) {
+        if !self.ended {
+            let _ = self.commands.send(Command::Cancel(self.id));
+        }
+    }
+}
+
 fn service_loop(
     _namespace: Namespace,
     mut factory: Box<dyn TurnFactory>,
@@ -124,8 +137,27 @@ fn service_loop(
     let mut outputs: HashMap<TurnId, Sender<Event>> = HashMap::new();
 
     loop {
-        match commands.recv_timeout(Duration::from_millis(10)) {
-            Ok(Command::Start { request, reply }) => {
+        let command = if supervisor.is_empty() {
+            match commands.recv() {
+                Ok(command) => Some(command),
+                Err(_) => {
+                    stop_service(&mut supervisor, &mut outputs);
+                    return;
+                }
+            }
+        } else {
+            match commands.recv_timeout(Duration::from_millis(10)) {
+                Ok(command) => Some(command),
+                Err(mpsc::RecvTimeoutError::Timeout) => None,
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    stop_service(&mut supervisor, &mut outputs);
+                    return;
+                }
+            }
+        };
+
+        match command {
+            Some(Command::Start { request, reply }) => {
                 let started = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     factory.start(request)
                 }));
@@ -144,20 +176,24 @@ fn service_loop(
                     }
                 }
             }
-            Ok(Command::Cancel(id)) => {
+            Some(Command::Cancel(id)) => {
                 let _ = supervisor.cancel(id);
             }
-            Ok(Command::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => {
-                supervisor.shutdown(Duration::from_millis(250));
-                while !supervisor.is_empty() {
-                    dispatch(&mut supervisor, &mut outputs);
-                    thread::sleep(Duration::from_millis(1));
-                }
+            Some(Command::Stop) => {
+                stop_service(&mut supervisor, &mut outputs);
                 return;
             }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            None => {}
         }
         dispatch(&mut supervisor, &mut outputs);
+    }
+}
+
+fn stop_service(supervisor: &mut Supervisor, outputs: &mut HashMap<TurnId, Sender<Event>>) {
+    supervisor.shutdown(Duration::from_millis(250));
+    while !supervisor.is_empty() {
+        dispatch(supervisor, outputs);
+        thread::sleep(Duration::from_millis(1));
     }
 }
 
@@ -167,10 +203,13 @@ fn dispatch(supervisor: &mut Supervisor, outputs: &mut HashMap<TurnId, Sender<Ev
             Event::Update { turn_id, .. } | Event::Ended { turn_id, .. } => *turn_id,
         };
         let ended = matches!(event, Event::Ended { .. });
-        if let Some(output) = outputs.get(&id) {
-            let _ = output.send(event);
-        }
-        if ended {
+        let delivered = outputs
+            .get(&id)
+            .is_none_or(|output| output.send(event).is_ok());
+        if !delivered && !ended {
+            let _ = supervisor.cancel(id);
+            outputs.remove(&id);
+        } else if ended {
             outputs.remove(&id);
         }
     }
@@ -246,4 +285,71 @@ mod tests {
         }
         assert_eq!(ended, 1);
     }
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    struct DropFactory {
+        cancelled: Arc<AtomicBool>,
+    }
+
+    struct Hangs {
+        cancelled: Arc<AtomicBool>,
+    }
+
+    impl Exchange for Hangs {
+        fn next(&mut self, _deadline: Instant) -> Option<Update> {
+            None
+        }
+
+        fn cancel(&mut self, _grace: Duration) {
+            self.cancelled.store(true, Ordering::SeqCst);
+        }
+    }
+
+    impl TurnFactory for DropFactory {
+        fn start(
+            &mut self,
+            _request: TurnRequest,
+        ) -> Result<(Box<dyn Exchange>, Option<Timeouts>), String> {
+            Ok((
+                Box::new(Hangs {
+                    cancelled: Arc::clone(&self.cancelled),
+                }),
+                None,
+            ))
+        }
+    }
+
+    #[test]
+    fn dropping_a_turn_cancels_its_exchange() {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let probe = Arc::clone(&cancelled);
+        let runtime = Runtime::start(Namespace::fixed("test").unwrap(), move || {
+            Box::new(DropFactory { cancelled: probe })
+        });
+        let turn = runtime
+            .start_turn(TurnRequest {
+                system: None,
+                messages: vec![runtime_core::turn::Message {
+                    role: runtime_core::turn::Role::User,
+                    text: "hello".to_owned(),
+                }],
+                model: None,
+                tools: runtime_core::turn::ToolPolicy::None,
+                session: runtime_core::turn::SessionPolicy::Ephemeral,
+                continuation: None,
+                check_sign_in: false,
+            })
+            .unwrap();
+        drop(turn);
+
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while !cancelled.load(Ordering::SeqCst) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(cancelled.load(Ordering::SeqCst));
+    }
+
 }
