@@ -3,6 +3,7 @@
 use serde_json::Value;
 
 use crate::protocol::events::{ErrorBody, ErrorCode};
+use runtime_core::turn::Usage;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Line {
@@ -18,6 +19,7 @@ pub enum Line {
     ResultSuccess {
         session_id: Option<String>,
         text: String,
+        usage: Usage,
     },
     ResultFailed(ErrorBody<'static>),
     Ignored,
@@ -135,6 +137,14 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
                         .and_then(Value::as_str)
                         .unwrap_or_default()
                         .to_owned(),
+                    usage: Usage {
+                        input_tokens: event
+                            .pointer("/usage/input_tokens")
+                            .and_then(Value::as_u64),
+                        output_tokens: event
+                            .pointer("/usage/output_tokens")
+                            .and_then(Value::as_u64),
+                    },
                 }
             }
         }
@@ -276,7 +286,8 @@ mod tests {
             ),
             Ok(Line::ResultSuccess {
                 session_id: Some("abc-123".to_owned()),
-                text: "done".to_owned()
+                text: "done".to_owned(),
+                usage: Usage::default()
             })
         );
     }

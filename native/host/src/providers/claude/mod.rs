@@ -897,7 +897,11 @@ impl Turn {
                 self.queue.push_back(Update::Activity);
             }
             Ok(Line::Progress) => self.queue.push_back(Update::Activity),
-            Ok(Line::ResultSuccess { session_id, text }) => {
+            Ok(Line::ResultSuccess {
+                session_id,
+                text,
+                usage,
+            }) => {
                 if !self.started {
                     return self.end(Update::Failed(MALFORMED_OUTPUT));
                 }
@@ -910,6 +914,9 @@ impl Turn {
                 if !self.saw_delta && !text.is_empty() {
                     self.saw_delta = true;
                     self.queue.push_back(Update::Delta(text));
+                }
+                if usage.input_tokens.is_some() || usage.output_tokens.is_some() {
+                    self.queue.push_back(Update::Usage(usage));
                 }
                 self.turn_ended(if self.native_search && self.sources.count() == 0 {
                     Err(NATIVE_SEARCH_NO_SOURCES)

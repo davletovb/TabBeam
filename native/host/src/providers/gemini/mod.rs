@@ -768,6 +768,7 @@ impl Turn {
             Ok(Line::ResultSuccess {
                 conversation_id,
                 response,
+                usage,
             }) => {
                 if !self.initialized {
                     return self.fail(MALFORMED_OUTPUT);
@@ -795,6 +796,9 @@ impl Turn {
                             self.queue.push_back(Update::Source(source));
                         }
                     }
+                }
+                if usage.input_tokens.is_some() || usage.output_tokens.is_some() {
+                    self.queue.push_back(Update::Usage(usage));
                 }
                 let outcome = if self.native_search && (!self.searched || self.sources.count() == 0)
                 {

@@ -3,6 +3,7 @@
 use serde_json::Value;
 
 use crate::protocol::events::{ErrorBody, ErrorCode};
+use runtime_core::turn::Usage;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Line {
@@ -38,6 +39,7 @@ pub enum Line {
     ResultSuccess {
         conversation_id: Option<String>,
         response: String,
+        usage: Usage,
     },
     ResultFailed(ErrorBody<'static>),
     Ignored,
@@ -156,6 +158,14 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
                         .and_then(Value::as_str)
                         .unwrap_or_default()
                         .to_owned(),
+                    usage: Usage {
+                        input_tokens: result
+                            .pointer("/usage/input_tokens")
+                            .and_then(Value::as_u64),
+                        output_tokens: result
+                            .pointer("/usage/output_tokens")
+                            .and_then(Value::as_u64),
+                    },
                 }
             } else {
                 let message = result
