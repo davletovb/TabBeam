@@ -1,6 +1,6 @@
 (() => {
   try {
-    const value = localStorage.getItem("pervue.theme");
+    const value = localStorage.getItem("tabbeam.theme");
     if (value === "light" || value === "dark") {
       document.documentElement.setAttribute("data-theme", value);
     } else {

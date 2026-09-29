@@ -1,4 +1,4 @@
-export const THEME_STORAGE_KEY = "pervue.theme";
+export const THEME_STORAGE_KEY = "tabbeam.theme";
 /** @typedef {"system" | "light" | "dark"} ThemePreference */
 /** @type {readonly ThemePreference[]} */
 export const THEME_PREFERENCES = Object.freeze(["system", "light", "dark"]);

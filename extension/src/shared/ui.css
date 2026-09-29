@@ -1,5 +1,5 @@
 /*
- * Pervue design system, shared by the popup, the full view, and setup.
+ * TabBeam design system, shared by the popup, the full view, and setup.
  *
  * Every color is a token written with light-dark(), so the theme is decided
  * by color-scheme alone: the system preference by default, or the explicit
@@ -551,7 +551,7 @@ button {
   box-shadow: var(--shadow-sm);
 }
 
-/* Pervue's turn: open text under a small avatar and name. */
+/* TabBeam's turn: open text under a small avatar and name. */
 .message-assistant > strong {
   display: inline-flex;
   align-items: center;
@@ -645,14 +645,14 @@ button {
   mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 12.5 4.5 4.5L19 7.5'/%3E%3C/svg%3E");
 }
 
-/* The answer as it streams, drawn like one of Pervue's turns. */
+/* The answer as it streams, drawn like one of TabBeam's turns. */
 .answer {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
 .answer::before {
-  content: "Pervue";
+  content: "TabBeam";
   display: flex;
   align-items: center;
   height: 22px;

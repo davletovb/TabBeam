@@ -1,6 +1,6 @@
 import { isErrorCode } from "./outcomes.js";
 
-export const DIAGNOSTICS_MESSAGE = "pervue.diagnostics";
+export const DIAGNOSTICS_MESSAGE = "tabbeam.diagnostics";
 export const PROTOCOL_VERSION = 1;
 
 /** Keep diagnostics to the frozen normalized vocabulary; never copy raw provider text. */
@@ -42,7 +42,7 @@ export function sanitizedHostReady(event) {
 }
 
 
-export const DIAGNOSTICS_EXPORT_FORMAT = "pervue-support-diagnostics";
+export const DIAGNOSTICS_EXPORT_FORMAT = "tabbeam-support-diagnostics";
 export const DIAGNOSTICS_EXPORT_VERSION = 1;
 
 const HOST_STATES = new Set(["unknown", "available", "unavailable", "not-installed"]);
