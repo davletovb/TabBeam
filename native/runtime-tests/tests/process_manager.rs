@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use runtime_core::process::{Ending, Event, Exit, MAX_CHUNK_BYTES, Process, ProcessSpec};
 
-const PROVIDER: &str = env!("CARGO_BIN_EXE_pervue-fake-provider");
+const PROVIDER: &str = env!("CARGO_BIN_EXE_runtime-fake-provider");
 const NORMAL_OUTPUT: &str = concat!(
     "{\"type\":\"delta\",\"text\":\"alpha\"}\n",
     "{\"type\":\"delta\",\"text\":\" beta\"}\n",

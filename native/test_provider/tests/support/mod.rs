@@ -4,9 +4,9 @@
 #![allow(dead_code, reason = "each test crate uses part of the harness")]
 
 use std::collections::{HashSet, VecDeque};
+use std::ffi::OsString;
 use std::io::{self, Read, Write};
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::ops::Deref;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -16,81 +16,41 @@ use pervue_host::conversations::{Conversations, Durability, SessionStore};
 use pervue_host::diagnostics::Diagnostics;
 use pervue_host::framing;
 use pervue_host::host;
-use pervue_host::providers::claude::{Claude, Limits as ClaudeLimits};
+use pervue_host::providers::claude::Claude;
 use pervue_host::providers::codex::{Codex, Limits};
-use pervue_host::providers::{ConversationProvider, Providers, Timeouts};
-use runtime_core::discovery::SearchPath;
+use pervue_host::providers::gemini::Gemini;
+use pervue_host::providers::grok::Grok;
+use pervue_host::providers::{ConversationProvider, Providers};
+use runtime_fake_provider::harness::{self, Fixtures};
+#[allow(unused_imports)]
+pub use runtime_fake_provider::harness::{PROMPT_STOP_GRACE, TEST_LIMITS};
 use serde_json::Value;
 
 pub const PROVIDER: &str = env!("CARGO_BIN_EXE_pervue-fake-provider");
+pub const FIXTURES: Fixtures = Fixtures::new(PROVIDER, env!("CARGO_TARGET_TMPDIR"));
 
-/// Short limits, so failures show up quickly.
-pub const TEST_LIMITS: Limits = Limits {
-    timeouts: Timeouts {
-        start: Duration::from_secs(10),
-        idle: Duration::from_secs(10),
-        max_turn: Duration::from_secs(30),
-        stop_grace: Duration::from_millis(300),
-    },
-    probe: Duration::from_secs(5),
-    finish: Duration::from_millis(300),
-};
+/// A directory holding a fake `codex`, served the way Pervue serves it:
+/// conversations over the adapter, mapped to Codex threads in a directory
+/// beside the workspace.
+pub struct FakeCodex(harness::FakeCodex);
 
-/// The grace period of a cancel that should stop a process promptly. On POSIX
-/// the stop request, SIGTERM, ends the process well inside a long grace period.
-/// Windows has no stop request that reaches a process not reading its input,
-/// so there a short grace period ends in a kill.
-pub const PROMPT_STOP_GRACE: Duration = if cfg!(unix) {
-    Duration::from_secs(5)
-} else {
-    Duration::from_millis(300)
-};
+impl Deref for FakeCodex {
+    type Target = harness::FakeCodex;
 
-/// A directory holding a fake `codex` and the scenario it follows.
-pub struct FakeCodex {
-    pub dir: PathBuf,
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 impl FakeCodex {
-    pub fn install(exec: &str, login: &str) -> Self {
-        static NEXT: AtomicUsize = AtomicUsize::new(0);
-        // In the target directory, on the same file system as the binary.
-        let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!(
-            "pervue-fake-codex-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("create the fake codex directory");
-        // A hard link, not a copy. A copy is open for writing while it is
-        // made, and a process another test thread starts at that moment
-        // inherits it, so running the copy fails as a busy text file
-        // (ETXTBSY) until that process has started. A link is never open.
-        // A test that changes the installed `codex` must replace it, never
-        // write through it, which would change the fake provider itself.
-        let codex_path = dir.join(Self::file_name());
-        if std::fs::hard_link(PROVIDER, &codex_path).is_err() {
-            std::fs::copy(PROVIDER, &codex_path).expect("install the fake codex");
-        }
-        let codex = Self { dir };
-        codex.set(exec, login);
-        codex
-    }
-
     pub fn file_name() -> &'static str {
-        if cfg!(windows) { "codex.exe" } else { "codex" }
+        harness::FakeCodex::file_name()
     }
 
-    pub fn set(&self, exec: &str, login: &str) {
-        std::fs::write(
-            self.dir.join("codex-scenario"),
-            format!("exec={exec}\nlogin={login}\n"),
-        )
-        .expect("write the scenario");
+    pub fn install(exec: &str, login: &str) -> Self {
+        Self(harness::FakeCodex::install(FIXTURES, exec, login))
     }
 
-    /// Codex, served the way Pervue serves it: conversations over the adapter,
-    /// mapped to Codex threads in a directory beside the workspace.
     pub fn adapter(&self) -> Conversations<Codex> {
         self.adapter_with(TEST_LIMITS)
     }
@@ -102,7 +62,7 @@ impl FakeCodex {
     /// [`FakeCodex::adapter`] with the environment Codex gets from `host`.
     pub fn adapter_with_env<I>(&self, host: I) -> Conversations<Codex>
     where
-        I: IntoIterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+        I: IntoIterator<Item = (OsString, OsString)>,
     {
         Conversations::new(
             self.codex(TEST_LIMITS).with_environment(host),
@@ -112,114 +72,37 @@ impl FakeCodex {
 
     /// The bare adapter, which knows no conversations.
     pub fn codex(&self, limits: Limits) -> Codex {
-        Codex::new(SearchPath::new([self.dir.clone()]), self.dir.join("work")).with_limits(limits)
+        self.0.adapter_with(limits)
     }
 
     pub fn sessions(&self) -> SessionStore {
         SessionStore::new(Some(self.dir.join("work.sessions")))
             .with_durability(Durability::Required)
     }
-
-    pub fn read(&self, file: &str) -> String {
-        std::fs::read_to_string(self.dir.join(file)).unwrap_or_default()
-    }
-
-    pub fn invocations(&self) -> Vec<String> {
-        self.read("codex-invocations")
-            .lines()
-            .map(str::to_owned)
-            .collect()
-    }
-
-    pub fn prompts(&self) -> Vec<String> {
-        self.read("codex-prompts")
-            .split('\0')
-            .filter(|prompt| !prompt.is_empty())
-            .map(str::to_owned)
-            .collect()
-    }
-
-    pub fn pids(&self) -> Vec<u32> {
-        self.read("codex-pids")
-            .lines()
-            .map(|pid| pid.parse().expect("a pid"))
-            .collect()
-    }
-
-    /// Every `codex exec` this directory saw has exited and been reaped.
-    pub fn assert_nothing_left_running(&self) {
-        #[cfg(unix)]
-        for pid in self.pids() {
-            use nix::errno::Errno;
-            use nix::sys::signal::kill;
-            use nix::unistd::Pid;
-
-            let pid = Pid::from_raw(i32::try_from(pid).expect("pid fits in pid_t"));
-            assert_eq!(kill(pid, None), Err(Errno::ESRCH), "{pid} is still around");
-        }
-    }
 }
 
-impl Drop for FakeCodex {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.dir);
+/// A directory holding a fake `claude`, served the way Pervue serves it:
+/// conversations over the adapter, mapped to Claude sessions in a directory
+/// beside the workspace.
+pub struct FakeClaude(harness::FakeClaude);
+
+impl Deref for FakeClaude {
+    type Target = harness::FakeClaude;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
-}
-
-/// Short Claude adapter limits for integration tests.
-pub const CLAUDE_TEST_LIMITS: ClaudeLimits = ClaudeLimits {
-    timeouts: Timeouts {
-        start: Duration::from_secs(10),
-        idle: Duration::from_secs(10),
-        max_turn: Duration::from_secs(30),
-        stop_grace: Duration::from_millis(300),
-    },
-    probe: Duration::from_secs(5),
-    finish: Duration::from_millis(300),
-};
-
-/// A directory holding a fake `claude` CLI and its scenario.
-pub struct FakeClaude {
-    pub dir: PathBuf,
 }
 
 impl FakeClaude {
-    pub fn install(print: &str, auth: &str) -> Self {
-        static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!(
-            "pervue-fake-claude-support-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("create fake Claude directory");
-        let path = dir.join(Self::file_name());
-        if std::fs::hard_link(PROVIDER, &path).is_err() {
-            std::fs::copy(PROVIDER, &path).expect("install fake Claude");
-        }
-        let fake = Self { dir };
-        fake.set(print, auth);
-        fake
-    }
-
     pub fn file_name() -> &'static str {
-        if cfg!(windows) {
-            "claude.exe"
-        } else {
-            "claude"
-        }
+        harness::FakeClaude::file_name()
     }
 
-    pub fn set(&self, print: &str, auth: &str) {
-        std::fs::write(
-            self.dir.join("claude-scenario"),
-            format!("print={print}\nauth={auth}\n"),
-        )
-        .expect("write Claude scenario");
+    pub fn install(print: &str, auth: &str) -> Self {
+        Self(harness::FakeClaude::install(FIXTURES, print, auth))
     }
 
-    /// Claude, served the way Pervue serves it: conversations over the
-    /// adapter, mapped to Claude sessions in a directory beside the workspace.
     pub fn adapter(&self) -> Conversations<Claude> {
         Conversations::new(self.claude(), self.sessions())
     }
@@ -227,7 +110,7 @@ impl FakeClaude {
     /// [`FakeClaude::adapter`] with the environment Claude gets from `host`.
     pub fn adapter_with_env<I>(&self, host: I) -> Conversations<Claude>
     where
-        I: IntoIterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+        I: IntoIterator<Item = (OsString, OsString)>,
     {
         Conversations::new(self.claude().with_environment(host), self.sessions())
     }
@@ -240,7 +123,7 @@ impl FakeClaude {
 
     pub fn adapter_in_memory_with_env<I>(&self, host: I) -> Conversations<Claude>
     where
-        I: IntoIterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+        I: IntoIterator<Item = (OsString, OsString)>,
     {
         Conversations::new(
             self.claude().with_environment(host),
@@ -250,59 +133,70 @@ impl FakeClaude {
 
     /// The bare adapter, which knows no conversations.
     pub fn claude(&self) -> Claude {
-        Claude::new(
-            SearchPath::new([self.dir.clone()]),
-            self.dir.join("claude-work"),
-        )
-        .with_limits(CLAUDE_TEST_LIMITS)
+        self.0.adapter()
     }
 
     pub fn sessions(&self) -> SessionStore {
         SessionStore::new(Some(self.dir.join("claude-work.sessions")))
     }
+}
 
-    pub fn read(&self, file: &str) -> String {
-        std::fs::read_to_string(self.dir.join(file)).unwrap_or_default()
-    }
+/// A directory holding a fake `agy`, served the way Pervue serves it:
+/// conversations over the adapter.
+pub struct FakeGemini(harness::FakeGemini);
 
-    pub fn invocations(&self) -> Vec<String> {
-        self.read("claude-invocations")
-            .lines()
-            .map(str::to_owned)
-            .collect()
-    }
+impl Deref for FakeGemini {
+    type Target = harness::FakeGemini;
 
-    pub fn prompts(&self) -> Vec<String> {
-        self.read("claude-prompts")
-            .split('\0')
-            .filter(|prompt| !prompt.is_empty())
-            .map(str::to_owned)
-            .collect()
-    }
-
-    pub fn pids(&self) -> Vec<u32> {
-        self.read("claude-pids")
-            .lines()
-            .map(|pid| pid.parse().expect("a pid"))
-            .collect()
-    }
-
-    pub fn assert_nothing_left_running(&self) {
-        #[cfg(unix)]
-        for pid in self.pids() {
-            use nix::errno::Errno;
-            use nix::sys::signal::kill;
-            use nix::unistd::Pid;
-
-            let pid = Pid::from_raw(i32::try_from(pid).expect("pid fits in pid_t"));
-            assert_eq!(kill(pid, None), Err(Errno::ESRCH), "{pid} is still around");
-        }
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
-impl Drop for FakeClaude {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.dir);
+impl FakeGemini {
+    pub fn install() -> Self {
+        Self(harness::FakeGemini::install(FIXTURES))
+    }
+
+    pub fn adapter(&self) -> Conversations<Gemini> {
+        Conversations::new(self.gemini(), SessionStore::new(None))
+    }
+
+    /// The bare adapter, which knows no conversations.
+    pub fn gemini(&self) -> Gemini {
+        self.0.adapter()
+    }
+}
+
+/// A directory holding a fake `grok`, served the way Pervue serves it:
+/// conversations over the adapter.
+pub struct FakeGrok(harness::FakeGrok);
+
+impl Deref for FakeGrok {
+    type Target = harness::FakeGrok;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl FakeGrok {
+    pub fn install() -> Self {
+        Self(harness::FakeGrok::install(FIXTURES))
+    }
+
+    pub fn adapter(&self) -> Conversations<Grok> {
+        Conversations::new(self.0.adapter(), SessionStore::new(None))
+    }
+
+    pub fn adapter_with_environment(
+        &self,
+        extra: &[(&str, std::path::PathBuf)],
+    ) -> Conversations<Grok> {
+        Conversations::new(
+            self.0.adapter_with_environment(extra),
+            SessionStore::new(None),
+        )
     }
 }
 

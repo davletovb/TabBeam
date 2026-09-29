@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use nix::sys::signal::{Signal, kill};
 use nix::unistd::Pid;
 
-const PROVIDER: &str = env!("CARGO_BIN_EXE_pervue-fake-provider");
+const PROVIDER: &str = env!("CARGO_BIN_EXE_runtime-fake-provider");
 const READY_LINE: &str = "{\"type\":\"ready\"}\n";
 
 /// Kills and reaps the child if a test panics while it is still running.

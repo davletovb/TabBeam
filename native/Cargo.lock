@@ -57,7 +57,9 @@ dependencies = [
  "nix",
  "pervue-host",
  "runtime-core",
+ "runtime-fake-provider",
  "runtime-platform",
+ "runtime-providers",
  "serde_json",
 ]
 
@@ -116,6 +118,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "runtime-fake-provider"
+version = "0.1.0-dev"
+dependencies = [
+ "nix",
+ "runtime-core",
+ "runtime-providers",
+ "serde_json",
+]
+
+[[package]]
 name = "runtime-platform"
 version = "0.1.0-dev"
 dependencies = [
@@ -129,6 +141,18 @@ version = "0.1.0-dev"
 dependencies = [
  "runtime-core",
  "runtime-platform",
+ "serde_json",
+]
+
+[[package]]
+name = "runtime-tests"
+version = "0.1.0-dev"
+dependencies = [
+ "nix",
+ "runtime-core",
+ "runtime-fake-provider",
+ "runtime-platform",
+ "runtime-providers",
  "serde_json",
 ]
 

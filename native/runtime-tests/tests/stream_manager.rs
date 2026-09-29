@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use runtime_core::process::{Ending, Process, ProcessSpec};
 use runtime_core::stream::{LineStream, Output, StreamError};
 
-const PROVIDER: &str = env!("CARGO_BIN_EXE_pervue-fake-provider");
+const PROVIDER: &str = env!("CARGO_BIN_EXE_runtime-fake-provider");
 const DEADLINE: Duration = Duration::from_secs(10);
 const MIB: usize = 1024 * 1024;
 

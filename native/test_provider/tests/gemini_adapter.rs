@@ -1,76 +1,15 @@
 mod support;
 
-use std::ffi::OsString;
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use pervue_host::conversation::{HistoryMessage, Role};
 use pervue_host::conversations::{Conversations, SessionStore};
-use pervue_host::providers::gemini::Gemini;
 use pervue_host::providers::{
     ConversationProvider, ConversationSlot, Exchange, SendRequest, Update,
 };
-use runtime_core::discovery::SearchPath;
 use runtime_core::turn::SessionPolicy;
 
-use support::PROVIDER;
-
-struct FakeGemini {
-    dir: PathBuf,
-    home: PathBuf,
-}
-
-impl FakeGemini {
-    fn install() -> Self {
-        static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!(
-            "pervue-fake-agy-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let name = if cfg!(windows) { "agy.exe" } else { "agy" };
-        let path = dir.join(name);
-        if std::fs::hard_link(PROVIDER, &path).is_err() {
-            std::fs::copy(PROVIDER, &path).unwrap();
-        }
-        let home = dir.join("home");
-        std::fs::create_dir_all(&home).unwrap();
-        Self { dir, home }
-    }
-
-    /// Gemini, served the way Pervue serves it: conversations over the adapter.
-    fn adapter(&self) -> Conversations<Gemini> {
-        Conversations::new(self.gemini(), SessionStore::new(None))
-    }
-
-    fn gemini(&self) -> Gemini {
-        let home_name = if cfg!(unix) { "HOME" } else { "USERPROFILE" };
-        Gemini::new(
-            SearchPath::new([self.dir.clone()]),
-            self.dir.join("workspace"),
-        )
-        .with_environment([
-            (
-                OsString::from(home_name),
-                self.home.as_os_str().to_os_string(),
-            ),
-            (OsString::from("PATH"), self.dir.as_os_str().to_os_string()),
-        ])
-    }
-
-    fn brain(&self) -> PathBuf {
-        self.home.join(".gemini/antigravity-cli/brain")
-    }
-}
-
-impl Drop for FakeGemini {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.dir);
-    }
-}
+use support::FakeGemini;
 
 fn collect(mut exchange: Box<dyn Exchange>) -> Vec<Update> {
     let deadline = Instant::now() + Duration::from_secs(5);

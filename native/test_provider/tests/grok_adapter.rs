@@ -1,111 +1,14 @@
 mod support;
 
-use std::ffi::OsString;
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use pervue_host::conversation::{HistoryMessage, Role};
-use pervue_host::conversations::{Conversations, SessionStore};
-use pervue_host::providers::grok::Grok;
 use pervue_host::providers::{
     ConversationProvider, ConversationSlot, Exchange, SendRequest, Update,
 };
-use runtime_core::discovery::SearchPath;
 use runtime_core::turn::SessionPolicy;
 
-use support::PROVIDER;
-
-struct FakeGrok {
-    dir: PathBuf,
-    home: PathBuf,
-}
-
-impl FakeGrok {
-    fn install() -> Self {
-        static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!(
-            "pervue-fake-grok-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let name = if cfg!(windows) { "grok.exe" } else { "grok" };
-        let path = dir.join(name);
-        if std::fs::hard_link(PROVIDER, &path).is_err() {
-            std::fs::copy(PROVIDER, &path).unwrap();
-        }
-        let home = dir.join("home");
-        std::fs::create_dir_all(home.join(".grok")).unwrap();
-        std::fs::write(home.join(".grok/auth.json"), "{}").unwrap();
-        Self { dir, home }
-    }
-
-    fn environment(&self) -> Vec<(OsString, OsString)> {
-        let home_name = if cfg!(unix) { "HOME" } else { "USERPROFILE" };
-        vec![
-            (
-                OsString::from(home_name),
-                self.home.as_os_str().to_os_string(),
-            ),
-            (OsString::from("PATH"), self.dir.as_os_str().to_os_string()),
-            (
-                OsString::from("XAI_API_KEY"),
-                OsString::from("must-not-leak"),
-            ),
-        ]
-    }
-
-    /// Grok, served the way Pervue serves it: conversations over the adapter.
-    fn adapter(&self) -> Conversations<Grok> {
-        Conversations::new(
-            Grok::new(
-                SearchPath::new([self.dir.clone()]),
-                self.dir.join("workspace"),
-            )
-            .with_environment(self.environment()),
-            SessionStore::new(None),
-        )
-    }
-
-    fn adapter_with_environment(&self, extra: &[(&str, PathBuf)]) -> Conversations<Grok> {
-        let mut environment = self.environment();
-        environment.extend(
-            extra
-                .iter()
-                .map(|(name, value)| (OsString::from(name), value.as_os_str().to_os_string())),
-        );
-        Conversations::new(
-            Grok::new(
-                SearchPath::new([self.dir.clone()]),
-                self.dir.join("workspace"),
-            )
-            .with_environment(environment),
-            SessionStore::new(None),
-        )
-    }
-
-    fn turn_dirs(&self) -> Vec<PathBuf> {
-        std::fs::read_dir(self.dir.join("workspace"))
-            .into_iter()
-            .flatten()
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|path| {
-                path.file_name()
-                    .and_then(|name| name.to_str())
-                    .is_some_and(|name| name.starts_with("turn-"))
-            })
-            .collect()
-    }
-}
-
-impl Drop for FakeGrok {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.dir);
-    }
-}
+use support::FakeGrok;
 
 fn collect(mut exchange: Box<dyn Exchange>) -> Vec<Update> {
     let deadline = Instant::now() + Duration::from_secs(5);

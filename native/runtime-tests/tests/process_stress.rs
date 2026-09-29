@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use runtime_core::process::{Event, Process, ProcessSpec};
 
-const PROVIDER: &str = env!("CARGO_BIN_EXE_pervue-fake-provider");
+const PROVIDER: &str = env!("CARGO_BIN_EXE_runtime-fake-provider");
 const ROUNDS: usize = 120;
 const GRACE: Duration = Duration::from_millis(50);
 const DEADLINE: Duration = Duration::from_secs(10);

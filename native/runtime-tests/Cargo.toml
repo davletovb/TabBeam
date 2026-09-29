@@ -1,22 +1,19 @@
 [package]
-name = "pervue-fake-provider"
-description = "Pervue's integration tests, and the fake provider binary they run"
+name = "runtime-tests"
+description = "Integration tests for the provider runtime, run against the fake provider this package builds a binary of"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
 [[bin]]
-name = "pervue-fake-provider"
+name = "runtime-fake-provider"
 path = "src/main.rs"
 
 [dependencies]
 runtime-fake-provider = { path = "../fake-provider" }
 
 [dev-dependencies]
-# Pervue's tests run the host, and the adapters it serves, against the fake
-# provider this package builds a binary of.
-pervue-host = { path = "../host" }
 runtime-core = { path = "../runtime-core" }
 runtime-platform = { path = "../platform" }
 runtime-providers = { path = "../providers" }

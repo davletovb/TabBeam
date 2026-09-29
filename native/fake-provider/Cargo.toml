@@ -1,0 +1,19 @@
+[package]
+name = "runtime-fake-provider"
+description = "Deterministic fake provider CLIs (Codex, Claude, Antigravity, Grok) and a harness for testing provider adapters against them"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+runtime-core = { path = "../runtime-core" }
+runtime-providers = { path = "../providers" }
+# The fake `codex` persona prints JSON lines.
+serde_json = "1.0"
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.31", default-features = false, features = ["process", "resource", "signal"] }
+
+[lints]
+workspace = true

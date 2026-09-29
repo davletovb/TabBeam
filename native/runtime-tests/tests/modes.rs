@@ -6,7 +6,7 @@ use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-const PROVIDER: &str = env!("CARGO_BIN_EXE_pervue-fake-provider");
+const PROVIDER: &str = env!("CARGO_BIN_EXE_runtime-fake-provider");
 const NORMAL_OUTPUT: &str = concat!(
     "{\"type\":\"delta\",\"text\":\"alpha\"}\n",
     "{\"type\":\"delta\",\"text\":\" beta\"}\n",
