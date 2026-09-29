@@ -12,6 +12,7 @@
 //! forwarded, and the private workspace (including Grok's session files and
 //! the prompt file) is removed after the child has exited.
 
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::ffi::{OsStr, OsString};
 use std::fs;
@@ -28,7 +29,8 @@ use super::private_fs;
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
 use crate::conversation::provider_prompt;
 use crate::protocol::events::{
-    Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ProviderState,
+    Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ModelOption,
+    ProviderState,
 };
 use runtime_core::discovery::SearchPath;
 use runtime_core::process::{Event, Exit, Process, ProcessSpec};
@@ -308,19 +310,19 @@ impl Provider for Grok {
     fn status(&self) -> Box<dyn Exchange> {
         let Some(executable) = self.executable() else {
             return Box::new(Scripted::new([
-                status_update(Availability::NotFound, Authentication::Unknown),
+                status_update(Availability::NotFound, Authentication::Unknown, Vec::new(), None),
                 Update::Completed,
             ]));
         };
         let Ok(base) = self.launch.base_workspace() else {
             return Box::new(Scripted::new([
-                status_update(Availability::Unavailable, Authentication::Unknown),
+                status_update(Availability::Unavailable, Authentication::Unknown, Vec::new(), None),
                 Update::Completed,
             ]));
         };
         let Ok(workspace) = ProbeWorkspace::create(&base) else {
             return Box::new(Scripted::new([
-                status_update(Availability::Unavailable, Authentication::Unknown),
+                status_update(Availability::Unavailable, Authentication::Unknown, Vec::new(), None),
                 Update::Completed,
             ]));
         };
@@ -342,7 +344,7 @@ impl Provider for Grok {
                 }
             }
             Err(_) => StatusCheck::Done(VecDeque::from([
-                status_update(Availability::Unavailable, Authentication::Unknown),
+                status_update(Availability::Unavailable, Authentication::Unknown, Vec::new(), None),
                 Update::Completed,
             ])),
         })
@@ -411,17 +413,54 @@ impl Provider for Grok {
     }
 }
 
-fn status_update(availability: Availability, authentication: Authentication) -> Update {
+fn status_update(
+    availability: Availability,
+    authentication: Authentication,
+    models: Vec<ModelOption>,
+    sign_in: Option<runtime_core::turn::SignInClassification>,
+) -> Update {
     Update::Status {
         provider_id: ID.to_owned(),
         status: ProviderState {
             availability,
             authentication,
             capabilities: CAPABILITIES,
-            // Grok's signed-in model catalog changes frequently. Pervue accepts
-            // valid grok-* IDs and deliberately does not freeze suggestions.
-            models: &[],
+            models: Cow::Owned(models),
+            sign_in,
         },
+    }
+}
+
+fn parse_models(bytes: &[u8]) -> Vec<ModelOption> {
+    let text = String::from_utf8_lossy(bytes);
+    let mut models = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim().trim_start_matches(['*', '-']).trim();
+        let Some(id) = trimmed.split_whitespace().next() else {
+            continue;
+        };
+        if !id.starts_with("grok-") || models.iter().any(|model: &ModelOption| model.id == id) {
+            continue;
+        }
+        models.push(ModelOption {
+            id: Cow::Owned(id.to_owned()),
+            label: Cow::Owned(id.to_owned()),
+        });
+    }
+    models
+}
+
+fn classify_sign_in(
+    authentication: Authentication,
+    stdout: &[u8],
+) -> Option<runtime_core::turn::SignInClassification> {
+    let text = String::from_utf8_lossy(stdout).to_ascii_lowercase();
+    if text.contains("api key") || text.contains("deployment key") {
+        Some(runtime_core::turn::SignInClassification::ApiKey)
+    } else if authentication == Authentication::Authenticated {
+        Some(runtime_core::turn::SignInClassification::Subscription)
+    } else {
+        None
     }
 }
 
@@ -491,9 +530,15 @@ impl Exchange for StatusCheck {
                             } else {
                                 Availability::Unavailable
                             };
+                            let models = if success {
+                                parse_models(stdout)
+                            } else {
+                                Vec::new()
+                            };
+                            let sign_in = classify_sign_in(authentication, stdout);
                             workspace.take();
                             *self = Self::Done(VecDeque::from([
-                                status_update(availability, authentication),
+                                status_update(availability, authentication, models, sign_in),
                                 Update::Completed,
                             ]));
                         }
@@ -501,7 +546,7 @@ impl Exchange for StatusCheck {
                             process.kill();
                             workspace.take();
                             *self = Self::Done(VecDeque::from([
-                                status_update(Availability::Unavailable, Authentication::Unknown),
+                                status_update(Availability::Unavailable, Authentication::Unknown, Vec::new(), None),
                                 Update::Completed,
                             ]));
                         }

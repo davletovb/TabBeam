@@ -6,6 +6,7 @@
 //! of depending on Antigravity's native continuation state, then removes the
 //! Antigravity transcript once the child has exited.
 
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::{OsStr, OsString};
@@ -23,7 +24,8 @@ use super::private_fs;
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
 use crate::conversation::{SEARCH_INSTRUCTIONS, provider_prompt};
 use crate::protocol::events::{
-    Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ProviderState,
+    Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ModelOption,
+    ProviderState,
 };
 use crate::search::{NATIVE_SEARCH_NO_SOURCES, SourceCollector, codex_message_sources};
 use runtime_core::discovery::SearchPath;
@@ -40,6 +42,7 @@ const PLAIN_AGENT: &str = "pervue-text";
 const SEARCH_AGENT: &str = "pervue-search";
 const MAX_LINE_BYTES: usize = 8 * 1024 * 1024;
 const STDERR_TAIL_BYTES: usize = 8 * 1024;
+const STATUS_OUTPUT_BYTES: usize = 16 * 1024;
 const STATUS_PROBE: Duration = Duration::from_secs(10);
 const FINISH_GRACE: Duration = Duration::from_secs(5);
 
@@ -276,13 +279,13 @@ impl Provider for Gemini {
     fn status(&self) -> Box<dyn Exchange> {
         let Some(executable) = self.executable() else {
             return Box::new(Scripted::new([
-                status_update(Availability::NotFound, Authentication::Unknown),
+                status_update(Availability::NotFound, Authentication::Unknown, Vec::new(), None),
                 Update::Completed,
             ]));
         };
         let Ok(workspace) = self.launch.base_workspace() else {
             return Box::new(Scripted::new([
-                status_update(Availability::Unavailable, Authentication::Unknown),
+                status_update(Availability::Unavailable, Authentication::Unknown, Vec::new(), None),
                 Update::Completed,
             ]));
         };
@@ -295,11 +298,12 @@ impl Provider for Gemini {
                 StatusCheck::Probing {
                     process,
                     give_up: private_fs::after(STATUS_PROBE),
+                    stdout: Vec::new(),
                     stderr_tail: Vec::new(),
                 }
             }
             Err(_) => StatusCheck::Done(VecDeque::from([
-                status_update(Availability::Unavailable, Authentication::Unknown),
+                status_update(Availability::Unavailable, Authentication::Unknown, Vec::new(), None),
                 Update::Completed,
             ])),
         })
@@ -438,22 +442,49 @@ impl Provider for Gemini {
     }
 }
 
-fn status_update(availability: Availability, authentication: Authentication) -> Update {
+fn status_update(
+    availability: Availability,
+    authentication: Authentication,
+    models: Vec<ModelOption>,
+    sign_in: Option<runtime_core::turn::SignInClassification>,
+) -> Update {
     Update::Status {
         provider_id: ID.to_owned(),
         status: ProviderState {
             availability,
             authentication,
             capabilities: CAPABILITIES,
-            models: &[],
+            models: Cow::Owned(models),
+            sign_in,
         },
     }
+}
+
+fn parse_models(bytes: &[u8]) -> Vec<ModelOption> {
+    String::from_utf8_lossy(bytes)
+        .lines()
+        .filter_map(|line| {
+            let (id, label) = line.split_once('\t')?;
+            let id = id.trim();
+            let label = label.trim();
+            (id.starts_with("gemini-") && !label.is_empty()).then(|| ModelOption {
+                id: Cow::Owned(id.to_owned()),
+                label: Cow::Owned(label.to_owned()),
+            })
+        })
+        .collect()
+}
+
+fn keep_status_output(output: &mut Vec<u8>, bytes: &[u8]) {
+    let remaining = STATUS_OUTPUT_BYTES.saturating_sub(output.len());
+    output.extend_from_slice(&bytes[..bytes.len().min(remaining)]);
 }
 
 enum StatusCheck {
     Probing {
         process: Process,
         give_up: Instant,
+        stdout: Vec<u8>,
         stderr_tail: Vec<u8>,
     },
     Done(VecDeque<Update>),
@@ -468,6 +499,7 @@ impl Exchange for StatusCheck {
                 Self::Probing {
                     process,
                     give_up,
+                    stdout,
                     stderr_tail,
                 } => {
                     // Even after the nominal deadline, first consume an exit
@@ -480,7 +512,9 @@ impl Exchange for StatusCheck {
                         deadline.min(*give_up)
                     };
                     match process.next_event(poll_until) {
-                        Some(Event::Stdout(_)) => {}
+                        Some(Event::Stdout(bytes)) => {
+                            keep_status_output(stdout, &bytes);
+                        }
                         Some(Event::Stderr(bytes)) => {
                             private_fs::keep_tail(stderr_tail, &bytes, STDERR_TAIL_BYTES);
                         }
@@ -501,15 +535,22 @@ impl Exchange for StatusCheck {
                                 } else {
                                     Availability::Unavailable
                                 };
+                            let models = if success {
+                                parse_models(stdout)
+                            } else {
+                                Vec::new()
+                            };
+                            let sign_in = (authentication == Authentication::Authenticated)
+                                .then_some(runtime_core::turn::SignInClassification::Cloud);
                             *self = Self::Done(VecDeque::from([
-                                status_update(availability, authentication),
+                                status_update(availability, authentication, models, sign_in),
                                 Update::Completed,
                             ]));
                         }
                         None if Instant::now() >= *give_up => {
                             process.kill();
                             *self = Self::Done(VecDeque::from([
-                                status_update(Availability::Unavailable, Authentication::Unknown),
+                                status_update(Availability::Unavailable, Authentication::Unknown, Vec::new(), None),
                                 Update::Completed,
                             ]));
                         }
