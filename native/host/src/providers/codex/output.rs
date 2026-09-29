@@ -21,7 +21,7 @@
 
 use serde_json::Value;
 
-use crate::protocol::events::{ErrorCode};
+use crate::protocol::events::ErrorCode;
 use runtime_core::protocol::Failure as ErrorBody;
 
 /// One line of Codex output, reduced to what the adapter needs.

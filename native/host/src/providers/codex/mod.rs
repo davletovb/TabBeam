@@ -35,10 +35,10 @@ use crate::conversation::{provider_prompt, search_prompt};
 use crate::protocol::events::{
     Authentication, Availability, Capabilities, Capability, ErrorCode, ProviderState,
 };
-use runtime_core::protocol::Failure as ErrorBody;
 use crate::search::{NATIVE_SEARCH_NO_SOURCES, SourceCollector, codex_message_sources};
 use runtime_core::discovery::SearchPath;
 use runtime_core::process::{Event, Exit, Process, ProcessSpec};
+use runtime_core::protocol::Failure as ErrorBody;
 use runtime_core::stream::{BUSY_LIMIT, LineStream, Output};
 
 pub mod output;
@@ -439,22 +439,22 @@ impl Provider for Codex {
             None
         } else {
             match &conversation_id {
-            None => None,
-            Some(conversation_id) => match self
-                .conversations
-                .borrow()
-                .get(conversation_id)
-                .cloned()
-                .or_else(|| {
-                    self.session_dir
-                        .as_deref()
-                        .and_then(|dir| read_thread(dir, conversation_id))
-                }) {
-                Some(thread_id) => Some(thread_id),
-                None if !request.history.is_empty() => None,
-                None => return Box::new(Scripted::failed(UNKNOWN_CONVERSATION)),
+                None => None,
+                Some(conversation_id) => match self
+                    .conversations
+                    .borrow()
+                    .get(conversation_id)
+                    .cloned()
+                    .or_else(|| {
+                        self.session_dir
+                            .as_deref()
+                            .and_then(|dir| read_thread(dir, conversation_id))
+                    }) {
+                    Some(thread_id) => Some(thread_id),
+                    None if !request.history.is_empty() => None,
+                    None => return Box::new(Scripted::failed(UNKNOWN_CONVERSATION)),
+                },
             }
-        }
         };
         if request.fresh_session && prior_session.is_some() {
             if request.history.is_empty() {
@@ -698,7 +698,10 @@ fn superseded_thread_dir(dir: &Path, conversation: &str) -> PathBuf {
 
 fn record_superseded_thread(dir: &Path, conversation: &str, thread: &str) -> io::Result<()> {
     if !session_name(conversation) || !output::is_thread_id(thread) {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid superseded thread"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid superseded thread",
+        ));
     }
     let base = superseded_thread_dir(dir, conversation);
     super::private_fs::create_private_dir(&base)?;
@@ -1120,61 +1123,60 @@ impl Turn {
         self.started = true;
 
         let persistent = self.session_policy == runtime_core::turn::SessionPolicy::Persistent;
-        let conversation_id = match &self.conversation_id {
-            Some(conversation_id) => {
-                if persistent && self.resume.as_deref() != Some(thread_id.as_str()) {
-                    if let Some(old) = self.superseded_session.take() {
-                        if let Some(dir) = self.session_dir.as_deref() {
-                            if record_superseded_thread(dir, conversation_id, &old).is_err()
-                                || forget_thread(dir, conversation_id).is_err()
-                                || save_thread(dir, conversation_id, &thread_id).is_err()
-                            {
-                                return self.end(Update::Failed(SESSION_STORE_FAILED));
+        let conversation_id =
+            match &self.conversation_id {
+                Some(conversation_id) => {
+                    if persistent && self.resume.as_deref() != Some(thread_id.as_str()) {
+                        if let Some(old) = self.superseded_session.take() {
+                            if let Some(dir) = self.session_dir.as_deref() {
+                                if record_superseded_thread(dir, conversation_id, &old).is_err()
+                                    || forget_thread(dir, conversation_id).is_err()
+                                    || save_thread(dir, conversation_id, &thread_id).is_err()
+                                {
+                                    return self.end(Update::Failed(SESSION_STORE_FAILED));
+                                }
                             }
+                            self.conversations
+                                .borrow_mut()
+                                .insert(conversation_id.clone(), thread_id.clone());
+                            let home = codex_home(&self.launch);
+                            let workspace = self.launch.work_dir.clone();
+                            let marker = self
+                                .session_dir
+                                .as_deref()
+                                .map(|dir| superseded_thread_dir(dir, conversation_id).join(&old));
+                            forget::work_in_background(move || {
+                                let removed = home
+                                    .as_deref()
+                                    .map_or(Ok(()), |home| forget_rollouts(home, &workspace, &old));
+                                if removed.is_ok() {
+                                    if let Some(marker) = marker {
+                                        let _ = forget::remove(&marker);
+                                    }
+                                }
+                            });
+                        }
+                    }
+                    conversation_id.clone()
+                }
+                None => {
+                    let conversation_id = new_conversation_id(&self.conversations.borrow());
+                    if persistent {
+                        if self.session_dir.as_deref().is_none_or(|dir| {
+                            save_thread(dir, &conversation_id, &thread_id).is_err()
+                        }) {
+                            return self.end(Update::Failed(SESSION_STORE_FAILED));
                         }
                         self.conversations
                             .borrow_mut()
                             .insert(conversation_id.clone(), thread_id.clone());
-                        let home = codex_home(&self.launch);
-                        let workspace = self.launch.work_dir.clone();
-                        let marker = self
-                            .session_dir
-                            .as_deref()
-                            .map(|dir| superseded_thread_dir(dir, conversation_id).join(&old));
-                        forget::work_in_background(move || {
-                            let removed = home
-                                .as_deref()
-                                .map_or(Ok(()), |home| forget_rollouts(home, &workspace, &old));
-                            if removed.is_ok() {
-                                if let Some(marker) = marker {
-                                    let _ = forget::remove(&marker);
-                                }
-                            }
-                        });
                     }
+                    self.queue
+                        .push_back(Update::ConversationCreated(conversation_id.clone()));
+                    self.conversation_id = Some(conversation_id.clone());
+                    conversation_id
                 }
-                conversation_id.clone()
-            }
-            None => {
-                let conversation_id = new_conversation_id(&self.conversations.borrow());
-                if persistent {
-                    if self
-                        .session_dir
-                        .as_deref()
-                        .is_none_or(|dir| save_thread(dir, &conversation_id, &thread_id).is_err())
-                    {
-                        return self.end(Update::Failed(SESSION_STORE_FAILED));
-                    }
-                    self.conversations
-                        .borrow_mut()
-                        .insert(conversation_id.clone(), thread_id.clone());
-                }
-                self.queue
-                    .push_back(Update::ConversationCreated(conversation_id.clone()));
-                self.conversation_id = Some(conversation_id.clone());
-                conversation_id
-            }
-        };
+            };
         if persistent {
             self.queue.push_back(Update::Session(thread_id));
         }

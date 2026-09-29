@@ -2,7 +2,7 @@
 
 use serde_json::Value;
 
-use crate::protocol::events::{ErrorCode};
+use crate::protocol::events::ErrorCode;
 use runtime_core::protocol::Failure as ErrorBody;
 use runtime_core::turn::Usage;
 
@@ -139,9 +139,7 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
                         .unwrap_or_default()
                         .to_owned(),
                     usage: Usage {
-                        input_tokens: event
-                            .pointer("/usage/input_tokens")
-                            .and_then(Value::as_u64),
+                        input_tokens: event.pointer("/usage/input_tokens").and_then(Value::as_u64),
                         output_tokens: event
                             .pointer("/usage/output_tokens")
                             .and_then(Value::as_u64),
@@ -333,7 +331,9 @@ mod tests {
     #[test]
     fn unknown_stream_events_do_not_count_as_progress() {
         assert_eq!(
-            parse(r#"{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"x"}}}"#),
+            parse(
+                r#"{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"x"}}}"#
+            ),
             Ok(Line::Ignored)
         );
         assert_eq!(
