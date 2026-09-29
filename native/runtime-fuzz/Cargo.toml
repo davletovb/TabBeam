@@ -1,6 +1,7 @@
 [package]
 name = "runtime-fuzz"
 description = "cargo-fuzz targets of the provider runtime"
+license = "MIT OR Apache-2.0"
 version = "0.0.0"
 edition = "2024"
 publish = false

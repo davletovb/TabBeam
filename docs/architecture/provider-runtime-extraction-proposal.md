@@ -543,12 +543,12 @@ Long-lived provider processes stay out of scope (§4) unless the measurements sh
 - **Windows.**
   - There is no Job Object yet ([process.rs][p-process]), so only the provider process itself is stopped, not its descendants.
   - Don't claim process-tree kills on Windows.
-- **Licensing.** Pervue has no license yet. Choose one for the library before its repository is made public or its crates are published.
+- **Licensing.** Pervue has no license yet. The library's is `MIT OR Apache-2.0` (decided 2026-09-29); add the license files and notice when its repository is created, before it is made public or its crates are published.
 
 ## 10. Open decisions
 
-1. The library's name. `provider-runtime` is a placeholder.
-2. The license.
+1. The library's name. `provider-runtime` is a placeholder, and the owner is choosing another.
+2. ~~The license.~~ Decided: `MIT OR Apache-2.0`.
 3. What should the default absolute turn limit be, and can applications raise it? Conclave uses 180 s today, and Pervue has no limit.
 4. Should Pervue keep its per-turn sign-in checks for Claude and Codex as they are, or set a caching policy? Pervue's checks guard against a signed-out CLI, not against the wrong kind of billing.
 
