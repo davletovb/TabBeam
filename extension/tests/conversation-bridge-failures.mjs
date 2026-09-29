@@ -21,7 +21,7 @@ const id = "conv_00000000-0000-4000-8000-000000000001";
  * begin?: () => Promise<any>
  * }} [options] */
 function harness(options = {}) {
-  const port = new MockPort("pervue.ask");
+  const port = new MockPort("tabbeam.ask");
   /** @type {{request: any, owner: any}[]} */
   const sent = [];
   /** @type {any[]} */

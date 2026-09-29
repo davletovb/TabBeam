@@ -42,7 +42,7 @@ const ID_C = "conv_00000000-0000-4000-8000-00000000000c";
 
   await store.remove(first.id);
   assert.deepEqual((await store.list()).map((item) => item.id), [second.id]);
-  assert.equal(saved[`pervue.conversation.${first.id}`], undefined, "the record itself is gone");
+  assert.equal(saved[`tabbeam.conversation.${first.id}`], undefined, "the record itself is gone");
   assert.ok(await rejects(store.get(first.id)));
   assert.ok(await rejects(store.remove(first.id)), "deleting twice fails");
   assert.ok(await rejects(store.remove("not-an-id")));
@@ -181,7 +181,7 @@ const ID_C = "conv_00000000-0000-4000-8000-00000000000c";
   });
   /** @param {any} change */
   const changed = (change) => {
-    for (const listener of listeners) listener({ [`pervue.conversation.${ID_A}`]: change }, "local");
+    for (const listener of listeners) listener({ [`tabbeam.conversation.${ID_A}`]: change }, "local");
   };
   assert.equal(await view.loadConversation(ID_A), true);
   assert.equal(elements.history.children.length, 2);

@@ -182,7 +182,7 @@ class FakeElement {
     provider: { ...summary.provider, provider_output: "secret output" },
     recent_failure: { ...summary.recent_failure, message: "secret failure detail" }
   }, 5678);
-  assert.equal(exported.format, "pervue-support-diagnostics");
+  assert.equal(exported.format, "tabbeam-support-diagnostics");
   assert.equal(exported.version, 1);
   assert.equal(exported.generated_at, 5678);
   assert.deepEqual(exported.provider, summary.provider);

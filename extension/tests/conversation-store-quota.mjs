@@ -35,8 +35,8 @@ for (let i = 0; i < 5; i += 1) {
 const recent = await store.list();
 assert.equal(recent[0].id, ids.at(-1));
 assert.ok(recent.length < 5, "quota eviction removes the oldest conversations");
-assert.ok(!values["pervue.conversation." + ids[0]]);
-assert.ok(values["pervue.conversation." + ids.at(-1)]);
+assert.ok(!values["tabbeam.conversation." + ids[0]]);
+assert.ok(values["tabbeam.conversation." + ids.at(-1)]);
 assert.ok(JSON.stringify(values[CONVERSATIONS_KEY]).length < 4_000, "index stays small");
 assert.ok((await store.get(ids.at(-1) ?? "")).messages[0].text.includes("[Stored excerpt truncated]"));
 reads.length = 0;

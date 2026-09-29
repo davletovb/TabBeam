@@ -105,8 +105,8 @@ function openView(providerId = "codex", extra = {}) {
     },
     /** @param {any} message */
     async sendMessage(message) {
-      if (message.type === "pervue.conversations.list") return { ok: true, value: await store.list() };
-      if (message.type === "pervue.conversations.get") return { ok: true, value: await store.get(message.conversation_id) };
+      if (message.type === "tabbeam.conversations.list") return { ok: true, value: await store.list() };
+      if (message.type === "tabbeam.conversations.get") return { ok: true, value: await store.get(message.conversation_id) };
       throw new Error("unexpected worker message");
     }
   };
@@ -314,15 +314,15 @@ assert.equal(fullPage.elements.status.textContent, "Conversation not found. Star
 
 // Unknown schema versions are refused without silently replacing the data.
 const original = structuredClone(saved);
-saved["pervue.conversations"].schema_version = 3;
+saved["tabbeam.conversations"].schema_version = 3;
 let rejected = false;
 try {
   await store.list();
 } catch (error) {
-  rejected = /compatible Pervue version/.test(/** @type {Error} */ (error).message);
+  rejected = /compatible TabBeam version/.test(/** @type {Error} */ (error).message);
 }
 assert.equal(rejected, true, "a future schema version must not be discarded");
-assert.equal(saved["pervue.conversations"].schema_version, 3);
+assert.equal(saved["tabbeam.conversations"].schema_version, 3);
 saved = original;
 
 const longConversation = { messages: Array.from({ length: 40 }, (_, i) => [

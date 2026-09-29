@@ -99,7 +99,7 @@ bindAskForm(
   /** @type {any} */ (elements),
   {
     connect() {
-      const port = new MockPort("pervue.ask");
+      const port = new MockPort("tabbeam.ask");
       ports.push(port);
       return port;
     }
