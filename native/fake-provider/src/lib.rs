@@ -9,6 +9,7 @@
 //! directory, and builds adapters that run it.
 
 pub mod harness;
+pub mod resources;
 
 mod claude;
 mod codex;
@@ -85,6 +86,26 @@ impl Mode {
 }
 
 /// The fake provider's `main`.
+/// Records that this process ran a turn, as one line in `<cli>-pids` beside
+/// the executable, for a test to check that it was reaped.
+fn record_launch(cli: &str) {
+    use std::io::Write as _;
+
+    let Some(dir) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(Path::to_path_buf))
+    else {
+        return;
+    };
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join(format!("{cli}-pids")))
+    {
+        let _ = writeln!(file, "{}", std::process::id());
+    }
+}
+
 pub fn run() -> ExitCode {
     let mut args = std::env::args_os();
     let program = args

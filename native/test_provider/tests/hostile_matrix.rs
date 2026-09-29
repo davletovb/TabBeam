@@ -11,6 +11,9 @@
 //!
 //! The cases run one after another in a single test, so the resource
 //! measurements see only the case under way.
+//!
+//! The runtime runs the same misbehaviour under its own scheduler, with none
+//! of Pervue's host around it, in `runtime-tests`.
 
 mod support;
 
@@ -18,6 +21,7 @@ use std::time::Duration;
 
 use pervue_host::providers::Timeouts;
 use pervue_host::providers::codex::Limits;
+use runtime_fake_provider::resources::{held, peak_memory_growth, reset_peak_memory, settle};
 use serde_json::Value;
 use support::{FakeCodex, PacedInput, Session, TEST_LIMITS, request_id_for, serve_timed};
 
@@ -340,60 +344,6 @@ fn cases() -> Vec<Case> {
     ]
 }
 
-/// What the test process holds, where the platform shows it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Held {
-    threads: usize,
-    file_descriptors: usize,
-}
-
-#[cfg(target_os = "linux")]
-fn held() -> Option<Held> {
-    let count = |dir: &str| std::fs::read_dir(dir).ok().map(Iterator::count);
-    Some(Held {
-        threads: count("/proc/self/task")?,
-        file_descriptors: count("/proc/self/fd")?,
-    })
-}
-
-#[cfg(not(target_os = "linux"))]
-fn held() -> Option<Held> {
-    None
-}
-
-/// A field of `/proc/self/status`, in KiB.
-fn status_kib(field: &str) -> Option<u64> {
-    let status = std::fs::read_to_string("/proc/self/status").ok()?;
-    status.lines().find_map(|line| {
-        line.strip_prefix(field)?
-            .trim()
-            .strip_suffix("kB")?
-            .trim()
-            .parse()
-            .ok()
-    })
-}
-
-/// Resets the peak resident memory to the current, and returns the current,
-/// where the platform allows (Linux).
-fn reset_peak_memory() -> Option<u64> {
-    std::fs::write("/proc/self/clear_refs", "5").ok()?;
-    status_kib("VmRSS:")
-}
-
-/// Waits a little for helper threads and pipes to go, then returns what the
-/// process holds.
-fn settle(baseline: Option<Held>) -> Option<Held> {
-    for _ in 0..200 {
-        let now = held();
-        if now == baseline {
-            return now;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    held()
-}
-
 #[test]
 fn hostile_providers_end_normalized_with_bounded_resources() {
     let baseline = held();
@@ -420,9 +370,7 @@ fn hostile_providers_end_normalized_with_bounded_resources() {
                 panic!("{name}: the host is stuck")
             }
         }
-        let growth = memory_before
-            .zip(status_kib("VmHWM:"))
-            .map(|(before, peak)| peak.saturating_sub(before));
+        let growth = peak_memory_growth(memory_before);
         eprintln!(
             "{:>8.2?}  {name} (peak memory +{} KiB)",
             started.elapsed(),

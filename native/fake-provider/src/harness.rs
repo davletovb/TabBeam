@@ -101,6 +101,46 @@ pub const CLAUDE_TEST_LIMITS: claude::Limits = claude::Limits {
     finish: Duration::from_millis(300),
 };
 
+/// What the fake CLIs record about the launches they ran: the process of each.
+macro_rules! launched {
+    ($cli:literal) => {
+        /// The process ID of each launch that ran a turn.
+        pub fn pids(&self) -> Vec<u32> {
+            std::fs::read_to_string(self.dir.join(concat!($cli, "-pids")))
+                .unwrap_or_default()
+                .lines()
+                .map(|pid| pid.parse().expect("a pid"))
+                .collect()
+        }
+
+        /// The launches this directory saw that have not exited and been
+        /// reaped yet.
+        pub fn still_running(&self) -> Vec<u32> {
+            #[cfg(unix)]
+            {
+                use nix::errno::Errno;
+                use nix::sys::signal::kill;
+                use nix::unistd::Pid;
+
+                self.pids()
+                    .into_iter()
+                    .filter(|pid| {
+                        let pid = Pid::from_raw(i32::try_from(*pid).expect("pid fits in pid_t"));
+                        kill(pid, None) != Err(Errno::ESRCH)
+                    })
+                    .collect()
+            }
+            #[cfg(not(unix))]
+            Vec::new()
+        }
+
+        /// Every launch this directory saw has exited and been reaped.
+        pub fn assert_nothing_left_running(&self) {
+            assert_eq!(self.still_running(), Vec::<u32>::new(), "still around");
+        }
+    };
+}
+
 /// What the fake CLIs record, read back from the directory that holds them.
 macro_rules! recorded {
     ($cli:literal) => {
@@ -125,26 +165,7 @@ macro_rules! recorded {
                 .collect()
         }
 
-        /// The process ID of each launch that ran the answer.
-        pub fn pids(&self) -> Vec<u32> {
-            self.read(concat!($cli, "-pids"))
-                .lines()
-                .map(|pid| pid.parse().expect("a pid"))
-                .collect()
-        }
-
-        /// Every launch this directory saw has exited and been reaped.
-        pub fn assert_nothing_left_running(&self) {
-            #[cfg(unix)]
-            for pid in self.pids() {
-                use nix::errno::Errno;
-                use nix::sys::signal::kill;
-                use nix::unistd::Pid;
-
-                let pid = Pid::from_raw(i32::try_from(pid).expect("pid fits in pid_t"));
-                assert_eq!(kill(pid, None), Err(Errno::ESRCH), "{pid} is still around");
-            }
-        }
+        launched!($cli);
     };
 }
 
@@ -234,11 +255,15 @@ impl FakeClaude {
 
     /// The Claude adapter, pointed at this directory, with short limits.
     pub fn adapter(&self) -> Claude {
+        self.adapter_with(CLAUDE_TEST_LIMITS)
+    }
+
+    pub fn adapter_with(&self, limits: claude::Limits) -> Claude {
         Claude::new(
             SearchPath::new([self.dir.clone()]),
             self.dir.join("claude-work"),
         )
-        .with_limits(CLAUDE_TEST_LIMITS)
+        .with_limits(limits)
     }
 
     /// [`FakeClaude::adapter`] with the environment Claude gets from `host`.
@@ -265,6 +290,8 @@ pub struct FakeGemini {
 }
 
 impl FakeGemini {
+    launched!("agy");
+
     pub fn install(fixtures: Fixtures) -> Self {
         let dir = fixtures.directory("agy");
         fixtures.install(&dir, if cfg!(windows) { "agy.exe" } else { "agy" });
@@ -313,6 +340,8 @@ pub struct FakeGrok {
 }
 
 impl FakeGrok {
+    launched!("grok");
+
     pub fn install(fixtures: Fixtures) -> Self {
         let dir = fixtures.directory("grok");
         fixtures.install(&dir, if cfg!(windows) { "grok.exe" } else { "grok" });

@@ -32,6 +32,7 @@ fn run(args: Vec<OsString>) -> Result<(), ()> {
         return Ok(());
     }
 
+    crate::record_launch("agy");
     let agent = value_after(&args, "--agent").ok_or(())?;
     let model = value_after(&args, "--model");
     if !has_pair(&args, "--input-format", "stream-json")
@@ -162,6 +163,12 @@ fn run(args: Vec<OsString>) -> Result<(), ()> {
             }),
         )?;
         hang_briefly();
+        return Ok(());
+    }
+
+    if model.as_deref() == Some("gemini-hang") {
+        // Started, and then silent: only a cancellation or a timeout ends it.
+        std::thread::sleep(std::time::Duration::from_secs(30));
         return Ok(());
     }
 

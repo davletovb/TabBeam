@@ -149,6 +149,8 @@ name = "runtime-tests"
 version = "0.1.0-dev"
 dependencies = [
  "nix",
+ "provider-runtime-scheduler",
+ "provider-runtime-service",
  "runtime-core",
  "runtime-fake-provider",
  "runtime-platform",

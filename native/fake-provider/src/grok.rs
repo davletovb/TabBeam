@@ -39,6 +39,8 @@ fn run(args: Vec<OsString>) -> Result<(), ()> {
         return Ok(());
     }
 
+    crate::record_launch("grok");
+
     assert_isolated_environment()?;
 
     let prompt = arg_value(&args, "--prompt-file")

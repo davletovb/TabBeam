@@ -14,6 +14,8 @@ path = "src/main.rs"
 runtime-fake-provider = { path = "../fake-provider" }
 
 [dev-dependencies]
+provider-runtime-scheduler = { path = "../scheduler" }
+provider-runtime-service = { path = "../service" }
 runtime-core = { path = "../runtime-core" }
 runtime-platform = { path = "../platform" }
 runtime-providers = { path = "../providers" }
