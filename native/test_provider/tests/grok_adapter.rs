@@ -5,10 +5,11 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use pervue_core::discovery::SearchPath;
 use pervue_host::conversation::{HistoryMessage, Role};
 use pervue_host::providers::grok::Grok;
 use pervue_host::providers::{Exchange, Provider, SendRequest, Update};
+use runtime_core::discovery::SearchPath;
+use runtime_core::turn::SessionPolicy;
 
 use support::PROVIDER;
 
@@ -137,6 +138,8 @@ fn request(conversation_id: Option<String>, native_search: bool, model: &str) ->
         context: None,
         model: Some(model.to_owned()),
         native_search,
+        session_policy: SessionPolicy::Ephemeral,
+        fresh_session: false,
     }
 }
 

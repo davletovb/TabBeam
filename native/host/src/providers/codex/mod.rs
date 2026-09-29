@@ -17,6 +17,7 @@
 //! ([`environment::INHERITED`]), Codex's own settings, and a `PATH` that
 //! starts with Codex's directory.
 
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::ffi::{OsStr, OsString};
@@ -32,12 +33,13 @@ use super::forget;
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
 use crate::conversation::{provider_prompt, search_prompt};
 use crate::protocol::events::{
-    Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ProviderState,
+    Authentication, Availability, Capabilities, Capability, ErrorCode, ProviderState,
 };
 use crate::search::{NATIVE_SEARCH_NO_SOURCES, SourceCollector, codex_message_sources};
-use pervue_core::discovery::SearchPath;
-use pervue_core::process::{Event, Exit, Process, ProcessSpec};
-use pervue_core::stream::{BUSY_LIMIT, LineStream, Output};
+use runtime_core::discovery::SearchPath;
+use runtime_core::process::{Event, Exit, Process, ProcessSpec};
+use runtime_core::protocol::Failure as ErrorBody;
+use runtime_core::stream::{BUSY_LIMIT, LineStream, Output};
 
 pub mod output;
 pub(crate) mod workspace;
@@ -75,6 +77,7 @@ pub const LIMITS: Limits = Limits {
     timeouts: Timeouts {
         start: Duration::from_secs(60),
         idle: Duration::from_secs(300),
+        max_turn: Duration::MAX,
         stop_grace: Duration::from_secs(2),
     },
     probe: Duration::from_secs(10),
@@ -97,73 +100,63 @@ pub const CAPABILITIES: Capabilities = Capabilities {
     cancellation: Capability::Supported,
 };
 
-const NOT_INSTALLED: ErrorBody<'static> = ErrorBody {
+const NOT_INSTALLED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderNotFound,
     reason: "EXECUTABLE_NOT_FOUND",
-    message: "Codex isn't installed. Install the Codex CLI, then try again.",
     retryable: false,
 };
 
-const NOT_SIGNED_IN: ErrorBody<'static> = ErrorBody {
+const NOT_SIGNED_IN: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderNotAuthenticated,
     reason: "LOGIN_REQUIRED",
-    message: "Codex isn't signed in. Run \"codex login\" in a terminal, then try again.",
     retryable: false,
 };
 
-const CONTEXT_TOOLS_ENABLED: ErrorBody<'static> = ErrorBody {
+const CONTEXT_TOOLS_ENABLED: ErrorBody = ErrorBody {
     code: ErrorCode::InvalidRequest,
     reason: "PAGE_CONTEXT_TOOLS_ENABLED",
-    message: "Pervue won't send browser context to Codex while user-configured MCP servers are enabled. Disable them or choose No context.",
     retryable: false,
 };
 
-const SEARCH_TOOLS_ENABLED: ErrorBody<'static> = ErrorBody {
+const SEARCH_TOOLS_ENABLED: ErrorBody = ErrorBody {
     code: ErrorCode::SearchFailed,
     reason: "NATIVE_SEARCH_CONFIGURATION_UNSAFE",
-    message: "Pervue won't enable Codex web search while user-configured MCP servers are enabled. Disable them or use a plain Ask turn.",
     retryable: false,
 };
 
-const UNKNOWN_CONVERSATION: ErrorBody<'static> = ErrorBody {
+const UNKNOWN_CONVERSATION: ErrorBody = ErrorBody {
     code: ErrorCode::InvalidRequest,
     reason: "UNKNOWN_CONVERSATION",
-    message: "This conversation can't be continued. Start a new one.",
     retryable: false,
 };
 
-const START_FAILED: ErrorBody<'static> = ErrorBody {
+const START_FAILED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROVIDER_UNAVAILABLE",
-    message: "Codex couldn't start. Reinstall the Codex CLI, then try again.",
     retryable: false,
 };
 
-const NO_WORKSPACE: ErrorBody<'static> = ErrorBody {
+const NO_WORKSPACE: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "WORKSPACE_UNAVAILABLE",
-    message: "Pervue couldn't prepare a private folder for Codex. Make sure your cache folder exists and only you can change it, then try again.",
     retryable: false,
 };
 
-const PROCESS_EXITED: ErrorBody<'static> = ErrorBody {
+const PROCESS_EXITED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROCESS_EXITED",
-    message: "Codex stopped unexpectedly. Try again.",
     retryable: true,
 };
 
-const MALFORMED_OUTPUT: ErrorBody<'static> = ErrorBody {
+const MALFORMED_OUTPUT: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "MALFORMED_PROVIDER_OUTPUT",
-    message: "Codex answered in a way Pervue doesn't understand. Update Codex and Pervue, then try again.",
     retryable: false,
 };
 
-const SESSION_STORE_FAILED: ErrorBody<'static> = ErrorBody {
+const SESSION_STORE_FAILED: ErrorBody = ErrorBody {
     code: ErrorCode::InternalError,
     reason: "SESSION_STORE_FAILED",
-    message: "Codex's conversation could not be saved. Check available disk space and try again.",
     retryable: true,
 };
 
@@ -279,7 +272,7 @@ impl Codex {
         self.search.find(EXECUTABLE)
     }
 
-    fn validate_request(&self, request: &SendRequest) -> Result<(), ErrorBody<'static>> {
+    fn validate_request(&self, request: &SendRequest) -> Result<(), ErrorBody> {
         let context_turn = request.context.is_some();
         let reference_turn = context_turn || request.native_search;
         if reference_turn && !context_configuration_is_safe(&self.launch) {
@@ -309,6 +302,10 @@ impl Provider for Codex {
         ID
     }
 
+    fn supports_persistent_session(&self) -> bool {
+        true
+    }
+
     fn capabilities(&self) -> Capabilities {
         let mut capabilities = CAPABILITIES;
         if !context_configuration_is_safe(&self.launch) {
@@ -330,6 +327,7 @@ impl Provider for Codex {
                     Availability::NotFound,
                     Authentication::Unknown,
                     capabilities,
+                    None,
                 ),
                 Update::Completed,
             ]));
@@ -339,12 +337,14 @@ impl Provider for Codex {
                 process,
                 give_up: after(self.limits.probe),
                 capabilities,
+                output: Vec::new(),
             },
             Err(_) => StatusCheck::Done(VecDeque::from([
                 status_update(
                     Availability::Unavailable,
                     Authentication::Unknown,
                     capabilities,
+                    None,
                 ),
                 Update::Completed,
             ])),
@@ -366,6 +366,11 @@ impl Provider for Codex {
         let workspace = self.launch.work_dir.clone();
         let session_dir = self.session_dir.clone();
         let conversation = conversation_id.to_owned();
+        let superseded = self
+            .session_dir
+            .as_deref()
+            .map(|dir| read_superseded_threads(dir, conversation_id))
+            .unwrap_or_default();
         let conversations = Rc::clone(&self.conversations);
         let forgotten = conversation_id.to_owned();
         // The files go on their own thread. The mappings go last, the one in
@@ -373,10 +378,18 @@ impl Provider for Codex {
         // all be removed, a retry can still find them.
         forget::in_background(
             move || {
-                if let (Some(home), Some(thread)) = (home, thread) {
-                    forget_rollouts(&home, &workspace, &thread)?;
+                if let Some(home) = home {
+                    if let Some(thread) = thread {
+                        forget_rollouts(&home, &workspace, &thread)?;
+                    }
+                    for thread in &superseded {
+                        forget_rollouts(&home, &workspace, thread)?;
+                    }
                 }
-                session_dir.map_or(Ok(()), |dir| forget_thread(&dir, &conversation))
+                session_dir.map_or(Ok(()), |dir| {
+                    forget_thread(&dir, &conversation)?;
+                    forget::remove(&superseded_thread_dir(&dir, &conversation))
+                })
             },
             move || {
                 conversations.borrow_mut().remove(&forgotten);
@@ -409,9 +422,9 @@ impl Provider for Codex {
         } else {
             request.text
         };
-        let resume = match &conversation_id {
+        let prior_session = match &conversation_id {
             None => None,
-            Some(conversation_id) => match self
+            Some(conversation_id) => self
                 .conversations
                 .borrow()
                 .get(conversation_id)
@@ -420,13 +433,32 @@ impl Provider for Codex {
                     self.session_dir
                         .as_deref()
                         .and_then(|dir| read_thread(dir, conversation_id))
-                }) {
-                Some(thread_id) => Some(thread_id),
-                None if !request.history.is_empty() => None,
-                None => return Box::new(Scripted::failed(UNKNOWN_CONVERSATION)),
-            },
+                }),
         };
-        if resume.is_none() && !request.history.is_empty() {
+        let resume = if request.fresh_session {
+            None
+        } else {
+            match &conversation_id {
+                None => None,
+                Some(conversation_id) => match self
+                    .conversations
+                    .borrow()
+                    .get(conversation_id)
+                    .cloned()
+                    .or_else(|| {
+                        self.session_dir
+                            .as_deref()
+                            .and_then(|dir| read_thread(dir, conversation_id))
+                    }) {
+                    Some(thread_id) => Some(thread_id),
+                    None if !request.history.is_empty() => None,
+                    None => return Box::new(Scripted::failed(UNKNOWN_CONVERSATION)),
+                },
+            }
+        };
+        if request.fresh_session && prior_session.is_some() && !request.history.is_empty() {
+            prompt = fallback_prompt.take().expect("history is present");
+        } else if resume.is_none() && !request.history.is_empty() {
             // If a provider has no native session (or its mapping was lost),
             // the ordered, bounded dialogue still reaches the new turn.
             prompt = fallback_prompt.take().expect("history is present");
@@ -442,6 +474,8 @@ impl Provider for Codex {
             resume,
             conversation_id,
             conversations: Rc::clone(&self.conversations),
+            superseded_session: request.fresh_session.then_some(prior_session).flatten(),
+            session_policy: request.session_policy,
             finish_grace: self.limits.finish,
             restrict_tools: reference_turn,
             context_turn,
@@ -520,6 +554,7 @@ fn status_update(
     availability: Availability,
     authentication: Authentication,
     capabilities: Capabilities,
+    sign_in: Option<runtime_core::turn::SignInClassification>,
 ) -> Update {
     Update::Status {
         provider_id: ID.to_owned(),
@@ -527,7 +562,8 @@ fn status_update(
             availability,
             authentication,
             capabilities,
-            models: &[],
+            models: Cow::Borrowed(&[]),
+            sign_in,
         },
     }
 }
@@ -653,6 +689,33 @@ fn rollout_written_for_pervue(path: &Path, thread: &str, workspace: &Path) -> bo
     })
 }
 
+fn superseded_thread_dir(dir: &Path, conversation: &str) -> PathBuf {
+    dir.join("superseded").join(conversation)
+}
+
+fn record_superseded_thread(dir: &Path, conversation: &str, thread: &str) -> io::Result<()> {
+    if !session_name(conversation) || !output::is_thread_id(thread) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid superseded thread",
+        ));
+    }
+    let base = superseded_thread_dir(dir, conversation);
+    super::private_fs::create_private_dir(&base)?;
+    super::private_fs::write_private_file(&base.join(thread), b"pending\n")
+}
+
+fn read_superseded_threads(dir: &Path, conversation: &str) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(superseded_thread_dir(dir, conversation)) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|thread| output::is_thread_id(thread))
+        .collect()
+}
+
 fn save_thread(dir: &Path, id: &str, thread: &str) -> io::Result<()> {
     #[cfg(unix)]
     {
@@ -686,8 +749,29 @@ fn save_thread(dir: &Path, id: &str, thread: &str) -> io::Result<()> {
 /// stdin (`-`). `--model` is a global `exec` option, so it applies to
 /// `resume` too; it is one `--model=<id>` argument, so the ID can never be
 /// read as an option of its own.
+#[cfg(test)]
 fn exec_args(
     workspace: &Path,
+    restrict_tools: bool,
+    context_turn: bool,
+    native_search: bool,
+    resume: Option<&str>,
+    model: Option<&str>,
+) -> Vec<OsString> {
+    exec_args_for_session(
+        workspace,
+        runtime_core::turn::SessionPolicy::Persistent,
+        restrict_tools,
+        context_turn,
+        native_search,
+        resume,
+        model,
+    )
+}
+
+fn exec_args_for_session(
+    workspace: &Path,
+    session_policy: runtime_core::turn::SessionPolicy,
     restrict_tools: bool,
     context_turn: bool,
     native_search: bool,
@@ -703,6 +787,9 @@ fn exec_args(
     ]
     .map(OsString::from)
     .into();
+    if session_policy == runtime_core::turn::SessionPolicy::Ephemeral {
+        args.push("--ephemeral".into());
+    }
     if restrict_tools {
         // Page text is attacker-controlled. A context turn is deliberately
         // answer-only: no local shell/image tools, apps/plugins/hooks,
@@ -775,6 +862,7 @@ enum StatusCheck {
         process: Process,
         give_up: Instant,
         capabilities: Capabilities,
+        output: Vec<u8>,
     },
     Done(VecDeque<Update>),
 }
@@ -790,6 +878,7 @@ impl Exchange for StatusCheck {
                     process,
                     give_up,
                     capabilities: _,
+                    output: _,
                 } if Instant::now() >= *give_up => {
                     process.kill();
                     Authentication::Unknown
@@ -798,11 +887,14 @@ impl Exchange for StatusCheck {
                     process,
                     give_up,
                     capabilities: _,
+                    output,
                 } => {
                     match process.next_event(deadline.min(*give_up)) {
                         Some(Event::Exited(exit)) => signed_in(&exit),
-                        // The probe's output names the account: never read.
-                        Some(Event::Stdout(_) | Event::Stderr(_)) => {
+                        // Keep only a bounded probe prefix for billing-mode
+                        // classification; it is never logged or forwarded.
+                        Some(Event::Stdout(bytes) | Event::Stderr(bytes)) => {
+                            super::keep_bounded_output(output, &bytes, STATUS_OUTPUT_BYTES);
                             if Instant::now() >= busy_until {
                                 return None;
                             }
@@ -813,12 +905,21 @@ impl Exchange for StatusCheck {
                     }
                 }
             };
-            let capabilities = match self {
-                Self::Probing { capabilities, .. } => *capabilities,
+            let (capabilities, sign_in) = match self {
+                Self::Probing {
+                    capabilities,
+                    output,
+                    ..
+                } => (*capabilities, classify_sign_in(authentication, output)),
                 Self::Done(_) => unreachable!("handled above"),
             };
             *self = Self::Done(VecDeque::from([
-                status_update(Availability::Available, authentication, capabilities),
+                status_update(
+                    Availability::Available,
+                    authentication,
+                    capabilities,
+                    sign_in,
+                ),
                 Update::Completed,
             ]));
         }
@@ -827,6 +928,25 @@ impl Exchange for StatusCheck {
     fn cancel(&mut self, _grace: Duration) {
         *self = Self::Done(VecDeque::from([Update::Stopped]));
     }
+}
+
+const STATUS_OUTPUT_BYTES: usize = 4096;
+
+fn classify_sign_in(
+    authentication: Authentication,
+    output: &[u8],
+) -> Option<runtime_core::turn::SignInClassification> {
+    if authentication != Authentication::Authenticated {
+        return None;
+    }
+    let text = String::from_utf8_lossy(output).to_ascii_lowercase();
+    Some(if text.contains("api key") {
+        runtime_core::turn::SignInClassification::ApiKey
+    } else if text.contains("chatgpt") || text.contains("subscription") {
+        runtime_core::turn::SignInClassification::Subscription
+    } else {
+        runtime_core::turn::SignInClassification::Unknown
+    })
 }
 
 /// One `conversation.send`: the sign-in probe, then the `codex exec` turn.
@@ -842,6 +962,8 @@ struct Turn {
     resume: Option<String>,
     conversation_id: Option<String>,
     conversations: Conversations,
+    superseded_session: Option<String>,
+    session_policy: runtime_core::turn::SessionPolicy,
     finish_grace: Duration,
     /// Browser context or native search requires all unrelated Codex tool
     /// surfaces to be disabled.
@@ -864,7 +986,7 @@ struct Turn {
     /// ("I'll look that up"), not answer, and is dropped.
     held: Option<String>,
     /// How the turn ended, once Codex said so.
-    outcome: Option<Result<(), ErrorBody<'static>>>,
+    outcome: Option<Result<(), ErrorBody>>,
     /// When to stop waiting for Codex to exit after the turn ended.
     finish_by: Option<Instant>,
 }
@@ -885,8 +1007,9 @@ impl Turn {
         let Ok(workspace) = self.launch.workspace() else {
             return self.end(Update::Failed(NO_WORKSPACE));
         };
-        let args = exec_args(
+        let args = exec_args_for_session(
             &workspace,
+            self.session_policy,
             self.restrict_tools,
             self.context_turn,
             self.native_search,
@@ -899,6 +1022,7 @@ impl Turn {
                 // argument may have, and no shell ever sees it.
                 let _ = process.write(std::mem::take(&mut self.prompt).as_bytes());
                 process.close_stdin();
+                self.queue.push_back(Update::Launched);
                 self.stage = Stage::Running(LineStream::new(process, MAX_LINE_BYTES));
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -940,9 +1064,14 @@ impl Turn {
                 self.queue.push_back(Update::Activity);
             }
             Ok(Line::Progress) => self.queue.push_back(Update::Activity),
-            Ok(Line::TurnCompleted) if !self.started => self.end(Update::Failed(MALFORMED_OUTPUT)),
-            Ok(Line::TurnCompleted) => {
+            Ok(Line::TurnCompleted(_)) if !self.started => {
+                self.end(Update::Failed(MALFORMED_OUTPUT))
+            }
+            Ok(Line::TurnCompleted(usage)) => {
                 self.flush_held();
+                if usage.input_tokens.is_some() || usage.output_tokens.is_some() {
+                    self.queue.push_back(Update::Usage(usage));
+                }
                 self.turn_ended(Ok(()));
             }
             Ok(Line::TurnFailed(message)) => {
@@ -989,31 +1118,65 @@ impl Turn {
             return self.end(Update::Failed(MALFORMED_OUTPUT));
         };
         self.started = true;
-        let conversation_id = match &self.conversation_id {
-            Some(conversation_id) => conversation_id.clone(),
-            None => {
-                let conversation_id = new_conversation_id(&self.conversations.borrow());
-                if self
-                    .session_dir
-                    .as_deref()
-                    .is_none_or(|dir| save_thread(dir, &conversation_id, &thread_id).is_err())
-                {
-                    return self.end(Update::Failed(SESSION_STORE_FAILED));
+
+        let persistent = self.session_policy == runtime_core::turn::SessionPolicy::Persistent;
+        let conversation_id =
+            match &self.conversation_id {
+                Some(conversation_id) => {
+                    if persistent && self.resume.as_deref() != Some(thread_id.as_str()) {
+                        if let Some(old) = self.superseded_session.take() {
+                            if let Some(dir) = self.session_dir.as_deref() {
+                                if record_superseded_thread(dir, conversation_id, &old).is_err()
+                                    || forget_thread(dir, conversation_id).is_err()
+                                    || save_thread(dir, conversation_id, &thread_id).is_err()
+                                {
+                                    return self.end(Update::Failed(SESSION_STORE_FAILED));
+                                }
+                            }
+                            self.conversations
+                                .borrow_mut()
+                                .insert(conversation_id.clone(), thread_id.clone());
+                            let home = codex_home(&self.launch);
+                            let workspace = self.launch.work_dir.clone();
+                            let marker = self
+                                .session_dir
+                                .as_deref()
+                                .map(|dir| superseded_thread_dir(dir, conversation_id).join(&old));
+                            forget::tracked_cleanup(marker, move || {
+                                home.as_deref()
+                                    .map_or(Ok(()), |home| forget_rollouts(home, &workspace, &old))
+                            });
+                        }
+                    }
+                    conversation_id.clone()
                 }
-                self.conversations
-                    .borrow_mut()
-                    .insert(conversation_id.clone(), thread_id);
-                self.queue
-                    .push_back(Update::ConversationCreated(conversation_id.clone()));
-                conversation_id
-            }
-        };
+                None => {
+                    let conversation_id = new_conversation_id(&self.conversations.borrow());
+                    if persistent {
+                        if self.session_dir.as_deref().is_none_or(|dir| {
+                            save_thread(dir, &conversation_id, &thread_id).is_err()
+                        }) {
+                            return self.end(Update::Failed(SESSION_STORE_FAILED));
+                        }
+                        self.conversations
+                            .borrow_mut()
+                            .insert(conversation_id.clone(), thread_id.clone());
+                    }
+                    self.queue
+                        .push_back(Update::ConversationCreated(conversation_id.clone()));
+                    self.conversation_id = Some(conversation_id.clone());
+                    conversation_id
+                }
+            };
+        if persistent {
+            self.queue.push_back(Update::Session(thread_id));
+        }
         self.queue.push_back(Update::Started {
             conversation_id: Some(conversation_id),
         });
     }
 
-    fn turn_ended(&mut self, outcome: Result<(), ErrorBody<'static>>) {
+    fn turn_ended(&mut self, outcome: Result<(), ErrorBody>) {
         let outcome = if outcome.is_ok() && self.native_search && self.sources.count() == 0 {
             Err(NATIVE_SEARCH_NO_SOURCES)
         } else {
@@ -1170,6 +1333,20 @@ mod tests {
                 .any(|arg| arg.to_string_lossy().starts_with("--model"))
         );
         assert_eq!(default.last().unwrap(), "-");
+    }
+
+    #[test]
+    fn ephemeral_turns_disable_codex_session_persistence() {
+        let args = exec_args_for_session(
+            Path::new("/tmp/pervue-workspace"),
+            runtime_core::turn::SessionPolicy::Ephemeral,
+            false,
+            false,
+            false,
+            None,
+            None,
+        );
+        assert!(args.iter().any(|arg| arg == "--ephemeral"));
     }
 
     #[test]

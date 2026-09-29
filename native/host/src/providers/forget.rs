@@ -8,18 +8,18 @@
 
 use std::fs;
 use std::io::{self, Read};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use super::{Exchange, Scripted, Update};
-use crate::protocol::events::{ErrorBody, ErrorCode};
+use crate::protocol::events::ErrorCode;
+use runtime_core::protocol::Failure as ErrorBody;
 
-pub const SESSION_FORGET_FAILED: ErrorBody<'static> = ErrorBody {
+pub const SESSION_FORGET_FAILED: ErrorBody = ErrorBody {
     code: ErrorCode::InternalError,
     reason: "SESSION_FORGET_FAILED",
-    message: "Pervue couldn't remove everything this conversation left behind. Delete it again to retry.",
     retryable: true,
 };
 
@@ -81,6 +81,29 @@ impl Exchange for Background {
             *self = Self::Stopping;
         }
     }
+}
+
+/// Runs best-effort provider cleanup away from the host loop. The work must
+/// preserve its durable retry record when it fails.
+pub(crate) fn work_in_background(work: impl FnOnce() + Send + 'static) {
+    let _ = thread::Builder::new()
+        .name("pervue-provider-cleanup".to_owned())
+        .spawn(work);
+}
+
+/// Runs best-effort provider cleanup and removes its durable retry marker only
+/// after the cleanup succeeds.
+pub(crate) fn tracked_cleanup(
+    marker: Option<PathBuf>,
+    work: impl FnOnce() -> io::Result<()> + Send + 'static,
+) {
+    work_in_background(move || {
+        if work().is_ok() {
+            if let Some(marker) = marker {
+                let _ = remove(&marker);
+            }
+        }
+    });
 }
 
 /// How much of a transcript is read to find where it ran.

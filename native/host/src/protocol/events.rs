@@ -9,7 +9,7 @@ use serde::Serialize;
 use super::PROTOCOL_VERSION;
 use super::request::{FailureKind, RequestFailure, RequestId};
 use crate::HOST_VERSION;
-use pervue_core::framing::{self, FrameError};
+use crate::framing::{self, FrameError};
 
 /// v1 event names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,13 +48,23 @@ pub enum EventError {
     Frame(FrameError),
 }
 
-pub use pervue_core::protocol::{
-    Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ModelOption,
-    ProviderState, Source,
+pub use runtime_core::protocol::{
+    Authentication, Availability, Capabilities, Capability, ErrorCode, ModelOption, ProviderState,
+    Source,
 };
 
-/// Payload of a `provider.status` event.
+/// Protocol-v1 error body. Runtime failures are converted to this host-owned
+/// shape so provider-runtime crates never carry Pervue wording.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct ErrorBody<'a> {
+    pub code: ErrorCode,
+    pub reason: &'a str,
+    pub message: &'a str,
+    pub retryable: bool,
+}
+
+/// Payload of a `provider.status` event.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ProviderStatus<'a> {
     pub provider_id: &'a str,
     pub status: ProviderState,
@@ -299,13 +309,13 @@ mod tests {
     #[test]
     fn suggested_models_are_listed_only_when_there_are_some() {
         const MODELS: &[ModelOption] = &[ModelOption {
-            id: "sonnet",
-            label: "Sonnet (latest)",
+            id: std::borrow::Cow::Borrowed("sonnet"),
+            label: std::borrow::Cow::Borrowed("Sonnet (latest)"),
         }];
         let mut state = crate::providers::fake::STATUS;
-        let without = serde_json::to_value(state).unwrap();
+        let without = serde_json::to_value(&state).unwrap();
         assert!(without.get("models").is_none());
-        state.models = MODELS;
+        state.models = std::borrow::Cow::Borrowed(MODELS);
         let with = serde_json::to_value(state).unwrap();
         assert_eq!(
             with["models"],
@@ -333,7 +343,8 @@ mod tests {
                     model_selection: Capability::Unknown,
                     cancellation: Capability::Supported,
                 },
-                models: &[],
+                models: std::borrow::Cow::Borrowed(&[]),
+                sign_in: None,
             },
         };
 

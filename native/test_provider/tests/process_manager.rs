@@ -5,7 +5,7 @@
 use std::io;
 use std::time::{Duration, Instant};
 
-use pervue_core::process::{Ending, Event, Exit, MAX_CHUNK_BYTES, Process, ProcessSpec};
+use runtime_core::process::{Ending, Event, Exit, MAX_CHUNK_BYTES, Process, ProcessSpec};
 
 const PROVIDER: &str = env!("CARGO_BIN_EXE_pervue-fake-provider");
 const NORMAL_OUTPUT: &str = concat!(

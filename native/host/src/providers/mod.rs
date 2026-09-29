@@ -16,7 +16,8 @@ use std::time::{Duration, Instant};
 
 use crate::conversation::{BrowserContext, HistoryMessage};
 use crate::protocol::events::Capabilities;
-pub use pervue_core::stream::BUSY_LIMIT;
+pub use runtime_core::stream::BUSY_LIMIT;
+use runtime_core::turn::SessionPolicy;
 
 pub mod claude;
 pub mod codex;
@@ -46,9 +47,19 @@ pub struct SendRequest {
     /// Whether the selected AI provider should perform its own authenticated
     /// native web search during this same turn.
     pub native_search: bool,
+    /// Whether provider-native state may outlive this turn.
+    pub session_policy: SessionPolicy,
+    /// Start a new native session even when this Pervue conversation already
+    /// has one. The host uses this for search isolation.
+    pub fresh_session: bool,
 }
 
-pub use pervue_core::exchange::{Exchange, Scripted, Timeouts, Update};
+pub use runtime_core::exchange::{Exchange, Scripted, Timeouts, Update};
+
+pub(crate) fn keep_bounded_output(output: &mut Vec<u8>, bytes: &[u8], limit: usize) {
+    let remaining = limit.saturating_sub(output.len());
+    output.extend_from_slice(&bytes[..bytes.len().min(remaining)]);
+}
 
 /// A provider adapter.
 pub trait Provider {
@@ -60,6 +71,12 @@ pub trait Provider {
     /// Capabilities that are stable for this adapter implementation. The host
     /// uses these to reject requests that would otherwise be silently degraded.
     fn capabilities(&self) -> Capabilities;
+
+    /// Whether this execution mode supports a provider-native persistent
+    /// session that can be resumed by an opaque handle.
+    fn supports_persistent_session(&self) -> bool {
+        false
+    }
 
     /// Starts checking availability, authentication, and capabilities. The
     /// exchange reports one `Status` and then `Completed`.

@@ -18,6 +18,7 @@ use pervue_host::protocol::events::{Authentication, Availability, Capability, Er
 use pervue_host::providers::codex::{CODEX_VARIABLES, Codex, LIMITS, Limits};
 use pervue_host::providers::environment::INHERITED;
 use pervue_host::providers::{Exchange, Provider, SendRequest, Timeouts, Update};
+use runtime_core::turn::SessionPolicy;
 use serde_json::Value;
 use support::{FakeCodex, PROMPT_STOP_GRACE, PacedInput, TEST_LIMITS, names, serve};
 
@@ -31,6 +32,8 @@ fn ask(text: &str) -> SendRequest {
         context: None,
         model: None,
         native_search: false,
+        session_policy: SessionPolicy::Persistent,
+        fresh_session: false,
     }
 }
 
@@ -70,7 +73,12 @@ fn run_until_started(exchange: &mut dyn Exchange) -> Vec<Update> {
 fn visible(updates: &[Update]) -> Vec<Update> {
     updates
         .iter()
-        .filter(|update| **update != Update::Activity)
+        .filter(|update| {
+            !matches!(
+                update,
+                Update::Activity | Update::Launched | Update::Session(_) | Update::Usage(_)
+            )
+        })
         .cloned()
         .collect()
 }
@@ -847,7 +855,7 @@ fn codex_runs_in_its_own_workspace() {
 #[cfg(unix)]
 #[test]
 fn codex_gets_the_workspace_s_real_path() {
-    use pervue_core::discovery::SearchPath;
+    use runtime_core::discovery::SearchPath;
     use std::path::Path;
 
     // Reached through a link, the workspace is checked, and given to Codex,
@@ -961,6 +969,38 @@ fn a_new_host_recovers_the_codex_thread_without_exposing_it() {
             .any(|invocation| invocation.contains(&format!("resume {stored} -")))
     );
     codex.assert_nothing_left_running();
+}
+
+#[test]
+fn search_retry_without_completed_history_starts_a_fresh_codex_session() {
+    let codex = FakeCodex::install("answers", "signed-in");
+    let adapter = codex.adapter();
+    let first = visible(&run_to_end(adapter.send(ask("first")).as_mut()));
+    let Update::ConversationCreated(conversation_id) = first[0].clone() else {
+        panic!("missing conversation: {first:?}");
+    };
+
+    codex.set("search-no-links", "signed-in");
+    let before = codex.invocations().len();
+    let updates = run_to_end(
+        adapter
+            .send(SendRequest {
+                conversation_id: Some(conversation_id),
+                native_search: true,
+                fresh_session: true,
+                ..ask("retry search")
+            })
+            .as_mut(),
+    );
+    assert_eq!(
+        failure(&updates),
+        (ErrorCode::SearchFailed, "NATIVE_SEARCH_NO_SOURCES")
+    );
+    assert!(
+        codex.invocations()[before..]
+            .iter()
+            .any(|line| line.starts_with("exec "))
+    );
 }
 
 #[test]
@@ -1078,11 +1118,8 @@ fn failed_turns_map_to_normalized_errors() {
         let Some(Update::Failed(error)) = updates.last() else {
             unreachable!()
         };
-        assert!(
-            !error.message.contains("sk-"),
-            "{scenario}: {}",
-            error.message
-        );
+        let debug = format!("{error:?}");
+        assert!(!debug.contains("sk-"), "{scenario}: {debug}");
         codex.assert_nothing_left_running();
     }
 }

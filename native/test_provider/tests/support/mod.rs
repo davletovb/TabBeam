@@ -12,13 +12,13 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use pervue_core::discovery::SearchPath;
-use pervue_core::framing;
 use pervue_host::diagnostics::Diagnostics;
+use pervue_host::framing;
 use pervue_host::host;
 use pervue_host::providers::claude::{Claude, Limits as ClaudeLimits};
 use pervue_host::providers::codex::{Codex, Limits};
 use pervue_host::providers::{Provider, Providers, Timeouts};
+use runtime_core::discovery::SearchPath;
 use serde_json::Value;
 
 pub const PROVIDER: &str = env!("CARGO_BIN_EXE_pervue-fake-provider");
@@ -28,6 +28,7 @@ pub const TEST_LIMITS: Limits = Limits {
     timeouts: Timeouts {
         start: Duration::from_secs(10),
         idle: Duration::from_secs(10),
+        max_turn: Duration::from_secs(30),
         stop_grace: Duration::from_millis(300),
     },
     probe: Duration::from_secs(5),
@@ -146,6 +147,7 @@ pub const CLAUDE_TEST_LIMITS: ClaudeLimits = ClaudeLimits {
     timeouts: Timeouts {
         start: Duration::from_secs(10),
         idle: Duration::from_secs(10),
+        max_turn: Duration::from_secs(30),
         stop_grace: Duration::from_millis(300),
     },
     probe: Duration::from_secs(5),

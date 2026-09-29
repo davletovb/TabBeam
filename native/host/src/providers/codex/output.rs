@@ -21,7 +21,9 @@
 
 use serde_json::Value;
 
-use crate::protocol::events::{ErrorBody, ErrorCode};
+use crate::protocol::events::ErrorCode;
+use runtime_core::protocol::Failure as ErrorBody;
+use runtime_core::turn::Usage;
 
 /// One line of Codex output, reduced to what the adapter needs.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,7 +36,7 @@ pub enum Line {
     WebSearch,
     /// Work in progress, with nothing to show.
     Progress,
-    TurnCompleted,
+    TurnCompleted(Usage),
     /// The turn failed; the message is Codex's own and is never forwarded.
     TurnFailed(String),
     /// Nothing the adapter acts on.
@@ -71,7 +73,12 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
             _ => return Err(Malformed),
         },
         "turn.started" => Line::TurnStarted,
-        "turn.completed" => Line::TurnCompleted,
+        "turn.completed" => Line::TurnCompleted(Usage {
+            input_tokens: event.pointer("/usage/input_tokens").and_then(Value::as_u64),
+            output_tokens: event
+                .pointer("/usage/output_tokens")
+                .and_then(Value::as_u64),
+        }),
         "turn.failed" => Line::TurnFailed(
             event
                 .pointer("/error/message")
@@ -100,24 +107,21 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
     })
 }
 
-const AUTH_REJECTED: ErrorBody<'static> = ErrorBody {
+const AUTH_REJECTED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderNotAuthenticated,
     reason: "AUTH_REJECTED",
-    message: "Codex's sign-in was rejected. Run \"codex login\" in a terminal, then try again.",
     retryable: false,
 };
 
-const RATE_LIMITED: ErrorBody<'static> = ErrorBody {
+const RATE_LIMITED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROVIDER_RATE_LIMITED",
-    message: "Codex has reached a usage or rate limit. Try again later.",
     retryable: true,
 };
 
-const UNAVAILABLE: ErrorBody<'static> = ErrorBody {
+const UNAVAILABLE: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROVIDER_UNAVAILABLE",
-    message: "Codex couldn't answer right now. Try again.",
     retryable: true,
 };
 
@@ -125,7 +129,7 @@ const UNAVAILABLE: ErrorBody<'static> = ErrorBody {
 /// the reason comes from the status it names; anything else counts as the
 /// service being unavailable. The message itself is never forwarded: it can
 /// contain URLs and masked keys.
-pub fn turn_failure(message: &str) -> ErrorBody<'static> {
+pub fn turn_failure(message: &str) -> ErrorBody {
     let message = message.to_ascii_lowercase();
     let mentions = |needles: &[&str]| needles.iter().any(|needle| message.contains(needle));
     if mentions(&[
@@ -173,7 +177,10 @@ mod tests {
                 Line::Progress,
                 Line::TurnStarted,
                 Line::AgentMessage("Hello from the mock — ünïcödé ✓".to_owned()),
-                Line::TurnCompleted,
+                Line::TurnCompleted(Usage {
+                    input_tokens: Some(12),
+                    output_tokens: Some(7)
+                }),
             ]
         );
     }
@@ -189,7 +196,13 @@ mod tests {
     fn a_resumed_turn_reports_the_same_thread() {
         let (first, resumed) = (parse_all(SUCCESS), parse_all(RESUMED));
         assert_eq!(first[0], resumed[0]);
-        assert_eq!(resumed.last(), Some(&Line::TurnCompleted));
+        assert_eq!(
+            resumed.last(),
+            Some(&Line::TurnCompleted(Usage {
+                input_tokens: Some(24),
+                output_tokens: Some(14),
+            }))
+        );
     }
 
     #[test]
@@ -303,6 +316,5 @@ mod tests {
         let secret = "unexpected status 401 Unauthorized: Incorrect API key provided: sk-abc***xyz";
         let error = turn_failure(secret);
         assert_eq!(error.code, ErrorCode::ProviderNotAuthenticated);
-        assert!(!error.message.contains("sk-"));
     }
 }

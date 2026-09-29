@@ -21,7 +21,7 @@ nix = { version = "0.31", default-features = false, features = ["resource", "sig
 # Host adapter tests use the host; process and stream integration tests import
 # core directly and run against this crate's fake-provider binary.
 pervue-host = { path = "../host" }
-pervue-core = { path = "../core" }
+runtime-core = { path = "../runtime-core" }
 
 [target.'cfg(unix)'.dev-dependencies]
 nix = { version = "0.31", default-features = false, features = ["process", "signal"] }

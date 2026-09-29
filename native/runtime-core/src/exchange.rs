@@ -5,12 +5,20 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use crate::protocol::{ErrorBody, ProviderState, Source};
+use crate::protocol::{Failure, ProviderState, Source};
+use crate::turn::Usage;
 
 /// What an exchange reports, in protocol order. After a terminal update
 /// (`Completed`, `Failed`, or `Stopped`), the exchange is finished.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Update {
+    /// The provider process was successfully spawned.
+    Launched,
+    /// A resumable provider's opaque native session handle. Persistent turns
+    /// emit this before `Started`, and again if the provider changes it.
+    Session(String),
+    /// A cumulative usage snapshot for this turn.
+    Usage(Usage),
     /// A new provider-neutral conversation (`conversation.created`). Comes
     /// before `Started`.
     ConversationCreated(String),
@@ -31,7 +39,7 @@ pub enum Update {
     /// Terminal: the request succeeded.
     Completed,
     /// Terminal: the request failed.
-    Failed(ErrorBody<'static>),
+    Failed(Failure),
     /// Terminal: the exchange stopped after [`Exchange::cancel`].
     Stopped,
 }
@@ -60,8 +68,10 @@ pub trait Exchange {
 pub struct Timeouts {
     /// From the request to `response.started`.
     pub start: Duration,
-    /// Between updates once the response has started.
+    /// Between recognized work updates once the response has started.
     pub idle: Duration,
+    /// Absolute wall-clock bound for the whole turn, including provider start.
+    pub max_turn: Duration,
     /// How long a cancelled or timed-out request may take to stop before its
     /// process is killed.
     pub stop_grace: Duration,
@@ -76,7 +86,7 @@ impl Scripted {
     }
 
     /// An exchange that fails at once with `error`.
-    pub fn failed(error: ErrorBody<'static>) -> Self {
+    pub fn failed(error: Failure) -> Self {
         Self::new([Update::Failed(error)])
     }
 }

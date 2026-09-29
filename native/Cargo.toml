@@ -1,5 +1,5 @@
 [workspace]
-members = ["core", "host", "test_provider"]
+members = ["runtime-core", "scheduler", "service", "host", "test_provider"]
 # `cargo build` produces only the shippable host; the fake provider is a test
 # fixture and is built by `cargo test --workspace`.
 default-members = ["host"]

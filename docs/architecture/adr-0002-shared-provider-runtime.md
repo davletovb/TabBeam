@@ -1,6 +1,6 @@
 # ADR-0002: Extract a shared provider runtime as an in-process Rust library
 
-**Status:** Proposed  
+**Status:** Accepted — Stage 1 implemented, verification in progress  
 **Date:** 2026-09-28  
 **Decided by:** Project owner, pending acceptance  
 **Supersedes:** the C ABI path for non-Rust consumers in [ADR-0001](adr-0001-native-host-in-rust.md) (the last bullet of both Decision and Consequences) and in framework §9.7  
@@ -70,7 +70,7 @@ Conclave has decided to adopt a shared runtime for all four providers at once, i
 - **Sign-in checks** that an application requests finish before a turn's provider process starts, and never run alongside it. The library doesn't cache them. Caching is an explicit policy of the application, and any authentication or provider failure invalidates it.
 - **Each application's namespace is fixed when it starts the runtime.** Its workspaces and cleanup records live under that namespace.
 - **The environment allowlist** can be extended only through trusted configuration read at startup. It never takes names from per-turn input: requests, pages, prompts, or model output.
-- **Every turn is bounded by an absolute limit.** The idle timer resets only on deltas, sources, and provider events that the adapter recognizes as work.
+- **The scheduler supports an absolute turn limit for every turn.** The application chooses the value. Stage 1 preserves Pervue's pre-ADR effective behavior by using an unbounded practical default (`Duration::MAX`) until the default-limit open question below is decided; explicit callers and tests can set a finite bound. The idle timer resets only on deltas, sources, and provider events that the adapter recognizes as work.
 
 **5. The turn contract.**
 - **IDs.** The runtime generates turn IDs from a counter that never repeats for the life of the process. `start_turn` registers the turn before it returns.
@@ -124,7 +124,7 @@ Both applications pin the library to a git revision, and it stays at version 0.x
   - an allowlisted environment;
   - private workspaces;
   - typed failures.
-- **Pervue gets usage events, live model lists, sign-in classification, and an absolute turn limit.** It no longer has a Claude turn that unrecognized events keep alive indefinitely.
+- **Pervue gets usage events, live model lists, sign-in classification, and scheduler support for an absolute turn limit.** Stage 1 does not silently choose the unresolved product default; Pervue keeps its previous effective duration behavior until that value is decided. Unrecognized provider events do not reset the idle timer.
 - **Both applications share the fake provider, the hostile-process matrix, the contract suite, and the panic tests.**
 - **Renaming `pervue-core` to `runtime-core` touches every import,** and extracting the scheduler changes `host.rs`, the host's most heavily tested file.
 - **Pervue depends on another repository.** Pin bumps and API churn during 0.x are the cost.

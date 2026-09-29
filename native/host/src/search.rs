@@ -6,17 +6,16 @@
 
 use std::collections::HashSet;
 
-use pervue_core::protocol::{ErrorBody, ErrorCode, Source};
+use runtime_core::protocol::{ErrorCode, Failure, Source};
 use serde::Deserialize;
 
 pub const DEFAULT_BACKEND_ID: &str = "auto";
 pub const PROVIDER_BACKEND_ID: &str = "provider";
 pub const MAX_SOURCES_PER_TURN: usize = 20;
 
-pub const NATIVE_SEARCH_NO_SOURCES: ErrorBody<'static> = ErrorBody {
+pub const NATIVE_SEARCH_NO_SOURCES: Failure = Failure {
     code: ErrorCode::SearchFailed,
     reason: "NATIVE_SEARCH_NO_SOURCES",
-    message: "The provider finished web search without returning usable sources. Try again or update the provider.",
     retryable: true,
 };
 

@@ -376,7 +376,7 @@ fn parse_conversation_payload(payload: &[u8]) -> Result<Method<'_>, FailureKind>
 }
 
 /// Longest model ID accepted.
-pub const MAX_MODEL_ID_BYTES: usize = 128;
+pub const MAX_MODEL_ID_BYTES: usize = runtime_core::turn::MAX_MODEL_ID_BYTES;
 
 /// Whether `model` is a model ID a provider may be given. Model IDs reach a
 /// provider's command line, so only a conservative set passes: an ASCII
@@ -384,13 +384,7 @@ pub const MAX_MODEL_ID_BYTES: usize = 128;
 /// Nothing can start with `-` (an option), contain whitespace or quotes, or
 /// look like a path from the root.
 pub fn is_model_id(model: &str) -> bool {
-    let bytes = model.as_bytes();
-    !bytes.is_empty()
-        && bytes.len() <= MAX_MODEL_ID_BYTES
-        && bytes[0].is_ascii_alphanumeric()
-        && bytes
-            .iter()
-            .all(|&byte| byte.is_ascii_alphanumeric() || b"._-:/@".contains(&byte))
+    runtime_core::turn::is_model_id(model)
 }
 
 /// Validates `input` and returns its question and bounded dialogue history.

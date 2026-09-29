@@ -3,7 +3,7 @@
 use std::collections::VecDeque;
 
 use libfuzzer_sys::fuzz_target;
-use pervue_core::stream::{LineSplitter, StreamError};
+use runtime_core::stream::{LineSplitter, StreamError};
 
 const MAX_LINE_BYTES: usize = 4096;
 const SCHEDULE_BYTES: usize = 8;

@@ -1,17 +1,17 @@
 //! Exercises only the standalone crate's public surface (no host or browser).
 
+use std::borrow::Cow;
 use std::collections::VecDeque;
-use std::io::{Cursor, Read};
+use std::io::Read;
 use std::time::{Duration, Instant};
 
-use pervue_core::discovery::SearchPath;
-use pervue_core::exchange::{Exchange, Scripted, Update};
-use pervue_core::framing::{self, FrameError, MAX_FRAME_SIZE};
-use pervue_core::process::{Process, ProcessSpec};
-use pervue_core::protocol::{
+use runtime_core::discovery::SearchPath;
+use runtime_core::exchange::{Exchange, Scripted, Update};
+use runtime_core::process::{Process, ProcessSpec};
+use runtime_core::protocol::{
     Authentication, Availability, Capabilities, Capability, ProviderState,
 };
-use pervue_core::stream::{LineSplitter, Output, StreamError, split_text};
+use runtime_core::stream::{LineSplitter, Output, StreamError, split_text};
 
 #[test]
 fn child_fixture() {
@@ -36,7 +36,7 @@ fn process_and_stream_lifecycle_work_without_host() {
     let mut process = Process::spawn(&spec).unwrap();
     process.write(b"ping").unwrap();
     process.close_stdin();
-    let mut lines = pervue_core::stream::LineStream::new(process, 4096).keeping_stderr_tail(64);
+    let mut lines = runtime_core::stream::LineStream::new(process, 4096).keeping_stderr_tail(64);
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut saw_echo = false;
     loop {
@@ -63,21 +63,7 @@ fn process_and_stream_lifecycle_work_without_host() {
 }
 
 #[test]
-fn bounded_wire_and_utf8_chunks_work_without_host() {
-    let mut output = Cursor::new(Vec::new());
-    framing::write_frame(&mut output, b"ok").unwrap();
-    output.set_position(0);
-    assert_eq!(
-        framing::read_frame(&mut output).unwrap(),
-        Some(b"ok".to_vec())
-    );
-
-    let mut too_large = Cursor::new((MAX_FRAME_SIZE as u32 + 1).to_ne_bytes());
-    assert_eq!(
-        framing::read_frame(&mut too_large),
-        Err(FrameError::TooLarge)
-    );
-
+fn bounded_utf8_chunks_work_without_host() {
     let mut splitter = LineSplitter::new(4);
     let mut lines = VecDeque::new();
     splitter.push(&[0xc3], &mut lines).unwrap();
@@ -109,7 +95,8 @@ fn exchange_and_platform_types_do_not_depend_on_host() {
             model_selection: Capability::Unknown,
             cancellation: Capability::Supported,
         },
-        models: &[],
+        models: Cow::Borrowed(&[]),
+        sign_in: None,
     };
     let mut exchange: Box<dyn Exchange> = Box::new(Scripted::new([
         Update::Status {

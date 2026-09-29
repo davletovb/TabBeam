@@ -5,6 +5,7 @@
 //! stream-json on stdin/stdout. Provider session IDs remain private to this
 //! adapter; the host and extension see only opaque Pervue conversation IDs.
 
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::{OsStr, OsString};
@@ -21,13 +22,13 @@ use super::forget;
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
 use crate::conversation::{provider_prompt, search_prompt};
 use crate::protocol::events::{
-    Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ModelOption,
-    ProviderState,
+    Authentication, Availability, Capabilities, Capability, ErrorCode, ModelOption, ProviderState,
 };
 use crate::search::{NATIVE_SEARCH_NO_SOURCES, SourceCollector, claude_tool_result_sources};
-use pervue_core::discovery::SearchPath;
-use pervue_core::process::{Event, Exit, Process, ProcessSpec};
-use pervue_core::stream::{BUSY_LIMIT, LineStream, Output};
+use runtime_core::discovery::SearchPath;
+use runtime_core::process::{Event, Exit, Process, ProcessSpec};
+use runtime_core::protocol::Failure as ErrorBody;
+use runtime_core::stream::{BUSY_LIMIT, LineStream, Output};
 
 pub mod output;
 
@@ -64,6 +65,7 @@ pub const LIMITS: Limits = Limits {
     timeouts: Timeouts {
         start: Duration::from_secs(60),
         idle: Duration::from_secs(300),
+        max_turn: Duration::MAX,
         stop_grace: Duration::from_secs(2),
     },
     probe: Duration::from_secs(10),
@@ -89,37 +91,34 @@ pub const CAPABILITIES: Capabilities = Capabilities {
 /// valid model ID (a full model name) is passed on as well.
 pub const MODELS: &[ModelOption] = &[
     ModelOption {
-        id: "sonnet",
-        label: "Sonnet (latest)",
+        id: Cow::Borrowed("sonnet"),
+        label: Cow::Borrowed("Sonnet (latest)"),
     },
     ModelOption {
-        id: "opus",
-        label: "Opus (latest)",
+        id: Cow::Borrowed("opus"),
+        label: Cow::Borrowed("Opus (latest)"),
     },
     ModelOption {
-        id: "haiku",
-        label: "Haiku (latest)",
+        id: Cow::Borrowed("haiku"),
+        label: Cow::Borrowed("Haiku (latest)"),
     },
 ];
 
-const NOT_INSTALLED: ErrorBody<'static> = ErrorBody {
+const NOT_INSTALLED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderNotFound,
     reason: "EXECUTABLE_NOT_FOUND",
-    message: "Claude isn't installed. Install Claude Code, then try again.",
     retryable: false,
 };
 
-const NOT_SIGNED_IN: ErrorBody<'static> = ErrorBody {
+const NOT_SIGNED_IN: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderNotAuthenticated,
     reason: "LOGIN_REQUIRED",
-    message: "Claude isn't signed in. Run \"claude auth login\" in a terminal, then try again.",
     retryable: false,
 };
 
-const UNKNOWN_CONVERSATION: ErrorBody<'static> = ErrorBody {
+const UNKNOWN_CONVERSATION: ErrorBody = ErrorBody {
     code: ErrorCode::InvalidRequest,
     reason: "UNKNOWN_CONVERSATION",
-    message: "This conversation can't be continued. Start a new one.",
     retryable: false,
 };
 
@@ -128,45 +127,39 @@ const UNKNOWN_CONVERSATION: ErrorBody<'static> = ErrorBody {
 /// two; past this, the answer streams live.
 const HELD_TEXT_LIMIT: usize = 600;
 
-const START_FAILED: ErrorBody<'static> = ErrorBody {
+const START_FAILED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROVIDER_UNAVAILABLE",
-    message: "Claude couldn't start. Reinstall Claude Code, then try again.",
     retryable: false,
 };
 
-const NO_WORKSPACE: ErrorBody<'static> = ErrorBody {
+const NO_WORKSPACE: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "WORKSPACE_UNAVAILABLE",
-    message: "Pervue couldn't prepare a private folder for Claude. Check your cache folder and try again.",
     retryable: false,
 };
 
-const PROCESS_EXITED: ErrorBody<'static> = ErrorBody {
+const PROCESS_EXITED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROCESS_EXITED",
-    message: "Claude stopped unexpectedly. Try again.",
     retryable: true,
 };
 
-const MALFORMED_OUTPUT: ErrorBody<'static> = ErrorBody {
+const MALFORMED_OUTPUT: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "MALFORMED_PROVIDER_OUTPUT",
-    message: "Claude answered in a way Pervue doesn't understand. Update Claude Code and Pervue, then try again.",
     retryable: false,
 };
 
-const SESSION_GONE: ErrorBody<'static> = ErrorBody {
+const SESSION_GONE: ErrorBody = ErrorBody {
     code: ErrorCode::InvalidRequest,
     reason: "UNKNOWN_CONVERSATION",
-    message: "Claude's saved session no longer exists. Start a new conversation.",
     retryable: false,
 };
 
-const SESSION_STORE_FAILED: ErrorBody<'static> = ErrorBody {
+const SESSION_STORE_FAILED: ErrorBody = ErrorBody {
     code: ErrorCode::InternalError,
     reason: "SESSION_STORE_FAILED",
-    message: "Claude's conversation could not be saved. Check available disk space and try again.",
     retryable: true,
 };
 
@@ -277,7 +270,7 @@ impl Claude {
         self.search.find(EXECUTABLE)
     }
 
-    fn validate_request(&self, request: &SendRequest) -> Result<(), ErrorBody<'static>> {
+    fn validate_request(&self, request: &SendRequest) -> Result<(), ErrorBody> {
         if let Some(conversation_id) = request.conversation_id.as_deref() {
             let known = self.conversations.borrow().contains_key(conversation_id)
                 || self
@@ -300,6 +293,10 @@ impl Provider for Claude {
 
     fn timeouts(&self) -> Timeouts {
         self.limits.timeouts
+    }
+
+    fn supports_persistent_session(&self) -> bool {
+        true
     }
 
     fn capabilities(&self) -> Capabilities {
@@ -340,6 +337,11 @@ impl Provider for Claude {
         let workspace = self.launch.work_dir.clone();
         let session_dir = self.session_dir.clone();
         let conversation = conversation_id.to_owned();
+        let superseded = self
+            .session_dir
+            .as_deref()
+            .map(|dir| read_superseded_sessions(dir, conversation_id))
+            .unwrap_or_default();
         let conversations = Rc::clone(&self.conversations);
         let forgotten = conversation_id.to_owned();
         // The files go on their own thread. The mappings go last, the one in
@@ -347,10 +349,18 @@ impl Provider for Claude {
         // all be removed, a retry can still find them.
         forget::in_background(
             move || {
-                if let (Some(config), Some(session)) = (config, session) {
-                    forget_transcript(&config, &workspace, &session)?;
+                if let Some(config) = config {
+                    if let Some(session) = session {
+                        forget_transcript(&config, &workspace, &session)?;
+                    }
+                    for session in &superseded {
+                        forget_transcript(&config, &workspace, session)?;
+                    }
                 }
-                session_dir.map_or(Ok(()), |dir| forget_session(&dir, &conversation))
+                session_dir.map_or(Ok(()), |dir| {
+                    forget_session(&dir, &conversation)?;
+                    forget::remove(&superseded_session_dir(&dir, &conversation))
+                })
             },
             move || {
                 conversations.borrow_mut().remove(&forgotten);
@@ -385,19 +395,33 @@ impl Provider for Claude {
         } else {
             request.text
         };
-        let resume = match &conversation_id {
+        let prior_session = match &conversation_id {
             None => None,
-            Some(id) => match self.conversations.borrow().get(id).cloned().or_else(|| {
+            Some(id) => self.conversations.borrow().get(id).cloned().or_else(|| {
                 self.session_dir
                     .as_deref()
                     .and_then(|dir| read_session(dir, id))
-            }) {
-                Some(session) => Some(session),
-                None if !request.history.is_empty() => None,
-                None => return Box::new(Scripted::failed(UNKNOWN_CONVERSATION)),
-            },
+            }),
         };
-        if resume.is_none() && !request.history.is_empty() {
+        let resume = if request.fresh_session {
+            None
+        } else {
+            match &conversation_id {
+                None => None,
+                Some(id) => match self.conversations.borrow().get(id).cloned().or_else(|| {
+                    self.session_dir
+                        .as_deref()
+                        .and_then(|dir| read_session(dir, id))
+                }) {
+                    Some(session) => Some(session),
+                    None if !request.history.is_empty() => None,
+                    None => return Box::new(Scripted::failed(UNKNOWN_CONVERSATION)),
+                },
+            }
+        };
+        if request.fresh_session && prior_session.is_some() && !request.history.is_empty() {
+            prompt = fallback_prompt.take().expect("history is present");
+        } else if resume.is_none() && !request.history.is_empty() {
             prompt = fallback_prompt.take().expect("history is present");
             conversation_id = None;
         }
@@ -412,6 +436,8 @@ impl Provider for Claude {
             resume,
             conversation_id,
             conversations: Rc::clone(&self.conversations),
+            superseded_session: request.fresh_session.then_some(prior_session).flatten(),
+            session_policy: request.session_policy,
             finish_grace: self.limits.finish,
             model: request.model,
             native_search: request.native_search,
@@ -450,7 +476,9 @@ fn status_update(availability: Availability, authentication: Authentication) -> 
             availability,
             authentication,
             capabilities: CAPABILITIES,
-            models: MODELS,
+            models: Cow::Borrowed(MODELS),
+            sign_in: (authentication == Authentication::Authenticated)
+                .then_some(runtime_core::turn::SignInClassification::Unknown),
         },
     }
 }
@@ -506,6 +534,33 @@ fn read_session(dir: &Path, id: &str) -> Option<String> {
         .read_to_string(&mut content)
         .ok()?;
     output::is_session_id(&content).then_some(content)
+}
+
+fn superseded_session_dir(dir: &Path, conversation: &str) -> PathBuf {
+    dir.join("superseded").join(conversation)
+}
+
+fn record_superseded_session(dir: &Path, conversation: &str, session: &str) -> io::Result<()> {
+    if !session_name(conversation) || !output::is_session_id(session) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid superseded session",
+        ));
+    }
+    let base = superseded_session_dir(dir, conversation);
+    super::private_fs::create_private_dir(&base)?;
+    super::private_fs::write_private_file(&base.join(session), b"pending\n")
+}
+
+fn read_superseded_sessions(dir: &Path, conversation: &str) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(superseded_session_dir(dir, conversation)) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|session| output::is_session_id(session))
+        .collect()
 }
 
 fn save_session(dir: &Path, id: &str, session: &str) -> io::Result<()> {
@@ -665,7 +720,22 @@ impl Exchange for StatusCheck {
 /// The `claude -p` command line for one turn; the question goes on stdin.
 /// A model is one `--model=<id>` argument, so the ID can never be read as an
 /// option of its own.
+#[cfg(test)]
 fn claude_args(resume: Option<&str>, model: Option<&str>, native_search: bool) -> Vec<OsString> {
+    claude_args_for_session(
+        resume,
+        model,
+        native_search,
+        runtime_core::turn::SessionPolicy::Persistent,
+    )
+}
+
+fn claude_args_for_session(
+    resume: Option<&str>,
+    model: Option<&str>,
+    native_search: bool,
+    session_policy: runtime_core::turn::SessionPolicy,
+) -> Vec<OsString> {
     let mut args: Vec<OsString> = [
         "-p",
         "--output-format",
@@ -691,6 +761,9 @@ fn claude_args(resume: Option<&str>, model: Option<&str>, native_search: bool) -
     if native_search {
         args.extend(["--allowedTools", "WebSearch"].map(OsString::from));
     }
+    if session_policy == runtime_core::turn::SessionPolicy::Ephemeral {
+        args.push("--no-session-persistence".into());
+    }
     if let Some(model) = model {
         args.push(format!("--model={model}").into());
     }
@@ -711,6 +784,8 @@ struct Turn {
     resume: Option<String>,
     conversation_id: Option<String>,
     conversations: Conversations,
+    superseded_session: Option<String>,
+    session_policy: runtime_core::turn::SessionPolicy,
     finish_grace: Duration,
     /// The model to answer with, or `None` for Claude's own default.
     model: Option<String>,
@@ -739,7 +814,7 @@ struct Turn {
     held: String,
     /// The message being streamed has shown its text; the rest streams live.
     live: bool,
-    outcome: Option<Result<(), ErrorBody<'static>>>,
+    outcome: Option<Result<(), ErrorBody>>,
     finish_by: Option<Instant>,
 }
 
@@ -754,10 +829,11 @@ impl Turn {
         let Ok(workspace) = self.launch.workspace() else {
             return self.end(Update::Failed(NO_WORKSPACE));
         };
-        let args = claude_args(
+        let args = claude_args_for_session(
             self.resume.as_deref(),
             self.model.as_deref(),
             self.native_search,
+            self.session_policy,
         );
         let input = serde_json::json!({
             "type": "user",
@@ -773,6 +849,7 @@ impl Turn {
                 let _ = process.write(input.as_bytes());
                 process.close_stdin();
                 self.prompt.clear();
+                self.queue.push_back(Update::Launched);
                 self.stage = Stage::Running(
                     LineStream::new(process, MAX_LINE_BYTES).keeping_stderr_tail(STDERR_TAIL_BYTES),
                 );
@@ -804,15 +881,40 @@ impl Turn {
                     // A rebuild replaces the stale session behind the same
                     // conversation ID, so the extension sees no new one.
                     Some(id) if self.rebuilding => {
-                        if self.remember(&id, session).is_err() {
+                        if self.remember(&id, session.clone()).is_err() {
                             return self.end(Update::Failed(SESSION_STORE_FAILED));
                         }
+                        id
+                    }
+                    Some(id) if self.superseded_session.is_some() => {
+                        let old = self.superseded_session.take().expect("checked");
+                        if let Some(dir) = self.session_dir.as_deref() {
+                            if record_superseded_session(dir, &id, &old).is_err()
+                                || save_session(dir, &id, &session).is_err()
+                            {
+                                return self.end(Update::Failed(SESSION_STORE_FAILED));
+                            }
+                        }
+                        self.conversations
+                            .borrow_mut()
+                            .insert(id.clone(), session.clone());
+                        let config = claude_config_dir(&self.launch);
+                        let workspace = self.launch.work_dir.clone();
+                        let marker = self
+                            .session_dir
+                            .as_deref()
+                            .map(|dir| superseded_session_dir(dir, &id).join(&old));
+                        forget::tracked_cleanup(marker, move || {
+                            config.as_deref().map_or(Ok(()), |config| {
+                                forget_transcript(config, &workspace, &old)
+                            })
+                        });
                         id
                     }
                     Some(id) => id,
                     None => {
                         let id = new_conversation_id(&self.conversations.borrow());
-                        if self.remember(&id, session).is_err() {
+                        if self.remember(&id, session.clone()).is_err() {
                             return self.end(Update::Failed(SESSION_STORE_FAILED));
                         }
                         self.conversation_id = Some(id.clone());
@@ -821,6 +923,9 @@ impl Turn {
                         id
                     }
                 };
+                if self.session_policy == runtime_core::turn::SessionPolicy::Persistent {
+                    self.queue.push_back(Update::Session(session));
+                }
                 if !self.announced {
                     self.announced = true;
                     self.queue.push_back(Update::Started {
@@ -892,8 +997,11 @@ impl Turn {
                 self.flush_held();
                 self.queue.push_back(Update::Activity);
             }
-            Ok(Line::Progress) => self.queue.push_back(Update::Activity),
-            Ok(Line::ResultSuccess { session_id, text }) => {
+            Ok(Line::ResultSuccess {
+                session_id,
+                text,
+                usage,
+            }) => {
                 if !self.started {
                     return self.end(Update::Failed(MALFORMED_OUTPUT));
                 }
@@ -906,6 +1014,9 @@ impl Turn {
                 if !self.saw_delta && !text.is_empty() {
                     self.saw_delta = true;
                     self.queue.push_back(Update::Delta(text));
+                }
+                if usage.input_tokens.is_some() || usage.output_tokens.is_some() {
+                    self.queue.push_back(Update::Usage(usage));
                 }
                 self.turn_ended(if self.native_search && self.sources.count() == 0 {
                     Err(NATIVE_SEARCH_NO_SOURCES)
@@ -959,7 +1070,7 @@ impl Turn {
     /// doesn't fail the turn: the new session is kept in memory, and the stale
     /// mapping is dropped so a restarted host rebuilds from history instead of
     /// resuming the wrong session.
-    fn follow_session(&self, conversation: &str, session: String) {
+    fn follow_session(&mut self, conversation: &str, session: String) {
         let current = self
             .conversations
             .borrow()
@@ -969,13 +1080,34 @@ impl Turn {
         if current.as_deref() == Some(session.as_str()) {
             return;
         }
+
         if self.remember(conversation, session.clone()).is_err() {
             if let Some(dir) = &self.session_dir {
                 let _ = forget_session(dir, conversation);
             }
             self.conversations
                 .borrow_mut()
-                .insert(conversation.to_owned(), session);
+                .insert(conversation.to_owned(), session.clone());
+        }
+        if self.session_policy == runtime_core::turn::SessionPolicy::Persistent {
+            self.queue.push_back(Update::Session(session));
+        }
+
+        if let Some(old) = current {
+            let marker = self.session_dir.as_deref().and_then(|dir| {
+                record_superseded_session(dir, conversation, &old)
+                    .ok()
+                    .map(|()| superseded_session_dir(dir, conversation).join(&old))
+            });
+            if self.session_dir.is_none() || marker.is_some() {
+                let config = claude_config_dir(&self.launch);
+                let workspace = self.launch.work_dir.clone();
+                forget::tracked_cleanup(marker, move || {
+                    config
+                        .as_deref()
+                        .map_or(Ok(()), |config| forget_transcript(config, &workspace, &old))
+                });
+            }
         }
     }
 
@@ -988,7 +1120,7 @@ impl Turn {
         }
     }
 
-    fn turn_ended(&mut self, outcome: Result<(), ErrorBody<'static>>) {
+    fn turn_ended(&mut self, outcome: Result<(), ErrorBody>) {
         self.outcome = Some(outcome);
         self.finish_by = Some(after(self.finish_grace));
     }
@@ -1158,12 +1290,23 @@ mod tests {
     }
 
     #[test]
+    fn ephemeral_turns_disable_claude_session_persistence() {
+        let args = claude_args_for_session(
+            None,
+            None,
+            false,
+            runtime_core::turn::SessionPolicy::Ephemeral,
+        );
+        assert!(args.iter().any(|arg| arg == "--no-session-persistence"));
+    }
+
+    #[test]
     fn suggested_models_are_valid_model_ids() {
         assert_eq!(CAPABILITIES.model_selection, Capability::Supported);
         assert!(!MODELS.is_empty());
         for model in MODELS {
             assert!(
-                crate::protocol::request::is_model_id(model.id),
+                crate::protocol::request::is_model_id(&model.id),
                 "{}",
                 model.id
             );

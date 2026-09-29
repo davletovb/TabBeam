@@ -2,6 +2,7 @@
 
 mod support;
 
+use runtime_core::turn::SessionPolicy;
 use std::ffi::OsString;
 use std::time::{Duration, Instant};
 
@@ -25,6 +26,8 @@ fn ask(text: &str) -> SendRequest {
         context: None,
         model: None,
         native_search: false,
+        session_policy: SessionPolicy::Persistent,
+        fresh_session: false,
     }
 }
 
@@ -71,7 +74,12 @@ fn run_until_started(exchange: &mut dyn Exchange) -> Vec<Update> {
 fn visible(updates: &[Update]) -> Vec<Update> {
     updates
         .iter()
-        .filter(|update| **update != Update::Activity)
+        .filter(|update| {
+            !matches!(
+                update,
+                Update::Activity | Update::Launched | Update::Session(_) | Update::Usage(_)
+            )
+        })
         .cloned()
         .collect()
 }
@@ -782,13 +790,19 @@ fn result_session_id_replaces_the_mapping_for_the_next_turn() {
     };
 
     claude.set("forks-session", "signed-in");
-    run_to_end(
+    let second = run_to_end(
         adapter
             .send(SendRequest {
                 conversation_id: Some(conversation.clone()),
                 ..ask("second")
             })
             .as_mut(),
+    );
+    assert!(
+        second.iter().any(
+            |update| matches!(update, Update::Session(session) if session.starts_with("forked-"))
+        ),
+        "{second:?}"
     );
 
     claude.set("answers", "signed-in");
@@ -808,6 +822,38 @@ fn result_session_id_replaces_the_mapping_for_the_next_turn() {
         .collect();
     assert!(prints[1].contains("--resume claude-"));
     assert!(prints[2].contains("--resume forked-"), "{:?}", prints[2]);
+}
+
+#[test]
+fn search_retry_without_completed_history_starts_a_fresh_claude_session() {
+    let claude = FakeClaude::install("answers", "signed-in");
+    let adapter = claude.adapter();
+    let first = visible(&run_to_end(adapter.send(ask("first")).as_mut()));
+    let Update::ConversationCreated(conversation_id) = first[0].clone() else {
+        panic!("missing conversation: {first:?}");
+    };
+
+    claude.set("search-no-links", "signed-in");
+    let before = claude.invocations().len();
+    let updates = run_to_end(
+        adapter
+            .send(SendRequest {
+                conversation_id: Some(conversation_id),
+                native_search: true,
+                fresh_session: true,
+                ..ask("retry search")
+            })
+            .as_mut(),
+    );
+    assert_eq!(
+        failure(&updates),
+        (ErrorCode::SearchFailed, "NATIVE_SEARCH_NO_SOURCES")
+    );
+    assert!(
+        claude.invocations()[before..]
+            .iter()
+            .any(|line| line.starts_with("-p "))
+    );
 }
 
 #[test]

@@ -2,7 +2,8 @@
 
 use serde_json::Value;
 
-use crate::protocol::events::{ErrorBody, ErrorCode};
+use crate::protocol::events::ErrorCode;
+use runtime_core::protocol::Failure as ErrorBody;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Line {
@@ -22,7 +23,7 @@ pub enum Line {
     ResultSuccess {
         text: String,
     },
-    ResultFailed(ErrorBody<'static>),
+    ResultFailed(ErrorBody),
     Activity,
     Ignored,
 }
@@ -187,24 +188,21 @@ fn parse_assistant(event: &Value) -> Result<Line, Malformed> {
     })
 }
 
-const AUTH_REJECTED: ErrorBody<'static> = ErrorBody {
+const AUTH_REJECTED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderNotAuthenticated,
     reason: "AUTH_REJECTED",
-    message: "Grok isn't signed in with a Grok/X account. Run grok login, then try again.",
     retryable: false,
 };
 
-const RATE_LIMITED: ErrorBody<'static> = ErrorBody {
+const RATE_LIMITED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROVIDER_RATE_LIMITED",
-    message: "Grok has reached a usage or rate limit. Try again later.",
     retryable: true,
 };
 
-const UNAVAILABLE: ErrorBody<'static> = ErrorBody {
+const UNAVAILABLE: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROVIDER_UNAVAILABLE",
-    message: "Grok couldn't answer right now. Try again.",
     retryable: true,
 };
 
@@ -227,7 +225,7 @@ pub fn authentication_failure(message: &str) -> bool {
     .any(|phrase| lower.contains(phrase))
 }
 
-pub fn provider_failure(message: &str) -> ErrorBody<'static> {
+pub fn provider_failure(message: &str) -> ErrorBody {
     let lower = message.to_ascii_lowercase();
     if authentication_failure(message) {
         AUTH_REJECTED

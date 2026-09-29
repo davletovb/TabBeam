@@ -12,6 +12,7 @@
 //! forwarded, and the private workspace (including Grok's session files and
 //! the prompt file) is removed after the child has exited.
 
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::ffi::{OsStr, OsString};
 use std::fs;
@@ -28,11 +29,12 @@ use super::private_fs;
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
 use crate::conversation::provider_prompt;
 use crate::protocol::events::{
-    Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ProviderState,
+    Authentication, Availability, Capabilities, Capability, ErrorCode, ModelOption, ProviderState,
 };
-use pervue_core::discovery::SearchPath;
-use pervue_core::process::{Event, Exit, Process, ProcessSpec};
-use pervue_core::stream::{BUSY_LIMIT, LineStream, Output};
+use runtime_core::discovery::SearchPath;
+use runtime_core::process::{Event, Exit, Process, ProcessSpec};
+use runtime_core::protocol::Failure as ErrorBody;
+use runtime_core::stream::{BUSY_LIMIT, LineStream, Output};
 
 pub mod output;
 
@@ -62,97 +64,88 @@ pub const CAPABILITIES: Capabilities = Capabilities {
 pub const TIMEOUTS: Timeouts = Timeouts {
     start: Duration::from_secs(60),
     idle: Duration::from_secs(300),
+    max_turn: Duration::MAX,
     stop_grace: Duration::from_secs(2),
 };
 
-const NOT_INSTALLED: ErrorBody<'static> = ErrorBody {
+const NOT_INSTALLED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderNotFound,
     reason: "EXECUTABLE_NOT_FOUND",
-    message: "Grok Build isn't installed. Install the Grok CLI, then try again.",
     retryable: false,
 };
-const START_FAILED: ErrorBody<'static> = ErrorBody {
+const START_FAILED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROVIDER_UNAVAILABLE",
-    message: "Grok Build couldn't start. Reinstall it, then try again.",
     retryable: false,
 };
-const NO_WORKSPACE: ErrorBody<'static> = ErrorBody {
+const NO_WORKSPACE: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "WORKSPACE_UNAVAILABLE",
-    message: "Pervue couldn't prepare a private folder for Grok. Check your cache folder, then try again.",
     retryable: false,
 };
-const PROCESS_EXITED: ErrorBody<'static> = ErrorBody {
+const PROCESS_EXITED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROCESS_EXITED",
-    message: "Grok stopped unexpectedly. Try again.",
     retryable: true,
 };
-const MALFORMED_OUTPUT: ErrorBody<'static> = ErrorBody {
+const MALFORMED_OUTPUT: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "MALFORMED_PROVIDER_OUTPUT",
-    message: "Grok answered in a way Pervue doesn't understand. Update Grok Build and Pervue, then try again.",
     retryable: false,
 };
-const BOUNDARY_VIOLATION: ErrorBody<'static> = ErrorBody {
+const BOUNDARY_VIOLATION: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROVIDER_BOUNDARY_VIOLATION",
-    message: "Grok exposed or used a tool Pervue doesn't allow, so the turn was stopped.",
     retryable: false,
 };
-const AUTH_MODE_REJECTED: ErrorBody<'static> = ErrorBody {
+const AUTH_MODE_REJECTED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderNotAuthenticated,
     reason: "AUTH_REJECTED",
-    message: "Pervue uses Grok/X account sign-in, not API-key billing. Run grok login, then try again.",
     retryable: false,
 };
-const UNKNOWN_CONVERSATION: ErrorBody<'static> = ErrorBody {
+const UNKNOWN_CONVERSATION: ErrorBody = ErrorBody {
     code: ErrorCode::InvalidRequest,
     reason: "UNKNOWN_CONVERSATION",
-    message: "This Grok conversation ID is not one Pervue issued. Start a new conversation.",
     retryable: false,
 };
-const MODEL_NOT_SUPPORTED: ErrorBody<'static> = ErrorBody {
+const PERSISTENT_SESSION_UNSUPPORTED: ErrorBody = ErrorBody {
+    code: ErrorCode::InvalidRequest,
+    reason: "PERSISTENT_SESSION_UNSUPPORTED",
+    retryable: false,
+};
+const MODEL_NOT_SUPPORTED: ErrorBody = ErrorBody {
     code: ErrorCode::InvalidRequest,
     reason: "MODEL_NOT_SUPPORTED",
-    message: "The Grok provider accepts Grok model IDs only.",
     retryable: false,
 };
-const SEARCH_UNSUPPORTED: ErrorBody<'static> = ErrorBody {
+const SEARCH_UNSUPPORTED: ErrorBody = ErrorBody {
     code: ErrorCode::InvalidRequest,
     reason: "SEARCH_UNSUPPORTED",
-    message: "Grok Build's shipped headless CLI doesn't expose a Pervue-safe native web-search surface yet. Turn Web off and try again.",
     retryable: false,
 };
-const MODEL_MISMATCH: ErrorBody<'static> = ErrorBody {
+const MODEL_MISMATCH: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "MODEL_MISMATCH",
-    message: "Grok started a different model than Pervue requested. Update Grok Build or choose its default model, then try again.",
     retryable: false,
 };
-const WORKSPACE_MISMATCH: ErrorBody<'static> = ErrorBody {
+const WORKSPACE_MISMATCH: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "WORKSPACE_MISMATCH",
-    message: "Grok didn't stay in Pervue's private workspace, so the turn was stopped.",
     retryable: false,
 };
-const TOOLSET_MISMATCH: ErrorBody<'static> = ErrorBody {
+const TOOLSET_MISMATCH: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "TOOLSET_MISMATCH",
-    message: "Grok exposed tools in a text-only Pervue turn, so the turn was stopped.",
     retryable: false,
 };
-const SKILLS_MISMATCH: ErrorBody<'static> = ErrorBody {
+const SKILLS_MISMATCH: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "SKILLS_MISMATCH",
-    message: "Grok loaded skills in Pervue's isolated turn, so the turn was stopped.",
     retryable: false,
 };
-const MCP_MISMATCH: ErrorBody<'static> = ErrorBody {
+const MCP_MISMATCH: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "MCP_MISMATCH",
-    message: "Grok connected an MCP server in Pervue's isolated turn, so the turn was stopped.",
     retryable: false,
 };
 
@@ -307,19 +300,34 @@ impl Provider for Grok {
     fn status(&self) -> Box<dyn Exchange> {
         let Some(executable) = self.executable() else {
             return Box::new(Scripted::new([
-                status_update(Availability::NotFound, Authentication::Unknown),
+                status_update(
+                    Availability::NotFound,
+                    Authentication::Unknown,
+                    Vec::new(),
+                    None,
+                ),
                 Update::Completed,
             ]));
         };
         let Ok(base) = self.launch.base_workspace() else {
             return Box::new(Scripted::new([
-                status_update(Availability::Unavailable, Authentication::Unknown),
+                status_update(
+                    Availability::Unavailable,
+                    Authentication::Unknown,
+                    Vec::new(),
+                    None,
+                ),
                 Update::Completed,
             ]));
         };
         let Ok(workspace) = ProbeWorkspace::create(&base) else {
             return Box::new(Scripted::new([
-                status_update(Availability::Unavailable, Authentication::Unknown),
+                status_update(
+                    Availability::Unavailable,
+                    Authentication::Unknown,
+                    Vec::new(),
+                    None,
+                ),
                 Update::Completed,
             ]));
         };
@@ -341,13 +349,21 @@ impl Provider for Grok {
                 }
             }
             Err(_) => StatusCheck::Done(VecDeque::from([
-                status_update(Availability::Unavailable, Authentication::Unknown),
+                status_update(
+                    Availability::Unavailable,
+                    Authentication::Unknown,
+                    Vec::new(),
+                    None,
+                ),
                 Update::Completed,
             ])),
         })
     }
 
     fn send(&self, request: SendRequest) -> Box<dyn Exchange> {
+        if request.session_policy != runtime_core::turn::SessionPolicy::Ephemeral {
+            return Box::new(Scripted::failed(PERSISTENT_SESSION_UNSUPPORTED));
+        }
         if request.native_search {
             return Box::new(Scripted::failed(SEARCH_UNSUPPORTED));
         }
@@ -395,7 +411,7 @@ impl Provider for Grok {
         Box::new(Turn {
             stream: LineStream::new(process, MAX_LINE_BYTES).keeping_stderr_tail(STDERR_TAIL_BYTES),
             workspace: Some(workspace),
-            queue: VecDeque::new(),
+            queue: VecDeque::from([Update::Launched]),
             conversation_id,
             announce_conversation: new_conversation,
             expected_cwd,
@@ -410,17 +426,61 @@ impl Provider for Grok {
     }
 }
 
-fn status_update(availability: Availability, authentication: Authentication) -> Update {
+fn status_update(
+    availability: Availability,
+    authentication: Authentication,
+    models: Vec<ModelOption>,
+    sign_in: Option<runtime_core::turn::SignInClassification>,
+) -> Update {
     Update::Status {
         provider_id: ID.to_owned(),
         status: ProviderState {
             availability,
             authentication,
             capabilities: CAPABILITIES,
-            // Grok's signed-in model catalog changes frequently. Pervue accepts
-            // valid grok-* IDs and deliberately does not freeze suggestions.
-            models: &[],
+            models: Cow::Owned(models),
+            sign_in,
         },
+    }
+}
+
+fn parse_models(bytes: &[u8]) -> Vec<ModelOption> {
+    let text = String::from_utf8_lossy(bytes);
+    let mut models = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim().trim_start_matches(['*', '-']).trim();
+        let Some(id) = trimmed.split_whitespace().next() else {
+            continue;
+        };
+        if !id.starts_with("grok-")
+            || !runtime_core::turn::is_model_id(id)
+            || id.len() > runtime_core::turn::MAX_MODEL_LABEL_BYTES
+            || models.iter().any(|model: &ModelOption| model.id == id)
+        {
+            continue;
+        }
+        if models.len() == runtime_core::turn::MAX_MODEL_OPTIONS {
+            break;
+        }
+        models.push(ModelOption {
+            id: Cow::Owned(id.to_owned()),
+            label: Cow::Owned(id.to_owned()),
+        });
+    }
+    models
+}
+
+fn classify_sign_in(
+    authentication: Authentication,
+    stdout: &[u8],
+) -> Option<runtime_core::turn::SignInClassification> {
+    let text = String::from_utf8_lossy(stdout).to_ascii_lowercase();
+    if text.contains("api key") || text.contains("deployment key") {
+        Some(runtime_core::turn::SignInClassification::ApiKey)
+    } else if authentication == Authentication::Authenticated {
+        Some(runtime_core::turn::SignInClassification::Subscription)
+    } else {
+        None
     }
 }
 
@@ -490,9 +550,15 @@ impl Exchange for StatusCheck {
                             } else {
                                 Availability::Unavailable
                             };
+                            let models = if success {
+                                parse_models(stdout)
+                            } else {
+                                Vec::new()
+                            };
+                            let sign_in = classify_sign_in(authentication, stdout);
                             workspace.take();
                             *self = Self::Done(VecDeque::from([
-                                status_update(availability, authentication),
+                                status_update(availability, authentication, models, sign_in),
                                 Update::Completed,
                             ]));
                         }
@@ -500,7 +566,12 @@ impl Exchange for StatusCheck {
                             process.kill();
                             workspace.take();
                             *self = Self::Done(VecDeque::from([
-                                status_update(Availability::Unavailable, Authentication::Unknown),
+                                status_update(
+                                    Availability::Unavailable,
+                                    Authentication::Unknown,
+                                    Vec::new(),
+                                    None,
+                                ),
                                 Update::Completed,
                             ]));
                         }
@@ -654,13 +725,13 @@ struct Turn {
     initialized: bool,
     cancelled: bool,
     saw_text: bool,
-    outcome: Option<Result<(), ErrorBody<'static>>>,
+    outcome: Option<Result<(), ErrorBody>>,
     finish_by: Option<Instant>,
     done: bool,
 }
 
 impl Turn {
-    fn fail(&mut self, error: ErrorBody<'static>) {
+    fn fail(&mut self, error: ErrorBody) {
         self.queue.clear();
         self.outcome = Some(Err(error));
         self.finish_by = None;
@@ -961,5 +1032,21 @@ mod tests {
         assert!(model_matches(Some("grok-4.6"), "grok-4.6"));
         assert!(!model_matches(Some("grok-4"), "grok-40"));
         assert!(!model_matches(Some("grok-4"), "claude-grok-4"));
+    }
+    #[test]
+    fn live_model_catalog_is_protocol_bounded() {
+        let mut input = String::new();
+        for index in 0..40 {
+            input.push_str(&format!("* grok-{index} (available)\n"));
+        }
+        input.push_str("* grok bad\n");
+        input.push_str("* --danger\n");
+        let models = parse_models(input.as_bytes());
+        assert_eq!(models.len(), runtime_core::turn::MAX_MODEL_OPTIONS);
+        assert!(
+            models
+                .iter()
+                .all(|model| runtime_core::turn::is_model_id(&model.id))
+        );
     }
 }

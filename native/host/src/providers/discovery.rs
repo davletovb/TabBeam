@@ -1,8 +1,8 @@
 //! Host policy for provider executable discovery. The reusable directory
-//! search lives in `pervue-core`; adapters use this entry point so every
+//! search lives in `runtime-core`; adapters use this entry point so every
 //! installed provider honors the same override, including hermetic tests.
 
-use pervue_core::discovery::SearchPath;
+use runtime_core::discovery::SearchPath;
 
 /// Host-specific override for the generic search path.
 pub const SEARCH_PATH_VARIABLE: &str = "PERVUE_PROVIDER_PATH";

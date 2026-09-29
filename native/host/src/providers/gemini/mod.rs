@@ -6,6 +6,7 @@
 //! of depending on Antigravity's native continuation state, then removes the
 //! Antigravity transcript once the child has exited.
 
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::{OsStr, OsString};
@@ -23,12 +24,13 @@ use super::private_fs;
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
 use crate::conversation::{SEARCH_INSTRUCTIONS, provider_prompt};
 use crate::protocol::events::{
-    Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ProviderState,
+    Authentication, Availability, Capabilities, Capability, ErrorCode, ModelOption, ProviderState,
 };
 use crate::search::{NATIVE_SEARCH_NO_SOURCES, SourceCollector, codex_message_sources};
-use pervue_core::discovery::SearchPath;
-use pervue_core::process::{Event, Exit, Process, ProcessSpec};
-use pervue_core::stream::{BUSY_LIMIT, LineStream, Output};
+use runtime_core::discovery::SearchPath;
+use runtime_core::process::{Event, Exit, Process, ProcessSpec};
+use runtime_core::protocol::Failure as ErrorBody;
+use runtime_core::stream::{BUSY_LIMIT, LineStream, Output};
 
 pub mod output;
 
@@ -40,6 +42,7 @@ const PLAIN_AGENT: &str = "pervue-text";
 const SEARCH_AGENT: &str = "pervue-search";
 const MAX_LINE_BYTES: usize = 8 * 1024 * 1024;
 const STDERR_TAIL_BYTES: usize = 8 * 1024;
+const STATUS_OUTPUT_BYTES: usize = 16 * 1024;
 const STATUS_PROBE: Duration = Duration::from_secs(10);
 const FINISH_GRACE: Duration = Duration::from_secs(5);
 
@@ -56,67 +59,63 @@ pub const CAPABILITIES: Capabilities = Capabilities {
 pub const TIMEOUTS: Timeouts = Timeouts {
     start: Duration::from_secs(60),
     idle: Duration::from_secs(300),
+    max_turn: Duration::MAX,
     stop_grace: Duration::from_secs(2),
 };
 
-const NOT_INSTALLED: ErrorBody<'static> = ErrorBody {
+const NOT_INSTALLED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderNotFound,
     reason: "EXECUTABLE_NOT_FOUND",
-    message: "Antigravity CLI isn't installed. Install Antigravity CLI, then try again.",
     retryable: false,
 };
-const START_FAILED: ErrorBody<'static> = ErrorBody {
+const START_FAILED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROVIDER_UNAVAILABLE",
-    message: "Antigravity CLI couldn't start. Reinstall it, then try again.",
     retryable: false,
 };
-const NO_WORKSPACE: ErrorBody<'static> = ErrorBody {
+const NO_WORKSPACE: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "WORKSPACE_UNAVAILABLE",
-    message: "Pervue couldn't prepare a private folder for Antigravity. Check your cache folder, then try again.",
     retryable: false,
 };
-const PROCESS_EXITED: ErrorBody<'static> = ErrorBody {
+const PROCESS_EXITED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROCESS_EXITED",
-    message: "Antigravity stopped unexpectedly. Try again.",
     retryable: true,
 };
-const MALFORMED_OUTPUT: ErrorBody<'static> = ErrorBody {
+const MALFORMED_OUTPUT: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "MALFORMED_PROVIDER_OUTPUT",
-    message: "Antigravity answered in a way Pervue doesn't understand. Update Antigravity CLI and Pervue, then try again.",
     retryable: false,
 };
-const BOUNDARY_VIOLATION: ErrorBody<'static> = ErrorBody {
+const BOUNDARY_VIOLATION: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROVIDER_BOUNDARY_VIOLATION",
-    message: "Antigravity tried to use a tool or step Pervue doesn't allow, so the turn was stopped.",
     retryable: false,
 };
-const AGENT_NOT_USED: ErrorBody<'static> = ErrorBody {
+const AGENT_NOT_USED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROVIDER_AGENT_NOT_USED",
-    message: "Antigravity didn't use Pervue's restricted agent, so the turn was stopped. Update Antigravity CLI, then try again.",
     retryable: false,
 };
-const PERMISSIONS_TOO_OPEN: ErrorBody<'static> = ErrorBody {
+const PERMISSIONS_TOO_OPEN: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROVIDER_PERMISSIONS_TOO_OPEN",
-    message: "Antigravity is set to run tools without asking, so Pervue stopped the turn. Set Antigravity's tool permission to review requests, then try again.",
     retryable: false,
 };
-const UNKNOWN_CONVERSATION: ErrorBody<'static> = ErrorBody {
+const UNKNOWN_CONVERSATION: ErrorBody = ErrorBody {
     code: ErrorCode::InvalidRequest,
     reason: "UNKNOWN_CONVERSATION",
-    message: "This Gemini conversation ID is not one Pervue issued. Start a new conversation.",
     retryable: false,
 };
-const MODEL_NOT_SUPPORTED: ErrorBody<'static> = ErrorBody {
+const PERSISTENT_SESSION_UNSUPPORTED: ErrorBody = ErrorBody {
+    code: ErrorCode::InvalidRequest,
+    reason: "PERSISTENT_SESSION_UNSUPPORTED",
+    retryable: false,
+};
+const MODEL_NOT_SUPPORTED: ErrorBody = ErrorBody {
     code: ErrorCode::InvalidRequest,
     reason: "MODEL_NOT_SUPPORTED",
-    message: "The Gemini provider accepts Gemini model IDs only.",
     retryable: false,
 };
 
@@ -275,13 +274,23 @@ impl Provider for Gemini {
     fn status(&self) -> Box<dyn Exchange> {
         let Some(executable) = self.executable() else {
             return Box::new(Scripted::new([
-                status_update(Availability::NotFound, Authentication::Unknown),
+                status_update(
+                    Availability::NotFound,
+                    Authentication::Unknown,
+                    Vec::new(),
+                    None,
+                ),
                 Update::Completed,
             ]));
         };
         let Ok(workspace) = self.launch.base_workspace() else {
             return Box::new(Scripted::new([
-                status_update(Availability::Unavailable, Authentication::Unknown),
+                status_update(
+                    Availability::Unavailable,
+                    Authentication::Unknown,
+                    Vec::new(),
+                    None,
+                ),
                 Update::Completed,
             ]));
         };
@@ -294,17 +303,26 @@ impl Provider for Gemini {
                 StatusCheck::Probing {
                     process,
                     give_up: private_fs::after(STATUS_PROBE),
+                    stdout: Vec::new(),
                     stderr_tail: Vec::new(),
                 }
             }
             Err(_) => StatusCheck::Done(VecDeque::from([
-                status_update(Availability::Unavailable, Authentication::Unknown),
+                status_update(
+                    Availability::Unavailable,
+                    Authentication::Unknown,
+                    Vec::new(),
+                    None,
+                ),
                 Update::Completed,
             ])),
         })
     }
 
     fn send(&self, request: SendRequest) -> Box<dyn Exchange> {
+        if request.session_policy != runtime_core::turn::SessionPolicy::Ephemeral {
+            return Box::new(Scripted::failed(PERSISTENT_SESSION_UNSUPPORTED));
+        }
         if request
             .model
             .as_deref()
@@ -355,6 +373,7 @@ impl Provider for Gemini {
         let Ok(mut process) = Process::spawn(&spec) else {
             return Box::new(Scripted::failed(START_FAILED));
         };
+        let mut launched = VecDeque::from([Update::Launched]);
         if process.write(input.as_bytes()).is_err() {
             process.kill();
             return Box::new(Scripted::failed(START_FAILED));
@@ -367,7 +386,7 @@ impl Provider for Gemini {
             home: self.launch.home.clone(),
             cleanup_dir: self.cleanup_dir.clone(),
             pending_cleanups: Rc::clone(&self.pending_cleanups),
-            queue: VecDeque::new(),
+            queue: std::mem::take(&mut launched),
             conversation_id,
             announce_conversation: new_conversation,
             expected_agent: agent,
@@ -437,22 +456,49 @@ impl Provider for Gemini {
     }
 }
 
-fn status_update(availability: Availability, authentication: Authentication) -> Update {
+fn status_update(
+    availability: Availability,
+    authentication: Authentication,
+    models: Vec<ModelOption>,
+    sign_in: Option<runtime_core::turn::SignInClassification>,
+) -> Update {
     Update::Status {
         provider_id: ID.to_owned(),
         status: ProviderState {
             availability,
             authentication,
             capabilities: CAPABILITIES,
-            models: &[],
+            models: Cow::Owned(models),
+            sign_in,
         },
     }
+}
+
+fn parse_models(bytes: &[u8]) -> Vec<ModelOption> {
+    String::from_utf8_lossy(bytes)
+        .lines()
+        .filter_map(|line| {
+            let (id, label) = line.split_once('\t')?;
+            let id = id.trim();
+            let label = label.trim();
+            (id.starts_with("gemini-")
+                && runtime_core::turn::is_model_id(id)
+                && !label.is_empty()
+                && label.chars().count() <= runtime_core::turn::MAX_MODEL_LABEL_BYTES)
+                .then(|| ModelOption {
+                    id: Cow::Owned(id.to_owned()),
+                    label: Cow::Owned(label.to_owned()),
+                })
+        })
+        .take(runtime_core::turn::MAX_MODEL_OPTIONS)
+        .collect()
 }
 
 enum StatusCheck {
     Probing {
         process: Process,
         give_up: Instant,
+        stdout: Vec<u8>,
         stderr_tail: Vec<u8>,
     },
     Done(VecDeque<Update>),
@@ -467,6 +513,7 @@ impl Exchange for StatusCheck {
                 Self::Probing {
                     process,
                     give_up,
+                    stdout,
                     stderr_tail,
                 } => {
                     // Even after the nominal deadline, first consume an exit
@@ -479,7 +526,9 @@ impl Exchange for StatusCheck {
                         deadline.min(*give_up)
                     };
                     match process.next_event(poll_until) {
-                        Some(Event::Stdout(_)) => {}
+                        Some(Event::Stdout(bytes)) => {
+                            super::keep_bounded_output(stdout, &bytes, STATUS_OUTPUT_BYTES);
+                        }
                         Some(Event::Stderr(bytes)) => {
                             private_fs::keep_tail(stderr_tail, &bytes, STDERR_TAIL_BYTES);
                         }
@@ -500,15 +549,27 @@ impl Exchange for StatusCheck {
                                 } else {
                                     Availability::Unavailable
                                 };
+                            let models = if success {
+                                parse_models(stdout)
+                            } else {
+                                Vec::new()
+                            };
+                            let sign_in = (authentication == Authentication::Authenticated)
+                                .then_some(runtime_core::turn::SignInClassification::Cloud);
                             *self = Self::Done(VecDeque::from([
-                                status_update(availability, authentication),
+                                status_update(availability, authentication, models, sign_in),
                                 Update::Completed,
                             ]));
                         }
                         None if Instant::now() >= *give_up => {
                             process.kill();
                             *self = Self::Done(VecDeque::from([
-                                status_update(Availability::Unavailable, Authentication::Unknown),
+                                status_update(
+                                    Availability::Unavailable,
+                                    Authentication::Unknown,
+                                    Vec::new(),
+                                    None,
+                                ),
                                 Update::Completed,
                             ]));
                         }
@@ -595,13 +656,13 @@ struct Turn {
     step_text: String,
     messages: usize,
     sources: SourceCollector,
-    outcome: Option<Result<(), ErrorBody<'static>>>,
+    outcome: Option<Result<(), ErrorBody>>,
     finish_by: Option<Instant>,
     done: bool,
 }
 
 impl Turn {
-    fn fail(&mut self, error: ErrorBody<'static>) {
+    fn fail(&mut self, error: ErrorBody) {
         self.queue.clear();
         self.outcome = Some(Err(error));
         self.finish_by = Some(Instant::now());
@@ -726,6 +787,7 @@ impl Turn {
             Ok(Line::ResultSuccess {
                 conversation_id,
                 response,
+                usage,
             }) => {
                 if !self.initialized {
                     return self.fail(MALFORMED_OUTPUT);
@@ -753,6 +815,9 @@ impl Turn {
                             self.queue.push_back(Update::Source(source));
                         }
                     }
+                }
+                if usage.input_tokens.is_some() || usage.output_tokens.is_some() {
+                    self.queue.push_back(Update::Usage(usage));
                 }
                 let outcome = if self.native_search && (!self.searched || self.sources.count() == 0)
                 {
@@ -1190,5 +1255,30 @@ mod tests {
             assert!(definition.contains("agents: []"));
             assert!(definition.contains("hooks: []"));
         }
+    }
+    #[test]
+    fn live_model_catalog_is_protocol_bounded() {
+        let mut input = String::new();
+        for index in 0..40 {
+            input.push_str(&format!("gemini-{index}\tGemini {index}\n"));
+        }
+        input.push_str("--danger\tBad\n");
+        input.push_str(&format!(
+            "gemini-too-long\t{}\n",
+            "x".repeat(runtime_core::turn::MAX_MODEL_LABEL_BYTES + 1)
+        ));
+        let models = parse_models(input.as_bytes());
+        assert_eq!(models.len(), runtime_core::turn::MAX_MODEL_OPTIONS);
+        assert!(
+            models
+                .iter()
+                .all(|model| runtime_core::turn::is_model_id(&model.id))
+        );
+        assert!(
+            models
+                .iter()
+                .all(|model| model.label.chars().count()
+                    <= runtime_core::turn::MAX_MODEL_LABEL_BYTES)
+        );
     }
 }

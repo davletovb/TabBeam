@@ -2,7 +2,9 @@
 
 use serde_json::Value;
 
-use crate::protocol::events::{ErrorBody, ErrorCode};
+use crate::protocol::events::ErrorCode;
+use runtime_core::protocol::Failure as ErrorBody;
+use runtime_core::turn::Usage;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Line {
@@ -14,12 +16,12 @@ pub enum Line {
     /// The message being streamed ended.
     MessageStop,
     ToolEvents(Vec<ToolEvent>),
-    Progress,
     ResultSuccess {
         session_id: Option<String>,
         text: String,
+        usage: Usage,
     },
-    ResultFailed(ErrorBody<'static>),
+    ResultFailed(ErrorBody),
     Ignored,
 }
 
@@ -88,7 +90,7 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
                                 .to_owned(),
                         )
                     } else {
-                        Line::Progress
+                        Line::Ignored
                     }
                 }
                 "content_block_start"
@@ -100,7 +102,7 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
                     Line::ToolUseStart
                 }
                 "message_stop" => Line::MessageStop,
-                _ => Line::Progress,
+                _ => Line::Ignored,
             }
         }
         "assistant" | "user" => event
@@ -109,7 +111,7 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
             .map(|blocks| blocks.iter().filter_map(tool_event).collect::<Vec<_>>())
             .filter(|events| !events.is_empty())
             .map(Line::ToolEvents)
-            .unwrap_or(Line::Progress),
+            .unwrap_or(Line::Ignored),
         "result" => {
             let failed = event
                 .get("is_error")
@@ -135,11 +137,36 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
                         .and_then(Value::as_str)
                         .unwrap_or_default()
                         .to_owned(),
+                    usage: Usage {
+                        input_tokens: total_input_tokens(event.get("usage")),
+                        output_tokens: event
+                            .pointer("/usage/output_tokens")
+                            .and_then(Value::as_u64),
+                    },
                 }
             }
         }
         _ => Line::Ignored,
     })
+}
+
+fn total_input_tokens(usage: Option<&Value>) -> Option<u64> {
+    let usage = usage?;
+    let input = usage.get("input_tokens").and_then(Value::as_u64);
+    let cache_creation = usage
+        .get("cache_creation_input_tokens")
+        .and_then(Value::as_u64);
+    let cache_read = usage.get("cache_read_input_tokens").and_then(Value::as_u64);
+    if input.is_none() && cache_creation.is_none() && cache_read.is_none() {
+        None
+    } else {
+        Some(
+            input
+                .unwrap_or(0)
+                .saturating_add(cache_creation.unwrap_or(0))
+                .saturating_add(cache_read.unwrap_or(0)),
+        )
+    }
 }
 
 fn tool_event(block: &Value) -> Option<ToolEvent> {
@@ -160,31 +187,27 @@ fn tool_event(block: &Value) -> Option<ToolEvent> {
     }
 }
 
-const AUTH_REJECTED: ErrorBody<'static> = ErrorBody {
+const AUTH_REJECTED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderNotAuthenticated,
     reason: "AUTH_REJECTED",
-    message: "Claude's sign-in was rejected. Run \"claude auth login\" in a terminal, then try again.",
     retryable: false,
 };
 
-const RATE_LIMITED: ErrorBody<'static> = ErrorBody {
+const RATE_LIMITED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROVIDER_RATE_LIMITED",
-    message: "Claude has reached a usage or rate limit. Try again later.",
     retryable: true,
 };
 
-const UNKNOWN_CONVERSATION: ErrorBody<'static> = ErrorBody {
+const UNKNOWN_CONVERSATION: ErrorBody = ErrorBody {
     code: ErrorCode::InvalidRequest,
     reason: "UNKNOWN_CONVERSATION",
-    message: "Claude's saved session no longer exists. Pervue will rebuild it from conversation history when possible.",
     retryable: false,
 };
 
-const UNAVAILABLE: ErrorBody<'static> = ErrorBody {
+const UNAVAILABLE: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROVIDER_UNAVAILABLE",
-    message: "Claude couldn't answer right now. Try again.",
     retryable: true,
 };
 
@@ -208,7 +231,7 @@ pub fn names_unknown_session(message: &str) -> bool {
 /// "rate" or "auth". Besides Claude's own wording, this covers the raw API
 /// errors it passes on, such as `API Error: 429 {"type":"error","error":{"type":
 /// "rate_limit_error",…}}`.
-pub fn result_failure(message: &str) -> ErrorBody<'static> {
+pub fn result_failure(message: &str) -> ErrorBody {
     let lower = message.to_ascii_lowercase();
     if names_unknown_session(message) {
         UNKNOWN_CONVERSATION
@@ -276,7 +299,8 @@ mod tests {
             ),
             Ok(Line::ResultSuccess {
                 session_id: Some("abc-123".to_owned()),
-                text: "done".to_owned()
+                text: "done".to_owned(),
+                usage: Usage::default()
             })
         );
     }
@@ -314,11 +338,25 @@ mod tests {
             parse(
                 r#"{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}}"#
             ),
-            Ok(Line::Progress)
+            Ok(Line::Ignored)
         );
         assert_eq!(
             parse(r#"{"type":"stream_event","event":{"type":"message_stop"}}"#),
             Ok(Line::MessageStop)
+        );
+    }
+
+    #[test]
+    fn unknown_stream_events_do_not_count_as_progress() {
+        assert_eq!(
+            parse(
+                r#"{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"x"}}}"#
+            ),
+            Ok(Line::Ignored)
+        );
+        assert_eq!(
+            parse(r#"{"type":"stream_event","event":{"type":"future_event"}}"#),
+            Ok(Line::Ignored)
         );
     }
 
@@ -378,5 +416,19 @@ mod tests {
                 "{message}"
             );
         }
+    }
+    #[test]
+    fn usage_includes_cache_creation_and_cache_reads() {
+        let line = r#"{"type":"result","subtype":"success","is_error":false,"result":"done","session_id":"abc-123","usage":{"input_tokens":10,"cache_creation_input_tokens":4,"cache_read_input_tokens":6,"output_tokens":3}}"#;
+        assert!(matches!(
+            parse(line),
+            Ok(Line::ResultSuccess {
+                usage: Usage {
+                    input_tokens: Some(20),
+                    output_tokens: Some(3)
+                },
+                ..
+            })
+        ));
     }
 }

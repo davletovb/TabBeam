@@ -2,7 +2,9 @@
 
 use serde_json::Value;
 
-use crate::protocol::events::{ErrorBody, ErrorCode};
+use crate::protocol::events::ErrorCode;
+use runtime_core::protocol::Failure as ErrorBody;
+use runtime_core::turn::Usage;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Line {
@@ -38,8 +40,9 @@ pub enum Line {
     ResultSuccess {
         conversation_id: Option<String>,
         response: String,
+        usage: Usage,
     },
-    ResultFailed(ErrorBody<'static>),
+    ResultFailed(ErrorBody),
     Ignored,
 }
 
@@ -156,6 +159,14 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
                         .and_then(Value::as_str)
                         .unwrap_or_default()
                         .to_owned(),
+                    usage: Usage {
+                        input_tokens: result
+                            .pointer("/usage/input_tokens")
+                            .and_then(Value::as_u64),
+                        output_tokens: result
+                            .pointer("/usage/output_tokens")
+                            .and_then(Value::as_u64),
+                    },
                 }
             } else {
                 let message = result
@@ -169,24 +180,21 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
     })
 }
 
-const AUTH_REJECTED: ErrorBody<'static> = ErrorBody {
+const AUTH_REJECTED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderNotAuthenticated,
     reason: "AUTH_REJECTED",
-    message: "Gemini isn't signed in through Antigravity. Run \"agy\" in a terminal, sign in, then try again.",
     retryable: false,
 };
 
-const RATE_LIMITED: ErrorBody<'static> = ErrorBody {
+const RATE_LIMITED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROVIDER_RATE_LIMITED",
-    message: "Gemini has reached a usage or rate limit. Try again later.",
     retryable: true,
 };
 
-const UNAVAILABLE: ErrorBody<'static> = ErrorBody {
+const UNAVAILABLE: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROVIDER_UNAVAILABLE",
-    message: "Gemini couldn't answer through Antigravity right now. Try again.",
     retryable: true,
 };
 
@@ -206,7 +214,7 @@ pub fn authentication_failure(message: &str) -> bool {
     .any(|phrase| lower.contains(phrase))
 }
 
-pub fn provider_failure(message: &str) -> ErrorBody<'static> {
+pub fn provider_failure(message: &str) -> ErrorBody {
     let lower = message.to_ascii_lowercase();
     if authentication_failure(message) {
         AUTH_REJECTED
@@ -269,6 +277,7 @@ mod tests {
             Ok(Line::ResultSuccess {
                 conversation_id: Some("agy-123".to_owned()),
                 response: "done".to_owned(),
+                usage: Usage::default(),
             })
         );
     }
@@ -288,17 +297,26 @@ mod tests {
 
     #[test]
     fn failures_are_normalized_without_forwarding_provider_text() {
-        for (message, reason) in [
-            ("authentication required", "AUTH_REJECTED"),
+        for (message, code, reason) in [
+            (
+                "authentication required",
+                ErrorCode::ProviderNotAuthenticated,
+                "AUTH_REJECTED",
+            ),
             (
                 "http 429 RESOURCE_EXHAUSTED quota exceeded",
+                ErrorCode::ProviderFailed,
                 "PROVIDER_RATE_LIMITED",
             ),
-            ("secret provider detail", "PROVIDER_UNAVAILABLE"),
+            (
+                "secret provider detail",
+                ErrorCode::ProviderFailed,
+                "PROVIDER_UNAVAILABLE",
+            ),
         ] {
             let failure = provider_failure(message);
+            assert_eq!(failure.code, code);
             assert_eq!(failure.reason, reason);
-            assert!(!failure.message.contains("secret"));
         }
     }
 

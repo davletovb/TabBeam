@@ -4,7 +4,7 @@
 
 /// Largest Native Messaging payload the host reads or writes (1 MiB). Chrome
 /// caps host-to-browser messages at the same size.
-pub use pervue_core::framing::MAX_FRAME_SIZE;
+pub use crate::framing::MAX_FRAME_SIZE;
 
 /// Deepest container nesting accepted in a request (protocol v1 §1 rule 11).
 pub const MAX_JSON_DEPTH: usize = 128;

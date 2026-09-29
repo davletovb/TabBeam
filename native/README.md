@@ -1,8 +1,8 @@
 # Pervue Native Host
 
 Reusable primitives and their API/compatibility policy live in
-[`core/README.md`](core/README.md). The host owns browser policy and provider
-adapters; `pervue-core` can be tested independently of the host.
+[`runtime-core/README.md`](runtime-core/README.md). The host owns browser policy and provider
+adapters; `runtime-core` can be tested independently of the host.
 
 This directory contains the native Rust companion/host.
 
@@ -13,7 +13,7 @@ The host serves the Chrome extension over Native Messaging. It validates each pr
 ```text
 native/
 ├── Cargo.toml       Cargo workspace: shared version, Rust 1.85+, `unsafe` forbidden
-├── core/            pervue-core: reusable process, framing, stream, protocol, discovery
+├── runtime-core/    runtime-core: reusable process, stream, discovery, and provider primitives
 ├── host/            pervue-host: the Native Messaging host (binary + library)
 │   ├── src/
 │   │   ├── diagnostics.rs  structured lifecycle diagnostics (JSON lines on stderr)
@@ -57,7 +57,7 @@ Pervue uses Chrome Native Messaging framing:
 - 4-byte unsigned payload length in the platform's native byte order;
 - followed by exactly that many payload bytes;
 - zero-length payloads are valid;
-- inbound and outbound frames are capped at `MAX_FRAME_SIZE` (1 MiB) defined in `core/src/framing.rs` and reexported by `host/src/limits.rs`, which tests keep equal to `docs/protocol/native-messaging-v1.json`, the copy the extension is tested against;
+- inbound and outbound frames are capped at `MAX_FRAME_SIZE` (1 MiB) defined in `host/src/framing.rs` and reexported by `host/src/limits.rs`, which tests keep equal to `docs/protocol/native-messaging-v1.json`, the copy the extension is tested against;
 - oversized lengths are rejected before allocation;
 - EOF before any prefix byte is clean end-of-stream;
 - partial prefix/payload EOF is a truncated-frame error;
