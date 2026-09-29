@@ -90,10 +90,9 @@ fn exchange_and_platform_types_do_not_depend_on_host() {
             streaming: Capability::Supported,
             continuation: Capability::Unknown,
             web_search: Capability::Unsupported,
-            page_context: Capability::Supported,
-            attachments: Capability::Unsupported,
             model_selection: Capability::Unknown,
             cancellation: Capability::Supported,
+            tool_isolation: Capability::Supported,
         },
         models: Cow::Borrowed(&[]),
         sign_in: None,
@@ -113,12 +112,7 @@ fn exchange_and_platform_types_do_not_depend_on_host() {
     exchange.cancel(Duration::ZERO);
     assert!(exchange.next(Instant::now()).is_none());
 
-    let mut pending = Scripted::new([
-        Update::Started {
-            conversation_id: None,
-        },
-        Update::Completed,
-    ]);
+    let mut pending = Scripted::new([Update::Started, Update::Completed]);
     pending.cancel(Duration::ZERO);
     assert_eq!(pending.next(Instant::now()), Some(Update::Stopped));
     assert_eq!(pending.next(Instant::now()), None);

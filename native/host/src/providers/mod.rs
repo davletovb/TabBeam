@@ -1,33 +1,29 @@
-//! Provider adapters (PRO-01).
+//! The providers as Pervue serves them.
 //!
-//! The adapter contract is the shared surface proven by the Codex and Claude
-//! adapters (PRO-07). A [`Provider`] reports its status and serves requests
-//! through [`Exchange`]s: state machines the host loop drives, which never
-//! block past the deadline they are given, and never keep working past it for
-//! longer than [`BUSY_LIMIT`], however fast a provider writes. That lets one
-//! host serve several requests, and read cancellations, while providers work.
-//!
-//! Everything provider-specific stays inside the adapter: command lines,
-//! output formats, and provider session IDs. The host sees only [`Update`]s in
-//! protocol terms, and the popup sees only protocol events.
+//! The adapters and the runtime [`Provider`] contract they implement live in
+//! `runtime-providers`, and know nothing of conversations. This module is
+//! Pervue's side: the [`ConversationProvider`] the request loop drives (a
+//! conversation the extension names, with its history and browser context),
+//! the registry of what an installed host serves, and the `fake` scaffold.
+//! [`crate::conversations::Conversations`] implements the first over the
+//! second.
 
+use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use crate::conversation::{BrowserContext, HistoryMessage};
-use crate::protocol::events::Capabilities;
+use crate::conversations::{Conversations, Durability, SessionStore};
+use runtime_core::protocol::Capabilities;
 pub use runtime_core::stream::BUSY_LIMIT;
 use runtime_core::turn::SessionPolicy;
 
-pub mod claude;
-pub mod codex;
-pub mod discovery;
-pub mod environment;
 pub mod fake;
-pub mod forget;
-pub mod gemini;
-pub mod grok;
-pub(crate) mod private_fs;
+
+pub use runtime_providers::{Cleanup, INVALID_TURN, Provider, claude, codex, gemini, grok};
+
+pub use runtime_platform::layout::Layout;
 
 /// One `conversation.send`, in provider-neutral terms.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,17 +48,57 @@ pub struct SendRequest {
     /// Start a new native session even when this Pervue conversation already
     /// has one. The host uses this for search isolation.
     pub fresh_session: bool,
+    /// Where the conversation layer tells the host which conversation this
+    /// request serves, and whether it just created it.
+    pub conversation: ConversationSlot,
 }
+
+/// The conversation a request serves. The host creates one per request and
+/// reads it when the response starts; the layer that owns conversation IDs
+/// fills it in. It replaces the conversation events providers used to send,
+/// which are Pervue's protocol vocabulary, not the runtime's.
+#[derive(Debug, Clone, Default)]
+pub struct ConversationSlot(Rc<RefCell<SlotState>>);
+
+#[derive(Debug, Default)]
+struct SlotState {
+    id: Option<String>,
+    created: bool,
+}
+
+impl ConversationSlot {
+    /// The conversation the request serves, once known.
+    pub fn id(&self) -> Option<String> {
+        self.0.borrow().id.clone()
+    }
+
+    /// Whether the request created that conversation, so the host announces
+    /// it before the response starts.
+    pub fn created(&self) -> bool {
+        self.0.borrow().created
+    }
+
+    pub fn set(&self, id: impl Into<String>, created: bool) {
+        *self.0.borrow_mut() = SlotState {
+            id: Some(id.into()),
+            created,
+        };
+    }
+}
+
+impl PartialEq for ConversationSlot {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for ConversationSlot {}
 
 pub use runtime_core::exchange::{Exchange, Scripted, Timeouts, Update};
 
-pub(crate) fn keep_bounded_output(output: &mut Vec<u8>, bytes: &[u8], limit: usize) {
-    let remaining = limit.saturating_sub(output.len());
-    output.extend_from_slice(&bytes[..bytes.len().min(remaining)]);
-}
-
-/// A provider adapter.
-pub trait Provider {
+/// A provider as the host serves it: a conversation the extension names, with
+/// its history and browser context, over a runtime [`Provider`].
+pub trait ConversationProvider {
     /// The provider ID requests name, such as `codex`.
     fn id(&self) -> &str;
 
@@ -97,23 +133,39 @@ pub trait Provider {
 }
 
 /// The providers a host serves, in the order `provider.status` reports them.
-pub struct Providers(Vec<Box<dyn Provider>>);
+pub struct Providers(Vec<Box<dyn ConversationProvider>>);
 
 impl Providers {
-    pub fn new(providers: Vec<Box<dyn Provider>>) -> Self {
+    pub fn new(providers: Vec<Box<dyn ConversationProvider>>) -> Self {
         Self(providers)
     }
 
     /// The providers of an installed host. The fake scaffold stays registered
     /// for deterministic protocol diagnostics; real adapters use the same
     /// platform discovery rules.
-    pub fn installed() -> Self {
+    pub fn installed(layout: &Layout) -> Self {
+        let data = layout.data_dir();
+        let sessions = |name: &str| SessionStore::new(data.as_ref().map(|dir| dir.join(name)));
         Self(vec![
             Box::new(fake::Fake),
-            Box::new(codex::Codex::installed()),
-            Box::new(claude::Claude::installed()),
-            Box::new(gemini::Gemini::installed()),
-            Box::new(grok::Grok::installed()),
+            // Codex refuses to start a conversation it couldn't resume after a
+            // restart; Claude keeps one in memory when there is no directory.
+            Box::new(Conversations::new(
+                codex::Codex::installed(layout),
+                sessions("codex-sessions").with_durability(Durability::Required),
+            )),
+            Box::new(Conversations::new(
+                claude::Claude::installed(layout),
+                sessions("claude-sessions"),
+            )),
+            Box::new(Conversations::new(
+                gemini::Gemini::installed(layout),
+                SessionStore::new(None),
+            )),
+            Box::new(Conversations::new(
+                grok::Grok::installed(layout),
+                SessionStore::new(None),
+            )),
         ])
     }
 
@@ -123,14 +175,14 @@ impl Providers {
         Self(vec![Box::new(fake::Fake)])
     }
 
-    pub fn get(&self, id: &str) -> Option<&dyn Provider> {
+    pub fn get(&self, id: &str) -> Option<&dyn ConversationProvider> {
         self.0
             .iter()
             .map(Box::as_ref)
             .find(|provider| provider.id() == id)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &dyn Provider> {
+    pub fn iter(&self) -> impl Iterator<Item = &dyn ConversationProvider> {
         self.0.iter().map(Box::as_ref)
     }
 }
@@ -145,7 +197,7 @@ pub struct StatusOfAll {
 impl StatusOfAll {
     pub fn new(providers: &Providers) -> Self {
         Self {
-            pending: providers.iter().map(Provider::status).collect(),
+            pending: providers.iter().map(ConversationProvider::status).collect(),
             current: None,
         }
     }

@@ -198,7 +198,7 @@ Reached after **Milestone H**:
 | LIB-07 | Extract scheduler and absolute turn limits | ADR-002 Stage 1 | Native Runtime | LIB-06 | IMPLEMENTED — VERIFY |
 | LIB-08 | Add service API and supervisor panic boundaries | ADR-002 Stage 1 | Native Runtime | LIB-07 | IMPLEMENTED — VERIFY |
 | LIB-09 | Harden four-provider execution for shared runtime | ADR-002 Stage 1 | Provider / Testing | LIB-08, PRO-08, PRO-09 | IMPLEMENTED — VERIFY |
-| LIB-10 | Extract provider runtime to standalone repository | ADR-002 Stage 2 | Native Library | LIB-09 | BACKLOG |
+| LIB-10 | Extract provider runtime to standalone repository | ADR-002 Stage 2 | Native Library | LIB-09 | IN PROGRESS |
 | DOC-03 | Document reusable library ownership/API boundaries | F | Documentation | LIB-01, LIB-02, LIB-03, LIB-04 | IMPLEMENTED — VERIFY |
 | TST-11 | Add standalone native-library unit/ABI tests | F | Testing | LIB-01, LIB-02, LIB-03, LIB-04 | IMPLEMENTED — VERIFY |
 | PKG-01 | Build macOS companion package and host registration | G | Packaging | TST-08, EXT-13, LIB-02, LIB-05 | IMPLEMENTED — VERIFY |
@@ -678,7 +678,7 @@ Reached after **Milestone H**:
 **Status:** VERIFIED
 
 **Implementation evidence**
-- `native/host/src/providers/mod.rs`: a `Provider` reports its status (availability, authentication, capabilities) and starts each request as an `Exchange`, a state machine the host loop drives with deadlines. `cancel(grace)` stops an exchange, and dropping one closes it and kills its processes. Updates are in protocol terms (`ConversationCreated`, `Started`, `Delta`, `Status`, `Activity`, then `Completed`, `Failed`, or `Stopped`), so command lines, output formats, and provider session IDs stay inside the adapter.
+- `native/host/src/providers/mod.rs`: a `Provider` reports its status (availability, authentication, capabilities) and starts each request as an `Exchange`, a state machine the host loop drives with deadlines. `cancel(grace)` stops an exchange, and dropping one closes it and kills its processes. Updates are the runtime's own (`Launched`, `Session`, `Started`, `Delta`, `Status`, `Activity`, then `Completed`, `Failed`, or `Stopped`; conversations are owned by `pervue-host`'s `conversations` layer since LIB-10), so command lines, output formats, and provider session IDs stay inside the adapter.
 - The host serves requests side by side through the contract (`native/host/src/host.rs`). `request.cancel` stops its target, which ends with `REQUEST_CANCELLED` before `request.cancelled` confirms each cancellation (protocol v1 §7.6). Request IDs are unique among requests in flight (`DUPLICATE_REQUEST_ID`), start and idle timeouts end a request with `REQUEST_TIMEOUT`, and closing the input stops every running request (`INPUT_CLOSED`).
 - Tests in `host.rs` drive a scripted provider: requests side by side, a cancel before the response starts, nothing after a cancel, repeated cancellations, unknown and finished targets, duplicate and reused IDs, both timeouts, the end of input, an adapter that stops unasked or never stops, and requests aborted when stdout closes.
 - The deterministic `fake` scaffold is an adapter too (`native/host/src/providers/fake.rs`), so the golden fixtures and host conformance run through the contract. In the extension, only the default provider ID changed (`extension/src/background/ask-bridge.js`): popup code still sees protocol events alone.
@@ -1435,7 +1435,7 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 **Status:** IMPLEMENTED — VERIFY
 
 **Implementation evidence**
-- `native/runtime-core/tests/public_api.rs` exercises the independent public crate, including exchange cancellation; process/stream/discovery unit tests run in `runtime-core`. The `stream_lines` fuzz target compiles directly against `runtime_core::stream`, while `frame_reader` intentionally compiles against the host-owned `pervue_host::framing` boundary. Both run in CI. Provider and host integration tests remain in the workspace.
+- `native/runtime-core/tests/public_api.rs` exercises the independent public crate, including exchange cancellation; process/stream/discovery unit tests run in `runtime-core`. The `stream_lines` fuzz target compiles directly against `runtime_core::stream` (it moved to `native/runtime-fuzz/` in LIB-10), while `frame_reader` intentionally compiles against the host-owned `pervue_host::framing` boundary. Both run in CI. Provider and host integration tests remain in the workspace.
 
 ---
 
@@ -1463,6 +1463,7 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 - `runtime_core::protocol::Failure` carries only code/reason/retryability; `native/host/src/protocol/messages.rs` owns Pervue's provider-specific protocol-v1 wording.
 - `native/runtime-core/README.md` restores the ownership/lifetime, cleanup, extraction, and Rust source-compatibility contract for the new boundary.
 - Full workspace verification remains the exit gate before this item is moved from `IMPLEMENTED — VERIFY` to verified.
+- Correction (2026-09-29): the neutral-vocabulary criterion was not yet met when this was marked implemented. `runtime_core::protocol` still carried the `HostNotInstalled`, `HostUnavailable` and `ContextUnavailable` error codes and the `page_context` and `attachments` capabilities. They are now owned by `pervue-host`'s wire types; the runtime has its own `#[non_exhaustive]` error codes and a `tool_isolation` capability (LIB-10 preparation).
 
 ### LIB-07 — Extract scheduler and absolute turn limits
 **Milestone:** ADR-002 Stage 1  
@@ -1515,16 +1516,42 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 - Claude/Codex search turns fork fresh native sessions, retain superseded handles durably for deletion/retry, and permit a fresh retry when no completed dialogue history exists yet.
 - Codex and Claude emit cumulative usage snapshots (Claude includes cache-creation/read input); Gemini/Grok live catalogs are ID/label/count bounded before protocol emission; sign-in classifications are runtime-only in protocol v1.
 - Ephemeral CLI flags are covered by unit tests for Claude/Codex, fresh-session/lifecycle behavior by provider contract regression tests, and opt-in live suites remain the final real-CLI verification gate.
+- Correction (2026-09-29): the Gemini and Grok opt-in live smoke tests named in the acceptance criteria do not exist yet. Only `native/host/tests/live_codex.rs` and `live_claude.rs` do, and only `live-codex.yml` runs one. They are required before this item, and Stage 2's exit bar, can be verified. The contract suite also covered only Codex and Claude then; it now covers all four (see LIB-10, step 2).
 
 ### LIB-10 — Extract provider runtime to standalone repository
 **Milestone:** ADR-002 Stage 2  
 **Area:** Native Library  
 **Dependencies:** LIB-09  
-**Status:** BACKLOG
+**Status:** IN PROGRESS
 
 **Acceptance criteria**
 - `runtime-core`, `platform`, `providers`, `scheduler`, and `service` move with shared tests/fuzzing into the runtime repository.
 - Pervue pins an exact revision and passes its full suite, including live smoke tests.
+
+**Plan (four steps, each green on its own)**
+1. Prepare the boundary in-tree, so the move is a change of location. *Done, below.*
+2. Create the `platform` and `providers` crates in-tree, and move the adapter, contract, hostile-matrix and process tests and the `stream_lines` fuzz target beside them. The fake provider becomes a library with a small binary in each repository. *Done, below.*
+3. Create the library repository (history kept with `git filter-repo`), with CI on Linux, macOS and Windows, a Rust 1.85 job, a fuzz smoke run and manually started live workflows for all four providers.
+4. Switch Pervue to an exact pinned revision, and remove the in-tree crates.
+
+**Open before step 3:** the library's name and license (ADR-0002, "Not decided here"), and LIB-06 to LIB-09 verified, including the Gemini and Grok live smoke tests (see the LIB-09 correction). Also a sweep of the runtime crates for `pervue` (`rg -i pervue` over `native/{runtime-core,platform,providers,scheduler,service,fake-provider,runtime-tests,runtime-fuzz}`): the CI check reads the crate graph only, so the strings that are behaviour (the Gemini agent names `pervue-text` and `pervue-search`, the Grok owner marker and agent name, the provider thread names) move into adapter configuration, and the rest is reworded, before anyone else has to ship them.
+
+**Implementation evidence (step 1)**
+- Every directory the adapters choose comes from one `Layout` derived from a `Namespace`; `pervue` resolves to the paths installed hosts already use, pinned by tests.
+- The runtime has its own error codes and capabilities. Pervue's wire vocabulary lives in `pervue-host`, and protocol v1 output is unchanged (the golden host-conformance run passes).
+- Adapters take a neutral `Turn` (`Provider::send`), with a third tool policy, `ProviderDefault`, so a plain Codex turn stays unrestricted. Everything about conversations lives in `pervue-host`'s `conversations` layer: framing of history and page context, conversation IDs, the conversation→session store (same on-disk layout), superseded-session records and their retryable cleanup, session recovery (`SessionLost`), and `forget`. It is unit-tested against a scripted provider for every path, and the adapters' own tests run through it.
+- Prompt bytes are pinned against what the adapters built by hand, with one documented difference: a lone plain first question to Gemini or Grok no longer gets a "Current user question:" label.
+- Search-result normalization moved to `runtime-core::search`. Outside `providers/mod.rs` and the `fake` scaffold, nothing under `native/host/src/providers/` imports another part of `pervue-host`.
+- Verified on Linux (Rust stable and 1.85), with the Windows and macOS targets type-checked including tests, clippy and rustfmt clean, the protocol validator green against the built host, and the fuzz crate compiling against the updated lock files.
+
+**Implementation evidence (step 2)**
+- `runtime-platform` holds the environment allowlist, private files and workspaces, discovery policy and layout; `runtime-providers` holds the `Provider` trait and the four adapters. Neither, nor any other runtime crate (`runtime-core`, the scheduler, the service, `runtime-fake-provider`, `runtime-tests`, `runtime-fuzz`), depends on a `pervue*` crate: `scripts/check-runtime-independence.mjs` reads every workspace and fuzz manifest, and its own job in CI fails when one does (it was checked to fail on a planted dependency).
+- The fake provider is a library (`runtime-fake-provider`: the four fake CLIs, and a harness that installs them, reads back what they recorded, and measures the test process's threads, descriptors and memory). Each package that runs it builds a binary of its own: `runtime-tests` and Pervue's `test_provider`. The fake Gemini gained a hang mode, and the fake Gemini and Grok record their launches like the other two, so a test can prove every process was reaped.
+- `runtime-tests` holds, at the runtime's level (a `Turn` in, `Update`s out, with resumption through the session a run reported): the Codex, Claude, Gemini and Grok adapter tests; a **provider contract that all four adapters meet through the `Provider` trait alone** (status matches capabilities, ordering and single ending of updates, sessions kept exactly where a provider can keep one, search served or refused as its capabilities say, refused turns never reach a process, cancellation, dropped exchanges, a caller's deadline held however quiet the provider, harmless cleanup); the **hostile matrix under the scheduler's supervisor**, for Codex and Claude, with the same thread, descriptor and memory bounds; the threaded service against real adapters (answer, refusal, cancel, drop, stop, one silent turn beside an answering one); and the process, stream, mode and signal tests. A planted leak in the Grok adapter's workspace cleanup was caught by the contract suite.
+- Pervue's `test_provider` keeps what maps conversations onto turns, over each adapter (thread and session mapping, rebuilds after a lost session, page-context framing, forget), the host's own hostile matrix, and the contract as Pervue serves the providers, now for all four (LIB-09's Codex-and-Claude-only gap is closed for this suite; the Gemini and Grok live smoke tests remain to be written).
+- `stream_lines` moved to `runtime-fuzz` (its own lock file, `runtime-core` only) with its seed generator; `frame_reader` and `protocol` stay in `fuzz`. CI generates each corpus from its own directory and runs `stream_lines` with `--fuzz-dir runtime-fuzz`.
+- Verified on Linux with Rust stable and 1.85 (476 tests pass), clippy and rustfmt clean, the Windows and macOS targets type-checked including tests with warnings as errors, and both fuzz crates compiling. Not run here: the fuzz smoke run itself (it needs nightly and cargo-fuzz), and the Windows and macOS test runs, which CI provides.
+- Review follow-ups. The runtime hostile matrix failed the Linux release job on its memory bound: its own log of every progress update was the largest thing it held (74 MiB for one case), not the runtime (with progress only counted, that case grows by 168 KiB in release). The service was still unbounded behind a slow reader, though, so a turn now queues at most one unread `Update::Activity`. `Namespace::fixed` now refuses Windows device names (`con`, `aux`, `nul`, `com1`…), which no directory can be named. The independence check reports an unreadable manifest instead of dying, and its CI job installs a toolchain like the others.
 
 ## Milestone G — Installable Product
 
@@ -1775,7 +1802,7 @@ without terminal commands during the user journey.
 **Status:** IMPLEMENTED — VERIFY
 
 **Implementation evidence**
-- The host normalizes every result once (`native/host/src/search.rs`, `display_text`): single-line plain text with markup removed, common entities decoded, control characters, bidi marks/overrides, and zero-width spaces removed; title ≤512 bytes, snippet ≤4096, source name/age ≤256; only URLs the browser's URL parser also accepts (strict subset, ≤4096 bytes once percent-encoded, pinned for both sides by `docs/protocol/fixtures/v1-source-urls.json`), so a source counted toward grounding is never dropped by the extension; ≤20 unique sources per turn. Claude's `Links:` array is read before the prose Claude Code prints after it.
+- The host normalizes every result once (`native/runtime-core/src/search.rs`, `display_text`): single-line plain text with markup removed, common entities decoded, control characters, bidi marks/overrides, and zero-width spaces removed; title ≤512 bytes, snippet ≤4096, source name/age ≤256; only URLs the browser's URL parser also accepts (strict subset, ≤4096 bytes once percent-encoded, pinned for both sides by `docs/protocol/fixtures/v1-source-urls.json`), so a source counted toward grounding is never dropped by the extension; ≤20 unique sources per turn. Claude's `Links:` array is read before the prose Claude Code prints after it.
 - The extension checks again (`extension/src/shared/sources.js`): the worker accepts a `response.source` only when `source_id` names valid data, bounds text by characters, drops repeats, keeps ≤20 per answer, and forwards and stores only the checked copy. Only complete answers keep sources. Pages check once more and render text nodes only.
 - Hostile fake-CLI results (option-, shell-, markup-, instruction-, credential-URL-, and `javascript:`-shaped) never appear in any later command line or prompt: `hostile_search_results_are_plain_text_and_never_reach_a_command_line` (Claude) and `hostile_cited_links_are_plain_text_and_never_reach_a_command_line` (Codex). Documented in `docs/security/trust-boundaries.md` §6 and protocol v1 `response.source`.
 
@@ -1793,7 +1820,7 @@ without terminal commands during the user journey.
 
 **Implementation evidence**
 - `extension/tests/search-sources.mjs` drives the real ask form, worker bridge, and conversation store with host events that mix valid, malformed, repeated, and hostile sources: an answer keeps exactly the checked sources its own turn retrieved, in order, identical to what the page was shown; the popup and full view render the same identities; a failed search (timeout after a source, or `NATIVE_SEARCH_NO_SOURCES`) shows the host's message, keeps no sources, leaves earlier answers and dialogue history intact, and a retry searches again and keeps only its own sources.
-- Native normalization is covered by the `search.rs` unit tests and the Claude/Codex adapter tests above; `extension/tests/native-roundtrip.mjs` sends a search question through the built host to a provider that can't search and gets `SEARCH_FAILED` / `NATIVE_SEARCH_UNSUPPORTED` with no sources or deltas, then keeps answering.
+- Native normalization is covered by the `runtime-core` `search.rs` unit tests and the Claude/Codex adapter tests above; `extension/tests/native-roundtrip.mjs` sends a search question through the built host to a provider that can't search and gets `SEARCH_FAILED` / `NATIVE_SEARCH_UNSUPPORTED` with no sources or deltas, then keeps answering.
 
 ---
 
@@ -1949,10 +1976,12 @@ Update this section whenever item statuses change.
 | MVP closure | 7 | 7 | 0 | 0 | 0 | 0 | 0 | 0 |
 | E — Second provider | 5 | 0 | 5 | 0 | 0 | 0 | 0 | 0 |
 | F — Reusable native core | 7 | 0 | 7 | 0 | 0 | 0 | 0 | 0 |
+| ADR-0002 Stage 1 (LIB-06–LIB-09) | 4 | 0 | 4 | 0 | 0 | 0 | 0 | 0 |
+| ADR-0002 Stage 2 (LIB-10) | 1 | 0 | 0 | 1 | 0 | 0 | 0 | 0 |
 | G — Installable product | 9 | 0 | 7 | 0 | 0 | 0 | 2 | 0 |
-| H — Search/citations | 8 | 0 | 4 | 0 | 0 | 4 | 0 | 0 |
+| H — Search/citations | 8 | 0 | 8 | 0 | 0 | 0 | 0 | 0 |
 | Post-milestone | 6 | 0 | 3 | 0 | 0 | 1 | 0 | 2 |
-| **Total** | **81** | **46** | **26** | **0** | **0** | **5** | **2** | **2** |
+| **Total** | **86** | **46** | **34** | **1** | **0** | **1** | **2** | **2** |
 
 ### Milestone completion rule
 

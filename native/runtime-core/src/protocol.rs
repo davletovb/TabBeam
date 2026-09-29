@@ -1,4 +1,9 @@
-//! Normalized errors, capabilities and provider status shared by adapters.
+//! Failures, capabilities and provider status shared by adapters.
+//!
+//! These are runtime concepts only. An application maps them to its own wire
+//! vocabulary and wording: Pervue's protocol v1 adds error categories for the
+//! browser and native host, and capabilities for page context and attachments,
+//! in `pervue-host`.
 
 use std::borrow::Cow;
 
@@ -6,20 +11,22 @@ use serde::{Serialize, Serializer};
 
 use crate::turn::SignInClassification;
 
-/// Normalized error categories (DOC-02 §2).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+/// What kind of failure an adapter reports. Applications match on this, so the
+/// set can grow: match with a wildcard arm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ErrorCode {
-    HostNotInstalled,
-    HostUnavailable,
+    /// The provider's executable couldn't be found.
     ProviderNotFound,
+    /// The provider is signed out, or rejected the credentials it has.
     ProviderNotAuthenticated,
+    /// The provider failed, or produced output the adapter couldn't use.
     ProviderFailed,
+    /// A turn that required native web search ended without a usable source.
     SearchFailed,
-    RequestCancelled,
-    RequestTimeout,
-    ContextUnavailable,
+    /// The request can't be served as it is, for example an unknown session.
     InvalidRequest,
+    /// The runtime itself failed, for example while storing a file.
     InternalError,
 }
 
@@ -47,7 +54,7 @@ pub struct Failure {
     pub retryable: bool,
 }
 
-/// Provider availability (DOC-02 §4).
+/// Provider availability.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Availability {
@@ -57,7 +64,7 @@ pub enum Availability {
     Unknown,
 }
 
-/// Provider authentication state (DOC-02 §4).
+/// Provider authentication state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Authentication {
@@ -66,7 +73,7 @@ pub enum Authentication {
     Unknown,
 }
 
-/// A capability value, serialized as `true`, `false`, or `"unknown"` (DOC-02 §5).
+/// A capability value, serialized as `true`, `false`, or `"unknown"`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Capability {
     Supported,
@@ -84,16 +91,21 @@ impl Serialize for Capability {
     }
 }
 
-/// The v1 capability set (DOC-02 §5).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+/// What an execution mode can do. Whether a product offers page context or
+/// attachments on top of that is the application's policy, not the runtime's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Capabilities {
     pub streaming: Capability,
     pub continuation: Capability,
     pub web_search: Capability,
-    pub page_context: Capability,
-    pub attachments: Capability,
     pub model_selection: Capability,
     pub cancellation: Capability,
+    /// The adapter can run a turn that gives the provider no tools, so text
+    /// the application doesn't control can only inform the answer, never make
+    /// the provider act. It can change while the runtime runs: an adapter
+    /// reports `Unsupported` while the user's own provider configuration
+    /// exposes tools it can't switch off.
+    pub tool_isolation: Capability,
 }
 
 /// A model an adapter suggests (`status.models`). Suggestions, not the
@@ -106,17 +118,17 @@ pub struct ModelOption {
     pub label: Cow<'static, str>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+/// One provider's availability, sign-in and capabilities.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderState {
     pub availability: Availability,
     pub authentication: Authentication,
     pub capabilities: Capabilities,
-    /// Suggested models, when `model_selection` is supported. Omitted when
-    /// empty; live provider catalogs use the owned form.
-    #[serde(skip_serializing_if = "<[ModelOption]>::is_empty")]
+    /// Suggested models, when `model_selection` is supported. Live provider
+    /// catalogs use the owned form.
     pub models: Cow<'static, [ModelOption]>,
-    /// Runtime-only classification. Pervue protocol v1 deliberately does not
-    /// expose account/billing mode.
-    #[serde(skip)]
+    /// How the provider is signed in, when the adapter can tell. Applications
+    /// decide whether to accept it; Pervue protocol v1 deliberately doesn't
+    /// expose account or billing mode.
     pub sign_in: Option<SignInClassification>,
 }

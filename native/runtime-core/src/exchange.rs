@@ -1,12 +1,26 @@
-//! Bounded-deadline provider exchange events, shared by Codex and Claude.
-//! Update names follow Pervue protocol v1; changing their meaning requires
-//! reviewing both the Rust consumers and the browser wire contract.
+//! Bounded-deadline provider exchange events, shared by every adapter.
+//!
+//! The events are the runtime's own: an application maps them to whatever it
+//! sends its users. Pervue's protocol v1 does so in `pervue-host`, which also
+//! owns the conversations the runtime knows nothing about.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use crate::protocol::{Failure, ProviderState, Source};
 use crate::turn::Usage;
+
+/// How sure an adapter is that a session it was asked to resume is gone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionLoss {
+    /// The provider said the session doesn't exist. The application can drop
+    /// what it kept for it and rebuild the dialogue in a new session.
+    Confirmed,
+    /// The resumed run ended before the turn started, and the adapter can't
+    /// tell why: a lost session, or a crash. The application decides whether
+    /// to start over from its own history.
+    Suspected,
+}
 
 /// What an exchange reports, in protocol order. After a terminal update
 /// (`Completed`, `Failed`, or `Stopped`), the exchange is finished.
@@ -19,11 +33,15 @@ pub enum Update {
     Session(String),
     /// A cumulative usage snapshot for this turn.
     Usage(Usage),
-    /// A new provider-neutral conversation (`conversation.created`). Comes
-    /// before `Started`.
-    ConversationCreated(String),
-    /// Response production started (`response.started`).
-    Started { conversation_id: Option<String> },
+    /// The session the turn was asked to resume can't be used. Sent at most
+    /// once, only before any answer text, and followed by the turn's own
+    /// terminal `Failed`: an application that can start over discards that
+    /// failure, and one that can't reports it.
+    SessionLost(SessionLoss),
+    /// The provider accepted the turn: its own start-of-turn event arrived and,
+    /// where the adapter checks one, its `init` boundary passed. No answer text
+    /// comes before it, and the start limit runs until it arrives.
+    Started,
     /// The next piece of the answer (`response.delta`).
     Delta(String),
     /// A normalized source attached to the answer (`response.source`).

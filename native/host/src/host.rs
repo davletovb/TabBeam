@@ -34,13 +34,16 @@ use crate::diagnostics::{
 use crate::framing::{self, FrameError};
 use crate::limits::MAX_FRAME_SIZE;
 use crate::protocol::events::{
-    self, Capability, ConversationCreated, ErrorBody, ErrorCode, Event, ProviderStatus,
-    RequestCancelled, ResponseCompleted, ResponseDelta, ResponseSource, ResponseStarted,
+    self, Capabilities, Capability, ConversationCreated, ErrorBody, ErrorCode, Event,
+    HostCapabilities, ProviderState, ProviderStatus, RequestCancelled, ResponseCompleted,
+    ResponseDelta, ResponseSource, ResponseStarted,
 };
 use crate::protocol::messages;
 use crate::protocol::request::{self, Method, RequestFailure, RequestId};
-use crate::providers::{Exchange, Providers, Scripted, SendRequest, StatusOfAll, Timeouts, Update};
-use runtime_core::protocol::Failure;
+use crate::providers::{
+    ConversationSlot, Exchange, Providers, Scripted, SendRequest, StatusOfAll, Timeouts, Update,
+};
+use runtime_core::protocol::{ErrorCode as FailureCode, Failure};
 use runtime_core::stream::split_text;
 
 /// Why the host stopped before a clean end of stream.
@@ -109,31 +112,31 @@ const SHUTDOWN_GRACE: Duration = Duration::from_millis(250);
 const STATUS_STOP_GRACE: Duration = Duration::from_millis(250);
 
 const PROVIDER_NOT_INSTALLED: Failure = Failure {
-    code: ErrorCode::ProviderNotFound,
+    code: FailureCode::ProviderNotFound,
     reason: "PROVIDER_NOT_INSTALLED",
     retryable: false,
 };
 
 const NATIVE_SEARCH_UNSUPPORTED: Failure = Failure {
-    code: ErrorCode::SearchFailed,
+    code: FailureCode::SearchFailed,
     reason: "NATIVE_SEARCH_UNSUPPORTED",
     retryable: false,
 };
 
 const SEARCH_WITH_CONTEXT_UNSUPPORTED: Failure = Failure {
-    code: ErrorCode::SearchFailed,
+    code: FailureCode::SearchFailed,
     reason: "SEARCH_WITH_CONTEXT_UNSUPPORTED",
     retryable: false,
 };
 
 const PAGE_CONTEXT_UNSUPPORTED: Failure = Failure {
-    code: ErrorCode::InvalidRequest,
+    code: FailureCode::InvalidRequest,
     reason: "PAGE_CONTEXT_UNSUPPORTED",
     retryable: false,
 };
 
 const MODEL_SELECTION_UNSUPPORTED: Failure = Failure {
-    code: ErrorCode::InvalidRequest,
+    code: FailureCode::InvalidRequest,
     reason: "MODEL_SELECTION_UNSUPPORTED",
     retryable: false,
 };
@@ -218,7 +221,7 @@ where
     W: Write + ?Sized,
     L: Write,
 {
-    let providers = Providers::installed();
+    let providers = Providers::installed(&crate::layout());
     run_with(&providers, input, output, log)
 }
 
@@ -352,6 +355,11 @@ struct Running {
     /// Whether the host serves the provider the request names.
     provider_served: bool,
     conversation_id: Option<String>,
+    /// Which conversation a `conversation.send` serves, as its provider layer
+    /// reports it.
+    slot: Option<ConversationSlot>,
+    /// `conversation.created` went out for a conversation the request created.
+    announced: bool,
     started_at: Instant,
     stop: Option<Stop>,
 }
@@ -373,6 +381,8 @@ impl Running {
             provider_id,
             provider_served,
             conversation_id,
+            slot: None,
+            announced: false,
             started_at: Instant::now(),
             stop: None,
         }
@@ -522,6 +532,7 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                 let conversation_id = conversation_id.map(|id| id.decode().into_owned());
                 let provider = self.providers.get(&provider_id);
                 let provider_served = provider.is_some();
+                let slot = ConversationSlot::default();
                 let question = text.decode().into_owned();
                 let native_search = search.is_some();
                 let native_supported = provider.as_ref().is_some_and(|provider| {
@@ -534,7 +545,12 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                     ),
                     Some(provider)
                         if context.is_some()
-                            && provider.capabilities().page_context != Capability::Supported =>
+                            && Capabilities::new(
+                                provider.capabilities(),
+                                HostCapabilities::PERVUE,
+                            )
+                            .page_context
+                                != Capability::Supported =>
                     {
                         (
                             Box::new(Scripted::failed(PAGE_CONTEXT_UNSUPPORTED)),
@@ -556,6 +572,7 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                         let provider_timeouts = provider.timeouts();
                         let persistent = provider.supports_persistent_session();
                         let request = SendRequest {
+                            conversation: slot.clone(),
                             text: question,
                             history,
                             conversation_id: conversation_id.clone(),
@@ -581,14 +598,16 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                     }
                     None => (Box::new(Scripted::failed(PROVIDER_NOT_INSTALLED)), None),
                 };
-                self.start_running(
+                let mut running = self.start_running(
                     id,
                     "conversation.send",
                     Some((provider_id, provider_served)),
                     conversation_id,
                     timeouts,
                     exchange,
-                )
+                );
+                running.slot = Some(slot);
+                running
             }
             Method::ProviderStatus { provider_id } => {
                 let provider_id = provider_id.map(|id| id.decode().into_owned());
@@ -699,8 +718,12 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                     else {
                         continue;
                     };
-                    if let Update::ConversationCreated(conversation_id) = &update {
-                        self.conversations.insert(conversation_id.clone());
+                    if matches!(update, Update::Started) {
+                        if let Some(slot) = &self.running[index].slot {
+                            if let (true, Some(id)) = (slot.created(), slot.id()) {
+                                self.conversations.insert(id);
+                            }
+                        }
                     }
                     forward(&mut *self.output, &mut self.running[index], update)?;
                 }
@@ -837,24 +860,33 @@ fn forward<W: Write + ?Sized>(
     }
     let raw = &running.id.raw;
     match update {
-        Update::ConversationCreated(conversation_id) => {
-            let payload = ConversationCreated {
-                conversation_id: &conversation_id,
-            };
-            let written = write_event(output, raw, Event::ConversationCreated, &payload);
-            running.conversation_id = Some(conversation_id);
-            written
-        }
-        Update::Started { conversation_id } => {
+        Update::Started => {
+            // The conversation layer says which conversation this request
+            // serves, and whether it just created it: v1 announces a new
+            // conversation right before the response that starts it.
+            let conversation_id = running.slot.as_ref().and_then(ConversationSlot::id);
+            let created = running.slot.as_ref().is_some_and(ConversationSlot::created);
+            // Recorded before anything is written: a request whose output
+            // closes on its first event still names the conversation it made.
+            if conversation_id.is_some() {
+                running.conversation_id.clone_from(&conversation_id);
+            }
+            if let (true, false, Some(id)) = (created, running.announced, &conversation_id) {
+                running.announced = true;
+                write_event(
+                    output,
+                    raw,
+                    Event::ConversationCreated,
+                    &ConversationCreated {
+                        conversation_id: id,
+                    },
+                )?;
+            }
             let payload = ResponseStarted {
                 provider_id: running.provider_id.as_deref().unwrap_or_default(),
                 conversation_id: conversation_id.as_deref(),
             };
-            let written = write_event(output, raw, Event::ResponseStarted, &payload);
-            if conversation_id.is_some() {
-                running.conversation_id = conversation_id;
-            }
-            written
+            write_event(output, raw, Event::ResponseStarted, &payload)
         }
         Update::Delta(text) => {
             for piece in split_text(&text, MAX_DELTA_BYTES) {
@@ -880,12 +912,13 @@ fn forward<W: Write + ?Sized>(
         } => {
             let payload = ProviderStatus {
                 provider_id: &provider_id,
-                status,
+                status: ProviderState::new(status, HostCapabilities::PERVUE),
             };
             write_event(output, raw, Event::ProviderStatus, &payload)
         }
         Update::Launched
         | Update::Session(_)
+        | Update::SessionLost(_)
         | Update::Usage(_)
         | Update::Activity
         | Update::Completed
@@ -954,8 +987,8 @@ mod tests {
     use crate::HOST_VERSION;
     use crate::framing::PREFIX_SIZE;
     use crate::limits::MAX_FRAME_SIZE;
-    use crate::protocol::events::Capabilities;
-    use crate::providers::{Provider, fake};
+    use crate::providers::{ConversationProvider, fake};
+    use runtime_core::protocol::Capabilities;
 
     fn framed(payloads: &[&str]) -> Vec<u8> {
         let mut wire = Vec::new();
@@ -1194,9 +1227,7 @@ mod tests {
             }
             if self.script.starts && !self.started {
                 self.started = true;
-                return Some(Update::Started {
-                    conversation_id: None,
-                });
+                return Some(Update::Started);
             }
             if self.script.stops_unasked {
                 self.done = true;
@@ -1252,7 +1283,7 @@ mod tests {
         }
     }
 
-    impl Provider for TestProvider {
+    impl ConversationProvider for TestProvider {
         fn id(&self) -> &str {
             self.id
         }
@@ -1308,6 +1339,105 @@ mod tests {
 
     fn with(provider: TestProvider) -> Providers {
         Providers::new(vec![Box::new(fake::Fake), Box::new(provider)])
+    }
+
+    /// A provider whose conversation layer reports through the request's
+    /// slot, as `Conversations` does, instead of through updates.
+    struct SlotProvider;
+
+    impl ConversationProvider for SlotProvider {
+        fn id(&self) -> &str {
+            "slotted"
+        }
+
+        fn timeouts(&self) -> Timeouts {
+            Timeouts {
+                start: Duration::from_secs(60),
+                idle: Duration::from_secs(60),
+                max_turn: Duration::from_secs(180),
+                stop_grace: Duration::ZERO,
+            }
+        }
+
+        fn capabilities(&self) -> Capabilities {
+            fake::STATUS.capabilities
+        }
+
+        fn status(&self) -> Box<dyn Exchange> {
+            Box::new(Scripted::new([Update::Completed]))
+        }
+
+        fn send(&self, request: SendRequest) -> Box<dyn Exchange> {
+            match request.conversation_id {
+                Some(id) => request.conversation.set(id, false),
+                None => request.conversation.set("conv_0123456789abcdef", true),
+            }
+            Box::new(Scripted::new([
+                Update::Launched,
+                Update::Started,
+                Update::Delta("hi".to_owned()),
+                Update::Completed,
+            ]))
+        }
+    }
+
+    #[test]
+    fn a_conversation_the_layer_created_is_announced_just_before_the_response_starts() {
+        let providers = Providers::new(vec![Box::new(SlotProvider)]);
+        let requests = [
+            request(
+                "req_new",
+                "conversation.send",
+                r#"{"provider_id":"slotted","input":{"text":"one"}}"#,
+            ),
+            request(
+                "req_next",
+                "conversation.send",
+                r#"{"provider_id":"slotted","conversation_id":"conv_0123456789abcdef","input":{"text":"two"}}"#,
+            ),
+        ];
+        let frames: Vec<&str> = requests.iter().map(String::as_str).collect();
+        let session = run_session(&providers, framed(&frames).as_slice());
+        assert_eq!(session.result, Ok(()));
+        let events = session.events();
+        let for_request = |id: &str| -> Vec<&Value> {
+            events[1..]
+                .iter()
+                .filter(|event| event["request_id"] == id)
+                .collect()
+        };
+
+        let new = for_request("req_new");
+        let names: Vec<&str> = new.iter().map(|e| e["event"].as_str().unwrap()).collect();
+        assert_eq!(
+            names,
+            [
+                "conversation.created",
+                "response.started",
+                "response.delta",
+                "response.completed"
+            ]
+        );
+        assert_eq!(
+            new[0]["payload"],
+            json!({"conversation_id": "conv_0123456789abcdef"})
+        );
+        assert_eq!(
+            new[1]["payload"],
+            json!({"provider_id": "slotted", "conversation_id": "conv_0123456789abcdef"})
+        );
+
+        // A conversation that already existed isn't announced again.
+        let next = for_request("req_next");
+        let names: Vec<&str> = next.iter().map(|e| e["event"].as_str().unwrap()).collect();
+        assert_eq!(
+            names,
+            ["response.started", "response.delta", "response.completed"]
+        );
+        assert_eq!(
+            next[0]["payload"]["conversation_id"],
+            "conv_0123456789abcdef"
+        );
     }
 
     #[test]
@@ -1401,7 +1531,7 @@ mod tests {
     /// Serves `flood` requests with a [`Flooding`] exchange.
     struct FloodingProvider;
 
-    impl Provider for FloodingProvider {
+    impl ConversationProvider for FloodingProvider {
         fn id(&self) -> &str {
             "flood"
         }
@@ -1711,7 +1841,7 @@ mod tests {
     #[test]
     fn context_is_rejected_before_an_unsupported_provider_runs() {
         let mut provider = TestProvider::new("test", Script::answers("ok"));
-        provider.capabilities.page_context = Capability::Unsupported;
+        provider.capabilities.tool_isolation = Capability::Unsupported;
         let calls = Rc::clone(&provider.calls);
         let request = request(
             "req_context",

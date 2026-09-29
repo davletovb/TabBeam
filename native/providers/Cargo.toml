@@ -1,0 +1,15 @@
+[package]
+name = "runtime-providers"
+description = "Provider-runtime adapters: one per execution mode of Codex, Claude, Gemini (Antigravity) and Grok, behind a neutral Turn-based Provider trait"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+runtime-core = { path = "../runtime-core" }
+runtime-platform = { path = "../platform" }
+serde_json = "1.0"
+
+[lints]
+workspace = true

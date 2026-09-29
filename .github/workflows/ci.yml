@@ -267,6 +267,22 @@ jobs:
       - name: Validate built host against golden protocol
         run: npm --prefix scripts run validate:host -- --host native/target/debug/pervue-host
 
+  runtime-independence:
+    name: Runtime independence
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - name: Install stable Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - name: The provider runtime does not depend on Pervue
+        run: node scripts/check-runtime-independence.mjs
+
   native-msrv:
     name: Native minimum Rust (1.85)
     runs-on: ubuntu-latest
@@ -335,15 +351,15 @@ jobs:
         run: |
           node fuzz/fuzz-support.mjs frame-corpus fuzz/corpus/frame_reader
           node fuzz/fuzz-support.mjs protocol-corpus fuzz/corpus/protocol
-          node fuzz/fuzz-support.mjs stream-corpus fuzz/corpus/stream_lines
+          node runtime-fuzz/fuzz-support.mjs stream-corpus runtime-fuzz/corpus/stream_lines
       - name: Smoke-run frame fuzz target
         run: |
           max_len=$(node fuzz/fuzz-support.mjs max-len frame_reader)
           cargo +nightly fuzz run frame_reader fuzz/corpus/frame_reader -- -runs=1000 -max_len="$max_len"
-      - name: Smoke-run standalone stream fuzz target
+      - name: Smoke-run the runtime's stream fuzz target
         run: |
-          max_len=$(node fuzz/fuzz-support.mjs max-len stream_lines)
-          cargo +nightly fuzz run stream_lines fuzz/corpus/stream_lines -- -runs=1000 -max_len="$max_len"
+          max_len=$(node runtime-fuzz/fuzz-support.mjs max-len stream_lines)
+          cargo +nightly fuzz run --fuzz-dir runtime-fuzz stream_lines runtime-fuzz/corpus/stream_lines -- -runs=1000 -max_len="$max_len"
       - name: Smoke-run protocol fuzz target
         run: |
           max_len=$(node fuzz/fuzz-support.mjs max-len protocol)

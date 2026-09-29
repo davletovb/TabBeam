@@ -7,6 +7,7 @@
 //! provider runtime boundary.
 
 pub mod conversation;
+pub mod conversations;
 pub mod diagnostics;
 pub mod framing;
 pub mod host;
@@ -18,3 +19,23 @@ pub mod search;
 
 /// Host version reported by `--version` and in the `host.ready` event.
 pub const HOST_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Pervue's provider-runtime namespace (ADR-0002): its workspaces, conversation
+/// mappings and cleanup records live under this name. Changing it would strand
+/// installed hosts' files.
+pub const NAMESPACE: &str = "pervue";
+
+/// The directories Pervue's provider adapters use.
+pub fn layout() -> providers::Layout {
+    providers::Layout::new(
+        runtime_core::turn::Namespace::fixed(NAMESPACE).expect("Pervue's namespace is valid"),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn pervues_namespace_is_valid_and_unchanged() {
+        assert_eq!(super::layout().namespace().as_str(), "pervue");
+    }
+}

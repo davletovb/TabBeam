@@ -5,8 +5,8 @@
 use std::borrow::Cow;
 use std::time::Duration;
 
-use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
-use crate::protocol::events::{
+use super::{ConversationProvider, Exchange, Scripted, SendRequest, Timeouts, Update};
+use runtime_core::protocol::{
     Authentication, Availability, Capabilities, Capability, ProviderState,
 };
 
@@ -25,10 +25,9 @@ pub const STATUS: ProviderState = ProviderState {
         streaming: Capability::Supported,
         continuation: Capability::Supported,
         web_search: Capability::Unsupported,
-        page_context: Capability::Supported,
-        attachments: Capability::Unsupported,
         model_selection: Capability::Unsupported,
         cancellation: Capability::Unsupported,
+        tool_isolation: Capability::Supported,
     },
     models: Cow::Borrowed(&[]),
     sign_in: None,
@@ -36,7 +35,7 @@ pub const STATUS: ProviderState = ProviderState {
 
 pub struct Fake;
 
-impl Provider for Fake {
+impl ConversationProvider for Fake {
     fn id(&self) -> &str {
         ID
     }
@@ -65,21 +64,14 @@ impl Provider for Fake {
     }
 
     fn send(&self, request: SendRequest) -> Box<dyn Exchange> {
-        let mut updates = Vec::new();
-        let conversation_id = match request.conversation_id {
-            Some(conversation_id) => conversation_id,
-            None => {
-                updates.push(Update::ConversationCreated(CONVERSATION_ID.to_owned()));
-                CONVERSATION_ID.to_owned()
-            }
-        };
-        updates.extend([
-            Update::Started {
-                conversation_id: Some(conversation_id),
-            },
+        match request.conversation_id {
+            Some(conversation_id) => request.conversation.set(conversation_id, false),
+            None => request.conversation.set(CONVERSATION_ID, true),
+        }
+        Box::new(Scripted::new([
+            Update::Started,
             Update::Delta(ANSWER.to_owned()),
             Update::Completed,
-        ]);
-        Box::new(Scripted::new(updates))
+        ]))
     }
 }

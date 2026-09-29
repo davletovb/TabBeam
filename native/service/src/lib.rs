@@ -3,14 +3,21 @@
 //! The service owns its supervisor on a dedicated thread. A channel closing
 //! before a terminal event is converted by the turn handle into one synthetic
 //! runtime-loss ending, preserving the exactly-once consumer contract.
+//!
+//! A turn's events wait in a queue until its handle reads them. `Update::Activity`
+//! says only that the provider is still working, which the scheduler has already
+//! counted, so a turn queues at most one until the handle reads it: a provider
+//! that floods progress cannot fill memory behind a consumer that reads slowly.
 
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::Duration;
 
 use provider_runtime_scheduler::{EndReason, Event, Supervisor, TurnId};
-use runtime_core::exchange::{Exchange, Timeouts};
+use runtime_core::exchange::{Exchange, Timeouts, Update};
 use runtime_core::turn::{Namespace, Turn as TurnRequest};
 
 pub trait TurnFactory: 'static {
@@ -23,10 +30,24 @@ pub trait TurnFactory: 'static {
     ) -> Result<(Box<dyn Exchange>, Option<Timeouts>), String>;
 }
 
+/// What a caller gets for a turn it started.
+struct Started {
+    id: TurnId,
+    events: Receiver<Event>,
+    activity_queued: Arc<AtomicBool>,
+}
+
+/// A turn's queue of events, as the service side sees it.
+struct Output {
+    events: Sender<Event>,
+    /// Whether an `Update::Activity` is queued and unread.
+    activity_queued: Arc<AtomicBool>,
+}
+
 enum Command {
     Start {
         request: TurnRequest,
-        reply: Sender<Result<(TurnId, Receiver<Event>), String>>,
+        reply: Sender<Result<Started, String>>,
     },
     Cancel(TurnId),
     Stop,
@@ -58,12 +79,17 @@ impl Runtime {
         self.commands
             .send(Command::Start { request, reply })
             .map_err(|_| "runtime service is not running".to_owned())?;
-        let (id, events) = answer
+        let Started {
+            id,
+            events,
+            activity_queued,
+        } = answer
             .recv()
             .map_err(|_| "runtime service stopped while starting a turn".to_owned())??;
         Ok(Turn {
             id,
             events,
+            activity_queued,
             commands: self.commands.clone(),
             ended: false,
         })
@@ -82,6 +108,7 @@ impl Drop for Runtime {
 pub struct Turn {
     id: TurnId,
     events: Receiver<Event>,
+    activity_queued: Arc<AtomicBool>,
     commands: Sender<Command>,
     ended: bool,
 }
@@ -106,7 +133,18 @@ impl Turn {
                 self.ended = true;
                 Some(event)
             }
-            Ok(event) => Some(event),
+            Ok(event) => {
+                if matches!(
+                    event,
+                    Event::Update {
+                        update: Update::Activity,
+                        ..
+                    }
+                ) {
+                    self.activity_queued.store(false, Ordering::SeqCst);
+                }
+                Some(event)
+            }
             Err(_) => {
                 self.ended = true;
                 Some(Event::Ended {
@@ -134,7 +172,7 @@ fn service_loop(
     commands: Receiver<Command>,
 ) {
     let mut supervisor = Supervisor::new();
-    let mut outputs: HashMap<TurnId, Sender<Event>> = HashMap::new();
+    let mut outputs: HashMap<TurnId, Output> = HashMap::new();
 
     loop {
         let command = if supervisor.is_empty() {
@@ -164,9 +202,20 @@ fn service_loop(
                 match started {
                     Ok(Ok((exchange, limits))) => {
                         let (sender, events) = mpsc::channel();
+                        let activity_queued = Arc::new(AtomicBool::new(false));
                         let id = supervisor.start(exchange, limits, Duration::from_millis(250));
-                        outputs.insert(id, sender);
-                        let _ = reply.send(Ok((id, events)));
+                        outputs.insert(
+                            id,
+                            Output {
+                                events: sender,
+                                activity_queued: Arc::clone(&activity_queued),
+                            },
+                        );
+                        let _ = reply.send(Ok(Started {
+                            id,
+                            events,
+                            activity_queued,
+                        }));
                     }
                     Ok(Err(error)) => {
                         let _ = reply.send(Err(error));
@@ -189,7 +238,7 @@ fn service_loop(
     }
 }
 
-fn stop_service(supervisor: &mut Supervisor, outputs: &mut HashMap<TurnId, Sender<Event>>) {
+fn stop_service(supervisor: &mut Supervisor, outputs: &mut HashMap<TurnId, Output>) {
     supervisor.shutdown(Duration::from_millis(250));
     while !supervisor.is_empty() {
         dispatch(supervisor, outputs);
@@ -197,15 +246,26 @@ fn stop_service(supervisor: &mut Supervisor, outputs: &mut HashMap<TurnId, Sende
     }
 }
 
-fn dispatch(supervisor: &mut Supervisor, outputs: &mut HashMap<TurnId, Sender<Event>>) {
+fn dispatch(supervisor: &mut Supervisor, outputs: &mut HashMap<TurnId, Output>) {
     for event in supervisor.poll(Duration::from_millis(5)) {
         let id = match &event {
             Event::Update { turn_id, .. } | Event::Ended { turn_id, .. } => *turn_id,
         };
         let ended = matches!(event, Event::Ended { .. });
-        let delivered = outputs
-            .get(&id)
-            .is_none_or(|output| output.send(event).is_ok());
+        let delivered = outputs.get(&id).is_none_or(|output| {
+            let progress = matches!(
+                event,
+                Event::Update {
+                    update: Update::Activity,
+                    ..
+                }
+            );
+            // One unread progress update says all there is to say.
+            if progress && output.activity_queued.swap(true, Ordering::SeqCst) {
+                return true;
+            }
+            output.events.send(event).is_ok()
+        });
         if !delivered && !ended {
             let _ = supervisor.cancel(id);
             outputs.remove(&id);
@@ -244,12 +304,7 @@ mod tests {
             _request: TurnRequest,
         ) -> Result<(Box<dyn Exchange>, Option<Timeouts>), String> {
             Ok((
-                Box::new(One(VecDeque::from([
-                    Update::Started {
-                        conversation_id: None,
-                    },
-                    Update::Completed,
-                ]))),
+                Box::new(One(VecDeque::from([Update::Started, Update::Completed]))),
                 Some(Timeouts {
                     start: Duration::from_secs(1),
                     idle: Duration::from_secs(1),
@@ -274,6 +329,7 @@ mod tests {
                 tools: runtime_core::turn::ToolPolicy::None,
                 session: runtime_core::turn::SessionPolicy::Ephemeral,
                 continuation: None,
+                cleanup_group: None,
                 check_sign_in: false,
             })
             .unwrap();
@@ -340,6 +396,7 @@ mod tests {
                 tools: runtime_core::turn::ToolPolicy::None,
                 session: runtime_core::turn::SessionPolicy::Ephemeral,
                 continuation: None,
+                cleanup_group: None,
                 check_sign_in: false,
             })
             .unwrap();
@@ -350,5 +407,104 @@ mod tests {
             thread::sleep(Duration::from_millis(5));
         }
         assert!(cancelled.load(Ordering::SeqCst));
+    }
+
+    /// Reports progress as fast as it is asked, until it is cancelled.
+    struct FloodsProgress {
+        started: bool,
+        cancelled: bool,
+    }
+
+    impl Exchange for FloodsProgress {
+        fn next(&mut self, _deadline: Instant) -> Option<Update> {
+            if self.cancelled {
+                return Some(Update::Stopped);
+            }
+            if !std::mem::replace(&mut self.started, true) {
+                return Some(Update::Started);
+            }
+            Some(Update::Activity)
+        }
+
+        fn cancel(&mut self, _grace: Duration) {
+            self.cancelled = true;
+        }
+    }
+
+    struct FloodFactory;
+
+    impl TurnFactory for FloodFactory {
+        fn start(
+            &mut self,
+            _request: TurnRequest,
+        ) -> Result<(Box<dyn Exchange>, Option<Timeouts>), String> {
+            Ok((
+                Box::new(FloodsProgress {
+                    started: false,
+                    cancelled: false,
+                }),
+                None,
+            ))
+        }
+    }
+
+    fn hello() -> TurnRequest {
+        TurnRequest {
+            system: None,
+            messages: vec![runtime_core::turn::Message {
+                role: runtime_core::turn::Role::User,
+                text: "hello".to_owned(),
+            }],
+            model: None,
+            tools: runtime_core::turn::ToolPolicy::None,
+            session: runtime_core::turn::SessionPolicy::Ephemeral,
+            continuation: None,
+            cleanup_group: None,
+            check_sign_in: false,
+        }
+    }
+
+    #[test]
+    fn a_slow_consumer_holds_at_most_one_unread_progress_update() {
+        let runtime = Runtime::start(Namespace::fixed("test").unwrap(), || Box::new(FloodFactory));
+        let mut turn = runtime.start_turn(hello()).unwrap();
+
+        // Nothing is read while the provider floods progress, and then the
+        // turn is cancelled and given time to end.
+        thread::sleep(Duration::from_millis(300));
+        turn.cancel();
+        thread::sleep(Duration::from_millis(500));
+
+        let mut progress = 0;
+        let mut ended = 0;
+        while let Some(event) = turn.recv() {
+            match event {
+                Event::Update {
+                    update: Update::Activity,
+                    ..
+                } => progress += 1,
+                Event::Ended { .. } => ended += 1,
+                Event::Update { .. } => {}
+            }
+        }
+        assert_eq!(progress, 1, "unread progress piled up");
+        assert_eq!(ended, 1);
+    }
+
+    #[test]
+    fn progress_that_was_read_is_reported_again() {
+        let runtime = Runtime::start(Namespace::fixed("test").unwrap(), || Box::new(FloodFactory));
+        let mut turn = runtime.start_turn(hello()).unwrap();
+        let mut progress = 0;
+        while progress < 3 {
+            match turn.recv().expect("the turn is still running") {
+                Event::Update {
+                    update: Update::Activity,
+                    ..
+                } => progress += 1,
+                Event::Ended { reason, .. } => panic!("ended early: {reason:?}"),
+                Event::Update { .. } => {}
+            }
+        }
     }
 }

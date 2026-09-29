@@ -8,6 +8,7 @@ pub const MAX_MODEL_ID_BYTES: usize = 128;
 pub const MAX_MODEL_LABEL_BYTES: usize = 64;
 pub const MAX_MODEL_OPTIONS: usize = 32;
 pub const MAX_CONTINUATION_BYTES: usize = 256;
+pub const MAX_CLEANUP_GROUP_BYTES: usize = 64;
 
 pub fn is_model_id(model: &str) -> bool {
     let bytes = model.as_bytes();
@@ -19,11 +20,15 @@ pub fn is_model_id(model: &str) -> bool {
             .all(|&byte| byte.is_ascii_alphanumeric() || b"._-:/@".contains(&byte))
 }
 
-fn is_continuation(value: &str) -> bool {
+/// Whether `value` can be a native-session handle: opaque to the runtime, and
+/// safe to keep in a file name and to pass as one command-line argument. It
+/// starts with a letter or digit, so it can be neither an option nor a
+/// relative path such as `..`.
+pub fn is_session_handle(value: &str) -> bool {
     let bytes = value.as_bytes();
     !bytes.is_empty()
         && bytes.len() <= MAX_CONTINUATION_BYTES
-        && bytes[0] != b'-'
+        && bytes[0].is_ascii_alphanumeric()
         && bytes
             .iter()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
@@ -41,10 +46,19 @@ pub struct Message {
     pub text: String,
 }
 
+/// What the provider may do besides answering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolPolicy {
+    /// No tools at all. For turns whose text the application doesn't control:
+    /// it can only inform the answer, never make the provider act. An adapter
+    /// that can't guarantee this (see `Capabilities::tool_isolation`) refuses
+    /// the turn rather than running it with tools.
     None,
+    /// No tools except the provider's own web search.
     NativeWebSearch,
+    /// The provider's own configuration decides. For turns whose text the
+    /// application wrote itself, so the user's usual provider setup applies.
+    ProviderDefault,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,9 +75,27 @@ pub struct Turn {
     pub tools: ToolPolicy,
     pub session: SessionPolicy,
     pub continuation: Option<String>,
+    /// Groups this turn's per-turn cleanup records with the others of the same
+    /// group, so the application can retry a group's failed deletions
+    /// together (Pervue: one conversation). Opaque to the runtime.
+    pub cleanup_group: Option<String>,
     /// Whether the caller requires a fresh sign-in classification before the
-    /// provider process starts.
+    /// provider process starts. No adapter keeps a classification from one turn
+    /// to the next, so every turn that asks starts a probe first; an
+    /// application that wants fewer probes decides for itself which turns need
+    /// one (Pervue asks before every turn it sends, except the turn that
+    /// rebuilds a lost session, whose request has just passed the check).
     pub check_sign_in: bool,
+}
+
+/// Whether `value` can name a cleanup group: a file-name-safe token.
+pub fn is_cleanup_group(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    !bytes.is_empty()
+        && bytes.len() <= MAX_CLEANUP_GROUP_BYTES
+        && bytes
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
 impl Turn {
@@ -92,12 +124,19 @@ impl Turn {
         if self
             .continuation
             .as_deref()
-            .is_some_and(|continuation| !is_continuation(continuation))
+            .is_some_and(|continuation| !is_session_handle(continuation))
         {
             return Err(TurnError::InvalidContinuation);
         }
         if self.continuation.is_some() && self.session != SessionPolicy::Persistent {
             return Err(TurnError::ContinuationRequiresPersistentSession);
+        }
+        if self
+            .cleanup_group
+            .as_deref()
+            .is_some_and(|group| !is_cleanup_group(group))
+        {
+            return Err(TurnError::InvalidCleanupGroup);
         }
         Ok(())
     }
@@ -110,6 +149,7 @@ pub enum TurnError {
     InvalidModel,
     InvalidContinuation,
     ContinuationRequiresPersistentSession,
+    InvalidCleanupGroup,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -142,10 +182,17 @@ pub enum SignInClassification {
     Unknown,
 }
 
+/// The name an application gives the runtime, which becomes a component of
+/// every directory the runtime chooses (cache, data, workspaces).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Namespace(String);
 
 impl Namespace {
+    /// A namespace of 1 to 64 lowercase ASCII letters, digits, `-` or `_`, that
+    /// is not the name of a Windows device (`con`, `prn`, `aux`, `nul`, `com0`
+    /// to `com9`, `lpt0` to `lpt9`): as a directory name, a device name cannot
+    /// be created on Windows, whatever its case. It is refused on every
+    /// platform, so that a namespace that works on one works on all.
     pub fn fixed(value: impl Into<String>) -> Result<Self, NamespaceError> {
         let value = value.into();
         if value.is_empty()
@@ -153,6 +200,7 @@ impl Namespace {
             || !value.bytes().all(|byte| {
                 byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_')
             })
+            || is_windows_device_name(&value)
         {
             return Err(NamespaceError);
         }
@@ -164,12 +212,24 @@ impl Namespace {
     }
 }
 
+/// Whether Windows reserves `name`, in lowercase, as the name of a device.
+fn is_windows_device_name(name: &str) -> bool {
+    matches!(name, "con" | "prn" | "aux" | "nul")
+        || name
+            .strip_prefix("com")
+            .or_else(|| name.strip_prefix("lpt"))
+            .is_some_and(|number| matches!(number.as_bytes(), [b'0'..=b'9']))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NamespaceError;
 
 impl fmt::Display for NamespaceError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("namespace must be 1-64 lowercase ASCII letters, digits, '-' or '_'")
+        formatter.write_str(
+            "namespace must be 1-64 lowercase ASCII letters, digits, '-' or '_', \
+             and not a Windows device name such as 'con' or 'com1'",
+        )
     }
 }
 
@@ -191,6 +251,7 @@ mod tests {
             tools: ToolPolicy::None,
             session: SessionPolicy::Ephemeral,
             continuation: Some("opaque".to_owned()),
+            cleanup_group: None,
             check_sign_in: true,
         };
         assert_eq!(
@@ -228,6 +289,32 @@ mod tests {
             assert!(Namespace::fixed(value).is_err(), "{value}");
         }
     }
+
+    #[test]
+    fn a_namespace_is_never_a_windows_device_name() {
+        // As a directory, `Con` or `con` cannot be created on Windows, and the
+        // paths the runtime derives from a namespace would all fail.
+        for value in [
+            "con", "prn", "aux", "nul", "com0", "com1", "com9", "lpt0", "lpt1", "lpt9",
+        ] {
+            assert!(Namespace::fixed(value).is_err(), "{value}");
+        }
+        // Names that only look like them are ordinary.
+        for value in [
+            "com",
+            "lpt",
+            "com10",
+            "lpt10",
+            "console",
+            "con-app",
+            "my-con",
+            "nulls",
+            "auxiliary",
+        ] {
+            assert_eq!(Namespace::fixed(value).unwrap().as_str(), value);
+        }
+    }
+
     #[test]
     fn argv_bound_fields_are_validated() {
         let base = Turn {
@@ -240,6 +327,7 @@ mod tests {
             tools: ToolPolicy::None,
             session: SessionPolicy::Persistent,
             continuation: None,
+            cleanup_group: None,
             check_sign_in: false,
         };
         assert!(
@@ -261,10 +349,32 @@ mod tests {
         assert!(
             Turn {
                 system: Some("bad\0system".to_owned()),
-                ..base
+                ..base.clone()
             }
             .validate()
             .is_err()
+        );
+        for handle in ["..", ".hidden", "-c", "", "a/b", "a b"] {
+            assert!(!is_session_handle(handle), "{handle:?}");
+        }
+        for group in ["", "../up", "has space", &"x".repeat(65)] {
+            assert_eq!(
+                Turn {
+                    cleanup_group: Some(group.to_owned()),
+                    ..base.clone()
+                }
+                .validate(),
+                Err(TurnError::InvalidCleanupGroup),
+                "{group:?}"
+            );
+        }
+        assert!(
+            Turn {
+                cleanup_group: Some("conv_0123456789abcdef".to_owned()),
+                ..base
+            }
+            .validate()
+            .is_ok()
         );
     }
 }
