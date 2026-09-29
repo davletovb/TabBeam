@@ -27,6 +27,7 @@ fn message(provider: Option<&str>, reason: &str, retryable: bool) -> &'static st
         (Some("grok"), "EXECUTABLE_NOT_FOUND", _) => {
             "Grok Build isn't installed. Install the Grok CLI, then try again."
         }
+
         (Some("codex"), "LOGIN_REQUIRED" | "AUTH_REJECTED", _) => {
             "Codex isn't signed in. Run \"codex login\" in a terminal, then try again."
         }
@@ -39,19 +40,101 @@ fn message(provider: Option<&str>, reason: &str, retryable: bool) -> &'static st
         (Some("grok"), "AUTH_REJECTED", _) => {
             "Grok isn't signed in with a Grok/X account. Run grok login, then try again."
         }
-        (Some("codex"), "PROVIDER_UNAVAILABLE", false) => "Codex couldn't start. Reinstall the Codex CLI, then try again.",
-        (Some("claude"), "PROVIDER_UNAVAILABLE", false) => "Claude couldn't start. Reinstall Claude Code, then try again.",
-        (Some("gemini"), "PROVIDER_UNAVAILABLE", false) => "Antigravity CLI couldn't start. Reinstall it, then try again.",
-        (Some("grok"), "PROVIDER_UNAVAILABLE", false) => "Grok Build couldn't start. Reinstall it, then try again.",
-        (Some("codex"), "WORKSPACE_UNAVAILABLE", _) => "Pervue couldn't prepare a private folder for Codex. Make sure your cache folder exists and only you can change it, then try again.",
-        (Some("claude"), "WORKSPACE_UNAVAILABLE", _) => "Pervue couldn't prepare a private folder for Claude. Check your cache folder and try again.",
-        (Some("gemini"), "WORKSPACE_UNAVAILABLE", _) => "Pervue couldn't prepare a private folder for Antigravity. Check your cache folder, then try again.",
-        (Some("grok"), "WORKSPACE_UNAVAILABLE", _) => "Pervue couldn't prepare a private folder for Grok. Check your cache folder, then try again.",
-        (Some("gemini"), "PROVIDER_AGENT_NOT_USED", _) => "Antigravity didn't use Pervue's restricted agent, so the turn was stopped. Update Antigravity CLI, then try again.",
-        (Some("gemini"), "PROVIDER_PERMISSIONS_TOO_OPEN", _) => "Antigravity is set to run tools without asking, so Pervue stopped the turn. Set Antigravity's tool permission to review requests, then try again.",
-        (Some("codex"), "PAGE_CONTEXT_TOOLS_ENABLED", _) => "Pervue won't send browser context to Codex while user-configured MCP servers are enabled. Disable them or choose No context.",
-        (Some("codex"), "NATIVE_SEARCH_CONFIGURATION_UNSAFE", _) => "Pervue won't enable Codex web search while user-configured MCP servers are enabled. Disable them or use a plain Ask turn.",
-        (Some("grok"), "SEARCH_UNSUPPORTED", _) => "Grok Build's shipped headless CLI doesn't expose a Pervue-safe native web-search surface yet. Turn Web off and try again.",
+
+        (Some("codex"), "PROVIDER_UNAVAILABLE", false) => {
+            "Codex couldn't start. Reinstall the Codex CLI, then try again."
+        }
+        (Some("claude"), "PROVIDER_UNAVAILABLE", false) => {
+            "Claude couldn't start. Reinstall Claude Code, then try again."
+        }
+        (Some("gemini"), "PROVIDER_UNAVAILABLE", false) => {
+            "Antigravity CLI couldn't start. Reinstall it, then try again."
+        }
+        (Some("grok"), "PROVIDER_UNAVAILABLE", false) => {
+            "Grok Build couldn't start. Reinstall it, then try again."
+        }
+        (Some("codex"), "PROVIDER_UNAVAILABLE", true) => {
+            "Codex couldn't answer right now. Try again."
+        }
+        (Some("claude"), "PROVIDER_UNAVAILABLE", true) => {
+            "Claude couldn't answer right now. Try again."
+        }
+        (Some("gemini"), "PROVIDER_UNAVAILABLE", true) => {
+            "Gemini couldn't answer through Antigravity right now. Try again."
+        }
+        (Some("grok"), "PROVIDER_UNAVAILABLE", true) => {
+            "Grok couldn't answer right now. Try again."
+        }
+
+        (Some("codex"), "WORKSPACE_UNAVAILABLE", _) => {
+            "Pervue couldn't prepare a private folder for Codex. Make sure your cache folder exists and only you can change it, then try again."
+        }
+        (Some("claude"), "WORKSPACE_UNAVAILABLE", _) => {
+            "Pervue couldn't prepare a private folder for Claude. Check your cache folder and try again."
+        }
+        (Some("gemini"), "WORKSPACE_UNAVAILABLE", _) => {
+            "Pervue couldn't prepare a private folder for Antigravity. Check your cache folder, then try again."
+        }
+        (Some("grok"), "WORKSPACE_UNAVAILABLE", _) => {
+            "Pervue couldn't prepare a private folder for Grok. Check your cache folder, then try again."
+        }
+
+        (Some("codex"), "PROCESS_EXITED", _) => "Codex stopped unexpectedly. Try again.",
+        (Some("claude"), "PROCESS_EXITED", _) => "Claude stopped unexpectedly. Try again.",
+        (Some("gemini"), "PROCESS_EXITED", _) => "Antigravity stopped unexpectedly. Try again.",
+        (Some("grok"), "PROCESS_EXITED", _) => "Grok stopped unexpectedly. Try again.",
+
+        (Some("codex"), "MALFORMED_PROVIDER_OUTPUT", _) => {
+            "Codex answered in a way Pervue doesn't understand. Update Codex and Pervue, then try again."
+        }
+        (Some("claude"), "MALFORMED_PROVIDER_OUTPUT", _) => {
+            "Claude answered in a way Pervue doesn't understand. Update Claude Code and Pervue, then try again."
+        }
+        (Some("gemini"), "MALFORMED_PROVIDER_OUTPUT", _) => {
+            "Antigravity answered in a way Pervue doesn't understand. Update Antigravity CLI and Pervue, then try again."
+        }
+        (Some("grok"), "MALFORMED_PROVIDER_OUTPUT", _) => {
+            "Grok answered in a way Pervue doesn't understand. Update Grok Build and Pervue, then try again."
+        }
+
+        (Some("codex"), "PROVIDER_RATE_LIMITED", _) => {
+            "Codex has reached a usage or rate limit. Try again later."
+        }
+        (Some("claude"), "PROVIDER_RATE_LIMITED", _) => {
+            "Claude has reached a usage or rate limit. Try again later."
+        }
+        (Some("gemini"), "PROVIDER_RATE_LIMITED", _) => {
+            "Gemini has reached a usage or rate limit. Try again later."
+        }
+        (Some("grok"), "PROVIDER_RATE_LIMITED", _) => {
+            "Grok has reached a usage or rate limit. Try again later."
+        }
+
+        (Some("codex"), "PAGE_CONTEXT_TOOLS_ENABLED", _) => {
+            "Pervue won't send browser context to Codex while user-configured MCP servers are enabled. Disable them or choose No context."
+        }
+        (Some("codex"), "NATIVE_SEARCH_CONFIGURATION_UNSAFE", _) => {
+            "Pervue won't enable Codex web search while user-configured MCP servers are enabled. Disable them or use a plain Ask turn."
+        }
+        (Some("gemini"), "PROVIDER_AGENT_NOT_USED", _) => {
+            "Antigravity didn't use Pervue's restricted agent, so the turn was stopped. Update Antigravity CLI, then try again."
+        }
+        (Some("gemini"), "PROVIDER_PERMISSIONS_TOO_OPEN", _) => {
+            "Antigravity is set to run tools without asking, so Pervue stopped the turn. Set Antigravity's tool permission to review requests, then try again."
+        }
+        (Some("grok"), "SEARCH_UNSUPPORTED", _) => {
+            "Grok Build's shipped headless CLI doesn't expose a Pervue-safe native web-search surface yet. Turn Web off and try again."
+        }
+        (Some("claude"), "UNKNOWN_CONVERSATION", _) => {
+            "Claude's saved session no longer exists or can't be continued. Start a new conversation."
+        }
+        (Some("gemini"), "UNKNOWN_CONVERSATION", _) => {
+            "This Gemini conversation can't be continued. Start a new conversation."
+        }
+        (Some("grok"), "UNKNOWN_CONVERSATION", _) => {
+            "This Grok conversation can't be continued. Start a new conversation."
+        }
+
         (_, "PROVIDER_NOT_INSTALLED", _) => {
             "Pervue's companion app doesn't support this AI provider yet. Update it, then try again."
         }
@@ -67,25 +150,17 @@ fn message(provider: Option<&str>, reason: &str, retryable: bool) -> &'static st
         (_, "MODEL_SELECTION_UNSUPPORTED", _) => {
             "This AI provider can't switch models. Choose its default model, then ask again."
         }
-        (Some("codex"), "PROVIDER_RATE_LIMITED", _) => "Codex has reached a usage or rate limit. Try again later.",
-        (Some("claude"), "PROVIDER_RATE_LIMITED", _) => "Claude has reached a usage or rate limit. Try again later.",
-        (Some("gemini"), "PROVIDER_RATE_LIMITED", _) => "Gemini has reached a usage or rate limit. Try again later.",
-        (Some("grok"), "PROVIDER_RATE_LIMITED", _) => "Grok has reached a usage or rate limit. Try again later.",
-        (_, "PROVIDER_RATE_LIMITED", _) => "The provider has reached a usage or rate limit. Try again later."
+        (_, "PROVIDER_RATE_LIMITED", _) => {
+            "The provider has reached a usage or rate limit. Try again later."
+        }
         (_, "UNKNOWN_CONVERSATION", _) => "This conversation can't be continued. Start a new one.",
         (_, "WORKSPACE_UNAVAILABLE", _) => {
             "Pervue couldn't prepare a private provider workspace. Check your cache folder, then try again."
         }
-        (Some("codex"), "PROCESS_EXITED", _) => "Codex stopped unexpectedly. Try again.",
-        (Some("claude"), "PROCESS_EXITED", _) => "Claude stopped unexpectedly. Try again.",
-        (Some("gemini"), "PROCESS_EXITED", _) => "Antigravity stopped unexpectedly. Try again.",
-        (Some("grok"), "PROCESS_EXITED", _) => "Grok stopped unexpectedly. Try again.",
         (_, "PROCESS_EXITED", _) => "The provider stopped unexpectedly. Try again.",
-        (Some("codex"), "MALFORMED_PROVIDER_OUTPUT", _) => "Codex answered in a way Pervue doesn't understand. Update Codex and Pervue, then try again.",
-        (Some("claude"), "MALFORMED_PROVIDER_OUTPUT", _) => "Claude answered in a way Pervue doesn't understand. Update Claude Code and Pervue, then try again.",
-        (Some("gemini"), "MALFORMED_PROVIDER_OUTPUT", _) => "Antigravity answered in a way Pervue doesn't understand. Update Antigravity CLI and Pervue, then try again.",
-        (Some("grok"), "MALFORMED_PROVIDER_OUTPUT", _) => "Grok answered in a way Pervue doesn't understand. Update Grok Build and Pervue, then try again.",
-        (_, "MALFORMED_PROVIDER_OUTPUT", _) => "The provider answered in an unsupported format. Update the provider CLI and Pervue, then try again."
+        (_, "MALFORMED_PROVIDER_OUTPUT", _) => {
+            "The provider answered in an unsupported format. Update the provider CLI and Pervue, then try again."
+        }
         (_, "PROVIDER_BOUNDARY_VIOLATION", _) => {
             "The provider exposed or used a tool Pervue doesn't allow, so the turn was stopped."
         }
@@ -122,10 +197,6 @@ fn message(provider: Option<&str>, reason: &str, retryable: bool) -> &'static st
         (_, "WORKSPACE_MISMATCH" | "TOOLSET_MISMATCH" | "SKILLS_MISMATCH" | "MCP_MISMATCH", _) => {
             "The provider crossed Pervue's isolated execution boundary, so the turn was stopped."
         }
-        (Some("codex"), "PROVIDER_UNAVAILABLE", true) => "Codex couldn't answer right now. Try again.",
-        (Some("claude"), "PROVIDER_UNAVAILABLE", true) => "Claude couldn't answer right now. Try again.",
-        (Some("gemini"), "PROVIDER_UNAVAILABLE", true) => "Gemini couldn't answer through Antigravity right now. Try again.",
-        (Some("grok"), "PROVIDER_UNAVAILABLE", true) => "Grok couldn't answer right now. Try again.",
         (_, "PROVIDER_UNAVAILABLE", _) => "The provider couldn't answer right now. Try again.",
         _ => "The provider couldn't complete this request. Try again.",
     }
