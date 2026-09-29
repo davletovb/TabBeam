@@ -17,6 +17,7 @@
 //! ([`environment::INHERITED`]), Codex's own settings, and a `PATH` that
 //! starts with Codex's directory.
 
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::ffi::{OsStr, OsString};
@@ -331,6 +332,7 @@ impl Provider for Codex {
                     Availability::NotFound,
                     Authentication::Unknown,
                     capabilities,
+                    None,
                 ),
                 Update::Completed,
             ]));
@@ -346,6 +348,7 @@ impl Provider for Codex {
                     Availability::Unavailable,
                     Authentication::Unknown,
                     capabilities,
+                    None,
                 ),
                 Update::Completed,
             ])),
@@ -521,6 +524,7 @@ fn status_update(
     availability: Availability,
     authentication: Authentication,
     capabilities: Capabilities,
+    sign_in: Option<runtime_core::turn::SignInClassification>,
 ) -> Update {
     Update::Status {
         provider_id: ID.to_owned(),
@@ -528,7 +532,8 @@ fn status_update(
             availability,
             authentication,
             capabilities,
-            models: &[],
+            models: Cow::Borrowed(&[]),
+            sign_in,
         },
     }
 }
@@ -776,6 +781,7 @@ enum StatusCheck {
         process: Process,
         give_up: Instant,
         capabilities: Capabilities,
+        output: Vec<u8>,
     },
     Done(VecDeque<Update>),
 }
@@ -791,6 +797,7 @@ impl Exchange for StatusCheck {
                     process,
                     give_up,
                     capabilities: _,
+                    output: _,
                 } if Instant::now() >= *give_up => {
                     process.kill();
                     Authentication::Unknown
@@ -799,11 +806,14 @@ impl Exchange for StatusCheck {
                     process,
                     give_up,
                     capabilities: _,
+                    output,
                 } => {
                     match process.next_event(deadline.min(*give_up)) {
                         Some(Event::Exited(exit)) => signed_in(&exit),
-                        // The probe's output names the account: never read.
-                        Some(Event::Stdout(_) | Event::Stderr(_)) => {
+                        // Keep only a bounded probe prefix for billing-mode
+                        // classification; it is never logged or forwarded.
+                        Some(Event::Stdout(bytes) | Event::Stderr(bytes)) => {
+                            keep_status_output(output, &bytes);
                             if Instant::now() >= busy_until {
                                 return None;
                             }
@@ -814,12 +824,21 @@ impl Exchange for StatusCheck {
                     }
                 }
             };
-            let capabilities = match self {
-                Self::Probing { capabilities, .. } => *capabilities,
+            let (capabilities, sign_in) = match self {
+                Self::Probing {
+                    capabilities,
+                    output,
+                    ..
+                } => (*capabilities, classify_sign_in(authentication, output)),
                 Self::Done(_) => unreachable!("handled above"),
             };
             *self = Self::Done(VecDeque::from([
-                status_update(Availability::Available, authentication, capabilities),
+                status_update(
+                    Availability::Available,
+                    authentication,
+                    capabilities,
+                    sign_in,
+                ),
                 Update::Completed,
             ]));
         }
@@ -828,6 +847,30 @@ impl Exchange for StatusCheck {
     fn cancel(&mut self, _grace: Duration) {
         *self = Self::Done(VecDeque::from([Update::Stopped]));
     }
+}
+
+const STATUS_OUTPUT_BYTES: usize = 4096;
+
+fn keep_status_output(output: &mut Vec<u8>, bytes: &[u8]) {
+    let remaining = STATUS_OUTPUT_BYTES.saturating_sub(output.len());
+    output.extend_from_slice(&bytes[..bytes.len().min(remaining)]);
+}
+
+fn classify_sign_in(
+    authentication: Authentication,
+    output: &[u8],
+) -> Option<runtime_core::turn::SignInClassification> {
+    if authentication != Authentication::Authenticated {
+        return None;
+    }
+    let text = String::from_utf8_lossy(output).to_ascii_lowercase();
+    Some(if text.contains("api key") {
+        runtime_core::turn::SignInClassification::ApiKey
+    } else if text.contains("chatgpt") || text.contains("subscription") {
+        runtime_core::turn::SignInClassification::Subscription
+    } else {
+        runtime_core::turn::SignInClassification::Unknown
+    })
 }
 
 /// One `conversation.send`: the sign-in probe, then the `codex exec` turn.

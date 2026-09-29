@@ -5,6 +5,7 @@
 //! stream-json on stdin/stdout. Provider session IDs remain private to this
 //! adapter; the host and extension see only opaque Pervue conversation IDs.
 
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::{OsStr, OsString};
@@ -90,16 +91,16 @@ pub const CAPABILITIES: Capabilities = Capabilities {
 /// valid model ID (a full model name) is passed on as well.
 pub const MODELS: &[ModelOption] = &[
     ModelOption {
-        id: "sonnet",
-        label: "Sonnet (latest)",
+        id: Cow::Borrowed("sonnet"),
+        label: Cow::Borrowed("Sonnet (latest)"),
     },
     ModelOption {
-        id: "opus",
-        label: "Opus (latest)",
+        id: Cow::Borrowed("opus"),
+        label: Cow::Borrowed("Opus (latest)"),
     },
     ModelOption {
-        id: "haiku",
-        label: "Haiku (latest)",
+        id: Cow::Borrowed("haiku"),
+        label: Cow::Borrowed("Haiku (latest)"),
     },
 ];
 
@@ -451,7 +452,9 @@ fn status_update(availability: Availability, authentication: Authentication) -> 
             availability,
             authentication,
             capabilities: CAPABILITIES,
-            models: MODELS,
+            models: Cow::Borrowed(MODELS),
+            sign_in: (authentication == Authentication::Authenticated)
+                .then_some(runtime_core::turn::SignInClassification::Unknown),
         },
     }
 }
