@@ -261,18 +261,19 @@ fn a_system_prompt_goes_ahead_of_the_question_and_never_onto_the_command_line() 
             .as_mut(),
     );
     assert_eq!(updates.last(), Some(&Update::Completed));
-    // Grok reads its system prompt from the agent it runs as, and followed
-    // instructions in the prompt file in one live attempt of seven: the
-    // question arrives alone, and the instructions end the agent's own.
-    assert_eq!(fake.prompts(), ["What is muse?"]);
-    let agents = fake.read("grok-agents");
-    assert!(
-        agents.contains("\nAnswer in French. SYSTEM-MARKER\n"),
-        "{agents}"
+    // Grok follows instructions in the prompt file when they claim precedence
+    // over the messages, and ignores them in the body of its agent file, so the
+    // instructions come first in the prompt, in its own words.
+    assert_eq!(
+        fake.prompts(),
+        [format!(
+            "{}Answer in French. SYSTEM-MARKER\n\nWhat is muse?",
+            runtime_providers::grok::SYSTEM_INTRO
+        )]
     );
     assert!(
-        agents.find("Answer the user's request").unwrap() < agents.find("SYSTEM-MARKER").unwrap(),
-        "{agents}"
+        !fake.read("grok-agents").contains("SYSTEM-MARKER"),
+        "the system prompt is in the agent, where Grok ignores it"
     );
     assert!(
         !fake.invocations().concat().contains("SYSTEM-MARKER"),

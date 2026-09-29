@@ -1,9 +1,10 @@
 name: Live Codex smoke test
 
-# TST-05: the opt-in smoke test against the real Codex CLI
-# (native/host/tests/live_codex.rs). It runs only when started by hand. With a
-# repository secret OPENAI_API_KEY, Codex signs in with it and the test must
-# pass; without one, the test is skipped.
+# TST-05: the opt-in smoke tests against the real Codex CLI: Pervue's host on
+# top of it (native/host/tests/live_codex.rs) and the runtime's Codex adapter
+# alone (native/runtime-tests/tests/live_codex.rs). It runs only when started by
+# hand. With a repository secret OPENAI_API_KEY, Codex signs in with it and the
+# tests must pass; without one, they are skipped.
 on:
   workflow_dispatch:
     inputs:
@@ -54,3 +55,7 @@ jobs:
           # With a sign-in, a missing or signed-out Codex fails the test.
           PERVUE_LIVE_CODEX: ${{ secrets.OPENAI_API_KEY != '' && 'required' || '1' }}
         run: cargo +stable test --manifest-path native/Cargo.toml --locked -p pervue-host --test live_codex -- --nocapture
+      - name: Run the runtime's smoke test
+        env:
+          RUNTIME_LIVE_CODEX: ${{ secrets.OPENAI_API_KEY != '' && 'required' || '1' }}
+        run: cargo +stable test --manifest-path native/Cargo.toml --locked -p runtime-tests --test live_codex -- --nocapture

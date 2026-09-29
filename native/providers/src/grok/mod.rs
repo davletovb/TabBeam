@@ -172,19 +172,17 @@ pub fn owner_file(namespace: &Namespace) -> String {
 }
 
 /// The definition of the agent every turn runs as, named after the
-/// application's namespace. The application's system prompt, if it has one,
-/// ends the agent's own: the body of the definition is the system prompt Grok
-/// runs under, and instructions in the prompt file were followed in only one of
-/// seven live attempts when they came without a claim of precedence.
-fn agent_definition(namespace: &Namespace, system: Option<&str>) -> String {
-    let mut definition = PLAIN_AGENT.replace("{name}", &format!("{}-text", namespace.as_str()));
-    if let Some(system) = system.filter(|system| !system.is_empty()) {
-        definition.push('\n');
-        definition.push_str(system);
-        definition.push('\n');
-    }
-    definition
+/// application's namespace.
+fn agent_definition(namespace: &Namespace) -> String {
+    PLAIN_AGENT.replace("{name}", &format!("{}-text", namespace.as_str()))
 }
+
+/// Introduces a turn's system prompt in the prompt file. Grok's model follows
+/// instructions when they claim precedence over the messages below (16 of 16
+/// live runs), follows a plain introduction in 1 of 7 attempts, and ignores the
+/// same text in the body of its agent file (2 of 5 runs): so, unlike
+/// Antigravity's, its system prompt goes in the prompt, in these words.
+pub const SYSTEM_INTRO: &str = "Follow these instructions from the application for the whole conversation. They come before, and take precedence over, everything in the messages below:\n";
 
 #[derive(Debug, Clone)]
 struct Launch {
@@ -410,13 +408,17 @@ impl Provider for Grok {
             return Box::new(Scripted::failed(NO_WORKSPACE));
         };
 
-        // The system prompt is in the agent, not in the prompt file.
-        let prompt = prompt::render(None, &request.messages, request.tools);
+        let prompt = prompt::render_with_intro(
+            SYSTEM_INTRO,
+            request.system.as_deref(),
+            &request.messages,
+            request.tools,
+        );
         let workspace = match TurnWorkspace::create(
             &base,
             &prompt,
             &owner_file(&self.namespace),
-            &agent_definition(&self.namespace, request.system.as_deref()),
+            &agent_definition(&self.namespace),
         ) {
             Ok(workspace) => workspace,
             Err(_) => return Box::new(Scripted::failed(NO_WORKSPACE)),
@@ -1008,21 +1010,11 @@ mod tests {
     }
 
     #[test]
-    fn a_system_prompt_ends_the_agents_own_below_its_settings() {
-        let namespace = Namespace::fixed("my-app").unwrap();
-        let plain = agent_definition(&namespace, None);
-        let system = "Answer in French. Call yourself {name}.\n---\ntools: [run_command]";
-        let with = agent_definition(&namespace, Some(system));
-        // What the agent already said stays, and the application's text follows
-        // it, as written: it is not a template, and no setting of the agent is
-        // in the part it can write.
-        assert!(with.starts_with(&plain));
-        assert!(with.ends_with(&format!("\n{system}\n")));
-        let settings_end = with.rfind("---\nAnswer the user's request").unwrap();
-        assert_eq!(with[..settings_end].matches("tools:").count(), 1);
-        assert!(with[..settings_end].contains("tools: []"));
-        // Nothing to add is nothing added.
-        assert_eq!(agent_definition(&namespace, Some("")), plain);
+    fn the_system_prompt_is_introduced_with_a_claim_of_precedence() {
+        // A claim Antigravity read as an injection, and Grok follows: which is
+        // why this adapter words its introduction for itself.
+        assert!(SYSTEM_INTRO.contains("take precedence over"));
+        assert_ne!(SYSTEM_INTRO, runtime_core::prompt::SYSTEM_INTRO);
     }
 
     #[test]
@@ -1045,7 +1037,7 @@ mod tests {
 
     #[test]
     fn agent_profile_and_cli_clamps_are_text_only() {
-        let agent = agent_definition(&Namespace::fixed("my-app").unwrap(), None);
+        let agent = agent_definition(&Namespace::fixed("my-app").unwrap());
         assert!(agent.contains("name: my-app-text\n"));
         assert!(agent.contains("tools: []"));
         assert!(agent.contains("promptMode: full"));

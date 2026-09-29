@@ -474,31 +474,33 @@ fn a_system_prompt_reaches_every_provider_ahead_of_the_question() {
         );
         assert_eq!(updates.last(), Some(&Update::Completed), "{kind:?}");
 
-        // The instructions come first, under their introduction, and then the
-        // question, in the prompt; except for Antigravity and Grok, which read
-        // their system prompt from the agent they run as and follow it there
-        // much more readily than in a message, and get the question alone.
-        // Either way they are not on a command line, where anyone on the
-        // machine could read them.
-        let agent_file = match &rig.fixture {
-            Fixture::Gemini(fake) => Some(fake.read("agy-agents")),
-            Fixture::Grok(fake) => Some(fake.read("grok-agents")),
-            Fixture::Codex(_) | Fixture::Claude(_) => None,
-        };
-        match agent_file {
-            Some(agents) => {
+        // Where the instructions go is each provider's own: real runs showed
+        // that Antigravity follows its agent file and resists a message, while
+        // Grok follows a message that claims precedence and ignores its agent
+        // file. So Antigravity gets the question alone and the instructions in
+        // its agent, Grok the instructions first in the prompt in its own
+        // words, and Codex and Claude first in the prompt under the shared
+        // introduction. None of them is on a command line, where anyone on the
+        // machine could read it.
+        let in_prompt =
+            |intro: &str| format!("{intro}Answer in French. SYSTEM-MARKER\n\nWhat is muse?");
+        match &rig.fixture {
+            Fixture::Gemini(fake) => {
                 assert_eq!(rig.prompts(), ["What is muse?"], "{kind:?}");
                 assert!(
-                    agents.contains("\nAnswer in French. SYSTEM-MARKER\n"),
+                    fake.read("agy-agents")
+                        .contains("\nAnswer in French. SYSTEM-MARKER\n"),
                     "{kind:?}: the agent lacks the system prompt"
                 );
             }
-            None => assert_eq!(
+            Fixture::Grok(_) => assert_eq!(
                 rig.prompts(),
-                [format!(
-                    "{}Answer in French. SYSTEM-MARKER\n\nWhat is muse?",
-                    runtime_core::prompt::SYSTEM_INTRO
-                )],
+                [in_prompt(runtime_providers::grok::SYSTEM_INTRO)],
+                "{kind:?}"
+            ),
+            Fixture::Codex(_) | Fixture::Claude(_) => assert_eq!(
+                rig.prompts(),
+                [in_prompt(runtime_core::prompt::SYSTEM_INTRO)],
                 "{kind:?}"
             ),
         }

@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 
 use runtime_core::exchange::{Exchange, Update};
 use runtime_core::protocol::Availability;
+use runtime_core::turn::{Message, Role, SessionPolicy, ToolPolicy, Turn};
 use runtime_providers::Provider;
 
 /// How long a real model may take to answer.
@@ -60,6 +61,23 @@ pub fn run_within(exchange: &mut dyn Exchange, timeout: Duration) -> Vec<Update>
         if terminal {
             return updates;
         }
+    }
+}
+
+/// An ephemeral turn of one question, with the sign-in checked first.
+pub fn turn(system: Option<&str>, text: &str, tools: ToolPolicy) -> Turn {
+    Turn {
+        system: system.map(str::to_owned),
+        messages: vec![Message {
+            role: Role::User,
+            text: text.to_owned(),
+        }],
+        model: None,
+        tools,
+        session: SessionPolicy::Ephemeral,
+        continuation: None,
+        cleanup_group: None,
+        check_sign_in: true,
     }
 }
 
@@ -126,6 +144,16 @@ pub fn scratch(name: &str) -> Scratch {
 /// The user's home directory, where the provider CLIs keep their own files.
 pub fn home() -> Option<PathBuf> {
     std::env::var_os(if cfg!(unix) { "HOME" } else { "USERPROFILE" }).map(PathBuf::from)
+}
+
+/// Where a provider CLI keeps its own files: the directory its environment
+/// variable `variable` names when that is set, otherwise `default` under the
+/// user's home directory.
+pub fn provider_home(variable: &str, default: &str) -> Option<PathBuf> {
+    match std::env::var_os(variable) {
+        Some(dir) if !dir.is_empty() => Some(PathBuf::from(dir)),
+        _ => home().map(|home| home.join(default)),
+    }
 }
 
 /// A string no earlier run could have written, to look for afterwards.
@@ -253,4 +281,36 @@ pub fn answer_of(what: &str, updates: &[Update], variables: &[&str]) -> String {
             _ => None,
         })
         .collect()
+}
+
+/// Asks `provider` a question under a system prompt that says to answer every
+/// question with one word, and panics unless the answer has it. A model's
+/// compliance is not certain, so it gets a second try before the way the
+/// adapter delivers the prompt is called broken. `tools` are the plain turn's.
+pub fn assert_follows_system_prompt(
+    name: &str,
+    provider: &dyn Provider,
+    tools: ToolPolicy,
+    credentials: &[&str],
+) {
+    let mut followed = String::new();
+    for attempt in 1..=2 {
+        let updates = run_within(
+            provider
+                .send(turn(
+                    Some("Whatever you are asked, reply with the single word: marmalade"),
+                    "What is two plus two?",
+                    tools,
+                ))
+                .as_mut(),
+            ANSWER_TIMEOUT,
+        );
+        assert_completed("the instructed turn", &updates);
+        followed = answer_of("the instructed answer", &updates, credentials);
+        eprintln!("with a system prompt (attempt {attempt}), {name} answered: {followed}");
+        if followed.to_lowercase().contains("marmalade") {
+            return;
+        }
+    }
+    panic!("the system prompt was not followed: {followed}");
 }

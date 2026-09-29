@@ -21,36 +21,20 @@ mod support;
 use std::time::{Duration, Instant};
 
 use runtime_core::protocol::{Authentication, Availability, ErrorCode};
-use runtime_core::turn::{Message, Namespace, Role, SessionPolicy, ToolPolicy, Turn};
+use runtime_core::turn::{Namespace, ToolPolicy};
 use runtime_platform::discovery;
 use runtime_platform::layout::Layout;
 use runtime_providers::grok::Grok;
 use runtime_providers::{Provider, Update};
 use support::live::{
-    ANSWER_TIMEOUT, Mode, answer_of, assert_completed, assert_no_marker, home, marker, mode,
-    run_within, scratch, skip_or_fail, status_of,
+    ANSWER_TIMEOUT, Mode, answer_of, assert_completed, assert_follows_system_prompt,
+    assert_no_marker, home, marker, mode, run_within, scratch, skip_or_fail, status_of, turn,
 };
 
 const VARIABLE: &str = "RUNTIME_LIVE_GROK";
 
 /// Environment variables that may hold a credential in a CI job.
 const CREDENTIAL_VARIABLES: &[&str] = &["XAI_API_KEY", "GROK_CODE_XAI_API_KEY"];
-
-fn turn(system: Option<&str>, text: &str, tools: ToolPolicy) -> Turn {
-    Turn {
-        system: system.map(str::to_owned),
-        messages: vec![Message {
-            role: Role::User,
-            text: text.to_owned(),
-        }],
-        model: None,
-        tools,
-        session: SessionPolicy::Ephemeral,
-        continuation: None,
-        cleanup_group: None,
-        check_sign_in: true,
-    }
-}
 
 /// Waits a moment for the background removal of a turn's directories, and
 /// returns the ones still there.
@@ -128,30 +112,8 @@ fn live_grok_answers_and_leaves_nothing_behind() {
         "unexpected answer"
     );
 
-    // A system prompt is followed. A model's compliance is not certain, so it
-    // gets a second try before the mechanism is called broken.
-    let mut followed = String::new();
-    for attempt in 1..=2 {
-        let instructed = run_within(
-            grok.send(turn(
-                Some("Whatever you are asked, reply with the single word: marmalade"),
-                "What is two plus two?",
-                ToolPolicy::None,
-            ))
-            .as_mut(),
-            ANSWER_TIMEOUT,
-        );
-        assert_completed("the instructed turn", &instructed);
-        followed = answer_of("the instructed answer", &instructed, CREDENTIAL_VARIABLES);
-        eprintln!("with a system prompt (attempt {attempt}), Grok answered: {followed}");
-        if followed.to_lowercase().contains("marmalade") {
-            break;
-        }
-    }
-    assert!(
-        followed.to_lowercase().contains("marmalade"),
-        "the system prompt was not followed: {followed}"
-    );
+    // A system prompt is followed.
+    assert_follows_system_prompt("Grok", &grok, ToolPolicy::None, CREDENTIAL_VARIABLES);
 
     // Search is refused before anything runs, until the shipped CLI can offer
     // it without weakening the text-only boundary.

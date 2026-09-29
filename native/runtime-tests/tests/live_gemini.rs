@@ -17,14 +17,15 @@
 mod support;
 
 use runtime_core::protocol::{Authentication, Availability, ErrorCode};
-use runtime_core::turn::{Message, Namespace, Role, SessionPolicy, ToolPolicy, Turn};
+use runtime_core::turn::{Namespace, ToolPolicy};
 use runtime_platform::discovery;
 use runtime_platform::layout::Layout;
 use runtime_providers::gemini::Gemini;
 use runtime_providers::{Provider, Update};
 use support::live::{
-    ANSWER_TIMEOUT, Mode, answer_of, assert_completed, assert_no_marker, find_marker, home, marker,
-    mode, run_within, scratch, skip_or_fail, status_of,
+    ANSWER_TIMEOUT, Mode, answer_of, assert_completed, assert_follows_system_prompt,
+    assert_no_marker, find_marker, home, marker, mode, run_within, scratch, skip_or_fail,
+    status_of, turn,
 };
 
 const VARIABLE: &str = "RUNTIME_LIVE_GEMINI";
@@ -35,22 +36,6 @@ const CREDENTIAL_VARIABLES: &[&str] = &[
     "GOOGLE_API_KEY",
     "GOOGLE_APPLICATION_CREDENTIALS",
 ];
-
-fn turn(system: Option<&str>, text: &str, tools: ToolPolicy) -> Turn {
-    Turn {
-        system: system.map(str::to_owned),
-        messages: vec![Message {
-            role: Role::User,
-            text: text.to_owned(),
-        }],
-        model: None,
-        tools,
-        session: SessionPolicy::Ephemeral,
-        continuation: None,
-        cleanup_group: None,
-        check_sign_in: true,
-    }
-}
 
 #[test]
 fn live_gemini_answers_searches_and_leaves_nothing_behind() {
@@ -110,31 +95,8 @@ fn live_gemini_answers_searches_and_leaves_nothing_behind() {
         "unexpected answer"
     );
 
-    // A system prompt is followed. A model's compliance is not certain, so it
-    // gets a second try before the mechanism is called broken.
-    let mut followed = String::new();
-    for attempt in 1..=2 {
-        let instructed = run_within(
-            gemini
-                .send(turn(
-                    Some("Whatever you are asked, reply with the single word: marmalade"),
-                    "What is two plus two?",
-                    ToolPolicy::None,
-                ))
-                .as_mut(),
-            ANSWER_TIMEOUT,
-        );
-        assert_completed("the instructed turn", &instructed);
-        followed = answer_of("the instructed answer", &instructed, CREDENTIAL_VARIABLES);
-        eprintln!("with a system prompt (attempt {attempt}), Gemini answered: {followed}");
-        if followed.to_lowercase().contains("marmalade") {
-            break;
-        }
-    }
-    assert!(
-        followed.to_lowercase().contains("marmalade"),
-        "the system prompt was not followed: {followed}"
-    );
+    // A system prompt is followed.
+    assert_follows_system_prompt("Gemini", &gemini, ToolPolicy::None, CREDENTIAL_VARIABLES);
 
     // A native search returns sources, and completes only with them.
     let searched = run_within(

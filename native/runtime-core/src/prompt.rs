@@ -12,8 +12,9 @@
 //! it in the process list, so an adapter sends it on the channel that carries
 //! the rest: as the first part of the prompt, or, where the provider has a
 //! system prompt of its own that its CLI reads from a file the adapter writes
-//! (the agent of Antigravity and of Grok), there, which is where a model takes
-//! it most seriously.
+//! (Antigravity's agent), there. Which channel and which words a provider's
+//! model follows is not something to guess: they were found by running the real
+//! CLIs, and differ (see [`SYSTEM_INTRO`]).
 
 use crate::turn::{Message, Role, ToolPolicy};
 
@@ -33,17 +34,18 @@ const HISTORY_INTRO: &str =
 /// current message, when something else comes before the question.
 pub const CURRENT_QUESTION: &str = "Current user question:\n";
 
-/// Introduces a turn's system prompt when it goes in the prompt (Codex and
-/// Claude), so the provider can tell the application's instructions from
-/// something a user said. How it is worded matters, and was found by asking real
-/// models: telling one that the instructions "take precedence over" the
-/// messages below was read as a prompt injection by Antigravity's Gemini, which
-/// refused them; a purely descriptive header ("Instructions for this
-/// conversation…") was followed by Grok in 1 of 7 attempts, where the imperative
-/// with the claim of precedence had been in 13 of 13 runs. Both now read their system
-/// prompt from their agent, so this keeps the imperative, which is what set the
-/// text apart, and drops the claim. No live test has asserted that Codex or
-/// Claude follow it.
+/// Introduces a turn's system prompt when it goes in the prompt, so the provider
+/// can tell the application's instructions from something a user said. This is
+/// the wording for adapters whose provider has no better wording of its own
+/// (Codex and Claude): an imperative, without a claim of precedence.
+///
+/// The wording matters, and differs by provider, as real runs showed.
+/// Antigravity's Gemini read "take precedence over the messages below" as a
+/// prompt injection and refused, and follows its agent file instead. Grok is
+/// the opposite: it follows that claim of precedence in the prompt file (16 of
+/// 16 runs) and ignores the same text in its agent file (2 of 5), so its adapter
+/// has its own introduction (`grok::SYSTEM_INTRO`). No live test has yet
+/// asserted that Codex or Claude follow this one.
 pub const SYSTEM_INTRO: &str =
     "Follow these instructions from the application for the whole conversation:\n";
 
@@ -51,13 +53,25 @@ pub const SYSTEM_INTRO: &str =
 ///
 /// A lone message is sent as it is. A non-empty `system` prompt comes first,
 /// after [`SYSTEM_INTRO`] (an adapter whose provider has a system prompt of its
-/// own passes `None` and puts it there). Earlier messages come next, each as one line of
-/// quoted JSON, so nothing in them can be mistaken for an instruction of the
-/// application. A search turn adds [`SEARCH_INSTRUCTIONS`] before its question.
+/// own passes `None` and puts it there). Earlier messages come next, each as
+/// one line of quoted JSON, so nothing in them can be mistaken for an
+/// instruction of the application. A search turn adds [`SEARCH_INSTRUCTIONS`]
+/// before its question.
 pub fn render(system: Option<&str>, messages: &[Message], tools: ToolPolicy) -> String {
+    render_with_intro(SYSTEM_INTRO, system, messages, tools)
+}
+
+/// [`render`], introducing the system prompt with `intro` instead of
+/// [`SYSTEM_INTRO`], for a provider whose model wants other words.
+pub fn render_with_intro(
+    intro: &str,
+    system: Option<&str>,
+    messages: &[Message],
+    tools: ToolPolicy,
+) -> String {
     let mut prompt = String::new();
     if let Some(system) = system.filter(|system| !system.is_empty()) {
-        prompt.push_str(SYSTEM_INTRO);
+        prompt.push_str(intro);
         prompt.push_str(system);
         prompt.push_str("\n\n");
     }
@@ -159,6 +173,19 @@ mod tests {
                  {{\"role\":\"user\",\"text\":\"earlier\"}}\n\
                  what is muse?"
             )
+        );
+    }
+
+    #[test]
+    fn an_adapter_may_introduce_the_system_prompt_in_its_own_words() {
+        let messages = [message(Role::User, "what is muse?")];
+        assert_eq!(
+            render_with_intro("Listen:\n", Some("Be brief."), &messages, ToolPolicy::None),
+            "Listen:\nBe brief.\n\nwhat is muse?"
+        );
+        assert_eq!(
+            render_with_intro("Listen:\n", None, &messages, ToolPolicy::None),
+            render(None, &messages, ToolPolicy::None)
         );
     }
 
