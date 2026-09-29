@@ -1,8 +1,8 @@
 //! xAI Grok adapter through one-shot Grok Build headless mode (PRO-09).
 //!
-//! Pervue intentionally does not run Grok as a persistent ACP/app server.
+//! The adapter intentionally does not run Grok as a persistent ACP/app server.
 //! Every turn gets a fresh headless `grok` process, a private working
-//! directory and GROK_HOME, and the protocol's bounded history. Only the
+//! directory and GROK_HOME, and the application's bounded history. Only the
 //! existing Grok/X OAuth file is referenced outside that directory.
 //!
 //! Ordinary turns expose no tools. Grok web search is deliberately not
@@ -24,13 +24,13 @@ use std::time::{Duration, Instant, SystemTime};
 use crate::{Exchange, Provider, Scripted, Timeouts, Update};
 use runtime_core::discovery::SearchPath;
 use runtime_core::process::{Event, Exit, Process, ProcessSpec};
-use runtime_core::prompt::{self, SYSTEM_PROMPT_UNSUPPORTED};
+use runtime_core::prompt;
 use runtime_core::protocol::Failure as ErrorBody;
 use runtime_core::protocol::{
     Authentication, Availability, Capabilities, Capability, ErrorCode, ModelOption, ProviderState,
 };
 use runtime_core::stream::{BUSY_LIMIT, LineStream, Output};
-use runtime_core::turn::{SessionPolicy, ToolPolicy, Turn as TurnRequest};
+use runtime_core::turn::{Namespace, SessionPolicy, ToolPolicy, Turn as TurnRequest};
 use runtime_platform::discovery;
 use runtime_platform::environment;
 use runtime_platform::forget;
@@ -49,7 +49,6 @@ const STDERR_TAIL_BYTES: usize = 8 * 1024;
 const STATUS_OUTPUT_BYTES: usize = 16 * 1024;
 const STATUS_PROBE: Duration = Duration::from_secs(10);
 const FINISH_GRACE: Duration = Duration::from_secs(5);
-const OWNER_FILE: &str = ".pervue-owner";
 const STALE_WORKSPACE_AFTER: Duration = Duration::from_secs(15 * 60);
 const LEGACY_STALE_WORKSPACE_AFTER: Duration = Duration::from_secs(24 * 60 * 60);
 
@@ -145,9 +144,10 @@ const MCP_MISMATCH: ErrorBody = ErrorBody {
     retryable: false,
 };
 
+/// The agent of a turn, where `{name}` is its name.
 const PLAIN_AGENT: &str = r#"---
-name: pervue-text
-description: Text-only Pervue Grok responder.
+name: {name}
+description: Text-only Grok responder.
 promptMode: full
 tools: []
 discoverSkills: false
@@ -160,6 +160,29 @@ permissionMode: dontAsk
 ---
 Answer the user's request directly as text. Do not use tools, files, commands, MCP servers, skills, plugins, hooks, subagents, memory, or external side effects.
 "#;
+
+/// The file a workspace holds while its turn lives, and refreshes as a
+/// heartbeat: the name of the application's namespace in a leading-dot file
+/// name (`.my-app-owner` for `my-app`). A workspace with a fresh owner file is
+/// never removed as stale, and one without it is removed only when old; the name
+/// is fixed for a namespace because directories a previous run left behind are
+/// found by it.
+pub fn owner_file(namespace: &Namespace) -> String {
+    format!(".{}-owner", namespace.as_str())
+}
+
+/// The definition of the agent every turn runs as, named after the
+/// application's namespace.
+fn agent_definition(namespace: &Namespace) -> String {
+    PLAIN_AGENT.replace("{name}", &format!("{}-text", namespace.as_str()))
+}
+
+/// Introduces a turn's system prompt in the prompt file. Grok's model follows
+/// instructions when they claim precedence over the messages below (16 of 16
+/// live runs), follows a plain introduction in 1 of 7 attempts, and ignores the
+/// same text in the body of its agent file (2 of 5 runs): so, unlike
+/// Antigravity's, its system prompt goes in the prompt, in these words.
+pub const SYSTEM_INTRO: &str = "Follow these instructions from the application for the whole conversation. They come before, and take precedence over, everything in the messages below:\n";
 
 #[derive(Debug, Clone)]
 struct Launch {
@@ -230,6 +253,7 @@ impl Launch {
 pub struct Grok {
     search: SearchPath,
     launch: Rc<Launch>,
+    namespace: Namespace,
     timeouts: Timeouts,
 }
 
@@ -237,22 +261,26 @@ impl Grok {
     pub fn installed(layout: &Layout) -> Self {
         let host: Vec<_> = std::env::vars_os().collect();
         Self::new(
+            layout.namespace(),
             discovery::installed(layout),
             layout.workspace(&host, "grok"),
         )
     }
 
-    pub fn new(search: SearchPath, work_dir: PathBuf) -> Self {
+    /// The adapter for the application `namespace` names, which names its
+    /// agent and the owner file of its workspaces ([`owner_file`]).
+    pub fn new(namespace: &Namespace, search: SearchPath, work_dir: PathBuf) -> Self {
         // A hard-killed host cannot run TurnWorkspace::drop. Clear only the
-        // Grok directories Pervue names itself before this adapter starts
-        // serving requests, so prompt/context files from an interrupted prior
-        // host do not accumulate in the cache.
+        // Grok directories the application names itself before this adapter
+        // starts serving requests, so prompt/context files from an interrupted
+        // prior host do not accumulate in the cache.
         if let Ok(base) = workspace::prepare(&work_dir) {
-            sweep_stale_workspaces(&base);
+            sweep_stale_workspaces(&base, &owner_file(namespace));
         }
         Self {
             search,
             launch: Rc::new(Launch::new(work_dir, std::env::vars_os().collect())),
+            namespace: namespace.clone(),
             timeouts: TIMEOUTS,
         }
     }
@@ -316,7 +344,7 @@ impl Provider for Grok {
                 Update::Completed,
             ]));
         };
-        let Ok(workspace) = ProbeWorkspace::create(&base) else {
+        let Ok(workspace) = ProbeWorkspace::create(&base, &owner_file(&self.namespace)) else {
             return Box::new(Scripted::new([
                 status_update(
                     Availability::Unavailable,
@@ -363,9 +391,6 @@ impl Provider for Grok {
         if request.validate().is_err() {
             return Box::new(Scripted::failed(crate::INVALID_TURN));
         }
-        if request.system.is_some() {
-            return Box::new(Scripted::failed(SYSTEM_PROMPT_UNSUPPORTED));
-        }
         if request.tools == ToolPolicy::NativeWebSearch {
             return Box::new(Scripted::failed(SEARCH_UNSUPPORTED));
         }
@@ -383,8 +408,18 @@ impl Provider for Grok {
             return Box::new(Scripted::failed(NO_WORKSPACE));
         };
 
-        let prompt = prompt::render(&request.messages, request.tools);
-        let workspace = match TurnWorkspace::create(&base, &prompt) {
+        let prompt = prompt::render_with_intro(
+            SYSTEM_INTRO,
+            request.system.as_deref(),
+            &request.messages,
+            request.tools,
+        );
+        let workspace = match TurnWorkspace::create(
+            &base,
+            &prompt,
+            &owner_file(&self.namespace),
+            &agent_definition(&self.namespace),
+        ) {
             Ok(workspace) => workspace,
             Err(_) => return Box::new(Scripted::failed(NO_WORKSPACE)),
         };
@@ -589,20 +624,26 @@ impl Exchange for StatusCheck {
 struct ProbeWorkspace {
     path: PathBuf,
     grok_home: PathBuf,
+    /// The name of the owner file ([`owner_file`]).
+    owner: String,
 }
 
 impl ProbeWorkspace {
-    fn create(base: &Path) -> io::Result<Self> {
+    fn create(base: &Path, owner: &str) -> io::Result<Self> {
         let path = private_fs::unique_child(base, "status");
         private_fs::create_private_dir(&path)?;
-        private_fs::write_private_file(&path.join(OWNER_FILE), b"live")?;
+        private_fs::write_private_file(&path.join(owner), b"live")?;
         let grok_home = path.join("grok-home");
         private_fs::create_private_dir(&grok_home)?;
-        Ok(Self { path, grok_home })
+        Ok(Self {
+            path,
+            grok_home,
+            owner: owner.to_owned(),
+        })
     }
 
     fn touch(&self) -> io::Result<()> {
-        fs::write(self.path.join(OWNER_FILE), b"live")
+        fs::write(self.path.join(&self.owner), b"live")
     }
 
     fn path(&self) -> &Path {
@@ -625,10 +666,12 @@ struct TurnWorkspace {
     grok_home: PathBuf,
     prompt: PathBuf,
     agent: PathBuf,
+    /// The name of the owner file ([`owner_file`]).
+    owner: String,
 }
 
 impl TurnWorkspace {
-    fn create(base: &Path, prompt: &str) -> io::Result<Self> {
+    fn create(base: &Path, prompt: &str, owner: &str, definition: &str) -> io::Result<Self> {
         let path = private_fs::unique_child(base, "turn");
         private_fs::create_private_dir(&path)?;
         // Construct the guard before any sensitive file is written so every
@@ -637,21 +680,22 @@ impl TurnWorkspace {
             grok_home: path.join("grok-home"),
             prompt: path.join("prompt.txt"),
             agent: path.join("agent.md"),
+            owner: owner.to_owned(),
             path,
         };
-        workspace.initialize(prompt)?;
+        workspace.initialize(prompt, definition)?;
         Ok(workspace)
     }
 
-    fn initialize(&self, prompt: &str) -> io::Result<()> {
-        private_fs::write_private_file(&self.path.join(OWNER_FILE), b"live")?;
+    fn initialize(&self, prompt: &str, definition: &str) -> io::Result<()> {
+        private_fs::write_private_file(&self.path.join(&self.owner), b"live")?;
         private_fs::create_private_dir(&self.grok_home)?;
         private_fs::write_private_file(&self.prompt, prompt.as_bytes())?;
-        private_fs::write_private_file(&self.agent, PLAIN_AGENT.as_bytes())
+        private_fs::write_private_file(&self.agent, definition.as_bytes())
     }
 
     fn touch(&self) -> io::Result<()> {
-        fs::write(self.path.join(OWNER_FILE), b"live")
+        fs::write(self.path.join(&self.owner), b"live")
     }
 
     fn path(&self) -> &Path {
@@ -892,7 +936,7 @@ fn model_matches(requested: Option<&str>, actual: &str) -> bool {
     })
 }
 
-fn sweep_stale_workspaces(base: &Path) {
+fn sweep_stale_workspaces(base: &Path, owner_file: &str) {
     let Ok(entries) = fs::read_dir(base) else {
         return;
     };
@@ -906,7 +950,7 @@ fn sweep_stale_workspaces(base: &Path) {
             continue;
         }
         let path = entry.path();
-        let owner = path.join(OWNER_FILE);
+        let owner = path.join(owner_file);
         let stale = age_at_least(&owner, STALE_WORKSPACE_AFTER)
             || (!owner.exists() && age_at_least(&path, LEGACY_STALE_WORKSPACE_AFTER));
         if stale {
@@ -938,10 +982,11 @@ mod tests {
     #[test]
     fn headless_arguments_keep_prompt_text_out_of_argv() {
         let workspace = TurnWorkspace {
-            path: PathBuf::from("/tmp/pervue-grok"),
-            grok_home: PathBuf::from("/tmp/pervue-grok/grok-home"),
-            prompt: PathBuf::from("/tmp/pervue-grok/prompt.txt"),
-            agent: PathBuf::from("/tmp/pervue-grok/agent.md"),
+            path: PathBuf::from("/tmp/my-app-grok"),
+            grok_home: PathBuf::from("/tmp/my-app-grok/grok-home"),
+            prompt: PathBuf::from("/tmp/my-app-grok/prompt.txt"),
+            agent: PathBuf::from("/tmp/my-app-grok/agent.md"),
+            owner: owner_file(&Namespace::fixed("my-app").unwrap()),
         };
         let args = grok_args(&workspace, Some("grok-4.6"));
         let rendered: Vec<_> = args.iter().map(|arg| arg.to_string_lossy()).collect();
@@ -965,6 +1010,22 @@ mod tests {
     }
 
     #[test]
+    fn the_system_prompt_is_introduced_with_a_claim_of_precedence() {
+        // A claim Antigravity read as an injection, and Grok follows: which is
+        // why this adapter words its introduction for itself.
+        assert!(SYSTEM_INTRO.contains("take precedence over"));
+        assert_ne!(SYSTEM_INTRO, runtime_core::prompt::SYSTEM_INTRO);
+    }
+
+    #[test]
+    fn the_owner_file_is_named_after_the_namespace() {
+        assert_eq!(
+            owner_file(&Namespace::fixed("my-app").unwrap()),
+            ".my-app-owner"
+        );
+    }
+
+    #[test]
     fn capabilities_match_the_provider_contract() {
         assert_eq!(CAPABILITIES.streaming, Capability::Unsupported);
         assert_eq!(CAPABILITIES.continuation, Capability::Supported);
@@ -976,27 +1037,30 @@ mod tests {
 
     #[test]
     fn agent_profile_and_cli_clamps_are_text_only() {
-        assert!(PLAIN_AGENT.contains("tools: []"));
-        assert!(PLAIN_AGENT.contains("promptMode: full"));
-        assert!(PLAIN_AGENT.contains("discoverSkills: false"));
-        assert!(PLAIN_AGENT.contains("inheritSkills: false"));
-        assert!(PLAIN_AGENT.contains("agentsMd: false"));
-        assert!(PLAIN_AGENT.contains("mcpInheritance: none"));
-        assert!(PLAIN_AGENT.contains("permissionMode: dontAsk"));
-        assert!(PLAIN_AGENT.contains("  - Agent"));
+        let agent = agent_definition(&Namespace::fixed("my-app").unwrap());
+        assert!(agent.contains("name: my-app-text\n"));
+        assert!(agent.contains("tools: []"));
+        assert!(agent.contains("promptMode: full"));
+        assert!(agent.contains("discoverSkills: false"));
+        assert!(agent.contains("inheritSkills: false"));
+        assert!(agent.contains("agentsMd: false"));
+        assert!(agent.contains("mcpInheritance: none"));
+        assert!(agent.contains("permissionMode: dontAsk"));
+        assert!(agent.contains("  - Agent"));
 
         let workspace = TurnWorkspace {
-            path: PathBuf::from("/tmp/pervue-grok"),
-            grok_home: PathBuf::from("/tmp/pervue-grok/grok-home"),
-            prompt: PathBuf::from("/tmp/pervue-grok/prompt.txt"),
-            agent: PathBuf::from("/tmp/pervue-grok/agent.md"),
+            path: PathBuf::from("/tmp/my-app-grok"),
+            grok_home: PathBuf::from("/tmp/my-app-grok/grok-home"),
+            prompt: PathBuf::from("/tmp/my-app-grok/prompt.txt"),
+            agent: PathBuf::from("/tmp/my-app-grok/agent.md"),
+            owner: owner_file(&Namespace::fixed("my-app").unwrap()),
         };
         let args = grok_args(&workspace, None);
         let rendered: Vec<_> = args.iter().map(|arg| arg.to_string_lossy()).collect();
         assert!(
             rendered
                 .windows(2)
-                .any(|pair| pair == ["--agent", "/tmp/pervue-grok/agent.md"])
+                .any(|pair| pair == ["--agent", "/tmp/my-app-grok/agent.md"])
         );
         assert!(
             rendered

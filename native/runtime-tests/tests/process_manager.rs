@@ -284,14 +284,14 @@ fn a_process_gets_only_the_environment_its_spec_sets() {
     // shell; the process sees none of them.
     let spec = ProcessSpec::new(PROVIDER)
         .args(["--mode", "env"])
-        .env("PERVUE_TEST_VARIABLE", "set")
+        .env("RUNTIME_TEST_VARIABLE", "set")
         .envs([("SECOND", "2")]);
     let (output, exit) = run_to_exit(&mut Process::spawn(&spec).unwrap());
     assert!(exit.status.unwrap().success());
     let launch: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(
         launch["env"],
-        serde_json::json!({"PERVUE_TEST_VARIABLE": "set", "SECOND": "2"})
+        serde_json::json!({"RUNTIME_TEST_VARIABLE": "set", "SECOND": "2"})
     );
 }
 
@@ -341,7 +341,7 @@ fn a_process_runs_in_the_directory_its_spec_names() {
     );
 
     // Without its directory, the process doesn't start at all.
-    let missing = dir.join("pervue-no-such-directory");
+    let missing = dir.join("no-such-directory");
     let error = Process::spawn(&ProcessSpec::new(PROVIDER).current_dir(missing))
         .err()
         .expect("no directory to run in");

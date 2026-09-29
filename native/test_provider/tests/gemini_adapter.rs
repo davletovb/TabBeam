@@ -144,6 +144,9 @@ fn persisted_cleanup_records_survive_adapter_restart_and_forget_retries_them() {
     let agy_id = "agy-restart-1";
 
     let transcript = fake.brain().join(agy_id).join(".system_generated/logs");
+    std::fs::create_dir_all(fake.conversations()).unwrap();
+    let database = fake.conversations().join(format!("{agy_id}.db"));
+    std::fs::write(&database, "left behind").unwrap();
     std::fs::create_dir_all(&transcript).unwrap();
     std::fs::write(transcript.join("transcript.jsonl"), "left behind").unwrap();
 
@@ -159,6 +162,7 @@ fn persisted_cleanup_records_survive_adapter_restart_and_forget_retries_them() {
     let updates = collect(adapter.forget(conversation));
     assert!(matches!(updates.as_slice(), [Update::Completed]));
     assert!(!fake.brain().join(agy_id).exists());
+    assert!(!database.exists());
     assert!(!record.exists());
 }
 
@@ -170,4 +174,19 @@ fn answer_text(updates: &[Update]) -> String {
             _ => None,
         })
         .collect()
+}
+
+#[test]
+fn pervue_runs_its_turns_as_agents_named_pervue() {
+    // The agent definitions live in per-turn workspaces, so nothing installed
+    // depends on these names, but they are what Pervue has always used.
+    let fake = FakeGemini::install();
+    collect(fake.adapter().send(request(None, false)));
+    collect(fake.adapter().send(request(None, true)));
+    let invocations = fake.invocations().concat();
+    assert!(invocations.contains("--agent pervue-text"), "{invocations}");
+    assert!(
+        invocations.contains("--agent pervue-search"),
+        "{invocations}"
+    );
 }

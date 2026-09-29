@@ -848,7 +848,7 @@ mod prompts_match_what_the_adapters_used_to_build {
     fn rendered(draft: &Draft, with_history: bool) -> String {
         let turn = draft.turn(with_history, None, None);
         turn.validate().expect("a valid turn");
-        render(&turn.messages, turn.tools)
+        render(turn.system.as_deref(), &turn.messages, turn.tools)
     }
 
     #[test]

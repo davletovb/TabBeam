@@ -191,14 +191,33 @@ impl Rig {
         }
     }
 
+    /// What each launch of this provider read as its prompt.
+    fn prompts(&self) -> Vec<String> {
+        match &self.fixture {
+            Fixture::Codex(fake) => fake.prompts(),
+            Fixture::Claude(fake) => fake.prompts(),
+            Fixture::Gemini(fake) => fake.prompts(),
+            Fixture::Grok(fake) => fake.prompts(),
+        }
+    }
+
+    /// The command lines of this provider's launches, in one string.
+    fn command_lines(&self) -> String {
+        match &self.fixture {
+            Fixture::Codex(fake) => fake.invocations(),
+            Fixture::Claude(fake) => fake.invocations(),
+            Fixture::Gemini(fake) => fake.invocations(),
+            Fixture::Grok(fake) => fake.invocations(),
+        }
+        .concat()
+    }
+
     /// What a provider saved for a turn that is still there: its transcripts,
     /// and its per-turn workspaces.
     fn left_behind(&self) -> usize {
         match &self.fixture {
             Fixture::Codex(_) | Fixture::Claude(_) => 0,
-            Fixture::Gemini(fake) => {
-                std::fs::read_dir(fake.brain()).map_or(0, |entries| entries.count())
-            }
+            Fixture::Gemini(fake) => fake.kept(),
             Fixture::Grok(fake) => fake.turn_dirs().len(),
         }
     }
@@ -404,14 +423,6 @@ fn a_turn_the_provider_cannot_serve_is_refused_before_anything_runs() {
         let provider = rig.provider.as_ref();
         for (why, turn, refusal) in [
             (
-                "a system prompt",
-                Turn {
-                    system: Some("Be brief.".to_owned()),
-                    ..rig.ask("hi")
-                },
-                "SYSTEM_PROMPT_UNSUPPORTED",
-            ),
-            (
                 "no messages",
                 Turn {
                     messages: Vec::new(),
@@ -446,6 +457,57 @@ fn a_turn_the_provider_cannot_serve_is_refused_before_anything_runs() {
             );
         }
         rig.assert_nothing_left();
+    }
+}
+
+#[test]
+fn a_system_prompt_reaches_every_provider_ahead_of_the_question() {
+    for kind in ALL {
+        let rig = Rig::new(kind, Behaviour::Answers);
+        let updates = run_to_end(
+            rig.provider
+                .send(Turn {
+                    system: Some("Answer in French. SYSTEM-MARKER".to_owned()),
+                    ..rig.ask("What is muse?")
+                })
+                .as_mut(),
+        );
+        assert_eq!(updates.last(), Some(&Update::Completed), "{kind:?}");
+
+        // Where the instructions go is each provider's own: real runs showed
+        // that Antigravity follows its agent file and resists a message, while
+        // Grok follows a message that claims precedence and ignores its agent
+        // file. So Antigravity gets the question alone and the instructions in
+        // its agent, Grok the instructions first in the prompt in its own
+        // words, and Codex and Claude first in the prompt under the shared
+        // introduction. None of them is on a command line, where anyone on the
+        // machine could read it.
+        let in_prompt =
+            |intro: &str| format!("{intro}Answer in French. SYSTEM-MARKER\n\nWhat is muse?");
+        match &rig.fixture {
+            Fixture::Gemini(fake) => {
+                assert_eq!(rig.prompts(), ["What is muse?"], "{kind:?}");
+                assert!(
+                    fake.read("agy-agents")
+                        .contains("\nAnswer in French. SYSTEM-MARKER\n"),
+                    "{kind:?}: the agent lacks the system prompt"
+                );
+            }
+            Fixture::Grok(_) => assert_eq!(
+                rig.prompts(),
+                [in_prompt(runtime_providers::grok::SYSTEM_INTRO)],
+                "{kind:?}"
+            ),
+            Fixture::Codex(_) | Fixture::Claude(_) => assert_eq!(
+                rig.prompts(),
+                [in_prompt(runtime_core::prompt::SYSTEM_INTRO)],
+                "{kind:?}"
+            ),
+        }
+        assert!(
+            !rig.command_lines().contains("SYSTEM-MARKER"),
+            "{kind:?}: the system prompt reached the command line"
+        );
     }
 }
 

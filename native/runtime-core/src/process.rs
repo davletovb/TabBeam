@@ -813,7 +813,7 @@ mod tests {
 
     #[test]
     fn a_relative_program_path_is_refused_before_anything_starts() {
-        for program in ["pervue-fake-provider", "./pervue-fake-provider", "bin/sh"] {
+        for program in ["fake-provider", "./fake-provider", "bin/sh"] {
             let error = Process::spawn(&ProcessSpec::new(program))
                 .err()
                 .expect("a relative path must be refused");

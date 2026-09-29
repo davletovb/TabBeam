@@ -1,4 +1,4 @@
-//! Grok Build headless Messages output reduced to Pervue events.
+//! Grok Build headless Messages output reduced to provider-neutral events.
 
 use serde_json::Value;
 
@@ -96,9 +96,9 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
                 Line::ResultFailed(provider_failure(message))
             }
         }
-        // Pervue does not expose token-level Grok streaming yet, but partial
+        // The adapter does not expose token-level Grok streaming yet, but partial
         // frames prove that the provider is still making progress and must
-        // refresh the host's idle timer.
+        // refresh the idle timer.
         "stream_event" => Line::Activity,
         _ => Line::Ignored,
     })
@@ -168,7 +168,7 @@ fn parse_assistant(event: &Value) -> Result<Line, Malformed> {
                 }
             }
             "thinking" | "redacted_thinking" => activity = true,
-            // Pervue's shipped Grok integration is deliberately text-only.
+            // The shipped Grok integration is deliberately text-only.
             // Any tool-bearing block, including hosted/server tools, is a
             // boundary violation regardless of its particular tool name.
             "tool_use" | "tool_result" | "server_tool_use" | "web_search_tool_result" => {
@@ -176,7 +176,7 @@ fn parse_assistant(event: &Value) -> Result<Line, Malformed> {
                 forbidden_tool = true;
             }
             // Unknown blocks fail closed: Grok adds new execution-bearing
-            // block types over time, and Pervue must not silently bless one.
+            // block types over time, and the adapter must not silently bless one.
             _ => return Err(Malformed),
         }
     }

@@ -69,6 +69,17 @@ pub enum SessionPolicy {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Turn {
+    /// The application's own instructions for the conversation, as opposed to
+    /// what its user said. It never goes on a command line, where anyone on the
+    /// machine could read it. Antigravity (Gemini) reads its system prompt from
+    /// an agent file the adapter writes, so it goes there; the other adapters
+    /// send it as the first part of the prompt, under an introduction (Codex and
+    /// Claude: [`crate::prompt::SYSTEM_INTRO`]; Grok has its own). It goes with every turn that carries it,
+    /// including one that resumes a native session, where it repeats what the
+    /// session already holds: an application that resumes sessions sends it on
+    /// the first turn only. A system prompt that forbids searching starves a
+    /// [`ToolPolicy::NativeWebSearch`] turn, whose own instructions ask for
+    /// it: an application that sets both means them to agree.
     pub system: Option<String>,
     pub messages: Vec<Message>,
     pub model: Option<String>,
@@ -77,14 +88,14 @@ pub struct Turn {
     pub continuation: Option<String>,
     /// Groups this turn's per-turn cleanup records with the others of the same
     /// group, so the application can retry a group's failed deletions
-    /// together (Pervue: one conversation). Opaque to the runtime.
+    /// together (one conversation, say). Opaque to the runtime.
     pub cleanup_group: Option<String>,
     /// Whether the caller requires a fresh sign-in classification before the
     /// provider process starts. No adapter keeps a classification from one turn
     /// to the next, so every turn that asks starts a probe first; an
     /// application that wants fewer probes decides for itself which turns need
-    /// one (Pervue asks before every turn it sends, except the turn that
-    /// rebuilds a lost session, whose request has just passed the check).
+    /// one (an application that rebuilds a lost session, for one, leaves it
+    /// off for the rebuilt turn, whose request has just passed the check).
     pub check_sign_in: bool,
 }
 
@@ -189,7 +200,9 @@ pub struct Namespace(String);
 
 impl Namespace {
     /// A namespace of 1 to 64 lowercase ASCII letters, digits, `-` or `_`, that
-    /// is not the name of a Windows device (`con`, `prn`, `aux`, `nul`, `com0`
+    /// starts with a letter or a digit (so that a name built from it can never
+    /// be read as a command-line option), and is not the name of a Windows
+    /// device (`con`, `prn`, `aux`, `nul`, `com0`
     /// to `com9`, `lpt0` to `lpt9`): as a directory name, a device name cannot
     /// be created on Windows, whatever its case. It is refused on every
     /// platform, so that a namespace that works on one works on all.
@@ -200,6 +213,7 @@ impl Namespace {
             || !value.bytes().all(|byte| {
                 byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_')
             })
+            || !value.as_bytes()[0].is_ascii_alphanumeric()
             || is_windows_device_name(&value)
         {
             return Err(NamespaceError);
@@ -228,7 +242,7 @@ impl fmt::Display for NamespaceError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(
             "namespace must be 1-64 lowercase ASCII letters, digits, '-' or '_', \
-             and not a Windows device name such as 'con' or 'com1'",
+             starting with a letter or digit, and not a Windows device name such as 'con' or 'com1'",
         )
     }
 }
@@ -284,8 +298,8 @@ mod tests {
 
     #[test]
     fn namespaces_are_fixed_safe_path_components() {
-        assert_eq!(Namespace::fixed("pervue").unwrap().as_str(), "pervue");
-        for value in ["", "Pervue", "../pervue", "per vue"] {
+        assert_eq!(Namespace::fixed("my-app").unwrap().as_str(), "my-app");
+        for value in ["", "My-app", "../my-app", "my app", "-my-app", "_my_app"] {
             assert!(Namespace::fixed(value).is_err(), "{value}");
         }
     }

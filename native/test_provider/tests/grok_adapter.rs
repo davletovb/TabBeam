@@ -124,3 +124,24 @@ fn invalid_model_and_conversation_ids_are_refused_before_launch() {
         [Update::Failed(error)] if error.reason == "UNKNOWN_CONVERSATION"
     ));
 }
+
+#[test]
+fn pervue_marks_its_grok_workspaces_with_the_owner_file_installed_hosts_know() {
+    // A host that was killed leaves its workspaces behind, and the next one
+    // finds them by this name, so it must not change.
+    let fake = FakeGrok::install();
+    let adapter = fake.adapter();
+    let mut running = adapter.send(request(None, false, "grok-hang"));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while let Some(update) = running.next(deadline) {
+        if matches!(update, Update::Started) {
+            break;
+        }
+    }
+    let live = fake.turn_dirs();
+    assert_eq!(live.len(), 1);
+    assert!(live[0].join(".pervue-owner").exists());
+    running.cancel(Duration::from_millis(100));
+    collect(running);
+    assert!(fake.read("grok-agents").contains("name: pervue-text\n"));
+}

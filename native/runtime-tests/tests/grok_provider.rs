@@ -2,8 +2,8 @@
 //! the runtime's level: a `Turn` goes in and `Update`s come out. It covers
 //! status and the cached sign-in, the answer, every boundary that fails closed,
 //! and the per-turn workspaces. The adapter knows no conversations, so the
-//! tests that pin how Pervue maps its own to Grok's stateless turns are
-//! Pervue's, in `test_provider`.
+//! tests that pin how an application maps its own to Grok's stateless turns
+//! belong to that application (Pervue's are in `test_provider`).
 
 mod support;
 
@@ -223,6 +223,65 @@ fn a_second_host_does_not_remove_a_live_turn_workspace() {
 }
 
 #[test]
+fn a_turn_is_owned_and_named_after_the_applications_namespace() {
+    let fake = FakeGrok::install(FIXTURES);
+    let adapter = fake.adapter();
+
+    // While it runs, the turn's workspace holds the owner file of its
+    // namespace, and that alone.
+    let mut running = adapter.send(model("grok-hang"));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while let Some(update) = running.next(deadline) {
+        if matches!(update, Update::Started) {
+            break;
+        }
+    }
+    let live = fake.turn_dirs();
+    assert_eq!(live.len(), 1);
+    assert!(live[0].join(".runtime-tests-owner").exists());
+    assert!(!live[0].join(".pervue-owner").exists());
+    running.cancel(Duration::from_millis(100));
+    run_to_end(running.as_mut());
+
+    // The agent it runs as is named the same way.
+    let agents = fake.read("grok-agents");
+    assert!(agents.contains("name: runtime-tests-text\n"), "{agents}");
+    assert!(!agents.contains("pervue"), "{agents}");
+}
+
+#[test]
+fn a_system_prompt_goes_ahead_of_the_question_and_never_onto_the_command_line() {
+    let fake = FakeGrok::install(FIXTURES);
+    let updates = run_to_end(
+        fake.adapter()
+            .send(Turn {
+                system: Some("Answer in French. SYSTEM-MARKER".to_owned()),
+                ..ask("What is muse?")
+            })
+            .as_mut(),
+    );
+    assert_eq!(updates.last(), Some(&Update::Completed));
+    // Grok follows instructions in the prompt file when they claim precedence
+    // over the messages, and ignores them in the body of its agent file, so the
+    // instructions come first in the prompt, in its own words.
+    assert_eq!(
+        fake.prompts(),
+        [format!(
+            "{}Answer in French. SYSTEM-MARKER\n\nWhat is muse?",
+            runtime_providers::grok::SYSTEM_INTRO
+        )]
+    );
+    assert!(
+        !fake.read("grok-agents").contains("SYSTEM-MARKER"),
+        "the system prompt is in the agent, where Grok ignores it"
+    );
+    assert!(
+        !fake.invocations().concat().contains("SYSTEM-MARKER"),
+        "the system prompt reached the command line"
+    );
+}
+
+#[test]
 fn turns_the_adapter_cannot_serve_are_refused_before_grok_runs() {
     let fake = FakeGrok::install(FIXTURES);
     let adapter = fake.adapter();
@@ -231,13 +290,6 @@ fn turns_the_adapter_cannot_serve_are_refused_before_grok_runs() {
         (
             model("claude-opus"),
             (ErrorCode::InvalidRequest, "MODEL_NOT_SUPPORTED"),
-        ),
-        (
-            Turn {
-                system: Some("Be brief.".to_owned()),
-                ..ask("hi")
-            },
-            (ErrorCode::InvalidRequest, "SYSTEM_PROMPT_UNSUPPORTED"),
         ),
         (
             // Grok keeps no session: only the caller's messages continue.

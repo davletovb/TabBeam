@@ -15,7 +15,7 @@ use runtime_core::stream::{LineSplitter, Output, StreamError, split_text};
 
 #[test]
 fn child_fixture() {
-    match std::env::var("PERVUE_CORE_CHILD").as_deref() {
+    match std::env::var("RUNTIME_CORE_CHILD").as_deref() {
         Ok("echo") => {
             let mut input = String::new();
             std::io::stdin().read_to_string(&mut input).unwrap();
@@ -32,7 +32,7 @@ fn process_and_stream_lifecycle_work_without_host() {
     let self_exe = std::env::current_exe().unwrap();
     let spec = ProcessSpec::new(&self_exe)
         .args(["--exact", "child_fixture", "--nocapture"])
-        .env("PERVUE_CORE_CHILD", "echo");
+        .env("RUNTIME_CORE_CHILD", "echo");
     let mut process = Process::spawn(&spec).unwrap();
     process.write(b"ping").unwrap();
     process.close_stdin();
@@ -55,7 +55,7 @@ fn process_and_stream_lifecycle_work_without_host() {
     let mut hanging = Process::spawn(
         &ProcessSpec::new(self_exe)
             .args(["--exact", "child_fixture", "--nocapture"])
-            .env("PERVUE_CORE_CHILD", "hang"),
+            .env("RUNTIME_CORE_CHILD", "hang"),
     )
     .unwrap();
     let exit = hanging.kill();

@@ -22,7 +22,7 @@ const MAX_URL_BYTES: usize = 4096;
 const MAX_SNIPPET_BYTES: usize = 4096;
 const MAX_META_BYTES: usize = 256;
 
-/// One provider-native search result before it receives Pervue source identity.
+/// One provider-native search result before it receives its application's source identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchResult {
     pub title: String,

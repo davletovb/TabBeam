@@ -119,19 +119,15 @@ fn a_turn_through_the_service_streams_its_answer_and_ends_once() {
 }
 
 #[test]
-fn a_turn_the_provider_refuses_ends_as_a_failure_not_as_a_start_error() {
+fn a_turn_the_provider_cannot_run_ends_as_a_failure_not_as_a_start_error() {
     let fake = FakeCodex::install(FIXTURES, "answers", "signed-in");
     let runtime = service(codex_of(&fake, TEST_LIMITS));
-    // The adapter refuses a system prompt, so that is how the turn ends.
-    let mut turn = runtime
-        .start_turn(TurnRequest {
-            system: Some("Be brief.".to_owned()),
-            ..ask("hi")
-        })
-        .unwrap();
+    // With no Codex to run, the turn is accepted, and ends as a failure.
+    std::fs::remove_file(fake.dir.join(FakeCodex::file_name())).unwrap();
+    let mut turn = runtime.start_turn(ask("hi")).unwrap();
     let (_, reason) = finish(&mut turn);
     assert!(
-        matches!(reason, EndReason::Failed(failure) if failure.reason == "SYSTEM_PROMPT_UNSUPPORTED"),
+        matches!(reason, EndReason::Failed(failure) if failure.reason == "EXECUTABLE_NOT_FOUND"),
         "{reason:?}"
     );
     // A turn that cannot be valid never reaches the provider at all.

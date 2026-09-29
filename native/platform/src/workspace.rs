@@ -242,7 +242,7 @@ mod tests {
     fn a_directory_above_that_others_can_change_is_refused() {
         let scratch = Scratch::new("above");
         let cache = scratch.0.join("cache");
-        let dir = cache.join("pervue/codex-workspace");
+        let dir = cache.join("my-app/codex-workspace");
         prepare(&dir).unwrap();
         // Sticky or not, others could add `.git` and `AGENTS.md` to it.
         for open in [0o777, 0o1777, 0o757] {

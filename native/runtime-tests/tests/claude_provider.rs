@@ -1,7 +1,7 @@
 //! Claude adapter tests against the fake Claude Code CLI, at the runtime's
 //! level: a `Turn` goes in and `Update`s come out. The adapter knows no
-//! conversations, so the tests that pin how Pervue maps them to Claude sessions
-//! are Pervue's, in `test_provider`.
+//! conversations, so the tests that pin how an application maps its own to Claude
+//! sessions belong to that application (Pervue's are in `test_provider`).
 
 mod support;
 
@@ -851,23 +851,38 @@ fn a_turn_that_does_not_ask_for_the_sign_in_check_does_not_get_one() {
 }
 
 #[test]
-fn turns_the_adapter_cannot_serve_are_refused_before_claude_runs() {
+fn a_system_prompt_goes_ahead_of_the_question_and_never_onto_the_command_line() {
     let claude = FakeClaude::install(FIXTURES, "answers", "signed-in");
-    let adapter = claude.adapter();
-
-    // A system prompt has nowhere to go yet: refused, not dropped.
     let updates = run_to_end(
-        adapter
+        claude
+            .adapter()
             .send(Turn {
-                system: Some("Be brief.".to_owned()),
-                ..ask("hi")
+                system: Some("Answer in French. SYSTEM-MARKER".to_owned()),
+                ..ask("What is muse?")
             })
             .as_mut(),
     );
+    assert_eq!(updates.last(), Some(&Update::Completed));
+
+    let prompts = claude.prompts();
+    assert_eq!(prompts.len(), 1, "{prompts:?}");
     assert_eq!(
-        failure(&updates),
-        (ErrorCode::InvalidRequest, "SYSTEM_PROMPT_UNSUPPORTED")
+        prompts[0],
+        format!(
+            "{}Answer in French. SYSTEM-MARKER\n\nWhat is muse?",
+            runtime_core::prompt::SYSTEM_INTRO
+        )
     );
+    assert!(
+        !claude.invocations().concat().contains("SYSTEM-MARKER"),
+        "the system prompt reached the command line"
+    );
+}
+
+#[test]
+fn turns_the_adapter_cannot_serve_are_refused_before_claude_runs() {
+    let claude = FakeClaude::install(FIXTURES, "answers", "signed-in");
+    let adapter = claude.adapter();
 
     // Anything that could become an option of its own never reaches argv.
     for turn in [
@@ -926,7 +941,7 @@ fn cleanup_removes_only_the_claude_files_written_for_this_workspace() {
     let session = session_of(&run_to_end(adapter.send(ask("first")).as_mut())).unwrap();
     let workspace = std::fs::canonicalize(claude.dir.join("claude-work")).unwrap();
 
-    let ours = config.join("projects/-pervue-claude-workspace");
+    let ours = config.join("projects/-my-app-claude-workspace");
     let theirs = config.join("projects/-home-someone-project");
     transcript(&ours.join(format!("{session}.jsonl")), &session, &workspace);
     std::fs::create_dir_all(ours.join(&session).join("subagents")).unwrap();
@@ -969,7 +984,7 @@ fn a_failed_removal_keeps_the_proof_it_was_the_runtimes_so_it_can_be_retried() {
     let session = session_of(&run_to_end(adapter.send(ask("first")).as_mut())).unwrap();
     let workspace = std::fs::canonicalize(claude.dir.join("claude-work")).unwrap();
     let saved = config
-        .join("projects/-pervue-claude-workspace")
+        .join("projects/-my-app-claude-workspace")
         .join(format!("{session}.jsonl"));
     transcript(&saved, &session, &workspace);
     // A file where Claude keeps its session-env directories: removing the

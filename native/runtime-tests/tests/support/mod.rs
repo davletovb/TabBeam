@@ -3,6 +3,8 @@
 
 #![allow(dead_code, reason = "each test crate uses part of the support")]
 
+pub mod live;
+
 use std::time::{Duration, Instant};
 
 use runtime_fake_provider::harness::Fixtures;
@@ -18,6 +20,7 @@ pub use runtime_fake_provider::harness::{
 pub const FIXTURES: Fixtures = Fixtures::new(
     env!("CARGO_BIN_EXE_runtime-fake-provider"),
     env!("CARGO_TARGET_TMPDIR"),
+    "runtime-tests",
 );
 
 /// How long a test waits for an exchange before it calls the exchange hung.

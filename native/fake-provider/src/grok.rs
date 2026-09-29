@@ -49,6 +49,19 @@ fn run(args: Vec<OsString>) -> Result<(), ()> {
     let agent = arg_value(&args, "--agent")
         .and_then(|path| fs::read_to_string(path).ok())
         .ok_or(())?;
+    crate::record("grok", "prompts", &format!("{prompt}\0"));
+    crate::record("grok", "agents", &format!("{agent}\0"));
+    crate::record(
+        "grok",
+        "invocations",
+        &format!(
+            "{}\n",
+            args.iter()
+                .map(|arg| arg.to_string_lossy())
+                .collect::<Vec<_>>()
+                .join(" ")
+        ),
+    );
     let requested_model = arg_value(&args, "--model")
         .and_then(|value| value.to_str())
         .unwrap_or("grok-4.6");

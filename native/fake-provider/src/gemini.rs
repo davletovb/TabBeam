@@ -33,6 +33,17 @@ fn run(args: Vec<OsString>) -> Result<(), ()> {
     }
 
     crate::record_launch("agy");
+    crate::record(
+        "agy",
+        "invocations",
+        &format!(
+            "{}\n",
+            args.iter()
+                .map(|arg| arg.to_string_lossy())
+                .collect::<Vec<_>>()
+                .join(" ")
+        ),
+    );
     let agent = value_after(&args, "--agent").ok_or(())?;
     let model = value_after(&args, "--model");
     if !has_pair(&args, "--input-format", "stream-json")
@@ -48,6 +59,7 @@ fn run(args: Vec<OsString>) -> Result<(), ()> {
             .join("agent.md"),
     )
     .map_err(|_| ())?;
+    crate::record("agy", "agents", &format!("{definition}\0"));
     if !definition.contains("inheritCustomizations: false")
         || !definition.contains("inheritMcp: false")
         || !definition.contains("hooks: []")
@@ -55,7 +67,7 @@ fn run(args: Vec<OsString>) -> Result<(), ()> {
     {
         return Err(());
     }
-    let search = agent == "pervue-search";
+    let search = agent.ends_with("-search");
     if search && !definition.contains("  - search_web") {
         return Err(());
     }
@@ -78,6 +90,7 @@ fn run(args: Vec<OsString>) -> Result<(), ()> {
         .pointer("/message/content")
         .and_then(serde_json::Value::as_str)
         .ok_or(())?;
+    crate::record("agy", "prompts", &format!("{prompt}\0"));
 
     let session = format!(
         "agy-test-{}-{}",
@@ -287,7 +300,8 @@ fn write_transcript(session: &str, prompt: &str) -> Result<(), ()> {
     let Some(home) = home else {
         return Ok(());
     };
-    let dir = PathBuf::from(home)
+    let home = PathBuf::from(home);
+    let dir = home
         .join(".gemini")
         .join("antigravity-cli")
         .join("brain")
@@ -299,7 +313,19 @@ fn write_transcript(session: &str, prompt: &str) -> Result<(), ()> {
         "cwd": cwd.to_string_lossy(),
         "prompt": prompt
     });
-    fs::write(dir.join("transcript.jsonl"), format!("{record}\n")).map_err(|_| ())
+    fs::write(dir.join("transcript.jsonl"), format!("{record}\n")).map_err(|_| ())?;
+    // Real Antigravity also keeps the conversation, prompt included, in a
+    // database named after it, beside the brain.
+    let conversations = home
+        .join(".gemini")
+        .join("antigravity-cli")
+        .join("conversations");
+    fs::create_dir_all(&conversations).map_err(|_| ())?;
+    fs::write(
+        conversations.join(format!("{session}.db")),
+        format!("SQLite format 3\0{record}\n"),
+    )
+    .map_err(|_| ())
 }
 
 fn hang_briefly() {

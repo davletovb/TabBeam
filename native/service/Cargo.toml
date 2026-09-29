@@ -1,6 +1,7 @@
 [package]
 name = "provider-runtime-service"
 description = "Threaded in-process service entry point for the provider runtime"
+license = "MIT OR Apache-2.0"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

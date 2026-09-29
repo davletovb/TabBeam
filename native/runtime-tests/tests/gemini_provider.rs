@@ -2,8 +2,8 @@
 //! the runtime's level: a `Turn` goes in and `Update`s come out. It covers
 //! status, the answer and the sources, what fails closed, and that no
 //! Antigravity transcript outlives a turn. The adapter knows no conversations,
-//! so the tests that pin how Pervue maps its own to Gemini's stateless turns
-//! are Pervue's, in `test_provider`.
+//! so the tests that pin how an application maps its own to Gemini's stateless
+//! turns belong to that application (Pervue's are in `test_provider`).
 
 mod support;
 
@@ -46,11 +46,9 @@ fn model(model: &str) -> Turn {
     }
 }
 
-/// How many Antigravity transcripts the fake has kept.
+/// How many transcripts and conversation databases the fake has kept.
 fn transcripts(fake: &FakeGemini) -> usize {
-    std::fs::read_dir(fake.brain())
-        .map(|entries| entries.count())
-        .unwrap_or(0)
+    fake.kept()
 }
 
 #[test]
@@ -260,6 +258,57 @@ fn narration_before_each_search_is_not_saved_into_the_answer() {
 }
 
 #[test]
+fn a_turn_runs_as_an_agent_named_after_the_applications_namespace() {
+    let fake = FakeGemini::install(FIXTURES);
+    let adapter = fake.adapter();
+    run_to_end(adapter.send(ask("Say hello")).as_mut());
+    run_to_end(adapter.send(search()).as_mut());
+
+    let agents: Vec<String> = fake
+        .invocations()
+        .iter()
+        .filter_map(|line| {
+            let mut words = line.split(' ');
+            words.find(|word| *word == "--agent")?;
+            words.next().map(str::to_owned)
+        })
+        .collect();
+    assert_eq!(agents, ["runtime-tests-text", "runtime-tests-search"]);
+    assert!(!fake.invocations().concat().contains("pervue"));
+}
+
+#[test]
+fn a_system_prompt_goes_ahead_of_the_question_and_never_onto_the_command_line() {
+    let fake = FakeGemini::install(FIXTURES);
+    let updates = run_to_end(
+        fake.adapter()
+            .send(Turn {
+                system: Some("Answer in French. SYSTEM-MARKER".to_owned()),
+                ..ask("What is muse?")
+            })
+            .as_mut(),
+    );
+    assert_eq!(updates.last(), Some(&Update::Completed));
+    // Antigravity reads its system prompt from the agent it runs as, and
+    // treats instructions in the user's message as something to resist: so the
+    // question arrives alone, and the instructions end the agent's own.
+    assert_eq!(fake.prompts(), ["What is muse?"]);
+    let agents = fake.read("agy-agents");
+    assert!(
+        agents.contains("\nAnswer in French. SYSTEM-MARKER\n"),
+        "{agents}"
+    );
+    assert!(
+        agents.find("# System Prompt").unwrap() < agents.find("SYSTEM-MARKER").unwrap(),
+        "{agents}"
+    );
+    assert!(
+        !fake.invocations().concat().contains("SYSTEM-MARKER"),
+        "the system prompt reached the command line"
+    );
+}
+
+#[test]
 fn turns_the_adapter_cannot_serve_are_refused_before_agy_runs() {
     let fake = FakeGemini::install(FIXTURES);
     let adapter = fake.adapter();
@@ -268,13 +317,6 @@ fn turns_the_adapter_cannot_serve_are_refused_before_agy_runs() {
         (
             model("claude-test"),
             (ErrorCode::InvalidRequest, "MODEL_NOT_SUPPORTED"),
-        ),
-        (
-            Turn {
-                system: Some("Be brief.".to_owned()),
-                ..ask("hi")
-            },
-            (ErrorCode::InvalidRequest, "SYSTEM_PROMPT_UNSUPPORTED"),
         ),
         (
             // Gemini keeps no session: only the caller's messages continue.
@@ -315,10 +357,15 @@ fn a_cleanup_group_names_the_transcripts_a_restarted_adapter_removes() {
     let group = "conv_0000000000000001";
     let agy_id = "agy-restart-1";
 
-    // A transcript a turn of this group left behind, and the record of it.
+    // A transcript and a conversation database a turn of this group left
+    // behind, and the record of them.
     let transcript = fake.brain().join(agy_id).join(".system_generated/logs");
     std::fs::create_dir_all(&transcript).unwrap();
     std::fs::write(transcript.join("transcript.jsonl"), "left behind").unwrap();
+    std::fs::create_dir_all(fake.conversations()).unwrap();
+    let database = fake.conversations().join(format!("{agy_id}.db"));
+    std::fs::write(&database, "left behind").unwrap();
+    std::fs::write(format!("{}-wal", database.display()), "left behind").unwrap();
     let record = cleanup_dir.join(group);
     std::fs::create_dir_all(&record).unwrap();
     std::fs::write(record.join(agy_id), "pending\n").unwrap();
@@ -329,6 +376,8 @@ fn a_cleanup_group_names_the_transcripts_a_restarted_adapter_removes() {
     (cleanup.work)().expect("the cleanup works");
     (cleanup.completed)();
     assert!(!fake.brain().join(agy_id).exists());
+    assert!(!database.exists());
+    assert!(!std::path::Path::new(&format!("{}-wal", database.display())).exists());
     assert!(!record.exists());
 
     // A name that isn't a group, or a group with nothing left, is nothing.

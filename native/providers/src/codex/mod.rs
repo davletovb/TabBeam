@@ -28,7 +28,7 @@ use crate::{Cleanup, Exchange, Provider, Scripted, Timeouts, Update};
 use runtime_core::discovery::SearchPath;
 use runtime_core::exchange::SessionLoss;
 use runtime_core::process::{Event, Exit, Process, ProcessSpec};
-use runtime_core::prompt::{self, SYSTEM_PROMPT_UNSUPPORTED};
+use runtime_core::prompt;
 use runtime_core::protocol::Failure as ErrorBody;
 use runtime_core::protocol::{
     Authentication, Availability, Capabilities, Capability, ErrorCode, ProviderState,
@@ -340,9 +340,6 @@ impl Provider for Codex {
         if request.validate().is_err() {
             return Box::new(Scripted::failed(crate::INVALID_TURN));
         }
-        if request.system.is_some() {
-            return Box::new(Scripted::failed(SYSTEM_PROMPT_UNSUPPORTED));
-        }
         if let Err(error) = self.check_tools(request.tools) {
             return Box::new(Scripted::failed(error));
         }
@@ -351,7 +348,7 @@ impl Provider for Codex {
             stage: Stage::Done,
             executable,
             launch: Rc::clone(&self.launch),
-            prompt: prompt::render(&request.messages, request.tools),
+            prompt: prompt::render(request.system.as_deref(), &request.messages, request.tools),
             resume: request.continuation,
             session_policy: request.session,
             finish_grace: self.limits.finish,
@@ -405,7 +402,7 @@ fn context_configuration_is_safe(launch: &Launch) -> bool {
     // place because context turns explicitly disable those Codex features at
     // invocation time. User-configured MCP servers are different: Codex
     // exposes them independently of the plugin/apps feature gates, so fail
-    // closed until Pervue can disable each effective server deterministically.
+    // closed until the adapter can disable each effective server deterministically.
     let mut configs = vec![home.join("config.toml")];
     if home.exists() {
         let Ok(entries) = std::fs::read_dir(&home) else {
@@ -472,10 +469,10 @@ fn after(duration: Duration) -> Instant {
     now.checked_add(duration).unwrap_or(now)
 }
 
-/// Removes Codex's saved sessions of `thread` that Codex wrote for Pervue:
+/// Removes Codex's saved sessions of `thread` that Codex wrote for this application:
 /// `sessions/YYYY/MM/DD/rollout-…-<thread>.jsonl` and
 /// `archived_sessions/rollout-…-<thread>.jsonl` files whose `session_meta`
-/// names the thread and records Pervue's workspace as where it ran. Codex's
+/// names the thread and records the application's workspace as where it ran. Codex's
 /// own state database is left alone.
 fn forget_rollouts(home: &Path, workspace: &Path, thread: &str) -> io::Result<()> {
     let suffix = format!("-{thread}.jsonl");
@@ -502,7 +499,7 @@ fn forget_rollouts(home: &Path, workspace: &Path, thread: &str) -> io::Result<()
                     .file_name()
                     .to_str()
                     .is_some_and(|name| name.starts_with("rollout-") && name.ends_with(&suffix))
-                && rollout_written_for_pervue(&path, thread, workspace)
+                && rollout_written_for_workspace(&path, thread, workspace)
             {
                 forget::remove(&path)?;
             }
@@ -511,7 +508,7 @@ fn forget_rollouts(home: &Path, workspace: &Path, thread: &str) -> io::Result<()
     Ok(())
 }
 
-fn rollout_written_for_pervue(path: &Path, thread: &str, workspace: &Path) -> bool {
+fn rollout_written_for_workspace(path: &Path, thread: &str, workspace: &Path) -> bool {
     forget::head_lines(path).is_some_and(|lines| {
         lines
             .iter()
@@ -605,7 +602,7 @@ fn exec_args_for_session(
             }
         }
     }
-    // Search is explicit in Pervue. Plain and context turns never inherit
+    // Search is explicit. Plain and context turns never inherit
     // Codex's cached-search default.
     args.extend([
         "-c".into(),
@@ -627,8 +624,6 @@ fn exec_args_for_session(
     args
 }
 
-/// A new Pervue conversation ID. It is random so it reveals nothing about the
-/// Codex thread behind it.
 /// The `provider.status` check.
 enum StatusCheck {
     Probing {
@@ -1015,7 +1010,7 @@ mod tests {
 
     #[test]
     fn a_model_is_one_argument_that_applies_to_resumed_threads_too() {
-        let workspace = Path::new("/tmp/pervue-workspace");
+        let workspace = Path::new("/tmp/my-app-workspace");
         let args = exec_args(
             workspace,
             false,
@@ -1045,7 +1040,7 @@ mod tests {
     #[test]
     fn ephemeral_turns_disable_codex_session_persistence() {
         let args = exec_args_for_session(
-            Path::new("/tmp/pervue-workspace"),
+            Path::new("/tmp/my-app-workspace"),
             runtime_core::turn::SessionPolicy::Ephemeral,
             false,
             false,

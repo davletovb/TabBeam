@@ -1,6 +1,7 @@
 //! Reusable provider-runtime primitives shared by provider adapters.
 //!
-//! Chrome Native Messaging framing and browser protocol policy live in `pervue-host`.
+//! Browser transport, such as Chrome Native Messaging framing, and protocol
+//! policy belong to the application.
 
 pub mod discovery;
 pub mod exchange;
