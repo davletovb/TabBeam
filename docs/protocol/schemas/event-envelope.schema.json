@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://pervue.local/protocol/v1/event-envelope.schema.json",
-  "title": "Pervue Protocol v1 Event Envelope",
+  "$id": "https://tabbeam.local/protocol/v1/event-envelope.schema.json",
+  "title": "TabBeam Protocol v1 Event Envelope",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "type", "request_id", "event", "payload"],

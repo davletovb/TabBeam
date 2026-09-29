@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://pervue.local/protocol/v1/provider-status.schema.json",
-  "title": "Pervue Protocol v1 Provider Status Payload",
+  "$id": "https://tabbeam.local/protocol/v1/provider-status.schema.json",
+  "title": "TabBeam Protocol v1 Provider Status Payload",
   "type": "object",
   "additionalProperties": false,
   "required": ["provider_id", "status"],

@@ -1,6 +1,6 @@
-# Pervue
+# TabBeam
 
-Pervue is a lightweight, provider-independent browser AI command layer.
+TabBeam is a lightweight, provider-independent browser AI command layer.
 
 The product is designed around a fast browser workflow:
 
