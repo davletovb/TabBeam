@@ -120,12 +120,12 @@ for (const [index, fixture] of golden.invalid_cases.entries()) {
   driven.push(["invalid", fixture]);
 }
 
-const noProviders = fs.mkdtempSync(path.join(os.tmpdir(), "pervue-no-providers-"));
+const noProviders = fs.mkdtempSync(path.join(os.tmpdir(), "tabbeam-no-providers-"));
 let proc;
 try {
   proc = spawnSync(host, [CALLER_ORIGIN], {
     input: Buffer.concat(input),
-    env: { ...process.env, PERVUE_PROVIDER_PATH: noProviders },
+    env: { ...process.env, TABBEAM_PROVIDER_PATH: noProviders },
     encoding: null,
     maxBuffer: 64 * 1024 * 1024,
   });
