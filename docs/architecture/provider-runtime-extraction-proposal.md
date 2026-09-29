@@ -40,7 +40,7 @@
 
 ### Pervue
 
-`pervue-core` already holds the primitives the providers share ([core/README](../../native/seatline-core/README.md)): `process`, `stream`, `discovery`, `exchange`, `protocol`, and `framing`. The host holds the rest of the plumbing for its four real providers, and some of it is still copied between adapters:
+`pervue-core` already holds the primitives the providers share ([core/README](https://github.com/davletovb/seatline/blob/e021c2acf05132073d82bf3e2149f1ff64f1f49f/seatline-core/README.md)): `process`, `stream`, `discovery`, `exchange`, `protocol`, and `framing`. The host holds the rest of the plumbing for its four real providers, and some of it is still copied between adapters:
 
 | Host-owned piece | Where | Reuse today |
 |---|---|---|
@@ -139,7 +139,7 @@ In order of impact:
 - **A non-Rust application** would get a sidecar executable: a thin wrapper around the service API that speaks a versioned protocol over stdio. It is built only if a consumer needs it.
 - **Not planned:** a C ABI or a Node addon.
   - Both bring FFI, `unsafe` binding code, and in-process crashes into the host application.
-  - A C ABI also needs a versioned C façade ([core/README](../../native/seatline-core/README.md#compatibility-and-extraction)).
+  - A C ABI also needs a versioned C façade ([core/README](https://github.com/davletovb/seatline/blob/e021c2acf05132073d82bf3e2149f1ff64f1f49f/seatline-core/README.md#compatibility-and-extraction)).
   - A pure TypeScript port would duplicate the hardest code, and Node can't reproduce some of its guarantees. For example, it can't kill a process group before reaping the child.
 
 **ADR-0002** records:
