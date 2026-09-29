@@ -6,7 +6,7 @@ use super::events::ErrorBody;
 
 pub fn provider_failure(provider: Option<&str>, failure: Failure) -> ErrorBody<'static> {
     ErrorBody {
-        code: failure.code,
+        code: failure.code.into(),
         reason: failure.reason,
         message: message(provider, failure.reason, failure.retryable),
         retryable: failure.retryable,
@@ -205,7 +205,7 @@ fn message(provider: Option<&str>, reason: &str, retryable: bool) -> &'static st
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::events::ErrorCode;
+    use runtime_core::protocol::ErrorCode;
 
     fn failure(reason: &'static str, retryable: bool) -> Failure {
         Failure {

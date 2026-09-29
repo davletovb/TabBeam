@@ -33,13 +33,13 @@ use super::forget;
 use super::layout::Layout;
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
 use crate::conversation::{provider_prompt, search_prompt};
-use crate::protocol::events::{
-    Authentication, Availability, Capabilities, Capability, ErrorCode, ProviderState,
-};
 use crate::search::{NATIVE_SEARCH_NO_SOURCES, SourceCollector, codex_message_sources};
 use runtime_core::discovery::SearchPath;
 use runtime_core::process::{Event, Exit, Process, ProcessSpec};
 use runtime_core::protocol::Failure as ErrorBody;
+use runtime_core::protocol::{
+    Authentication, Availability, Capabilities, Capability, ErrorCode, ProviderState,
+};
 use runtime_core::stream::{BUSY_LIMIT, LineStream, Output};
 
 pub mod output;
@@ -95,10 +95,9 @@ pub const CAPABILITIES: Capabilities = Capabilities {
     streaming: Capability::Supported,
     continuation: Capability::Supported,
     web_search: Capability::Supported,
-    page_context: Capability::Supported,
-    attachments: Capability::Unsupported,
     model_selection: Capability::Supported,
     cancellation: Capability::Supported,
+    tool_isolation: Capability::Supported,
 };
 
 const NOT_INSTALLED: ErrorBody = ErrorBody {
@@ -311,7 +310,7 @@ impl Provider for Codex {
         let mut capabilities = CAPABILITIES;
         if !context_configuration_is_safe(&self.launch) {
             capabilities.web_search = Capability::Unsupported;
-            capabilities.page_context = Capability::Unsupported;
+            capabilities.tool_isolation = Capability::Unsupported;
         }
         capabilities
     }

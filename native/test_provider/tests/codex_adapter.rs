@@ -14,10 +14,10 @@ use pervue_host::conversation::{
     BrowserContext, BrowserContextMode, BrowserPageContext, HistoryMessage, Role,
     SEARCH_INSTRUCTIONS,
 };
-use pervue_host::protocol::events::{Authentication, Availability, Capability, ErrorCode};
 use pervue_host::providers::codex::{CODEX_VARIABLES, Codex, LIMITS, Limits};
 use pervue_host::providers::environment::INHERITED;
 use pervue_host::providers::{Exchange, Provider, SendRequest, Timeouts, Update};
+use runtime_core::protocol::{Authentication, Availability, Capability, ErrorCode};
 use runtime_core::turn::SessionPolicy;
 use serde_json::Value;
 use support::{FakeCodex, PROMPT_STOP_GRACE, PacedInput, TEST_LIMITS, names, serve};
@@ -443,7 +443,7 @@ fn page_context_reaches_codex_as_untrusted_reference_data() {
     let Update::Status { status, .. } = &updates[0] else {
         panic!("expected a status, got {updates:?}");
     };
-    assert_eq!(status.capabilities.page_context, Capability::Supported);
+    assert_eq!(status.capabilities.tool_isolation, Capability::Supported);
 }
 
 #[test]
@@ -545,14 +545,17 @@ fn context_fails_closed_when_user_mcp_servers_are_configured() {
         failure(&updates),
         (ErrorCode::InvalidRequest, "PAGE_CONTEXT_TOOLS_ENABLED")
     );
-    assert_eq!(adapter.capabilities().page_context, Capability::Unsupported);
+    assert_eq!(
+        adapter.capabilities().tool_isolation,
+        Capability::Unsupported
+    );
     assert_eq!(adapter.capabilities().web_search, Capability::Unsupported);
 
     let status_updates = run_to_end(adapter.status().as_mut());
     let Update::Status { status, .. } = &status_updates[0] else {
         panic!("expected status: {status_updates:?}");
     };
-    assert_eq!(status.capabilities.page_context, Capability::Unsupported);
+    assert_eq!(status.capabilities.tool_isolation, Capability::Unsupported);
     assert_eq!(status.capabilities.web_search, Capability::Unsupported);
 
     let search = run_to_end(

@@ -137,8 +137,8 @@ fn provider_differences_are_expressed_only_as_capabilities() {
     let codex = FakeCodex::install("answers", "signed-in").adapter();
     let claude = FakeClaude::install("answers", "signed-in").adapter();
 
-    assert_eq!(codex.capabilities().page_context, Capability::Supported);
-    assert_eq!(claude.capabilities().page_context, Capability::Supported);
+    assert_eq!(codex.capabilities().tool_isolation, Capability::Supported);
+    assert_eq!(claude.capabilities().tool_isolation, Capability::Supported);
     // Both take a model; they differ in whether they suggest any (status).
     assert_eq!(codex.capabilities().model_selection, Capability::Supported);
     assert_eq!(claude.capabilities().model_selection, Capability::Supported);

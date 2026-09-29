@@ -2,7 +2,7 @@
 
 use serde_json::Value;
 
-use crate::protocol::events::ErrorCode;
+use runtime_core::protocol::ErrorCode;
 use runtime_core::protocol::Failure as ErrorBody;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

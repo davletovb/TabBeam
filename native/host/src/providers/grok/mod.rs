@@ -29,12 +29,12 @@ use super::layout::Layout;
 use super::private_fs;
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
 use crate::conversation::provider_prompt;
-use crate::protocol::events::{
-    Authentication, Availability, Capabilities, Capability, ErrorCode, ModelOption, ProviderState,
-};
 use runtime_core::discovery::SearchPath;
 use runtime_core::process::{Event, Exit, Process, ProcessSpec};
 use runtime_core::protocol::Failure as ErrorBody;
+use runtime_core::protocol::{
+    Authentication, Availability, Capabilities, Capability, ErrorCode, ModelOption, ProviderState,
+};
 use runtime_core::stream::{BUSY_LIMIT, LineStream, Output};
 
 pub mod output;
@@ -56,10 +56,9 @@ pub const CAPABILITIES: Capabilities = Capabilities {
     streaming: Capability::Unsupported,
     continuation: Capability::Supported,
     web_search: Capability::Unsupported,
-    page_context: Capability::Supported,
-    attachments: Capability::Unsupported,
     model_selection: Capability::Supported,
     cancellation: Capability::Supported,
+    tool_isolation: Capability::Supported,
 };
 
 pub const TIMEOUTS: Timeouts = Timeouts {
@@ -986,7 +985,7 @@ mod tests {
         assert_eq!(CAPABILITIES.streaming, Capability::Unsupported);
         assert_eq!(CAPABILITIES.continuation, Capability::Supported);
         assert_eq!(CAPABILITIES.web_search, Capability::Unsupported);
-        assert_eq!(CAPABILITIES.page_context, Capability::Supported);
+        assert_eq!(CAPABILITIES.tool_isolation, Capability::Supported);
         assert_eq!(CAPABILITIES.model_selection, Capability::Supported);
         assert_eq!(CAPABILITIES.cancellation, Capability::Supported);
     }

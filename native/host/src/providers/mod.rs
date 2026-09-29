@@ -15,7 +15,7 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use crate::conversation::{BrowserContext, HistoryMessage};
-use crate::protocol::events::Capabilities;
+use runtime_core::protocol::Capabilities;
 pub use runtime_core::stream::BUSY_LIMIT;
 use runtime_core::turn::SessionPolicy;
 

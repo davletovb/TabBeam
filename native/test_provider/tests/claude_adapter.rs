@@ -10,9 +10,9 @@ use pervue_host::conversation::{
     BrowserContext, BrowserContextMode, BrowserPageContext, HistoryMessage, Role,
     SEARCH_INSTRUCTIONS,
 };
-use pervue_host::protocol::events::{Authentication, Availability, Capability, ErrorCode};
 use pervue_host::providers::claude::Claude;
 use pervue_host::providers::{Exchange, Provider, SendRequest, Update};
+use runtime_core::protocol::{Authentication, Availability, Capability, ErrorCode};
 use serde_json::Value;
 use support::FakeClaude;
 
@@ -957,7 +957,7 @@ fn capabilities_express_claudes_observed_differences() {
     let capabilities = pervue_host::providers::claude::CAPABILITIES;
     assert_eq!(capabilities.streaming, Capability::Supported);
     assert_eq!(capabilities.continuation, Capability::Supported);
-    assert_eq!(capabilities.page_context, Capability::Supported);
+    assert_eq!(capabilities.tool_isolation, Capability::Supported);
     // Claude Code takes `--model`, with aliases that track the latest models.
     assert_eq!(capabilities.model_selection, Capability::Supported);
     assert_eq!(capabilities.cancellation, Capability::Supported);

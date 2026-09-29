@@ -21,7 +21,7 @@
 
 use serde_json::Value;
 
-use crate::protocol::events::ErrorCode;
+use runtime_core::protocol::ErrorCode;
 use runtime_core::protocol::Failure as ErrorBody;
 use runtime_core::turn::Usage;
 

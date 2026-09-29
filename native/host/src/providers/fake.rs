@@ -6,7 +6,7 @@ use std::borrow::Cow;
 use std::time::Duration;
 
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
-use crate::protocol::events::{
+use runtime_core::protocol::{
     Authentication, Availability, Capabilities, Capability, ProviderState,
 };
 
@@ -25,10 +25,9 @@ pub const STATUS: ProviderState = ProviderState {
         streaming: Capability::Supported,
         continuation: Capability::Supported,
         web_search: Capability::Unsupported,
-        page_context: Capability::Supported,
-        attachments: Capability::Unsupported,
         model_selection: Capability::Unsupported,
         cancellation: Capability::Unsupported,
+        tool_isolation: Capability::Supported,
     },
     models: Cow::Borrowed(&[]),
     sign_in: None,

@@ -14,7 +14,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use super::{Exchange, Scripted, Update};
-use crate::protocol::events::ErrorCode;
+use runtime_core::protocol::ErrorCode;
 use runtime_core::protocol::Failure as ErrorBody;
 
 pub const SESSION_FORGET_FAILED: ErrorBody = ErrorBody {

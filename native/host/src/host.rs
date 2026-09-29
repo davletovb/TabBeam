@@ -34,13 +34,14 @@ use crate::diagnostics::{
 use crate::framing::{self, FrameError};
 use crate::limits::MAX_FRAME_SIZE;
 use crate::protocol::events::{
-    self, Capability, ConversationCreated, ErrorBody, ErrorCode, Event, ProviderStatus,
-    RequestCancelled, ResponseCompleted, ResponseDelta, ResponseSource, ResponseStarted,
+    self, Capabilities, Capability, ConversationCreated, ErrorBody, ErrorCode, Event,
+    HostCapabilities, ProviderState, ProviderStatus, RequestCancelled, ResponseCompleted,
+    ResponseDelta, ResponseSource, ResponseStarted,
 };
 use crate::protocol::messages;
 use crate::protocol::request::{self, Method, RequestFailure, RequestId};
 use crate::providers::{Exchange, Providers, Scripted, SendRequest, StatusOfAll, Timeouts, Update};
-use runtime_core::protocol::Failure;
+use runtime_core::protocol::{ErrorCode as FailureCode, Failure};
 use runtime_core::stream::split_text;
 
 /// Why the host stopped before a clean end of stream.
@@ -109,31 +110,31 @@ const SHUTDOWN_GRACE: Duration = Duration::from_millis(250);
 const STATUS_STOP_GRACE: Duration = Duration::from_millis(250);
 
 const PROVIDER_NOT_INSTALLED: Failure = Failure {
-    code: ErrorCode::ProviderNotFound,
+    code: FailureCode::ProviderNotFound,
     reason: "PROVIDER_NOT_INSTALLED",
     retryable: false,
 };
 
 const NATIVE_SEARCH_UNSUPPORTED: Failure = Failure {
-    code: ErrorCode::SearchFailed,
+    code: FailureCode::SearchFailed,
     reason: "NATIVE_SEARCH_UNSUPPORTED",
     retryable: false,
 };
 
 const SEARCH_WITH_CONTEXT_UNSUPPORTED: Failure = Failure {
-    code: ErrorCode::SearchFailed,
+    code: FailureCode::SearchFailed,
     reason: "SEARCH_WITH_CONTEXT_UNSUPPORTED",
     retryable: false,
 };
 
 const PAGE_CONTEXT_UNSUPPORTED: Failure = Failure {
-    code: ErrorCode::InvalidRequest,
+    code: FailureCode::InvalidRequest,
     reason: "PAGE_CONTEXT_UNSUPPORTED",
     retryable: false,
 };
 
 const MODEL_SELECTION_UNSUPPORTED: Failure = Failure {
-    code: ErrorCode::InvalidRequest,
+    code: FailureCode::InvalidRequest,
     reason: "MODEL_SELECTION_UNSUPPORTED",
     retryable: false,
 };
@@ -534,7 +535,12 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                     ),
                     Some(provider)
                         if context.is_some()
-                            && provider.capabilities().page_context != Capability::Supported =>
+                            && Capabilities::new(
+                                provider.capabilities(),
+                                HostCapabilities::PERVUE,
+                            )
+                            .page_context
+                                != Capability::Supported =>
                     {
                         (
                             Box::new(Scripted::failed(PAGE_CONTEXT_UNSUPPORTED)),
@@ -880,7 +886,7 @@ fn forward<W: Write + ?Sized>(
         } => {
             let payload = ProviderStatus {
                 provider_id: &provider_id,
-                status,
+                status: ProviderState::new(status, HostCapabilities::PERVUE),
             };
             write_event(output, raw, Event::ProviderStatus, &payload)
         }
@@ -954,8 +960,8 @@ mod tests {
     use crate::HOST_VERSION;
     use crate::framing::PREFIX_SIZE;
     use crate::limits::MAX_FRAME_SIZE;
-    use crate::protocol::events::Capabilities;
     use crate::providers::{Provider, fake};
+    use runtime_core::protocol::Capabilities;
 
     fn framed(payloads: &[&str]) -> Vec<u8> {
         let mut wire = Vec::new();
@@ -1711,7 +1717,7 @@ mod tests {
     #[test]
     fn context_is_rejected_before_an_unsupported_provider_runs() {
         let mut provider = TestProvider::new("test", Script::answers("ok"));
-        provider.capabilities.page_context = Capability::Unsupported;
+        provider.capabilities.tool_isolation = Capability::Unsupported;
         let calls = Rc::clone(&provider.calls);
         let request = request(
             "req_context",
