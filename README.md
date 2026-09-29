@@ -1,5 +1,7 @@
 # TabBeam
 
+**TabBeam: Ambient AI for your active tab.**
+
 TabBeam is a lightweight, provider-independent browser AI command layer.
 
 The product is designed around a fast browser workflow:

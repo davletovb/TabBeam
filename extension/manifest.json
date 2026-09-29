@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "TabBeam",
-  "description": "A lightweight, provider-independent browser AI command layer.",
+  "description": "Ambient AI for your active tab.",
   "version": "0.1.0",
   "minimum_chrome_version": "123",
   "action": {
