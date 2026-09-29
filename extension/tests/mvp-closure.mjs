@@ -238,12 +238,14 @@ class FakeElement {
   }
   // The companion persona is Beam on every surface where the user types, and
   // the popup keeps saying that a page is seen only when it is shared.
-  for (const [surface, markup, heading] of [
-    ["popup", popup, "h1"],
-    ["full view", fullpage, "h2"]
+  // The full view is where a conversation continues, so its accessible label
+  // keeps the follow-up cue that a screen-reader user needs there.
+  for (const [surface, markup, heading, label] of [
+    ["popup", popup, "h1", "Ask Beam"],
+    ["full view", fullpage, "h2", "Ask Beam a follow-up"]
   ]) {
     assert.ok(markup.includes(`>Ask Beam anything</${heading}>`), `${surface}: heading should say "Ask Beam anything"`);
-    assert.ok(markup.includes(">Ask Beam</label>"), `${surface}: the input's accessible label should say "Ask Beam"`);
+    assert.ok(markup.includes(`>${label}</label>`), `${surface}: the input's accessible label should say "${label}"`);
     assert.ok(markup.includes('placeholder="Ask Beam…"'), `${surface}: the placeholder should say "Ask Beam…"`);
   }
   assert.ok(
