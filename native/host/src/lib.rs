@@ -31,6 +31,7 @@ pub fn layout() -> providers::Layout {
         seatline_core::turn::Namespace::fixed(NAMESPACE).expect("TabBeam's namespace is valid"),
         "TabBeam",
     )
+    .expect("TabBeam's cache title is its namespace with only the case changed")
 }
 
 #[cfg(test)]
