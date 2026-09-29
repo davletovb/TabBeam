@@ -9,7 +9,7 @@ use serde::Serialize;
 use super::PROTOCOL_VERSION;
 use super::request::{FailureKind, RequestFailure, RequestId};
 use crate::HOST_VERSION;
-use pervue_core::framing::{self, FrameError};
+use crate::framing::{self, FrameError};
 
 /// v1 event names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,7 +48,7 @@ pub enum EventError {
     Frame(FrameError),
 }
 
-pub use pervue_core::protocol::{
+pub use runtime_core::protocol::{
     Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ModelOption,
     ProviderState, Source,
 };

@@ -34,8 +34,8 @@ use crate::protocol::events::{
 };
 use crate::protocol::request::{self, Method, RequestFailure, RequestId};
 use crate::providers::{Exchange, Providers, Scripted, SendRequest, StatusOfAll, Timeouts, Update};
-use pervue_core::framing::{self, FrameError};
-use pervue_core::stream::split_text;
+use crate::framing::{self, FrameError};
+use runtime_core::stream::split_text;
 
 /// Why the host stopped before a clean end of stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -965,7 +965,7 @@ mod tests {
     use crate::limits::MAX_FRAME_SIZE;
     use crate::protocol::events::Capabilities;
     use crate::providers::{Provider, fake};
-    use pervue_core::framing::PREFIX_SIZE;
+    use crate::framing::PREFIX_SIZE;
 
     fn framed(payloads: &[&str]) -> Vec<u8> {
         let mut wire = Vec::new();

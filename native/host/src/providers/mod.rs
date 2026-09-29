@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use crate::conversation::{BrowserContext, HistoryMessage};
 use crate::protocol::events::Capabilities;
-pub use pervue_core::stream::BUSY_LIMIT;
+pub use runtime_core::stream::BUSY_LIMIT;
 
 pub mod claude;
 pub mod codex;
@@ -48,7 +48,7 @@ pub struct SendRequest {
     pub native_search: bool,
 }
 
-pub use pervue_core::exchange::{Exchange, Scripted, Timeouts, Update};
+pub use runtime_core::exchange::{Exchange, Scripted, Timeouts, Update};
 
 /// A provider adapter.
 pub trait Provider {

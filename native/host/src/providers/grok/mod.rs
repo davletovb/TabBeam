@@ -30,9 +30,9 @@ use crate::conversation::provider_prompt;
 use crate::protocol::events::{
     Authentication, Availability, Capabilities, Capability, ErrorBody, ErrorCode, ProviderState,
 };
-use pervue_core::discovery::SearchPath;
-use pervue_core::process::{Event, Exit, Process, ProcessSpec};
-use pervue_core::stream::{BUSY_LIMIT, LineStream, Output};
+use runtime_core::discovery::SearchPath;
+use runtime_core::process::{Event, Exit, Process, ProcessSpec};
+use runtime_core::stream::{BUSY_LIMIT, LineStream, Output};
 
 pub mod output;
 

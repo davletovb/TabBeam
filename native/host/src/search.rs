@@ -6,7 +6,7 @@
 
 use std::collections::HashSet;
 
-use pervue_core::protocol::{ErrorBody, ErrorCode, Source};
+use runtime_core::protocol::{ErrorBody, ErrorCode, Source};
 use serde::Deserialize;
 
 pub const DEFAULT_BACKEND_ID: &str = "auto";
