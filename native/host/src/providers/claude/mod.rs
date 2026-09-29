@@ -1002,7 +1002,6 @@ impl Turn {
                 self.flush_held();
                 self.queue.push_back(Update::Activity);
             }
-            Ok(Line::Progress) => self.queue.push_back(Update::Activity),
             Ok(Line::ResultSuccess {
                 session_id,
                 text,
