@@ -168,7 +168,7 @@ fn one_shot_turns_continue_from_bounded_pervue_history() {
     assert!(
         second
             .iter()
-            .any(|update| matches!(update, Update::Started { .. }))
+            .any(|update| matches!(update, Update::Started))
     );
     assert_eq!(answer_text(&second), "Gemini continued answer");
     assert!(matches!(second.last(), Some(Update::Completed)));
@@ -246,7 +246,7 @@ fn a_failed_first_turn_can_retry_with_empty_completed_history() {
     assert!(
         updates
             .iter()
-            .any(|update| matches!(update, Update::Started { .. }))
+            .any(|update| matches!(update, Update::Started))
     );
     assert!(matches!(updates.last(), Some(Update::Completed)));
 }

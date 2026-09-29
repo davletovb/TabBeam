@@ -8,13 +8,13 @@ use std::time::{Duration, Instant};
 
 use pervue_host::conversation::{
     BrowserContext, BrowserContextMode, BrowserPageContext, HistoryMessage, Role,
-    SEARCH_INSTRUCTIONS,
 };
 use pervue_host::conversations::Conversations;
 use pervue_host::providers::claude::Claude;
 use pervue_host::providers::{
     ConversationProvider, ConversationSlot, Exchange, SendRequest, Update,
 };
+use runtime_core::prompt::SEARCH_INSTRUCTIONS;
 use runtime_core::protocol::{Authentication, Availability, Capability, ErrorCode};
 use serde_json::Value;
 use support::FakeClaude;
@@ -67,7 +67,7 @@ fn run_until_started(exchange: &mut dyn Exchange) -> Vec<Update> {
     loop {
         let update = exchange.next(deadline).expect("exchange did not start");
         assert!(!update.is_terminal(), "{update:?}");
-        let started = matches!(update, Update::Started { .. });
+        let started = matches!(update, Update::Started);
         updates.push(update);
         if started {
             return updates;
@@ -219,9 +219,7 @@ fn request_streams_with_tools_disabled_and_keeps_question_off_argv() {
     assert_eq!(
         updates,
         [
-            Update::Started {
-                conversation_id: None
-            },
+            Update::Started,
             Update::Delta("You asked: ".to_owned()),
             Update::Delta(question.to_owned()),
             Update::Completed,
@@ -612,9 +610,7 @@ fn continuation_resumes_and_survives_adapter_restart() {
     assert_eq!(
         second,
         [
-            Update::Started {
-                conversation_id: None
-            },
+            Update::Started,
             Update::Delta("You asked: ".to_owned()),
             Update::Delta("second".to_owned()),
             Update::Completed,
@@ -661,12 +657,7 @@ fn stale_resume_rebuilds_once_from_bounded_history_under_the_same_conversation()
     // The stale session is replaced behind the same conversation ID: no new
     // conversation, and one Started.
     continued(&slot, &conversation);
-    assert_eq!(
-        updates[0],
-        Update::Started {
-            conversation_id: None
-        }
-    );
+    assert_eq!(updates[0], Update::Started);
     assert_eq!(updates.last(), Some(&Update::Completed));
     let prompts = claude.prompts();
     let prompt = prompts.last().expect("fallback prompt");
@@ -733,14 +724,9 @@ fn missing_session_reported_in_result_rebuilds_without_a_second_started() {
     let (updates, slot) = ran(&adapter, follow_up(&conversation, history()));
     let started: Vec<_> = updates
         .iter()
-        .filter(|update| matches!(update, Update::Started { .. }))
+        .filter(|update| matches!(update, Update::Started))
         .collect();
-    assert_eq!(
-        started,
-        [&Update::Started {
-            conversation_id: None
-        }]
-    );
+    assert_eq!(started, [&Update::Started]);
     continued(&slot, &conversation);
     assert_eq!(updates.last(), Some(&Update::Completed));
     assert!(!prints(&claude)[2].contains("--resume"));

@@ -250,7 +250,7 @@ fn one_shot_turns_continue_from_bounded_pervue_history() {
     assert!(
         second
             .iter()
-            .any(|update| matches!(update, Update::Started { .. }))
+            .any(|update| matches!(update, Update::Started))
     );
     assert_eq!(answer_text(&second), "Grok follow-up answer");
     assert!(matches!(second.last(), Some(Update::Completed)));
@@ -332,7 +332,7 @@ fn a_second_host_does_not_remove_a_live_turn_workspace() {
     let mut running = first_adapter.send(request(None, false, "grok-hang"));
     let deadline = Instant::now() + Duration::from_secs(5);
     while let Some(update) = running.next(deadline) {
-        if matches!(update, Update::Started { .. }) {
+        if matches!(update, Update::Started) {
             break;
         }
     }

@@ -1,6 +1,8 @@
-//! Bounded-deadline provider exchange events, shared by Codex and Claude.
-//! Update names follow Pervue protocol v1; changing their meaning requires
-//! reviewing both the Rust consumers and the browser wire contract.
+//! Bounded-deadline provider exchange events, shared by every adapter.
+//!
+//! The events are the runtime's own: an application maps them to whatever it
+//! sends its users. Pervue's protocol v1 does so in `pervue-host`, which also
+//! owns the conversations the runtime knows nothing about.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -36,11 +38,10 @@ pub enum Update {
     /// terminal `Failed`: an application that can start over discards that
     /// failure, and one that can't reports it.
     SessionLost(SessionLoss),
-    /// A new provider-neutral conversation (`conversation.created`). Comes
-    /// before `Started`.
-    ConversationCreated(String),
-    /// Response production started (`response.started`).
-    Started { conversation_id: Option<String> },
+    /// The provider accepted the turn: its own start-of-turn event arrived and,
+    /// where the adapter checks one, its `init` boundary passed. No answer text
+    /// comes before it, and the start limit runs until it arrives.
+    Started,
     /// The next piece of the answer (`response.delta`).
     Delta(String),
     /// A normalized source attached to the answer (`response.source`).

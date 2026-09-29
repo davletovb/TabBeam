@@ -244,12 +244,7 @@ mod tests {
             _request: TurnRequest,
         ) -> Result<(Box<dyn Exchange>, Option<Timeouts>), String> {
             Ok((
-                Box::new(One(VecDeque::from([
-                    Update::Started {
-                        conversation_id: None,
-                    },
-                    Update::Completed,
-                ]))),
+                Box::new(One(VecDeque::from([Update::Started, Update::Completed]))),
                 Some(Timeouts {
                     start: Duration::from_secs(1),
                     idle: Duration::from_secs(1),

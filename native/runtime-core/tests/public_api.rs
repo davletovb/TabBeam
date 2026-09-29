@@ -112,12 +112,7 @@ fn exchange_and_platform_types_do_not_depend_on_host() {
     exchange.cancel(Duration::ZERO);
     assert!(exchange.next(Instant::now()).is_none());
 
-    let mut pending = Scripted::new([
-        Update::Started {
-            conversation_id: None,
-        },
-        Update::Completed,
-    ]);
+    let mut pending = Scripted::new([Update::Started, Update::Completed]);
     pending.cancel(Duration::ZERO);
     assert_eq!(pending.next(Instant::now()), Some(Update::Stopped));
     assert_eq!(pending.next(Instant::now()), None);

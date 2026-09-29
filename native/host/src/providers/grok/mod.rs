@@ -758,9 +758,7 @@ impl Turn {
                     return self.fail(MCP_MISMATCH);
                 }
                 self.initialized = true;
-                self.queue.push_back(Update::Started {
-                    conversation_id: None,
-                });
+                self.queue.push_back(Update::Started);
             }
             Ok(Line::Assistant {
                 text,

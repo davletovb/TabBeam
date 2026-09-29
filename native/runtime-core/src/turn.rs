@@ -21,12 +21,14 @@ pub fn is_model_id(model: &str) -> bool {
 }
 
 /// Whether `value` can be a native-session handle: opaque to the runtime, and
-/// safe to keep in a file name and to pass as one command-line argument.
+/// safe to keep in a file name and to pass as one command-line argument. It
+/// starts with a letter or digit, so it can be neither an option nor a
+/// relative path such as `..`.
 pub fn is_session_handle(value: &str) -> bool {
     let bytes = value.as_bytes();
     !bytes.is_empty()
         && bytes.len() <= MAX_CONTINUATION_BYTES
-        && bytes[0] != b'-'
+        && bytes[0].is_ascii_alphanumeric()
         && bytes
             .iter()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
@@ -302,6 +304,9 @@ mod tests {
             .validate()
             .is_err()
         );
+        for handle in ["..", ".hidden", "-c", "", "a/b", "a b"] {
+            assert!(!is_session_handle(handle), "{handle:?}");
+        }
         for group in ["", "../up", "has space", &"x".repeat(65)] {
             assert_eq!(
                 Turn {

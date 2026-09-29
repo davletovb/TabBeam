@@ -332,7 +332,7 @@ impl<P: Provider + 'static> ConversationExchange<P> {
                 Err(failure) => self.fail(failure),
             },
             Update::SessionLost(loss) => self.lost = Some(loss),
-            Update::Started { .. } => self.on_started(),
+            Update::Started => self.on_started(),
             Update::Delta(text) => {
                 self.saw_delta = true;
                 self.queue.push_back(Update::Delta(text));
@@ -406,9 +406,7 @@ impl<P: Provider + 'static> ConversationExchange<P> {
             return self.fail(SESSION_STORE_FAILED);
         }
         self.started = true;
-        self.queue.push_back(Update::Started {
-            conversation_id: None,
-        });
+        self.queue.push_back(Update::Started);
     }
 
     fn on_failed(&mut self, failure: Failure) {

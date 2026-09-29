@@ -718,10 +718,7 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                     else {
                         continue;
                     };
-                    if let Update::ConversationCreated(conversation_id) = &update {
-                        self.conversations.insert(conversation_id.clone());
-                    }
-                    if matches!(update, Update::Started { .. }) {
+                    if matches!(update, Update::Started) {
                         if let Some(slot) = &self.running[index].slot {
                             if let (true, Some(id)) = (slot.created(), slot.id()) {
                                 self.conversations.insert(id);
@@ -863,18 +860,17 @@ fn forward<W: Write + ?Sized>(
     }
     let raw = &running.id.raw;
     match update {
-        Update::ConversationCreated(conversation_id) => {
-            let payload = ConversationCreated {
-                conversation_id: &conversation_id,
-            };
-            let written = write_event(output, raw, Event::ConversationCreated, &payload);
-            running.conversation_id = Some(conversation_id);
-            written
-        }
-        Update::Started { conversation_id } => {
-            let conversation_id =
-                conversation_id.or_else(|| running.slot.as_ref().and_then(ConversationSlot::id));
+        Update::Started => {
+            // The conversation layer says which conversation this request
+            // serves, and whether it just created it: v1 announces a new
+            // conversation right before the response that starts it.
+            let conversation_id = running.slot.as_ref().and_then(ConversationSlot::id);
             let created = running.slot.as_ref().is_some_and(ConversationSlot::created);
+            // Recorded before anything is written: a request whose output
+            // closes on its first event still names the conversation it made.
+            if conversation_id.is_some() {
+                running.conversation_id.clone_from(&conversation_id);
+            }
             if let (true, false, Some(id)) = (created, running.announced, &conversation_id) {
                 running.announced = true;
                 write_event(
@@ -890,11 +886,7 @@ fn forward<W: Write + ?Sized>(
                 provider_id: running.provider_id.as_deref().unwrap_or_default(),
                 conversation_id: conversation_id.as_deref(),
             };
-            let written = write_event(output, raw, Event::ResponseStarted, &payload);
-            if conversation_id.is_some() {
-                running.conversation_id = conversation_id;
-            }
-            written
+            write_event(output, raw, Event::ResponseStarted, &payload)
         }
         Update::Delta(text) => {
             for piece in split_text(&text, MAX_DELTA_BYTES) {
@@ -1235,9 +1227,7 @@ mod tests {
             }
             if self.script.starts && !self.started {
                 self.started = true;
-                return Some(Update::Started {
-                    conversation_id: None,
-                });
+                return Some(Update::Started);
             }
             if self.script.stops_unasked {
                 self.done = true;
@@ -1384,9 +1374,7 @@ mod tests {
             }
             Box::new(Scripted::new([
                 Update::Launched,
-                Update::Started {
-                    conversation_id: None,
-                },
+                Update::Started,
                 Update::Delta("hi".to_owned()),
                 Update::Completed,
             ]))

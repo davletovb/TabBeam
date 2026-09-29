@@ -7,9 +7,11 @@
 | `process` | Absolute-path spawn, isolated child environment, piped I/O, bounded output queue, termination and reap | Executable choice, argv, trusted environment allowlist, provider parsing |
 | `stream` | Bounded UTF-8 lines, process-output streaming, terminal/error/stopped states, stderr tail, outgoing text chunks | Interpretation of provider lines and provider-specific messages |
 | `discovery` | Absolute directory search and platform executable detection | Pervue's provider-path override and provider-specific path policy |
-| `protocol` | Neutral failure, capability, source, provider-status, and model-option values | Browser wire envelopes and user-facing failure wording |
-| `exchange` | Deadline-driven `Exchange`, lifecycle `Update` values, `Timeouts`, scripted exchanges | Provider registry, product conversation routing, Native Messaging serialization |
-| `turn` | Neutral messages, tool/session policy, usage, sign-in classification, namespace and argv-bound identifier validation | Pervue browser-context policy and conversation-to-session mappings |
+| `protocol` | Neutral failure (with the runtime's own `#[non_exhaustive]` error codes), capability (including `tool_isolation`), source, provider-status, and model-option values | Protocol-v1 error categories, page-context and attachment capabilities, browser wire envelopes, and user-facing failure wording |
+| `exchange` | Deadline-driven `Exchange`, lifecycle `Update` values (`Launched`, `Session`, `SessionLost`, `Started`, `Delta`, …), `Timeouts`, scripted exchanges | Provider registry, conversation IDs and routing, Native Messaging serialization |
+| `turn` | Neutral messages, tool policy (`None`, `NativeWebSearch`, `ProviderDefault`), session policy, cleanup group, usage, sign-in classification, namespace and argv-bound identifier validation | Pervue browser-context policy and conversation-to-session mappings |
+| `prompt` | How every adapter renders a turn's messages, and the search instructions | Framing of browser context, or of anything else an application attaches to its own message |
+| `search` | Bounded, plain-text normalization of provider-native search results into sources | Whether a request asks for search at all |
 
 The Stage 1 scheduler and threaded service are sibling crates, `provider-runtime-scheduler` and `provider-runtime-service`. Native Messaging framing is intentionally **not** part of the shared runtime; it lives in `native/host/src/framing.rs` because it is Pervue's browser transport boundary. The trusted provider-environment allowlist also remains host-owned in Stage 1 and moves only with the platform layer in Stage 2.
 
@@ -23,7 +25,7 @@ An `Exchange` is owned by the scheduler for the accepted turn. The scheduler is 
 
 Runtime failures are Rust-owned `Failure { code, reason, retryable }` values. They deliberately carry no Pervue prose and no raw provider error string. Pervue translates them to protocol-v1 `ErrorBody` values in `host/src/protocol/messages.rs`. Provider stdout/stderr, prompts, account identifiers and credentials are never part of a runtime failure.
 
-Provider-native session handles are opaque strings. Only `Persistent` turns may report or continue one. Persistent Claude/Codex turns emit `Session` before `Started`, and emit it again if the provider changes the handle. Pervue owns the mapping from its conversation ID to that opaque handle. When Pervue forks a fresh search session, every superseded handle is recorded durably before best-effort transcript deletion so `conversation.forget` can retry cleanup.
+Provider-native session handles are opaque strings. Only `Persistent` turns may report or continue one. Persistent Claude/Codex turns emit `Session` before `Started`, and emit it again if the provider changes the handle. A turn that resumes a session it can't use sends `SessionLost` before its own terminal failure, `Confirmed` when the provider said the session is gone and `Suspected` when the run merely ended before the turn began; the application decides whether to start over. Pervue owns the mapping from its conversation ID to that opaque handle (`pervue-host`'s `conversations` layer, the only place a conversation exists). When Pervue forks a fresh search session, every superseded handle is recorded durably before best-effort transcript deletion so `conversation.forget` can retry cleanup. A turn's `cleanup_group` groups its per-turn cleanup records the same way, and is opaque to the runtime.
 
 `Ephemeral` means provider state must not outlive the turn. Modes with a native switch use it (`claude --no-session-persistence`, `codex exec --ephemeral`); stateless Gemini/Grok execution refuses `Persistent`. A mode that cannot meet its stated session policy must fail instead of silently weakening it.
 
@@ -35,7 +37,7 @@ The browser compatibility boundary is separate. Packaged Pervue hosts speak the 
 
 The extraction rule is the framework's two-consumer rule: a primitive or adapter is promoted only after two real consumers, applications, or provider modes demonstrate the same semantics. Codex and Claude established the process/stream/session contract; Pervue and Conclave justify the shared runtime. Product-only behavior stays with the application.
 
-Stage 2 moves the reusable runtime into its own repository. Pervue switches to the extracted revision first; a shared adapter is fixed there rather than patched locally. A future non-Rust consumer uses a versioned stdio sidecar around the service API rather than an ABI façade.
+Stage 2 moves the reusable runtime into its own repository. Pervue switches to the extracted revision first; a shared adapter is fixed there rather than patched locally. A future non-Rust consumer uses a versioned stdio sidecar around the service API rather than an ABI façade. The adapters and everything they use (`native/host/src/providers/`) no longer depend on any other part of `pervue-host`: conversations, browser context and protocol v1 sit above them, which is what makes the move a change of location.
 
 ## Verification
 

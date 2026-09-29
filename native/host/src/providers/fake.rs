@@ -64,21 +64,14 @@ impl ConversationProvider for Fake {
     }
 
     fn send(&self, request: SendRequest) -> Box<dyn Exchange> {
-        let mut updates = Vec::new();
-        let conversation_id = match request.conversation_id {
-            Some(conversation_id) => conversation_id,
-            None => {
-                updates.push(Update::ConversationCreated(CONVERSATION_ID.to_owned()));
-                CONVERSATION_ID.to_owned()
-            }
-        };
-        updates.extend([
-            Update::Started {
-                conversation_id: Some(conversation_id),
-            },
+        match request.conversation_id {
+            Some(conversation_id) => request.conversation.set(conversation_id, false),
+            None => request.conversation.set(CONVERSATION_ID, true),
+        }
+        Box::new(Scripted::new([
+            Update::Started,
             Update::Delta(ANSWER.to_owned()),
             Update::Completed,
-        ]);
-        Box::new(Scripted::new(updates))
+        ]))
     }
 }

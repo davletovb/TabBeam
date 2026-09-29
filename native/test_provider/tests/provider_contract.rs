@@ -83,7 +83,7 @@ fn common_contract(provider: &dyn ConversationProvider) {
         .expect("missing Session");
     let started = first_raw
         .iter()
-        .position(|update| matches!(update, Update::Started { .. }))
+        .position(|update| matches!(update, Update::Started))
         .expect("missing Started");
     assert!(launched < started);
     assert!(session < started);
@@ -110,12 +110,7 @@ fn common_contract(provider: &dyn ConversationProvider) {
     let second = visible(&run_to_end(provider.send(second_request).as_mut()));
     assert!(!slot.created(), "a follow-up continues its conversation");
     assert_eq!(slot.id(), Some(conversation_id));
-    assert_eq!(
-        second.first(),
-        Some(&Update::Started {
-            conversation_id: None,
-        })
-    );
+    assert_eq!(second.first(), Some(&Update::Started));
     assert_eq!(second.last(), Some(&Update::Completed));
 }
 

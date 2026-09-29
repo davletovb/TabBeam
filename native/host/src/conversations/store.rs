@@ -149,7 +149,12 @@ impl SessionStore {
     /// The sessions `conversation` left whose transcripts are still recorded
     /// as pending.
     pub fn superseded(&self, conversation: &str) -> Vec<String> {
-        let Some(dir) = &self.dir else {
+        // A conversation ID is joined into a path: only Pervue's own shape.
+        let Some(dir) = self
+            .dir
+            .as_ref()
+            .filter(|_| private_fs::is_conversation_id(conversation))
+        else {
             return Vec::new();
         };
         let Ok(entries) = std::fs::read_dir(superseded_dir(dir, conversation)) else {
@@ -175,6 +180,11 @@ impl SessionStore {
     ///
     /// [`forget_memory`]: SessionStore::forget_memory
     pub fn files_to_remove(&self, conversation: &str) -> Option<Removal> {
+        // A request can name any conversation, and this removes a directory
+        // named after it: only Pervue's own IDs may.
+        if !private_fs::is_conversation_id(conversation) {
+            return None;
+        }
         let dir = self.dir.clone()?;
         Some(Removal {
             dir,
@@ -389,6 +399,43 @@ mod tests {
         std::fs::write(scratch.0.join("blocked"), b"not a directory").unwrap();
         store.follow(CONVERSATION, "session-2");
         assert_eq!(store.get(CONVERSATION).as_deref(), Some("session-2"));
+    }
+
+    /// A `conversation.forget` names whatever conversation it likes. It must
+    /// never reach outside the store, however the ID is spelled.
+    #[test]
+    fn a_conversation_id_can_never_name_a_path_outside_the_store() {
+        let scratch = Scratch::new("traversal");
+        let store_dir = scratch.0.join("pervue").join("claude-sessions");
+        let store = SessionStore::new(Some(store_dir.clone()));
+        store.remember_new(CONVERSATION, "session-1").unwrap();
+        store
+            .record_superseded(CONVERSATION, "old-session")
+            .unwrap();
+        // Something a traversal would delete: the store's own directory, its
+        // parent, and a sibling.
+        let sibling = scratch.0.join("pervue").join("important");
+        std::fs::create_dir_all(&sibling).unwrap();
+        std::fs::write(sibling.join("data"), b"keep").unwrap();
+
+        for id in [
+            "..",
+            "../..",
+            "../../important",
+            "/",
+            "superseded/..",
+            "conv_../../..",
+            ".",
+            "conv_0123456789abcde/",
+        ] {
+            assert!(store.files_to_remove(id).is_none(), "{id}");
+            assert!(store.superseded(id).is_empty(), "{id}");
+            assert!(store.sessions_of(id).is_empty(), "{id}");
+            store.drop_mapping(id);
+        }
+        assert!(store_dir.join(CONVERSATION).exists());
+        assert!(store_dir.join("superseded").join(CONVERSATION).exists());
+        assert_eq!(std::fs::read(sibling.join("data")).unwrap(), b"keep");
     }
 
     #[test]

@@ -20,7 +20,6 @@ use super::environment;
 use super::forget;
 use super::layout::Layout;
 use super::{Cleanup, Exchange, Provider, Scripted, Timeouts, Update};
-use crate::search::{NATIVE_SEARCH_NO_SOURCES, SourceCollector, claude_tool_result_sources};
 use runtime_core::discovery::SearchPath;
 use runtime_core::exchange::SessionLoss;
 use runtime_core::process::{Event, Exit, Process, ProcessSpec};
@@ -29,6 +28,7 @@ use runtime_core::protocol::Failure as ErrorBody;
 use runtime_core::protocol::{
     Authentication, Availability, Capabilities, Capability, ErrorCode, ModelOption, ProviderState,
 };
+use runtime_core::search::{NATIVE_SEARCH_NO_SOURCES, SourceCollector, claude_tool_result_sources};
 use runtime_core::stream::{BUSY_LIMIT, LineStream, Output};
 use runtime_core::turn::{SessionPolicy, ToolPolicy, Turn as TurnRequest};
 
@@ -633,9 +633,7 @@ impl Turn {
                     self.reported_session = Some(session.clone());
                     self.queue.push_back(Update::Session(session));
                 }
-                self.queue.push_back(Update::Started {
-                    conversation_id: None,
-                });
+                self.queue.push_back(Update::Started);
             }
             Ok(Line::ToolEvents(events)) => {
                 if !self.started {
@@ -920,11 +918,7 @@ mod tests {
         assert_eq!(CAPABILITIES.model_selection, Capability::Supported);
         assert!(!MODELS.is_empty());
         for model in MODELS {
-            assert!(
-                crate::protocol::request::is_model_id(&model.id),
-                "{}",
-                model.id
-            );
+            assert!(runtime_core::turn::is_model_id(&model.id), "{}", model.id);
         }
     }
 }

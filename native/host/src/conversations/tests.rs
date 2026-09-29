@@ -142,9 +142,7 @@ fn answer(session: &str) -> Vec<Update> {
     vec![
         Update::Launched,
         Update::Session(session.to_owned()),
-        Update::Started {
-            conversation_id: None,
-        },
+        Update::Started,
         Update::Delta("ok".to_owned()),
         Update::Completed,
     ]
@@ -330,9 +328,7 @@ fn a_new_conversation_is_announced_with_its_mapping_already_stored() {
         [
             Update::Launched,
             Update::Session("session-1".to_owned()),
-            Update::Started {
-                conversation_id: None
-            },
+            Update::Started,
             Update::Delta("ok".to_owned()),
             Update::Completed,
         ]
@@ -548,9 +544,7 @@ fn a_session_the_provider_says_is_gone_is_rebuilt_under_the_same_conversation() 
             .script(vec![
                 Update::Launched,
                 Update::Session("session-1".to_owned()),
-                Update::Started {
-                    conversation_id: None,
-                },
+                Update::Started,
                 Update::SessionLost(SessionLoss::Confirmed),
                 Update::Failed(Failure {
                     code: ErrorCode::InvalidRequest,
@@ -574,7 +568,7 @@ fn a_session_the_provider_says_is_gone_is_rebuilt_under_the_same_conversation() 
     assert_eq!(
         updates
             .iter()
-            .filter(|update| matches!(update, Update::Started { .. }))
+            .filter(|update| matches!(update, Update::Started))
             .count(),
         1
     );
@@ -692,9 +686,7 @@ fn a_loss_after_answer_text_is_not_rebuilt() {
     let conversations = Conversations::new(
         Recorder::new(true).script(answer("session-1")).script(vec![
             Update::Session("session-1".to_owned()),
-            Update::Started {
-                conversation_id: None,
-            },
+            Update::Started,
             Update::Delta("partial".to_owned()),
             Update::SessionLost(SessionLoss::Confirmed),
             Update::Failed(Failure {
@@ -726,9 +718,7 @@ fn a_session_forked_by_the_provider_replaces_the_mapping_and_cleans_up_the_old_o
         Recorder::new(true).script(answer("session-1")).script(vec![
             Update::Launched,
             Update::Session("session-1".to_owned()),
-            Update::Started {
-                conversation_id: None,
-            },
+            Update::Started,
             Update::Delta("ok".to_owned()),
             // The final result names a different session.
             Update::Session("session-2".to_owned()),
@@ -768,7 +758,7 @@ fn a_mapping_that_cannot_be_stored_ends_the_turn_before_it_is_announced() {
     assert!(
         !updates
             .iter()
-            .any(|update| matches!(update, Update::Started { .. } | Update::Delta(_))),
+            .any(|update| matches!(update, Update::Started | Update::Delta(_))),
         "{updates:?}"
     );
 }
@@ -806,4 +796,153 @@ fn cancelling_stops_the_run_and_ends_once() {
         }
     }
     assert_eq!(ends, 1);
+}
+
+/// What the adapters built by hand before the runtime rendered turns: the
+/// prompt bytes every provider has been sent, which must not change.
+mod prompts_match_what_the_adapters_used_to_build {
+    use super::*;
+    use crate::conversation::{BrowserContextMode, provider_prompt};
+    use runtime_core::prompt::{SEARCH_INSTRUCTIONS, render};
+
+    fn context() -> BrowserContext {
+        BrowserContext {
+            mode: BrowserContextMode::Selection,
+            text: "page \"text\" \u{2028}".to_owned(),
+            truncated: false,
+            page: crate::conversation::BrowserPageContext {
+                title: "T".to_owned(),
+                url: "https://example.com/".to_owned(),
+            },
+        }
+    }
+
+    fn draft(with_context: bool, search: bool, history: bool) -> Draft {
+        Draft {
+            text: "follow up".to_owned(),
+            history: if history {
+                super::history()
+            } else {
+                Vec::new()
+            },
+            context: with_context.then(context),
+            model: None,
+            tools: if search {
+                ToolPolicy::NativeWebSearch
+            } else if with_context {
+                ToolPolicy::None
+            } else {
+                ToolPolicy::ProviderDefault
+            },
+            session: SessionPolicy::Persistent,
+        }
+    }
+
+    fn old_search_prompt(history: &[HistoryMessage], question: &str) -> String {
+        format!(
+            "{SEARCH_INSTRUCTIONS}{}",
+            provider_prompt(history, None, question)
+        )
+    }
+
+    fn rendered(draft: &Draft, with_history: bool) -> String {
+        let turn = draft.turn(with_history, None, None);
+        turn.validate().expect("a valid turn");
+        render(&turn.messages, turn.tools)
+    }
+
+    #[test]
+    fn a_first_attempt_that_resumes_or_starts_fresh() {
+        for (context, search) in [(false, false), (true, false), (false, true)] {
+            let draft = draft(context, search, true);
+            let old = if search {
+                old_search_prompt(&[], &draft.text)
+            } else if context {
+                provider_prompt(&[], draft.context.as_ref(), &draft.text)
+            } else {
+                draft.text.clone()
+            };
+            assert_eq!(
+                rendered(&draft, false),
+                old,
+                "context={context} search={search}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_replayed_dialogue() {
+        for (context, search) in [(false, false), (true, false), (false, true)] {
+            let draft = draft(context, search, true);
+            let old = if search {
+                old_search_prompt(&draft.history, &draft.text)
+            } else {
+                provider_prompt(&draft.history, draft.context.as_ref(), &draft.text)
+            };
+            assert_eq!(
+                rendered(&draft, true),
+                old,
+                "context={context} search={search}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_provider_with_no_sessions_gets_what_it_always_did_except_the_label_on_a_lone_question() {
+        for (context, search) in [(false, false), (true, false), (false, true)] {
+            for history in [false, true] {
+                let draft = draft(context, search, history);
+                let old = format!(
+                    "{}{}",
+                    if search { SEARCH_INSTRUCTIONS } else { "" },
+                    provider_prompt(&draft.history, draft.context.as_ref(), &draft.text)
+                );
+                let new = rendered(&draft, true);
+                if !context && !search && !history {
+                    // The one difference: a lone plain question is sent as it
+                    // is, as it always was to Claude and Codex.
+                    assert_eq!(old, "Current user question:\nfollow up");
+                    assert_eq!(new, "follow up");
+                } else {
+                    assert_eq!(
+                        new, old,
+                        "context={context} search={search} history={history}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn forgetting_a_conversation_named_like_a_path_removes_nothing_outside_the_store() {
+    let scratch = Scratch::new();
+    let store_dir = scratch.0.join("pervue").join("claude-sessions");
+    let conversations = Conversations::new(
+        Recorder::new(true).script(answer("session-1")),
+        SessionStore::new(Some(store_dir.clone())),
+    );
+    let id = first_conversation(&conversations);
+    // A search turn leaves a `superseded` directory beside the mappings, which
+    // is what makes a name like `superseded/..` resolve.
+    conversations
+        .store()
+        .record_superseded(&id, "old-session")
+        .unwrap();
+    let important = scratch.0.join("pervue").join("important");
+    std::fs::create_dir_all(&important).unwrap();
+    std::fs::write(important.join("data"), b"keep").unwrap();
+
+    for name in ["..", "../..", "../../important", "superseded/../.."] {
+        assert_eq!(
+            run(conversations.forget(name)).last(),
+            Some(&Update::Completed)
+        );
+    }
+    assert_eq!(std::fs::read(important.join("data")).unwrap(), b"keep");
+    assert!(store_dir.exists(), "the store's own directory");
+    assert_eq!(
+        SessionStore::new(Some(store_dir)).get(&id).as_deref(),
+        Some("session-1")
+    );
 }

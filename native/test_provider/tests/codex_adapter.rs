@@ -12,7 +12,6 @@ use std::time::{Duration, Instant};
 
 use pervue_host::conversation::{
     BrowserContext, BrowserContextMode, BrowserPageContext, HistoryMessage, Role,
-    SEARCH_INSTRUCTIONS,
 };
 use pervue_host::conversations::Conversations;
 use pervue_host::providers::codex::{CODEX_VARIABLES, Codex, LIMITS, Limits};
@@ -20,6 +19,7 @@ use pervue_host::providers::environment::INHERITED;
 use pervue_host::providers::{
     ConversationProvider, ConversationSlot, Exchange, SendRequest, Timeouts, Update,
 };
+use runtime_core::prompt::SEARCH_INSTRUCTIONS;
 use runtime_core::protocol::{Authentication, Availability, Capability, ErrorCode};
 use runtime_core::turn::SessionPolicy;
 use serde_json::Value;
@@ -66,7 +66,7 @@ fn run_until_started(exchange: &mut dyn Exchange) -> Vec<Update> {
             .next(deadline)
             .expect("the exchange should start before the deadline");
         assert!(!update.is_terminal(), "ended early: {update:?}");
-        let started = matches!(update, Update::Started { .. });
+        let started = matches!(update, Update::Started);
         updates.push(update);
         if started {
             return updates;
@@ -641,9 +641,7 @@ fn a_question_streams_its_answer_and_opens_a_conversation() {
     assert_eq!(
         updates,
         [
-            Update::Started {
-                conversation_id: None
-            },
+            Update::Started,
             Update::Delta(format!("You asked: {question}")),
             Update::Completed,
         ]
@@ -728,9 +726,7 @@ fn a_conversation_continues_its_codex_thread() {
     assert_eq!(
         visible(&second),
         [
-            Update::Started {
-                conversation_id: None
-            },
+            Update::Started,
             Update::Delta("You asked: second".to_owned()),
             Update::Completed,
         ]
@@ -979,12 +975,7 @@ fn a_new_host_recovers_the_codex_thread_without_exposing_it() {
     );
     continued(&slot, &conversation_id);
     let second = visible(&second);
-    assert_eq!(
-        second[0],
-        Update::Started {
-            conversation_id: None
-        }
-    );
+    assert_eq!(second[0], Update::Started);
     assert_eq!(second[1], Update::Delta("You asked: second".to_owned()));
     assert_eq!(second[2], Update::Completed);
     assert!(

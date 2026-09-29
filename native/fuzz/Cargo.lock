@@ -106,21 +106,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "runtime-core"
-version = "0.1.0-dev"
-dependencies = [
- "nix",
- "serde",
-]
-
-[[package]]
-name = "provider-runtime-scheduler"
-version = "0.1.0-dev"
-dependencies = [
- "runtime-core",
-]
-
-[[package]]
 name = "pervue-host"
 version = "0.1.0-dev"
 dependencies = [
@@ -136,8 +121,8 @@ name = "pervue-host-fuzz"
 version = "0.0.0"
 dependencies = [
  "libfuzzer-sys",
- "runtime-core",
  "pervue-host",
+ "runtime-core",
  "serde_json",
 ]
 
@@ -148,6 +133,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "provider-runtime-scheduler"
+version = "0.1.0-dev"
+dependencies = [
+ "runtime-core",
 ]
 
 [[package]]
@@ -164,6 +156,15 @@ name = "r-efi"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
+
+[[package]]
+name = "runtime-core"
+version = "0.1.0-dev"
+dependencies = [
+ "nix",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "serde"

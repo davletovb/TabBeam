@@ -74,7 +74,7 @@ impl Running {
     fn recognized_work(update: &Update) -> bool {
         matches!(
             update,
-            Update::Started { .. }
+            Update::Started
                 | Update::Activity
                 | Update::Delta(_)
                 | Update::Source(_)
@@ -260,7 +260,7 @@ impl Scheduler {
                     if Running::recognized_work(&update) {
                         self.running[index].last_work = Instant::now();
                     }
-                    if matches!(update, Update::Started { .. }) {
+                    if matches!(update, Update::Started) {
                         self.running[index].started = true;
                     }
                 }
@@ -470,9 +470,7 @@ mod tests {
         fn next(&mut self, _deadline: Instant) -> Option<Update> {
             if !self.started {
                 self.started = true;
-                return Some(Update::Started {
-                    conversation_id: None,
-                });
+                return Some(Update::Started);
             }
             if self.cancelled && !self.talked {
                 self.talked = true;
@@ -517,12 +515,7 @@ mod tests {
         let mut scheduler = Scheduler::new();
         let bad = scheduler.start(Box::new(Scripted::panics()), Some(limits()), Duration::ZERO);
         let good = scheduler.start(
-            Box::new(Scripted::new([
-                Update::Started {
-                    conversation_id: None,
-                },
-                Update::Completed,
-            ])),
+            Box::new(Scripted::new([Update::Started, Update::Completed])),
             Some(limits()),
             Duration::ZERO,
         );
@@ -595,7 +588,7 @@ mod tests {
             event,
             Event::Update {
                 turn_id,
-                update: Update::Started { .. }
+                update: Update::Started
             } if *turn_id == id
         )));
 
