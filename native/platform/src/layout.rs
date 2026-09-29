@@ -229,7 +229,11 @@ mod tests {
             ("HOME", "/Users/me"),
             ("LOCALAPPDATA", r"C:\Users\me\AppData\Local"),
         ]);
-        assert!(app.workspace(&host, "codex").to_string_lossy().contains("MyApp"));
+        assert!(
+            app.workspace(&host, "codex")
+                .to_string_lossy()
+                .contains("MyApp")
+        );
     }
 
     #[cfg(not(unix))]
