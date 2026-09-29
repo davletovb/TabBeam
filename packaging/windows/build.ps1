@@ -26,12 +26,12 @@ $target = 'x86_64-pc-windows-msvc'
 if ($LASTEXITCODE -ne 0) {
     throw "rustup target add $target failed with exit code $LASTEXITCODE"
 }
-& cargo build --manifest-path (Join-Path $root 'native\Cargo.toml') --release --locked --target $target -p pervue-host
+& cargo build --manifest-path (Join-Path $root 'native\Cargo.toml') --release --locked --target $target -p tabbeam-host
 if ($LASTEXITCODE -ne 0) {
     throw "cargo build failed with exit code $LASTEXITCODE"
 }
 
-$hostSource = Join-Path $root "native\target\$target\release\pervue-host.exe"
+$hostSource = Join-Path $root "native\target\$target\release\tabbeam-host.exe"
 if (-not (Test-Path -LiteralPath $hostSource -PathType Leaf)) {
     throw "Built host not found: $hostSource"
 }
@@ -48,10 +48,10 @@ if ($LASTEXITCODE -ne 0 -or $sourceCommit -notmatch '^[0-9a-f]{40}$') {
 }
 $sourceCommitShort = $sourceCommit.Substring(0, 12)
 
-$stage = Join-Path ([IO.Path]::GetTempPath()) ("pervue-windows-" + [Guid]::NewGuid().ToString('N'))
+$stage = Join-Path ([IO.Path]::GetTempPath()) ("tabbeam-windows-" + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $stage | Out-Null
 try {
-    $stagedHost = Join-Path $stage 'pervue-host.exe'
+    $stagedHost = Join-Path $stage 'tabbeam-host.exe'
     Copy-Item -LiteralPath $hostSource -Destination $stagedHost
 
     # Let the exact built host validate the extension ID and construct the
@@ -59,23 +59,23 @@ try {
     # Windows intentionally makes relative to the manifest.
     $manifestText = (& $hostSource --print-manifest $ExtensionId | Out-String)
     if ($LASTEXITCODE -ne 0) {
-        throw "pervue-host --print-manifest failed with exit code $LASTEXITCODE"
+        throw "tabbeam-host --print-manifest failed with exit code $LASTEXITCODE"
     }
     $manifest = $manifestText | ConvertFrom-Json
     $expectedOrigin = "chrome-extension://$ExtensionId/"
     $generatedHost = [IO.Path]::GetFullPath([string]$manifest.path)
-    if ($manifest.name -ne 'com.pervue.host' -or
+    if ($manifest.name -ne 'com.tabbeam.host' -or
         $manifest.type -ne 'stdio' -or
         @($manifest.allowed_origins).Count -ne 1 -or
         @($manifest.allowed_origins)[0] -cne $expectedOrigin -or
         $generatedHost -ine [IO.Path]::GetFullPath($hostSource)) {
-        throw 'Unexpected Native Messaging manifest from pervue-host --print-manifest.'
+        throw 'Unexpected Native Messaging manifest from tabbeam-host --print-manifest.'
     }
-    $manifest.path = 'pervue-host.exe'
+    $manifest.path = 'tabbeam-host.exe'
 
     $utf8 = New-Object System.Text.UTF8Encoding($false)
     [IO.File]::WriteAllText(
-        (Join-Path $stage 'com.pervue.host.json'),
+        (Join-Path $stage 'com.tabbeam.host.json'),
         ($manifest | ConvertTo-Json -Depth 8) + [Environment]::NewLine,
         $utf8
     )
@@ -118,7 +118,7 @@ try {
         throw 'Inno Setup 6.3 or newer compiler (ISCC.exe) is required.'
     }
 
-    $iss = Join-Path $PSScriptRoot 'Pervue.iss'
+    $iss = Join-Path $PSScriptRoot 'TabBeam.iss'
     $compilerArgs = @(
         "/DStageDir=$stage",
         "/DOutputDir=$OutputDirectory",
@@ -127,13 +127,13 @@ try {
         "/DSourceCommitShort=$sourceCommitShort"
     )
 
-    $signCommand = [Environment]::GetEnvironmentVariable('PERVUE_WINDOWS_SIGN_COMMAND')
+    $signCommand = [Environment]::GetEnvironmentVariable('TABBEAM_WINDOWS_SIGN_COMMAND')
     if ($signCommand) {
         if (-not $signCommand.Contains('$f')) {
-            throw 'PERVUE_WINDOWS_SIGN_COMMAND must contain Inno Setup''s $f filename placeholder.'
+            throw 'TABBEAM_WINDOWS_SIGN_COMMAND must contain Inno Setup''s $f filename placeholder.'
         }
-        $compilerArgs += '/DPervueSignTool=1'
-        $compilerArgs += "--signtool=pervue=$signCommand"
+        $compilerArgs += '/DTabBeamSignTool=1'
+        $compilerArgs += "--signtool=tabbeam=$signCommand"
     }
 
     & $iscc @compilerArgs $iss
@@ -141,7 +141,7 @@ try {
         throw "Inno Setup failed with exit code $LASTEXITCODE"
     }
 
-    $installer = Get-ChildItem -LiteralPath $OutputDirectory -Filter "Pervue-$hostVersion-$sourceCommitShort-windows-x64.exe" |
+    $installer = Get-ChildItem -LiteralPath $OutputDirectory -Filter "TabBeam-$hostVersion-$sourceCommitShort-windows-x64.exe" |
         Select-Object -First 1
     if (-not $installer) {
         throw 'Inno Setup completed but the expected installer was not produced.'

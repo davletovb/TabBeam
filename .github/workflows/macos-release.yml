@@ -25,7 +25,7 @@ jobs:
         run: |
           set -euo pipefail
           : "${APP_P12:?}" "${INSTALLER_P12:?}" "${CERT_PASSWORD:?}"
-          keychain="$RUNNER_TEMP/pervue.keychain-db"
+          keychain="$RUNNER_TEMP/tabbeam.keychain-db"
           security create-keychain -p "$CERT_PASSWORD" "$keychain"
           security unlock-keychain -p "$CERT_PASSWORD" "$keychain"
           security list-keychains -d user -s "$keychain"
@@ -37,12 +37,12 @@ jobs:
           rm -f "$RUNNER_TEMP/app.p12" "$RUNNER_TEMP/installer.p12"
       - name: Build signed package
         env:
-          PERVUE_APP_SIGN_IDENTITY: ${{ secrets.MACOS_DEVELOPER_ID_APP_IDENTITY }}
-          PERVUE_INSTALLER_SIGN_IDENTITY: ${{ secrets.MACOS_DEVELOPER_ID_INSTALLER_IDENTITY }}
+          TABBEAM_APP_SIGN_IDENTITY: ${{ secrets.MACOS_DEVELOPER_ID_APP_IDENTITY }}
+          TABBEAM_INSTALLER_SIGN_IDENTITY: ${{ secrets.MACOS_DEVELOPER_ID_INSTALLER_IDENTITY }}
           EXTENSION_ID: ${{ inputs.extension_id }}
         run: |
           set -euo pipefail
-          : "${PERVUE_APP_SIGN_IDENTITY:?}" "${PERVUE_INSTALLER_SIGN_IDENTITY:?}"
+          : "${TABBEAM_APP_SIGN_IDENTITY:?}" "${TABBEAM_INSTALLER_SIGN_IDENTITY:?}"
           packaging/macos/build.sh "$EXTENSION_ID"
           pkgutil --check-signature out/macos/*.pkg
       - name: Notarize and staple
@@ -61,6 +61,6 @@ jobs:
           xcrun stapler validate out/macos/*.pkg
       - uses: actions/upload-artifact@v4
         with:
-          name: pervue-macos-universal-${{ github.sha }}
+          name: tabbeam-macos-universal-${{ github.sha }}
           path: out/macos/*.pkg
           if-no-files-found: error

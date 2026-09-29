@@ -10,8 +10,8 @@ if (!/^[a-p]{32}$/.test(extensionId ?? "") || !marker) {
   throw new Error("usage: hold-host.mjs <extension-id> <ready-marker>");
 }
 
-const appDir = path.join(process.env.LOCALAPPDATA ?? "", "Programs", "Pervue");
-const host = path.join(appDir, "pervue-host.exe");
+const appDir = path.join(process.env.LOCALAPPDATA ?? "", "Programs", "TabBeam");
+const host = path.join(appDir, "tabbeam-host.exe");
 const child = spawn(
   host,
   [`chrome-extension://${extensionId}/`, "--parent-window=0"],

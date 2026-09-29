@@ -1,6 +1,6 @@
 name: Live Codex smoke test
 
-# TST-05: the opt-in smoke tests against the real Codex CLI: Pervue's host on
+# TST-05: the opt-in smoke tests against the real Codex CLI: TabBeam's host on
 # top of it (native/host/tests/live_codex.rs) and the runtime's Codex adapter
 # alone (native/seatline-tests/tests/live_codex.rs). It runs only when started by
 # hand. With a repository secret OPENAI_API_KEY, Codex signs in with it and the
@@ -53,8 +53,8 @@ jobs:
       - name: Run the smoke test
         env:
           # With a sign-in, a missing or signed-out Codex fails the test.
-          PERVUE_LIVE_CODEX: ${{ secrets.OPENAI_API_KEY != '' && 'required' || '1' }}
-        run: cargo +stable test --manifest-path native/Cargo.toml --locked -p pervue-host --test live_codex -- --nocapture
+          TABBEAM_LIVE_CODEX: ${{ secrets.OPENAI_API_KEY != '' && 'required' || '1' }}
+        run: cargo +stable test --manifest-path native/Cargo.toml --locked -p tabbeam-host --test live_codex -- --nocapture
       - name: Run the runtime's smoke test
         env:
           SEATLINE_LIVE_CODEX: ${{ secrets.OPENAI_API_KEY != '' && 'required' || '1' }}

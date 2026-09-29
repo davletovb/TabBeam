@@ -9,11 +9,11 @@ assert.match(extensionId ?? "", /^[a-p]{32}$/);
 
 const localAppData = process.env.LOCALAPPDATA ?? "";
 assert.ok(path.isAbsolute(localAppData), "LOCALAPPDATA must be an absolute path");
-const appDir = path.join(localAppData, "Programs", "Pervue");
-const manifestPath = path.join(appDir, "com.pervue.host.json");
-const host = path.join(appDir, "pervue-host.exe");
+const appDir = path.join(localAppData, "Programs", "TabBeam");
+const manifestPath = path.join(appDir, "com.tabbeam.host.json");
+const host = path.join(appDir, "tabbeam-host.exe");
 const buildPath = path.join(appDir, "build-info.json");
-const registryKey = String.raw`HKCU\Software\Google\Chrome\NativeMessagingHosts\com.pervue.host`;
+const registryKey = String.raw`HKCU\Software\Google\Chrome\NativeMessagingHosts\com.tabbeam.host`;
 
 const registry = spawnSync(
   "reg.exe",
@@ -31,8 +31,8 @@ const build = JSON.parse(fs.readFileSync(buildPath, "utf8"));
 assert.deepEqual(Object.keys(manifest).sort(), [
   "allowed_origins", "description", "name", "path", "type"
 ]);
-assert.equal(manifest.name, "com.pervue.host");
-assert.equal(manifest.path, "pervue-host.exe");
+assert.equal(manifest.name, "com.tabbeam.host");
+assert.equal(manifest.path, "tabbeam-host.exe");
 assert.equal(manifest.type, "stdio");
 assert.deepEqual(manifest.allowed_origins, [`chrome-extension://${extensionId}/`]);
 assert.equal(path.resolve(path.dirname(manifestPath), manifest.path), host);
