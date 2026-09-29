@@ -311,6 +311,10 @@ impl Provider for Codex {
         ID
     }
 
+    fn supports_persistent_session(&self) -> bool {
+        true
+    }
+
     fn capabilities(&self) -> Capabilities {
         let mut capabilities = CAPABILITIES;
         if !context_configuration_is_safe(&self.launch) {
@@ -370,6 +374,11 @@ impl Provider for Codex {
         let workspace = self.launch.work_dir.clone();
         let session_dir = self.session_dir.clone();
         let conversation = conversation_id.to_owned();
+        let superseded = self
+            .session_dir
+            .as_deref()
+            .map(|dir| read_superseded_threads(dir, conversation_id))
+            .unwrap_or_default();
         let conversations = Rc::clone(&self.conversations);
         let forgotten = conversation_id.to_owned();
         // The files go on their own thread. The mappings go last, the one in
@@ -377,10 +386,18 @@ impl Provider for Codex {
         // all be removed, a retry can still find them.
         forget::in_background(
             move || {
-                if let (Some(home), Some(thread)) = (home, thread) {
-                    forget_rollouts(&home, &workspace, &thread)?;
+                if let Some(home) = home {
+                    if let Some(thread) = thread {
+                        forget_rollouts(&home, &workspace, &thread)?;
+                    }
+                    for thread in &superseded {
+                        forget_rollouts(&home, &workspace, thread)?;
+                    }
                 }
-                session_dir.map_or(Ok(()), |dir| forget_thread(&dir, &conversation))
+                session_dir.map_or(Ok(()), |dir| {
+                    forget_thread(&dir, &conversation)?;
+                    forget::remove(&superseded_thread_dir(&dir, &conversation))
+                })
             },
             move || {
                 conversations.borrow_mut().remove(&forgotten);
@@ -413,7 +430,23 @@ impl Provider for Codex {
         } else {
             request.text
         };
-        let resume = match &conversation_id {
+        let prior_session = match &conversation_id {
+            None => None,
+            Some(conversation_id) => self
+                .conversations
+                .borrow()
+                .get(conversation_id)
+                .cloned()
+                .or_else(|| {
+                    self.session_dir
+                        .as_deref()
+                        .and_then(|dir| read_thread(dir, conversation_id))
+                }),
+        };
+        let resume = if request.fresh_session {
+            None
+        } else {
+            match &conversation_id {
             None => None,
             Some(conversation_id) => match self
                 .conversations
@@ -428,9 +461,15 @@ impl Provider for Codex {
                 Some(thread_id) => Some(thread_id),
                 None if !request.history.is_empty() => None,
                 None => return Box::new(Scripted::failed(UNKNOWN_CONVERSATION)),
-            },
+            }
+        }
         };
-        if resume.is_none() && !request.history.is_empty() {
+        if request.fresh_session && prior_session.is_some() {
+            if request.history.is_empty() {
+                return Box::new(Scripted::failed(UNKNOWN_CONVERSATION));
+            }
+            prompt = fallback_prompt.take().expect("history is present");
+        } else if resume.is_none() && !request.history.is_empty() {
             // If a provider has no native session (or its mapping was lost),
             // the ordered, bounded dialogue still reaches the new turn.
             prompt = fallback_prompt.take().expect("history is present");
@@ -446,6 +485,8 @@ impl Provider for Codex {
             resume,
             conversation_id,
             conversations: Rc::clone(&self.conversations),
+            superseded_session: request.fresh_session.then_some(prior_session).flatten(),
+            session_policy: request.session_policy,
             finish_grace: self.limits.finish,
             restrict_tools: reference_turn,
             context_turn,
@@ -659,6 +700,30 @@ fn rollout_written_for_pervue(path: &Path, thread: &str, workspace: &Path) -> bo
     })
 }
 
+fn superseded_thread_dir(dir: &Path, conversation: &str) -> PathBuf {
+    dir.join("superseded").join(conversation)
+}
+
+fn record_superseded_thread(dir: &Path, conversation: &str, thread: &str) -> io::Result<()> {
+    if !session_name(conversation) || !output::is_thread_id(thread) {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid superseded thread"));
+    }
+    let base = superseded_thread_dir(dir, conversation);
+    super::private_fs::create_private_dir(&base)?;
+    super::private_fs::write_private_file(&base.join(thread), b"pending\n")
+}
+
+fn read_superseded_threads(dir: &Path, conversation: &str) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(superseded_thread_dir(dir, conversation)) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|thread| output::is_thread_id(thread))
+        .collect()
+}
+
 fn save_thread(dir: &Path, id: &str, thread: &str) -> io::Result<()> {
     #[cfg(unix)]
     {
@@ -694,6 +759,7 @@ fn save_thread(dir: &Path, id: &str, thread: &str) -> io::Result<()> {
 /// read as an option of its own.
 fn exec_args(
     workspace: &Path,
+    session_policy: runtime_core::turn::SessionPolicy,
     restrict_tools: bool,
     context_turn: bool,
     native_search: bool,
@@ -709,6 +775,9 @@ fn exec_args(
     ]
     .map(OsString::from)
     .into();
+    if session_policy == runtime_core::turn::SessionPolicy::Ephemeral {
+        args.push("--ephemeral".into());
+    }
     if restrict_tools {
         // Page text is attacker-controlled. A context turn is deliberately
         // answer-only: no local shell/image tools, apps/plugins/hooks,
@@ -886,6 +955,8 @@ struct Turn {
     resume: Option<String>,
     conversation_id: Option<String>,
     conversations: Conversations,
+    superseded_session: Option<String>,
+    session_policy: runtime_core::turn::SessionPolicy,
     finish_grace: Duration,
     /// Browser context or native search requires all unrelated Codex tool
     /// surfaces to be disabled.
@@ -931,6 +1002,7 @@ impl Turn {
         };
         let args = exec_args(
             &workspace,
+            self.session_policy,
             self.restrict_tools,
             self.context_turn,
             self.native_search,
@@ -943,6 +1015,7 @@ impl Turn {
                 // argument may have, and no shell ever sees it.
                 let _ = process.write(std::mem::take(&mut self.prompt).as_bytes());
                 process.close_stdin();
+                self.queue.push_back(Update::Launched);
                 self.stage = Stage::Running(LineStream::new(process, MAX_LINE_BYTES));
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -1033,25 +1106,50 @@ impl Turn {
             return self.end(Update::Failed(MALFORMED_OUTPUT));
         };
         self.started = true;
+
+        let persistent = self.session_policy == runtime_core::turn::SessionPolicy::Persistent;
         let conversation_id = match &self.conversation_id {
-            Some(conversation_id) => conversation_id.clone(),
+            Some(conversation_id) => {
+                if persistent && self.resume.as_deref() != Some(thread_id.as_str()) {
+                    if let Some(old) = self.superseded_session.take() {
+                        if let Some(dir) = self.session_dir.as_deref() {
+                            if record_superseded_thread(dir, conversation_id, &old).is_err()
+                                || forget_thread(dir, conversation_id).is_err()
+                                || save_thread(dir, conversation_id, &thread_id).is_err()
+                            {
+                                return self.end(Update::Failed(SESSION_STORE_FAILED));
+                            }
+                        }
+                        self.conversations
+                            .borrow_mut()
+                            .insert(conversation_id.clone(), thread_id.clone());
+                    }
+                }
+                conversation_id.clone()
+            }
             None => {
                 let conversation_id = new_conversation_id(&self.conversations.borrow());
-                if self
-                    .session_dir
-                    .as_deref()
-                    .is_none_or(|dir| save_thread(dir, &conversation_id, &thread_id).is_err())
-                {
-                    return self.end(Update::Failed(SESSION_STORE_FAILED));
+                if persistent {
+                    if self
+                        .session_dir
+                        .as_deref()
+                        .is_none_or(|dir| save_thread(dir, &conversation_id, &thread_id).is_err())
+                    {
+                        return self.end(Update::Failed(SESSION_STORE_FAILED));
+                    }
+                    self.conversations
+                        .borrow_mut()
+                        .insert(conversation_id.clone(), thread_id.clone());
                 }
-                self.conversations
-                    .borrow_mut()
-                    .insert(conversation_id.clone(), thread_id);
                 self.queue
                     .push_back(Update::ConversationCreated(conversation_id.clone()));
+                self.conversation_id = Some(conversation_id.clone());
                 conversation_id
             }
         };
+        if persistent {
+            self.queue.push_back(Update::Session(thread_id));
+        }
         self.queue.push_back(Update::Started {
             conversation_id: Some(conversation_id),
         });

@@ -574,6 +574,7 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                     }
                     Some(provider) => {
                         let provider_timeouts = provider.timeouts();
+                        let persistent = provider.supports_persistent_session();
                         let request = SendRequest {
                             text: question,
                             history,
@@ -581,6 +582,12 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                             context,
                             model,
                             native_search,
+                            session_policy: if persistent {
+                                runtime_core::turn::SessionPolicy::Persistent
+                            } else {
+                                runtime_core::turn::SessionPolicy::Ephemeral
+                            },
+                            fresh_session: native_search && persistent,
                         };
                         if native_search && !native_supported {
                             (
