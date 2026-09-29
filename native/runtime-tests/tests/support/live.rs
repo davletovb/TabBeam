@@ -8,9 +8,10 @@
 //! `required`, as in a job set up with a sign-in, a missing or signed-out CLI
 //! fails it instead.
 
+use std::fmt;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use runtime_core::exchange::{Exchange, Update};
 use runtime_core::protocol::Availability;
@@ -156,12 +157,34 @@ pub fn provider_home(variable: &str, default: &str) -> Option<PathBuf> {
     }
 }
 
-/// A string no earlier run could have written, to look for afterwards.
-pub fn marker() -> String {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+/// How far before a run began a file's modification time may lie and the file
+/// still count as written during the run: file systems keep times coarsely
+/// (FAT to two seconds), and clocks are read at different moments.
+const CLOCK_SLACK: Duration = Duration::from_secs(5);
+
+/// A string no earlier run could have written, to look for afterwards, and
+/// when the run that made it began.
+#[derive(Debug, Clone)]
+pub struct Marker {
+    text: String,
+    since: SystemTime,
+}
+
+impl fmt::Display for Marker {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.text)
+    }
+}
+
+pub fn marker() -> Marker {
+    let now = SystemTime::now();
+    let nanos = now
+        .duration_since(UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_nanos());
-    format!("marker-{}-{nanos}", std::process::id())
+    Marker {
+        text: format!("marker-{}-{nanos}", std::process::id()),
+        since: now.checked_sub(CLOCK_SLACK).unwrap_or(UNIX_EPOCH),
+    }
 }
 
 /// What a search for a marker under a directory found.
@@ -174,11 +197,15 @@ pub struct Scan {
     pub incomplete: bool,
 }
 
-/// Looks for `marker` in the files under `dir`, without following links, and
-/// reads at most `MAX_FILES` files of at most `MAX_FILE_BYTES` each. It looks
-/// everywhere, not only where a provider is known to keep its files, because
-/// what it is for is finding where a provider keeps them that nobody knew.
-pub fn find_marker(dir: &Path, marker: &str) -> Scan {
+/// Looks for `marker` in the files under `dir`, without following links. It
+/// looks everywhere, not only where a provider is known to keep its files,
+/// because what it is for is finding where a provider keeps them that nobody
+/// knew. A file that holds the marker was written after the marker was made,
+/// so it only reads files modified since then, and a provider's home that
+/// holds years of files (a hundred thousand of them, say) is searched as fully
+/// as an empty one: at most `MAX_FILES` files of at most `MAX_FILE_BYTES` each
+/// are read, and it says so when it left any unread.
+pub fn find_marker(dir: &Path, marker: &Marker) -> Scan {
     const MAX_FILES: usize = 20_000;
     const MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
 
@@ -187,7 +214,7 @@ pub fn find_marker(dir: &Path, marker: &str) -> Scan {
         incomplete: false,
     };
     let mut pending = vec![dir.to_path_buf()];
-    let mut looked_at = 0;
+    let mut read = 0;
     while let Some(dir) = pending.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
@@ -200,19 +227,26 @@ pub fn find_marker(dir: &Path, marker: &str) -> Scan {
             if kind.is_dir() {
                 pending.push(path);
             } else if kind.is_file() {
-                looked_at += 1;
-                if looked_at > MAX_FILES {
+                // A file whose time can't be read is looked at, not assumed old.
+                let metadata = entry.metadata().ok();
+                if metadata
+                    .as_ref()
+                    .and_then(|meta| meta.modified().ok())
+                    .is_some_and(|modified| modified < marker.since)
+                {
+                    continue;
+                }
+                read += 1;
+                if read > MAX_FILES {
                     scan.incomplete = true;
                     return scan;
                 }
-                if entry
-                    .metadata()
-                    .is_ok_and(|meta| meta.len() > MAX_FILE_BYTES)
-                {
+                if metadata.is_some_and(|meta| meta.len() > MAX_FILE_BYTES) {
                     scan.incomplete = true;
                     continue;
                 }
-                if std::fs::read(&path).is_ok_and(|bytes| contains(&bytes, marker.as_bytes())) {
+                if std::fs::read(&path).is_ok_and(|bytes| contains(&bytes, marker.text.as_bytes()))
+                {
                     scan.found = Some(path);
                     return scan;
                 }
@@ -224,12 +258,12 @@ pub fn find_marker(dir: &Path, marker: &str) -> Scan {
 
 /// Panics if `marker` is anywhere under `dir`, and says so when it could not
 /// look everywhere.
-pub fn assert_no_marker(what: &str, dir: &Path, marker: &str) {
+pub fn assert_no_marker(what: &str, dir: &Path, marker: &Marker) {
     let scan = find_marker(dir, marker);
     assert_eq!(scan.found, None, "{what}: a file holds the prompt");
     if scan.incomplete {
         eprintln!(
-            "warning: {what}: {} is too large to be searched in full, so the prompt may be in a file that was not read",
+            "warning: {what}: files under {} that changed during the run were too many or too large to be read in full, so the prompt may be in one that was not read",
             dir.display()
         );
     }

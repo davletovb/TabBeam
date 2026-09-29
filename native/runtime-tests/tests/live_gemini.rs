@@ -23,7 +23,7 @@ use runtime_platform::layout::Layout;
 use runtime_providers::gemini::Gemini;
 use runtime_providers::{Provider, Update};
 use support::live::{
-    ANSWER_TIMEOUT, Mode, answer_of, assert_completed, assert_follows_system_prompt,
+    ANSWER_TIMEOUT, Mode, Scan, answer_of, assert_completed, assert_follows_system_prompt,
     assert_no_marker, find_marker, home, marker, mode, run_within, scratch, skip_or_fail,
     status_of, turn,
 };
@@ -129,14 +129,34 @@ fn live_gemini_answers_searches_and_leaves_nothing_behind() {
 }
 
 #[test]
-fn the_marker_search_finds_only_what_was_written() {
+fn the_marker_search_finds_only_what_was_written_during_the_run() {
     let dir = scratch("gemini-marker-self-test");
-    let reference = marker();
-    assert_eq!(find_marker(&dir, &reference).found, None);
     std::fs::create_dir(dir.join("nested")).unwrap();
+    // Written before the run began, and dated so: never read.
+    let earlier = dir.join("earlier");
+    let reference = marker();
+    std::fs::write(&earlier, format!("before {reference} after")).unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&earlier)
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
+        .unwrap();
+    let scan = find_marker(&dir, &reference);
+    assert_eq!(
+        scan,
+        Scan {
+            found: None,
+            incomplete: false
+        }
+    );
+
+    // Written during it, anywhere below: found.
     std::fs::write(dir.join("nested/file"), format!("before {reference} after")).unwrap();
     let scan = find_marker(&dir, &reference);
     assert_eq!(scan.found, Some(dir.join("nested/file")));
     assert!(!scan.incomplete);
-    assert_eq!(find_marker(&dir, "another marker").found, None);
+
+    // Another run's marker is not in it.
+    assert_eq!(find_marker(&dir, &marker()).found, None);
 }
