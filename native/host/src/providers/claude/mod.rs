@@ -22,13 +22,12 @@ use super::forget;
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
 use crate::conversation::{provider_prompt, search_prompt};
 use crate::protocol::events::{
-    Authentication, Availability, Capabilities, Capability, ErrorCode, ModelOption,
-    ProviderState,
+    Authentication, Availability, Capabilities, Capability, ErrorCode, ModelOption, ProviderState,
 };
-use runtime_core::protocol::Failure as ErrorBody;
 use crate::search::{NATIVE_SEARCH_NO_SOURCES, SourceCollector, claude_tool_result_sources};
 use runtime_core::discovery::SearchPath;
 use runtime_core::process::{Event, Exit, Process, ProcessSpec};
+use runtime_core::protocol::Failure as ErrorBody;
 use runtime_core::stream::{BUSY_LIMIT, LineStream, Output};
 
 pub mod output;
@@ -408,17 +407,17 @@ impl Provider for Claude {
             None
         } else {
             match &conversation_id {
-            None => None,
-            Some(id) => match self.conversations.borrow().get(id).cloned().or_else(|| {
-                self.session_dir
-                    .as_deref()
-                    .and_then(|dir| read_session(dir, id))
-            }) {
-                Some(session) => Some(session),
-                None if !request.history.is_empty() => None,
-                None => return Box::new(Scripted::failed(UNKNOWN_CONVERSATION)),
-            },
-        }
+                None => None,
+                Some(id) => match self.conversations.borrow().get(id).cloned().or_else(|| {
+                    self.session_dir
+                        .as_deref()
+                        .and_then(|dir| read_session(dir, id))
+                }) {
+                    Some(session) => Some(session),
+                    None if !request.history.is_empty() => None,
+                    None => return Box::new(Scripted::failed(UNKNOWN_CONVERSATION)),
+                },
+            }
         };
         if request.fresh_session && prior_session.is_some() {
             if request.history.is_empty() {
@@ -546,7 +545,10 @@ fn superseded_session_dir(dir: &Path, conversation: &str) -> PathBuf {
 
 fn record_superseded_session(dir: &Path, conversation: &str, session: &str) -> io::Result<()> {
     if !session_name(conversation) || !output::is_session_id(session) {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid superseded session"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid superseded session",
+        ));
     }
     let base = superseded_session_dir(dir, conversation);
     super::private_fs::create_private_dir(&base)?;
@@ -906,9 +908,9 @@ impl Turn {
                             .as_deref()
                             .map(|dir| superseded_session_dir(dir, &id).join(&old));
                         forget::work_in_background(move || {
-                            let removed = config
-                                .as_deref()
-                                .map_or(Ok(()), |config| forget_transcript(config, &workspace, &old));
+                            let removed = config.as_deref().map_or(Ok(()), |config| {
+                                forget_transcript(config, &workspace, &old)
+                            });
                             if removed.is_ok() {
                                 if let Some(marker) = marker {
                                     let _ = forget::remove(&marker);

@@ -476,9 +476,7 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
         timeouts: Option<Timeouts>,
         exchange: Box<dyn Exchange>,
     ) -> Running {
-        let turn_id = self
-            .supervisor
-            .start(exchange, timeouts, STATUS_STOP_GRACE);
+        let turn_id = self.supervisor.start(exchange, timeouts, STATUS_STOP_GRACE);
         Running::new(turn_id, id, method, provider, conversation_id)
     }
 
@@ -728,9 +726,10 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
             (Some(Stop::Cancelled(_)), _) => Some(CANCELLED),
             (Some(Stop::InputClosed), _) => Some(INPUT_CLOSED),
             (None, SchedulerEnd::Completed) => None,
-            (None, SchedulerEnd::Failed(error)) => {
-                Some(messages::provider_failure(running.provider_id.as_deref(), error))
-            },
+            (None, SchedulerEnd::Failed(error)) => Some(messages::provider_failure(
+                running.provider_id.as_deref(),
+                error,
+            )),
             (None, SchedulerEnd::Timeout(TimeoutKind::Start)) => Some(START_TIMEOUT),
             (None, SchedulerEnd::Timeout(TimeoutKind::Idle)) => Some(RESPONSE_TIMEOUT),
             (None, SchedulerEnd::Timeout(TimeoutKind::Absolute)) => Some(TURN_TIMEOUT),
