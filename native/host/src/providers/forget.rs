@@ -83,6 +83,14 @@ impl Exchange for Background {
     }
 }
 
+/// Runs best-effort provider cleanup away from the host loop. The work must
+/// preserve its durable retry record when it fails.
+pub(crate) fn work_in_background(work: impl FnOnce() + Send + 'static) {
+    let _ = thread::Builder::new()
+        .name("pervue-provider-cleanup".to_owned())
+        .spawn(work);
+}
+
 /// How much of a transcript is read to find where it ran.
 const HEAD_BYTES: u64 = 1024 * 1024;
 

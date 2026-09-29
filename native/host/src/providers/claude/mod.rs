@@ -304,6 +304,10 @@ impl Provider for Claude {
         self.limits.timeouts
     }
 
+    fn supports_persistent_session(&self) -> bool {
+        true
+    }
+
     fn capabilities(&self) -> Capabilities {
         CAPABILITIES
     }
@@ -342,6 +346,11 @@ impl Provider for Claude {
         let workspace = self.launch.work_dir.clone();
         let session_dir = self.session_dir.clone();
         let conversation = conversation_id.to_owned();
+        let superseded = self
+            .session_dir
+            .as_deref()
+            .map(|dir| read_superseded_sessions(dir, conversation_id))
+            .unwrap_or_default();
         let conversations = Rc::clone(&self.conversations);
         let forgotten = conversation_id.to_owned();
         // The files go on their own thread. The mappings go last, the one in
@@ -349,10 +358,18 @@ impl Provider for Claude {
         // all be removed, a retry can still find them.
         forget::in_background(
             move || {
-                if let (Some(config), Some(session)) = (config, session) {
-                    forget_transcript(&config, &workspace, &session)?;
+                if let Some(config) = config {
+                    if let Some(session) = session {
+                        forget_transcript(&config, &workspace, &session)?;
+                    }
+                    for session in &superseded {
+                        forget_transcript(&config, &workspace, session)?;
+                    }
                 }
-                session_dir.map_or(Ok(()), |dir| forget_session(&dir, &conversation))
+                session_dir.map_or(Ok(()), |dir| {
+                    forget_session(&dir, &conversation)?;
+                    forget::remove(&superseded_session_dir(&dir, &conversation))
+                })
             },
             move || {
                 conversations.borrow_mut().remove(&forgotten);
@@ -387,7 +404,18 @@ impl Provider for Claude {
         } else {
             request.text
         };
-        let resume = match &conversation_id {
+        let prior_session = match &conversation_id {
+            None => None,
+            Some(id) => self.conversations.borrow().get(id).cloned().or_else(|| {
+                self.session_dir
+                    .as_deref()
+                    .and_then(|dir| read_session(dir, id))
+            }),
+        };
+        let resume = if request.fresh_session {
+            None
+        } else {
+            match &conversation_id {
             None => None,
             Some(id) => match self.conversations.borrow().get(id).cloned().or_else(|| {
                 self.session_dir
@@ -398,8 +426,14 @@ impl Provider for Claude {
                 None if !request.history.is_empty() => None,
                 None => return Box::new(Scripted::failed(UNKNOWN_CONVERSATION)),
             },
+        }
         };
-        if resume.is_none() && !request.history.is_empty() {
+        if request.fresh_session && prior_session.is_some() {
+            if request.history.is_empty() {
+                return Box::new(Scripted::failed(UNKNOWN_CONVERSATION));
+            }
+            prompt = fallback_prompt.take().expect("history is present");
+        } else if resume.is_none() && !request.history.is_empty() {
             prompt = fallback_prompt.take().expect("history is present");
             conversation_id = None;
         }
@@ -414,6 +448,8 @@ impl Provider for Claude {
             resume,
             conversation_id,
             conversations: Rc::clone(&self.conversations),
+            superseded_session: request.fresh_session.then_some(prior_session).flatten(),
+            session_policy: request.session_policy,
             finish_grace: self.limits.finish,
             model: request.model,
             native_search: request.native_search,
@@ -510,6 +546,30 @@ fn read_session(dir: &Path, id: &str) -> Option<String> {
         .read_to_string(&mut content)
         .ok()?;
     output::is_session_id(&content).then_some(content)
+}
+
+fn superseded_session_dir(dir: &Path, conversation: &str) -> PathBuf {
+    dir.join("superseded").join(conversation)
+}
+
+fn record_superseded_session(dir: &Path, conversation: &str, session: &str) -> io::Result<()> {
+    if !session_name(conversation) || !output::is_session_id(session) {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid superseded session"));
+    }
+    let base = superseded_session_dir(dir, conversation);
+    super::private_fs::create_private_dir(&base)?;
+    super::private_fs::write_private_file(&base.join(session), b"pending\n")
+}
+
+fn read_superseded_sessions(dir: &Path, conversation: &str) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(superseded_session_dir(dir, conversation)) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|session| output::is_session_id(session))
+        .collect()
 }
 
 fn save_session(dir: &Path, id: &str, session: &str) -> io::Result<()> {
@@ -670,6 +730,20 @@ impl Exchange for StatusCheck {
 /// A model is one `--model=<id>` argument, so the ID can never be read as an
 /// option of its own.
 fn claude_args(resume: Option<&str>, model: Option<&str>, native_search: bool) -> Vec<OsString> {
+    claude_args_for_session(
+        resume,
+        model,
+        native_search,
+        runtime_core::turn::SessionPolicy::Persistent,
+    )
+}
+
+fn claude_args_for_session(
+    resume: Option<&str>,
+    model: Option<&str>,
+    native_search: bool,
+    session_policy: runtime_core::turn::SessionPolicy,
+) -> Vec<OsString> {
     let mut args: Vec<OsString> = [
         "-p",
         "--output-format",
@@ -695,6 +769,9 @@ fn claude_args(resume: Option<&str>, model: Option<&str>, native_search: bool) -
     if native_search {
         args.extend(["--allowedTools", "WebSearch"].map(OsString::from));
     }
+    if session_policy == runtime_core::turn::SessionPolicy::Ephemeral {
+        args.push("--no-session-persistence".into());
+    }
     if let Some(model) = model {
         args.push(format!("--model={model}").into());
     }
@@ -715,6 +792,8 @@ struct Turn {
     resume: Option<String>,
     conversation_id: Option<String>,
     conversations: Conversations,
+    superseded_session: Option<String>,
+    session_policy: runtime_core::turn::SessionPolicy,
     finish_grace: Duration,
     /// The model to answer with, or `None` for Claude's own default.
     model: Option<String>,
@@ -758,10 +837,11 @@ impl Turn {
         let Ok(workspace) = self.launch.workspace() else {
             return self.end(Update::Failed(NO_WORKSPACE));
         };
-        let args = claude_args(
+        let args = claude_args_for_session(
             self.resume.as_deref(),
             self.model.as_deref(),
             self.native_search,
+            self.session_policy,
         );
         let input = serde_json::json!({
             "type": "user",
@@ -777,6 +857,7 @@ impl Turn {
                 let _ = process.write(input.as_bytes());
                 process.close_stdin();
                 self.prompt.clear();
+                self.queue.push_back(Update::Launched);
                 self.stage = Stage::Running(
                     LineStream::new(process, MAX_LINE_BYTES).keeping_stderr_tail(STDERR_TAIL_BYTES),
                 );
@@ -813,6 +894,36 @@ impl Turn {
                         }
                         id
                     }
+                    Some(id) if self.superseded_session.is_some() => {
+                        let old = self.superseded_session.take().expect("checked");
+                        if let Some(dir) = self.session_dir.as_deref() {
+                            if record_superseded_session(dir, &id, &old).is_err()
+                                || save_session(dir, &id, &session).is_err()
+                            {
+                                return self.end(Update::Failed(SESSION_STORE_FAILED));
+                            }
+                        }
+                        self.conversations
+                            .borrow_mut()
+                            .insert(id.clone(), session.clone());
+                        let config = claude_config_dir(&self.launch);
+                        let workspace = self.launch.work_dir.clone();
+                        let marker = self
+                            .session_dir
+                            .as_deref()
+                            .map(|dir| superseded_session_dir(dir, &id).join(&old));
+                        forget::work_in_background(move || {
+                            let removed = config
+                                .as_deref()
+                                .map_or(Ok(()), |config| forget_transcript(config, &workspace, &old));
+                            if removed.is_ok() {
+                                if let Some(marker) = marker {
+                                    let _ = forget::remove(&marker);
+                                }
+                            }
+                        });
+                        id
+                    }
                     Some(id) => id,
                     None => {
                         let id = new_conversation_id(&self.conversations.borrow());
@@ -825,6 +936,9 @@ impl Turn {
                         id
                     }
                 };
+                if self.session_policy == runtime_core::turn::SessionPolicy::Persistent {
+                    self.queue.push_back(Update::Session(session));
+                }
                 if !self.announced {
                     self.announced = true;
                     self.queue.push_back(Update::Started {
@@ -979,6 +1093,29 @@ impl Turn {
             .or_else(|| self.resume.clone());
         if current.as_deref() == Some(session.as_str()) {
             return;
+        }
+        if let Some(old) = current {
+            if let Some(dir) = self.session_dir.as_deref() {
+                if record_superseded_session(dir, conversation, &old).is_err() {
+                    return;
+                }
+            }
+            let config = claude_config_dir(&self.launch);
+            let workspace = self.launch.work_dir.clone();
+            let marker = self
+                .session_dir
+                .as_deref()
+                .map(|dir| superseded_session_dir(dir, conversation).join(&old));
+            forget::work_in_background(move || {
+                let removed = config
+                    .as_deref()
+                    .map_or(Ok(()), |config| forget_transcript(config, &workspace, &old));
+                if removed.is_ok() {
+                    if let Some(marker) = marker {
+                        let _ = forget::remove(&marker);
+                    }
+                }
+            });
         }
         if self.remember(conversation, session.clone()).is_err() {
             if let Some(dir) = &self.session_dir {

@@ -759,6 +759,25 @@ fn save_thread(dir: &Path, id: &str, thread: &str) -> io::Result<()> {
 /// read as an option of its own.
 fn exec_args(
     workspace: &Path,
+    restrict_tools: bool,
+    context_turn: bool,
+    native_search: bool,
+    resume: Option<&str>,
+    model: Option<&str>,
+) -> Vec<OsString> {
+    exec_args_for_session(
+        workspace,
+        runtime_core::turn::SessionPolicy::Persistent,
+        restrict_tools,
+        context_turn,
+        native_search,
+        resume,
+        model,
+    )
+}
+
+fn exec_args_for_session(
+    workspace: &Path,
     session_policy: runtime_core::turn::SessionPolicy,
     restrict_tools: bool,
     context_turn: bool,
@@ -1000,7 +1019,7 @@ impl Turn {
         let Ok(workspace) = self.launch.workspace() else {
             return self.end(Update::Failed(NO_WORKSPACE));
         };
-        let args = exec_args(
+        let args = exec_args_for_session(
             &workspace,
             self.session_policy,
             self.restrict_tools,
@@ -1123,6 +1142,22 @@ impl Turn {
                         self.conversations
                             .borrow_mut()
                             .insert(conversation_id.clone(), thread_id.clone());
+                        let home = codex_home(&self.launch);
+                        let workspace = self.launch.work_dir.clone();
+                        let marker = self
+                            .session_dir
+                            .as_deref()
+                            .map(|dir| superseded_thread_dir(dir, conversation_id).join(&old));
+                        forget::work_in_background(move || {
+                            let removed = home
+                                .as_deref()
+                                .map_or(Ok(()), |home| forget_rollouts(home, &workspace, &old));
+                            if removed.is_ok() {
+                                if let Some(marker) = marker {
+                                    let _ = forget::remove(&marker);
+                                }
+                            }
+                        });
                     }
                 }
                 conversation_id.clone()
