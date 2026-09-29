@@ -145,7 +145,6 @@ Both applications pin the library to a git revision, and it stays at version 0.x
 
 ## Not decided here
 
-- The library's name. `provider-runtime` is a placeholder.
 - The default absolute turn limit.
 - Whether Pervue caches its sign-in checks.
 
@@ -163,7 +162,8 @@ The [runtime proposal §10](provider-runtime-extraction-proposal.md#10-open-deci
   - A namespace is refused when Windows would reserve it as a device name, and the service queues at most one unread `Activity` update per turn, so neither a consumer's choice of name nor a slow reader can break the runtime.
   - The provider contract now runs against all four adapters, at the runtime's level and as Pervue serves them, which closes the part of the LIB-09 gap that concerned Gemini and Grok in that suite.
 - **2026-09-29, before step 3.**
-  - **License.** The library is licensed `MIT OR Apache-2.0`, as most Rust libraries are, so a consumer may take either. The crates' manifests say so now; the license files, with their copyright notice, are added when the repository is created. Its name is still to be chosen.
+  - **Name.** The library is called `seatline`: the seat is the subscription a user is already signed in with, and the line is the line-oriented output of the provider CLIs it reads. At step 3 its crates become `seatline-core`, `seatline-platform`, `seatline-providers`, `seatline-scheduler` and `seatline-service` (all free on crates.io on 2026-09-29), replacing the `runtime-*` and `provider-runtime-*` names, and `scripts/check-runtime-independence.mjs` and the docs follow.
+  - **License.** The library is licensed `MIT OR Apache-2.0`, as most Rust libraries are, so a consumer may take either. The crates' manifests say so now; the license files, with their copyright notice, are added when the repository is created.
   - **System prompts.** `Turn::system` is sent by all four adapters, as the first part of the prompt on the channel that already carries the question, under a fixed introduction that says the instructions are the application's and take precedence over the messages. No provider CLI takes one without either exposing it on a command line or depending on a flag this runtime cannot check, so this is the one mechanism they share. An application that resumes native sessions sends `system` on a session's first turn only.
   - **Names.** The Gemini agent names and the Grok owner file and agent name come from the application's namespace (`gemini::agent_name`, `grok::owner_file`), so no runtime crate says `pervue` in what it does. Pervue's namespace gives the names it has always used, pinned by tests in `pervue-host`.
   - **Live smoke tests.** Gemini and Grok have them, at the runtime's level (`live_gemini`, `live_grok`), with workflows that start them by hand; they have not yet run against the real CLIs.
