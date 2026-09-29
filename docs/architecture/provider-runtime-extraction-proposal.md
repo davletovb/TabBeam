@@ -1,43 +1,46 @@
 # Proposal: a shared provider runtime
 
+
+> **Naming note (2026-09-29):** The application was renamed from **Pervue** to **TabBeam** before release. Historical references to `pervue-core` are intentionally retained because that crate was later renamed to `seatline-core`; current application identifiers use TabBeam.
+
 **Status:** Proposed, for discussion; the basis for [ADR-0002](adr-0002-shared-provider-runtime.md)  
 **Date:** 2026-09-27  
 **Revised:** 2026-09-28 (see §11)  
-**Scope:** hardening and extracting a reusable provider runtime from Pervue's `native/` so that a second application can use it. How Conclave adopts the runtime is recorded in Conclave's own repository, in its [adoption proposal][conclave-adoption].  
-**Evidence:** Pervue at `fc7284b` (four providers: Codex, Claude, Gemini, Grok), Conclave at `1379a37`
+**Scope:** hardening and extracting a reusable provider runtime from TabBeam's `native/` so that a second application can use it. How Conclave adopts the runtime is recorded in Conclave's own repository, in its [adoption proposal][conclave-adoption].  
+**Evidence:** TabBeam at `fc7284b` (four providers: Codex, Claude, Gemini, Grok), Conclave at `1379a37`
 
 ## Summary
 
-- **Conclave justifies a runtime shared between applications.** Pervue already extracted `pervue-core` under the two-provider rule in [framework §9.6](../product/browser-ai-extension-framework.md#96-extraction-rule). Conclave doesn't justify reuse for the first time. It justifies a *provider runtime* that two applications share.
+- **Conclave justifies a runtime shared between applications.** TabBeam already extracted `__HISTORIC_TABBEAM_CORE__` under the two-provider rule in [framework §9.6](../product/browser-ai-extension-framework.md#96-extraction-rule). Conclave doesn't justify reuse for the first time. It justifies a *provider runtime* that two applications share.
   - The runtime owns provider execution: running an authenticated AI CLI safely, streaming its answer, and stopping it.
   - Each application keeps its conversation and product policy.
-  - Native Messaging, browser context, provider sessions, and protocol v1 stay in Pervue.
+  - Native Messaging, browser context, provider sessions, and protocol v1 stay in TabBeam.
 - **Both apps now drive the same four CLIs:** Codex, Claude, Gemini (through Antigravity), and Grok. Each app has its own independent adapter for every one of them.
   - The runtime owns one shared adapter per supported execution mode: `codex exec`, Claude's print mode, Antigravity's one-shot mode, and Grok's one-shot headless mode.
   - An application can keep a different mode of the same CLI outside the shared set, such as Codex app-server or Grok ACP, when that mode's capabilities differ materially. It builds that adapter on `seatline-core`.
 - **The runtime is a Rust crate workspace that applications use in-process.**
   - A single supervisor owns the scheduler.
-  - `pervue-host` drives that supervisor from its own loop.
+  - `tabbeam-host` drives that supervisor from its own loop.
   - Async servers use a small service API, which runs the supervisor on a thread of its own.
   - If a non-Rust application ever needs the runtime, it gets a sidecar that wraps the service API.
   - There's no C ABI and no Node addon. ADR-0002 records this.
 - **Conclave is the second consumer.**
   - It has committed to adopting the runtime for all four providers at once, in a new Rust server. Its [adoption proposal][conclave-adoption], in the Conclave repository, records those decisions.
   - This proposal needs Conclave as a consumer, but doesn't depend on how Conclave builds its server.
-- **Every provider runs as one process per turn.** Codex runs through `exec` only, and Grok in one-shot headless mode, as Pervue's adapter already does.
+- **Every provider runs as one process per turn.** Codex runs through `exec` only, and Grok in one-shot headless mode, as TabBeam's adapter already does.
 - **Sign-in checks never run alongside a turn.** An application may choose to cache a successful check, but the runtime never caches by default (§8).
 - **Three stages, each with an exit bar** (§7):
-  1. **Harden the runtime inside Pervue.** Fix the known gaps, and verify the pending tracker items, until a defined exit bar is met.
-  2. **Extract it as a library, with all four adapters at once.** Pervue switches to the library first, and its full test suite passing against the library proves the extraction.
+  1. **Harden the runtime inside TabBeam.** Fix the known gaps, and verify the pending tracker items, until a defined exit bar is met.
+  2. **Extract it as a library, with all four adapters at once.** TabBeam switches to the library first, and its full test suite passing against the library proves the extraction.
   3. **Conclave integrates all four providers** into its Rust server. That work is planned in Conclave's own proposal.
 - **Speed work comes after both applications run on the library** (§8).
-- **The library gets its own repository in Stage 2,** and `pervue-core` becomes `seatline-core` inside it. Both applications pin it to a git revision.
+- **The library gets its own repository in Stage 2,** and `__HISTORIC_TABBEAM_CORE__` becomes `seatline-core` inside it. Both applications pin it to a git revision.
 
 ## 1. What exists today
 
-### Pervue
+### TabBeam
 
-`pervue-core` already holds the primitives the providers share ([core/README](../../native/seatline-core/README.md)): `process`, `stream`, `discovery`, `exchange`, `protocol`, and `framing`. The host holds the rest of the plumbing for its four real providers, and some of it is still copied between adapters:
+`__HISTORIC_TABBEAM_CORE__` already holds the primitives the providers share ([core/README](../../native/seatline-core/README.md)): `process`, `stream`, `discovery`, `exchange`, `protocol`, and `framing`. The host holds the rest of the plumbing for its four real providers, and some of it is still copied between adapters:
 
 | Host-owned piece | Where | Reuse today |
 |---|---|---|
@@ -53,7 +56,7 @@ The two per-turn cleanups work differently:
 - **Gemini** deletes the transcript Antigravity saves, and keeps durable records so failed deletions can be retried.
 - **Grok** deletes its whole private workspace, including Grok's session files and the prompt file. Heartbeat markers let startup recovery remove only directories that are stale.
 
-Gemini and Grok both landed without changing the `Provider` trait, `host.rs`, the protocol, or `pervue-core`. Four providers fitting the contract unchanged is good evidence that `Exchange` and `Update` are ready to become the runtime's API.
+Gemini and Grok both landed without changing the `Provider` trait, `host.rs`, the protocol, or `__HISTORIC_TABBEAM_CORE__`. Four providers fitting the contract unchanged is good evidence that `Exchange` and `Update` are ready to become the runtime's API.
 
 ### Conclave
 
@@ -76,37 +79,37 @@ Conclave also:
 
 ## 2. What each product gains
 
-### 2.1 What Conclave gains from Pervue's code
+### 2.1 What Conclave gains from TabBeam's code
 
 In order of impact:
 
 1. **The Claude prompt is a command-line argument** ([anthropic-claude.ts:254][c-claude-argv]).
    - Linux limits a single argument to 128 KiB (`MAX_ARG_STRLEN`), and Windows limits the whole command line to 32,767 characters. A Debate, Judge, or synthesis prompt that embeds other models' answers can fail to start.
    - On Linux, other local users can read the prompt with `ps`.
-   - Pervue sends prompts on stdin, or through a private prompt file for Grok.
+   - TabBeam sends prompts on stdin, or through a private prompt file for Grok.
 2. **Memory is unbounded.**
    - Claude's and Gemini's output accumulates in strings for the whole call ([anthropic-claude.ts:154][c-claude-buf]), and the `readline` clients accept lines of any length.
-   - Pervue caps a line at 8 MiB, reads at most 16 chunks ahead, and keeps only a small stderr tail that it never logs. The hostile matrix shows peak memory grows by at most 64 MiB during a 128 MiB stderr flood.
+   - TabBeam caps a line at 8 MiB, reads at most 16 chunks ahead, and keeps only a small stderr tail that it never logs. The hostile matrix shows peak memory grows by at most 64 MiB during a 128 MiB stderr flood.
 3. **Stopping a call is best effort.**
    - Claude, Grok, and the Codex app-server get one SIGTERM to the direct child, with no escalation ([anthropic-claude.ts:139][c-claude-kill], [acp-client.ts:150][c-grok-kill]). A CLI that ignores the signal, or a Node process it started, outlives the call.
-   - Pervue signals the process group, escalates to SIGKILL after a grace period, reaps the child, and kills whatever the child left in its group. Dropping the handle does the same.
+   - TabBeam signals the process group, escalates to SIGKILL after a grace period, reaps the child, and kills whatever the child left in its group. Dropping the handle does the same.
 4. **The environment is a denylist.**
    - A child inherits every variable not named, including other vendors' keys, `NODE_OPTIONS`, and `LD_PRELOAD`. The Codex app-server inherits the server's whole environment ([app-server-client.ts:64][c-codex-env]).
-   - Pervue passes a short allowlist plus each provider's own settings.
+   - TabBeam passes a short allowlist plus each provider's own settings.
 5. **Claude and Codex run in the server's working directory.**
    - Project instruction files there can apply to every council call: `CLAUDE.md` for Claude, `AGENTS.md` for Codex, and for Codex also those in directories above it up to the git root. Conclave passes `--safe-mode` to Claude, which may limit this for Claude; its Codex calls have no equivalent.
-   - Pervue runs each provider in an empty private workspace whose ownership it checks.
+   - TabBeam runs each provider in an empty private workspace whose ownership it checks.
 6. **Every Gemini call leaves a transcript behind.**
    - Conclave deletes each call's temporary workspace but never touches `~/.gemini/antigravity-cli/brain/`.
-   - Pervue's adapter deletes the transcript `agy` saves there after every turn, and keeps durable records to retry deletions that fail.
-   - Pervue's agent definition also sets `hooks: []`; Conclave's doesn't.
+   - TabBeam's adapter deletes the transcript `agy` saves there after every turn, and keeps durable records to retry deletions that fail.
+   - TabBeam's agent definition also sets `hooks: []`; Conclave's doesn't.
 7. **Grok runs with Conclave's own home and environment.**
-   - Pervue gives each Grok turn a private `GROK_HOME`, passes only the cached OAuth file, and disables more of Grok's features: workflows, telemetry, feedback, and folder trust.
-   - Pervue also explicitly denies the MCP umbrellas (`search_tool`, `use_tool`), which shipped Grok Build keeps available even with a restricted agent. It then verifies the `init` boundary before showing any text.
+   - TabBeam gives each Grok turn a private `GROK_HOME`, passes only the cached OAuth file, and disables more of Grok's features: workflows, telemetry, feedback, and folder trust.
+   - TabBeam also explicitly denies the MCP umbrellas (`search_tool`, `use_tool`), which shipped Grok Build keeps available even with a restricted agent. It then verifies the `init` boundary before showing any text.
    - Conclave's Grok inherits the server's environment minus four names, and relies on refusing ACP permission requests.
-8. **Executables are found through the server's `PATH`** (`spawn("claude")`). Pervue resolves an absolute path from fixed install locations and allows an explicit override.
+8. **Executables are found through the server's `PATH`** (`spawn("claude")`). TabBeam resolves an absolute path from fixed install locations and allows an explicit override.
 9. **Failures are classified once, inside the adapter.**
-   - Outside a Pervue adapter, every failure has a `code`, a `reason`, and a `retryable` flag, so code that handles rate limits and transient errors never reads error text.
+   - Outside a TabBeam adapter, every failure has a `code`, a `reason`, and a `retryable` flag, so code that handles rate limits and transient errors never reads error text.
    - Underneath, the adapters still classify by matching phrases in the provider's message ([codex/output.rs:128][p-codex-output], [claude/output.rs:211][p-claude-output]), because failures arrive as text.
    - Unlike Conclave's regular expressions, they match specific phrases rather than bare words such as "rate" or "auth", right next to the parser for that provider's output. The Codex matching is tested against output captured from Codex CLI 0.156.1.
 10. **Test assets.**
@@ -114,24 +117,24 @@ In order of impact:
     - The hostile-process matrix (TST-04).
     - The cross-provider contract suite (TST-10).
 
-### 2.2 What Pervue gains from Conclave's code
+### 2.2 What TabBeam gains from Conclave's code
 
 1. **Knowing how each CLI is billed.**
-   - Pervue's environment allowlist keeps API keys in environment variables away from providers. It doesn't cover a CLI that was itself signed in with an API key or a Console account.
+   - TabBeam's environment allowlist keeps API keys in environment variables away from providers. It doesn't cover a CLI that was itself signed in with an API key or a Console account.
    - Conclave checks the sign-in method for Claude by reading `claude auth status` JSON.
-   - For Codex, Conclave uses app-server's `account/read`. With `exec`, the equivalent is classifying the output of `codex login status`, which Pervue currently doesn't read. That output's exact wording hasn't been checked.
+   - For Codex, Conclave uses app-server's `account/read`. With `exec`, the equivalent is classifying the output of `codex login status`, which TabBeam currently doesn't read. That output's exact wording hasn't been checked.
    - For Gemini and Grok, both apps strip API-key variables. For Grok, both also set `GROK_DISABLE_API_KEY_AUTH`.
-2. **Usage and live model lists, which Pervue needs for its own providers.**
-   - Codex's `turn.completed` event and Antigravity's `result` event both report token counts. Pervue ignores them, because `Update` has no usage.
-   - Pervue runs `agy models` to check Gemini's status, but can't expose the list, because `ModelOption` holds only fixed strings.
+2. **Usage and live model lists, which TabBeam needs for its own providers.**
+   - Codex's `turn.completed` event and Antigravity's `result` event both report token counts. TabBeam ignores them, because `Update` has no usage.
+   - TabBeam runs `agy models` to check Gemini's status, but can't expose the list, because `ModelOption` holds only fixed strings.
 3. **Cross-checks.** Both apps have independent implementations of the same CLIs, and the differences are worth reconciling:
-   - **Gemini.** The two implementations agree on flags, the agent definition, permission modes, and the `init` check. Pervue fails a turn when Antigravity reports a step type it doesn't document, while Conclave ignores such steps. Pervue deletes transcripts, and Conclave reads usage.
-   - **Grok.** The two use different modes. Conclave uses ACP, which streams text; Pervue uses one-shot headless mode, which doesn't. Pervue checks more at `init`.
-4. **A second application** to test the runtime's API against, so it isn't shaped only by Pervue's needs.
+   - **Gemini.** The two implementations agree on flags, the agent definition, permission modes, and the `init` check. TabBeam fails a turn when Antigravity reports a step type it doesn't document, while Conclave ignores such steps. TabBeam deletes transcripts, and Conclave reads usage.
+   - **Grok.** The two use different modes. Conclave uses ACP, which streams text; TabBeam uses one-shot headless mode, which doesn't. TabBeam checks more at `init`.
+4. **A second application** to test the runtime's API against, so it isn't shaped only by TabBeam's needs.
 
 ## 3. How the runtime is consumed
 
-- **`pervue-host`** links the runtime crates and drives the supervisor, and through it the scheduler, from its existing synchronous loop.
+- **`tabbeam-host`** links the runtime crates and drives the supervisor, and through it the scheduler, from its existing synchronous loop.
 - **Async Rust servers** use the in-process service API (§6).
 - **A non-Rust application** would get a sidecar executable: a thin wrapper around the service API that speaks a versioned protocol over stdio. It is built only if a consumer needs it.
 - **Not planned:** a C ABI or a Node addon.
@@ -155,7 +158,7 @@ The runtime owns **provider execution mechanics**. The applications keep **conve
 ```text
 provider-runtime workspace (working name)
 ├─ seatline-core   process, stream, discovery; neutral turn, error, and usage types
-│                 (today's pervue-core, minus framing and Pervue's protocol vocabulary)
+│                 (today's __HISTORIC_TABBEAM_CORE__, minus framing and TabBeam's protocol vocabulary)
 ├─ platform       environment construction, private files and workspaces,
 │                 per-turn cleanup with its retry record
 ├─ providers      gemini, grok, claude, codex-exec
@@ -165,9 +168,9 @@ provider-runtime workspace (working name)
 └─ service        in-process API for async servers: runs the supervisor
                   on a thread of its own
 
-pervue-host
+tabbeam-host
 ├─ provider-runtime crates
-├─ Native Messaging framing (moved out of pervue-core), origin checks, manifest, protocol v1
+├─ Native Messaging framing (moved out of __HISTORIC_TABBEAM_CORE__), origin checks, manifest, protocol v1
 ├─ conversation→session map, stale-session policy, and transcript
 │  removal when a conversation is deleted
 ├─ browser context policy
@@ -179,30 +182,30 @@ A second application (Conclave: see its adoption proposal)
 ```
 
 **Crate ownership.**
-- `pervue-core` doesn't survive as a name. Its reusable modules become `seatline-core`, inside the runtime workspace, and its Pervue-specific parts (framing and protocol-v1 vocabulary) move into `pervue-host`.
-- Applications depend only on runtime crates, never on Pervue's crates.
+- `__HISTORIC_TABBEAM_CORE__` doesn't survive as a name. Its reusable modules become `seatline-core`, inside the runtime workspace, and its TabBeam-specific parts (framing and protocol-v1 vocabulary) move into `tabbeam-host`.
+- Applications depend only on runtime crates, never on TabBeam's crates.
 - An application's own adapters build on `seatline-core`. Conclave-only adapters, such as an app-server client for Codex, fall under this rule.
-- When the runtime gets its own repository, the whole workspace moves, and Pervue depends on it the same way Conclave does.
+- When the runtime gets its own repository, the whole workspace moves, and TabBeam depends on it the same way Conclave does.
 
 **What moves, and why.**
 - **The promotion rule.** Something moves into the runtime only when a second application uses it.
   - A shared adapter is one execution mode of a CLI. It moves into the runtime when a second application has accepted a plan to use that same mode.
   - Conclave has committed to the library's mode for all four CLIs: `codex exec`, Claude's print mode, Antigravity's one-shot mode, and Grok's one-shot headless mode. That meets the bar for all four at once, so they move together in Stage 2 (§7).
   - A different mode of the same CLI that only one application uses would stay with that application. Codex app-server and Grok ACP are examples, and Conclave has decided against both.
-  - Session maps and conversation-scoped transcript removal stay in `pervue-host`, because Conclave runs every call statelessly.
+  - Session maps and conversation-scoped transcript removal stay in `tabbeam-host`, because Conclave runs every call statelessly.
   - Search-result sanitizing becomes shareable only if Conclave's server moves to Rust.
 - **One process per turn, for every provider.**
   - Codex's app-server is the only CLI server that serves many conversations from one process. Grok's ACP mode can hold several sessions in one process, and Claude can keep one conversation's process alive. Antigravity has no such mode that either app uses.
-  - Pervue's Grok adapter already chose one-shot headless mode over ACP for the same reasons.
-  - Pervue chooses each turn's tools with launch flags: `--tools ""` or `--tools WebSearch` for Claude, the `pervue-text` or `pervue-search` agent for Gemini, `-c` feature switches for Codex, and tool denials for Grok. A long-lived process would fix those at launch.
+  - TabBeam's Grok adapter already chose one-shot headless mode over ACP for the same reasons.
+  - TabBeam chooses each turn's tools with launch flags: `--tools ""` or `--tools WebSearch` for Claude, the `tabbeam-text` or `tabbeam-search` agent for Gemini, `-c` feature switches for Codex, and tool denials for Grok. A long-lived process would fix those at launch.
   - A process kept alive for a conversation would carry earlier turns' page text into later turns.
   - A crash of a shared process fails every running turn. Cancelling becomes a request the CLI has to honor, instead of a kill.
-  - Pervue's host lives only as long as the extension's service worker keeps its connection ([native-connection.js][p-native-connection]), so a warm provider process wouldn't stay warm.
+  - TabBeam's host lives only as long as the extension's service worker keeps its connection ([native-connection.js][p-native-connection]), so a warm provider process wouldn't stay warm.
   - Speed is handled separately (§8).
 - **Continuation.**
   - The runtime's Claude provider accepts an opaque native-session handle to resume. It reports the native session it ran through the `Session` event (§6), before `Started`, and again if the session changes.
   - When that session no longer exists, it fails with a reason of its own before producing any output.
-  - `pervue-host` keeps the map, its `conv_` IDs, and the retry-once-with-history policy.
+  - `tabbeam-host` keeps the map, its `conv_` IDs, and the retry-once-with-history policy.
   - Claude's session IDs will then cross a crate boundary they don't cross today, but only as opaque values.
   - Gemini and Grok keep no sessions, so they need no hook.
   - Whether a turn keeps its native session at all is set by its session policy (§5), not guessed from whether it has a continuation handle.
@@ -212,10 +215,10 @@ A second application (Conclave: see its adoption proposal)
     - Grok's private workspace, with heartbeat markers and recovery of stale directories at startup.
     - `Ephemeral` `codex exec` turns (§5) need none: they run with `codex exec --ephemeral`, so Codex saves no session at all. Deleting rollout files isn't an equivalent fallback. Codex's state database, which `forget_rollouts` leaves untouched, can still hold the first user message.
   - **Cleanup when a conversation is deleted is policy**, so it stays with the application.
-    - In Pervue, that means Claude's and Codex's transcripts for every session the conversation has used, not just its current one.
+    - In TabBeam, that means Claude's and Codex's transcripts for every session the conversation has used, not just its current one.
     - A conversation's session changes when a search turn starts a new one (§7), or when Claude reports a different session. Each time, the host records the superseded handle durably before switching, then removes that session's transcript in the background.
     - A removal that fails stays recorded, and `conversation.forget` removes every session recorded for the conversation.
-  - **Retrying failed deletions.** The runtime keeps its own record of failed per-turn deletions, per namespace. It retries them when it starts and on request, so a consumer without conversations still gets retries. Pervue's `conversation.forget` can trigger the same retry.
+  - **Retrying failed deletions.** The runtime keeps its own record of failed per-turn deletions, per namespace. It retries them when it starts and on request, so a consumer without conversations still gets retries. TabBeam's `conversation.forget` can trigger the same retry.
 - **Environment construction.**
   - The core README lists the credential allowlist as host policy, so moving it changes that boundary deliberately.
   - Conclave needs the same protection (§2.1, item 4), and a provider in the runtime can't start without its variables.
@@ -224,9 +227,9 @@ A second application (Conclave: see its adoption proposal)
 ## 5. API changes a second application needs
 
 **Error wording**
-- Today: `ErrorBody<'static>` carries Pervue's wording, such as "Pervue couldn't prepare a private folder…".
+- Today: `ErrorBody<'static>` carries TabBeam's wording, such as "TabBeam couldn't prepare a private folder…".
 - Needed: the runtime returns only `code`, `reason`, and `retryable`, and each application writes its own messages.
-- Why: `pervue-host` keeps a table of messages, so protocol v1 doesn't change.
+- Why: `tabbeam-host` keeps a table of messages, so protocol v1 doesn't change.
 
 **Error codes and capabilities**
 - Today: `ErrorCode` and `Capabilities` mix runtime concepts with browser ones: `HostNotInstalled`, `ContextUnavailable`, `page_context`.
@@ -249,7 +252,7 @@ A second application (Conclave: see its adoption proposal)
 **Requests**
 - Today: `SendRequest` has `text`, `history`, browser `context`, and `native_search`.
 - Needed: a neutral turn with `system`, `messages`, `model`, a tool policy (`None` or `NativeWebSearch`), a session policy (below), and an optional continuation handle (§4).
-- Why: Conclave needs a system prompt and runs every call statelessly. Pervue frames its browser context into messages before it calls the runtime.
+- Why: Conclave needs a system prompt and runs every call statelessly. TabBeam frames its browser context into messages before it calls the runtime.
 
 **Session policy**
 - Today: each adapter decides for itself whether the provider keeps its native session.
@@ -260,12 +263,12 @@ A second application (Conclave: see its adoption proposal)
     - Each mode's live smoke test verifies this. After an `Ephemeral` turn, nothing the CLI stores, files or databases, may hold the prompt.
     - A mode that can't meet that refuses `Ephemeral` rather than degrading. One example is an installed Codex without `--ephemeral`.
   - **`Persistent`:** the provider keeps its native session and reports it through `Session` (§6). Only execution modes that can resume (Claude and Codex) accept it; `start_turn` rejects it for the others. A turn that carries a `continuation` handle is always `Persistent`.
-- Why: the same start, with no continuation handle, needs opposite behavior from the two applications. Pervue's first turn with Claude or Codex must keep the new session and report it, so the conversation can resume. Every Conclave call must leave nothing behind. A default either way would break one of them.
+- Why: the same start, with no continuation handle, needs opposite behavior from the two applications. TabBeam's first turn with Claude or Codex must keep the new session and report it, so the conversation can resume. Every Conclave call must leave nothing behind. A default either way would break one of them.
   - **Conclave:** always `Ephemeral`.
-  - **Pervue:** `Persistent` for Claude and Codex, and `Ephemeral` for Gemini and Grok, as today. Search turns follow the Stage 1 rule (§7).
+  - **TabBeam:** `Persistent` for Claude and Codex, and `Ephemeral` for Gemini and Grok, as today. Search turns follow the Stage 1 rule (§7).
 
 **Namespace**
-- Today: paths and thread names are hard-coded under `pervue`.
+- Today: paths and thread names are hard-coded under `tabbeam`.
 - Needed: an application namespace, fixed when the runtime starts.
   - An application that links the runtime passes it in code.
   - A sidecar would take it as a launch argument.
@@ -284,19 +287,19 @@ A second application (Conclave: see its adoption proposal)
   - An absolute `max_turn` limit alongside the others. Applications can override all of them, within ceilings.
   - A fixed rule for what resets the idle timer: deltas, sources, and provider events that the adapter recognizes as work. stderr and unrecognized output never reset it.
 - Why:
-  - Pervue's Claude adapter counts any unrecognized `stream_event` as progress ([claude/output.rs][p-claude-output]). A Claude build that keeps emitting such events keeps its turn alive indefinitely.
+  - TabBeam's Claude adapter counts any unrecognized `stream_event` as progress ([claude/output.rs][p-claude-output]). A Claude build that keeps emitting such events keeps its turn alive indefinitely.
   - That is tolerable in a popup the user can close. It isn't in a server-owned run that nobody is watching.
   - Conclave already bounds every call absolutely.
 
 **Reconciling what each app learned.**
-- **Claude command lines.** Pervue uses `--strict-mcp-config`, stream-json input, and `DISABLE_AUTOUPDATER`. Conclave uses `--no-session-persistence`, `--max-turns 1`, `--system-prompt`, `--disable-slash-commands`, and `--safe-mode`.
+- **Claude command lines.** TabBeam uses `--strict-mcp-config`, stream-json input, and `DISABLE_AUTOUPDATER`. Conclave uses `--no-session-persistence`, `--max-turns 1`, `--system-prompt`, `--disable-slash-commands`, and `--safe-mode`.
 - **Gemini agent definitions and step handling.** See §2.2, item 3.
-- **Grok lockdown settings.** Pervue's list is the longer one (§2.1, item 7).
+- **Grok lockdown settings.** TabBeam's list is the longer one (§2.1, item 7).
 
 ## 6. The in-process runtime API
 
 The runtime stays synchronous and needs no async runtime of its own. Both ways in go through the same supervisor, which owns the scheduler (see Supervision below):
-- **`pervue-host`** drives the supervisor from its existing synchronous loop.
+- **`tabbeam-host`** drives the supervisor from its existing synchronous loop.
 - **Async servers** use the `service` API:
   - it runs the supervisor on a thread of its own;
   - each turn's events arrive on a channel that works from both blocking and async code.
@@ -340,13 +343,13 @@ while let Some(event) = turn.next().await {
 **Events.**
 - **`Launched`**: the provider process started successfully. It feeds the run inspector and the §8 timeline, and doesn't affect any limit.
 - **`Session(handle)`**: the opaque native session the provider is running. Only `Persistent` turns send it (§5), and only execution modes that can resume (Claude and Codex) accept those.
-  - It arrives before `Started`, so an application that keeps a conversation→session map can store the mapping before it announces the conversation. Pervue's Codex adapter works that way today.
+  - It arrives before `Started`, so an application that keeps a conversation→session map can store the mapping before it announces the conversation. TabBeam's Codex adapter works that way today.
   - It arrives again if the provider later reports a different session. For example, Claude's final `result` can name a session other than the one in `init`. The application then rewrites its mapping.
-  - Pervue passes the handle back as the turn's `continuation` to resume. Conclave never uses it.
+  - TabBeam passes the handle back as the turn's `continuation` to resume. Conclave never uses it.
 - **`Started`**: the provider accepted the turn. Its own start-of-turn event arrived and, where the adapter checks one, the `init` boundary passed: the tool set, agent, permission mode, model, and working directory.
   - No answer text comes before it.
   - The start limit runs until it arrives, which catches a CLI that launches and then hangs, such as a signed-out `codex exec` that keeps retrying.
-  - Pervue's adapters use this meaning today: Codex at `turn.started`; Claude, Gemini, and Grok after `init`.
+  - TabBeam's adapters use this meaning today: Codex at `turn.started`; Claude, Gemini, and Grok after `init`.
 - **`Activity`**: the provider is working with nothing to show. It resets the idle timer, under the §5 rule.
 - **`Delta`, `Source`, `Usage`**: answer text, a citation, and a cumulative usage snapshot.
 - **`Ended(outcome)`**: completed, failed with a code, reason, and `retryable` flag, or cancelled. Every accepted turn gets one, whether or not `Launched` or `Started` came first.
@@ -383,7 +386,7 @@ Supervisor (the same one under both entry points)
 └─ scheduler: every step runs behind catch_unwind
     └─ provider exchanges: every call runs behind catch_unwind; each owns its process
 
-pervue-host   drives the supervisor from its own synchronous loop
+tabbeam-host   drives the supervisor from its own synchronous loop
 service API   runs the supervisor on a thread of its own, for async servers
 ```
 
@@ -396,24 +399,24 @@ service API   runs the supervisor on a thread of its own, for async servers
   - A panic in any of these ends only the affected turn, with a runtime error marked `maybe_started`, or fails only the affected status check.
   - The exchange is dropped, which kills and reaps its process.
 - **A panic in the scheduler itself.**
-  - Every scheduler step also runs behind `catch_unwind`, called by the supervisor. The supervisor's turn table lives outside the frame that unwinds, so it survives. In `pervue-host`, the loop that owns Native Messaging survives too.
+  - Every scheduler step also runs behind `catch_unwind`, called by the supervisor. The supervisor's turn table lives outside the frame that unwinds, so it survives. In `tabbeam-host`, the loop that owns Native Messaging survives too.
   - After a panic, the supervisor drops the scheduler, which kills and reaps every provider process it owned. It then ends every turn it still holds.
     - A turn is marked `not_started` only if it never reached the scheduler. Every other turn is marked `maybe_started`, because a provider may have started, or even finished, before the panic.
     - The supervisor removes a turn from its table before sending that turn's `Ended`, so no turn ends twice.
   - The supervisor then starts a new scheduler generation.
 - **A panic in the supervisor's own code** has no survivor inside the runtime, so each entry point handles it:
   - **Through the `service` API:** the thread's channels close. A turn handle whose channel closes before `Ended` reports `Ended` itself, as a runtime error marked `maybe_started`, so the caller still sees exactly one ending.
-  - **In `pervue-host`:** the host process ends, and the extension sees the host disconnect, as it does today.
-- **Aborts.** All of this relies on the default `panic = "unwind"`. With `panic = "abort"`, or an abort such as running out of memory, the whole process ends, and the application's own recovery applies. Conclave marks unfinished runs `interrupted` at startup, and Pervue's extension sees the host disconnect.
+  - **In `tabbeam-host`:** the host process ends, and the extension sees the host disconnect, as it does today.
+- **Aborts.** All of this relies on the default `panic = "unwind"`. With `panic = "abort"`, or an abort such as running out of memory, the whole process ends, and the application's own recovery applies. Conclave marks unfinished runs `interrupted` at startup, and TabBeam's extension sees the host disconnect.
 - **Tests.** Three tests prove this:
   - a fake-provider persona that makes its adapter panic;
-  - a test hook that panics a scheduler step, driven both through `pervue-host`'s loop and through the `service` API;
+  - a test hook that panics a scheduler step, driven both through `tabbeam-host`'s loop and through the `service` API;
   - a test hook that panics the `service` thread's supervisor.
 
-  Each asserts that every turn ends exactly once with the right marker, and that no provider process survives. For the `pervue-host` case, it also asserts that the host keeps serving new requests.
+  Each asserts that every turn ends exactly once with the right marker, and that no provider process survives. For the `tabbeam-host` case, it also asserts that the host keeps serving new requests.
 
 **Other rules.**
-- **Dropping the runtime** cancels every turn, waits out the stop grace, and kills what remains, as Pervue does with `INPUT_CLOSED`.
+- **Dropping the runtime** cancels every turn, waits out the stop grace, and kills what remains, as TabBeam does with `INPUT_CLOSED`.
 - **Diagnostics** go to a hook the application supplies. They contain no prompts, output, or account identifiers, as in OBS-01.
 - **Versioning.** Consumers pin the runtime to a git revision while it incubates, and to a semver version once it's published.
 
@@ -426,16 +429,16 @@ The tracker isn't edited here, and the IDs below are only proposals.
 - Write ADR-0002.
 - Choose the library's name and license.
 
-**Stage 1: harden inside Pervue** (proposed LIB-06 to LIB-09).
+**Stage 1: harden inside TabBeam** (proposed LIB-06 to LIB-09).
 
-The native code is reshaped into the future library while it still lives in Pervue, so Stage 2 is a move rather than a redesign.
+The native code is reshaped into the future library while it still lives in TabBeam, so Stage 2 is a move rather than a redesign.
 
 1. **Verify what's pending.** Move LIB-01 to LIB-05, PRO-05 to PRO-09, TST-10, and TST-11 to VERIFIED.
 2. **Reshape the workspace:**
-   - rename `pervue-core` to `seatline-core`;
-   - move framing into `pervue-host`;
+   - rename `__HISTORIC_TABBEAM_CORE__` to `seatline-core`;
+   - move framing into `tabbeam-host`;
    - introduce the neutral turn, error, usage, and timeout types (§5);
-   - move error wording into a message table in `pervue-host`.
+   - move error wording into a message table in `tabbeam-host`.
 3. **Extract the scheduler** from `host.rs`, and add the absolute limit and the rule for what resets the idle timer. The rule stops a Claude turn from staying alive on unrecognized events.
 4. **Add the `service` API,** with its supervisor and panic boundary (§6).
 5. **Close the gaps this proposal found:**
@@ -443,7 +446,7 @@ The native code is reshaped into the future library while it still lives in Perv
    - sign-in classification, including classifying the output of `codex login status`;
    - per-turn cleanup with the runtime's own retry record, for Gemini, Grok, and the session files `codex exec` saves for stateless turns;
    - moving Claude and Codex onto the shared private-file helpers, replacing their copies;
-   - in `pervue-host`: **a search turn never resumes a native Claude or Codex session.**
+   - in `tabbeam-host`: **a search turn never resumes a native Claude or Codex session.**
      - The problem: the rule against combining page context with search is checked per turn only, so resuming a session that saw page context earlier gives that page text live search access.
      - The rule: a search turn starts a new `Persistent` session from the bounded dialogue history, which never includes page context. The host then replaces the conversation's mapping with that new session.
      - The superseded session, which may hold page text, is recorded and cleaned up as §4 describes, so deleting the conversation later still removes it.
@@ -464,11 +467,11 @@ The native code is reshaped into the future library while it still lives in Perv
 1. Move these into a new repository with its own CI:
    - the runtime crates: `seatline-core`, `platform`, `providers`, `scheduler`, and `service`;
    - the test assets: the fake provider, the hostile matrix, the contract suite, the panic tests, and the fuzz targets.
-2. Switch Pervue to the library, pinned to a git revision. `pervue-host` keeps what §4 leaves it.
+2. Switch TabBeam to the library, pinned to a git revision. `tabbeam-host` keeps what §4 leaves it.
 3. Keep the library at version 0.x. Expect API changes during Stage 3, and have both applications bump their pin deliberately.
 
 **Stage 2 exit bar:**
-- Pervue's full test suite passes against the library, including the live smoke tests;
+- TabBeam's full test suite passes against the library, including the live smoke tests;
 - the library's own CI is green.
 
 **Stage 3: Conclave integrates all four providers.** This happens in Conclave's repository, following its [adoption proposal][conclave-adoption].
@@ -481,7 +484,7 @@ The native code is reshaped into the future library while it still lives in Perv
 
 **Working alongside the tracker.**
 - Stage 1 is largely the remaining tracker work, so coordinate it with whoever holds those items.
-- Reshaping the workspace and extracting the scheduler touch `host.rs` and every import of `pervue-core`. Start them after LIB-01 to LIB-05 are verified.
+- Reshaping the workspace and extracting the scheduler touch `host.rs` and every import of `__HISTORIC_TABBEAM_CORE__`. Start them after LIB-01 to LIB-05 are verified.
 - The Gemini and Grok adapters landed on 2026-09-28, and Gemini was fixed the same day for real `agy` output. Both should settle before Stage 2.
 
 ## 8. Speed and cold start
@@ -495,7 +498,7 @@ Optimize after both applications run on the library. At that point the library i
   - the first response chunk within 1,500 ms.
 - CI enforces the last two against the built host, but only with the fake provider. No real CLI's start-up is measured.
 
-**What a turn costs today in Pervue.**
+**What a turn costs today in TabBeam.**
 
 | Provider | Processes started per turn | Other work before the provider starts |
 |---|---|---|
@@ -530,33 +533,33 @@ Long-lived provider processes stay out of scope (§4) unless the measurements sh
 ## 9. Risks
 
 - **Premature generalization.** The §4 promotion rule decides what moves. Keep policy owned by a single application in that application.
-- **One large extraction step.** Moving all four adapters at once is a bigger change than moving them one at a time. Two things carry that risk: the Stage 1 exit bar, and Pervue switching to the library before Conclave does.
+- **One large extraction step.** Moving all four adapters at once is a bigger change than moving them one at a time. Two things carry that risk: the Stage 1 exit bar, and TabBeam switching to the library before Conclave does.
 - **Regressions from extracting the scheduler.**
   - `host.rs` holds protocol v1's lifecycle guarantees, so move it without changing behavior.
   - Keep TST-03, TST-04, and the golden fixtures as the gate.
-- **The rename touches every import.** Renaming `pervue-core` to `seatline-core` is mechanical but broad. Do it in one change, and coordinate it with open branches.
+- **The rename touches every import.** Renaming `__HISTORIC_TABBEAM_CORE__` to `seatline-core` is mechanical but broad. Do it in one change, and coordinate it with open branches.
 - **Supervision is only as good as its tests.** The panic tests (§6) are part of Stage 1, not a follow-up.
 - **Stricter checks on Gemini and Grok.**
-  - Failing on anything the boundary doesn't expect is the right default: an undocumented Antigravity step type, or a Grok `init` field that doesn't match. But it broke real Gemini turns in Pervue until the 2026-09-28 fix, and any consumer inherits the behavior.
+  - Failing on anything the boundary doesn't expect is the right default: an undocumented Antigravity step type, or a Grok `init` field that doesn't match. But it broke real Gemini turns in TabBeam until the 2026-09-28 fix, and any consumer inherits the behavior.
   - Run the live smoke tests for all four providers, including the Gemini and Grok tests Stage 1 adds, against each new CLI release.
-- **Codex's state database.** `conversation.forget` doesn't clear it today, and it can hold a thread's first user message. That gap predates this proposal, and it is documented in `native/README.md`. Stage 1 should decide whether Pervue can remove a thread's entry through Codex itself, or documents the gap as accepted.
+- **Codex's state database.** `conversation.forget` doesn't clear it today, and it can hold a thread's first user message. That gap predates this proposal, and it is documented in `native/README.md`. Stage 1 should decide whether TabBeam can remove a thread's entry through Codex itself, or documents the gap as accepted.
 - **Windows.**
   - There is no Job Object yet ([process.rs][p-process]), so only the provider process itself is stopped, not its descendants.
   - Don't claim process-tree kills on Windows.
-- **Licensing.** Pervue has no license yet. The library's is `MIT OR Apache-2.0` (decided 2026-09-29); add the license files and notice when its repository is created, before it is made public or its crates are published.
+- **Licensing.** TabBeam has no license yet. The library's is `MIT OR Apache-2.0` (decided 2026-09-29); add the license files and notice when its repository is created, before it is made public or its crates are published.
 
 ## 10. Open decisions
 
 1. ~~The library's name.~~ Decided: `seatline` (2026-09-29).
 2. ~~The license.~~ Decided: `MIT OR Apache-2.0`.
-3. What should the default absolute turn limit be, and can applications raise it? Conclave uses 180 s today, and Pervue has no limit.
-4. Should Pervue keep its per-turn sign-in checks for Claude and Codex as they are, or set a caching policy? Pervue's checks guard against a signed-out CLI, not against the wrong kind of billing.
+3. What should the default absolute turn limit be, and can applications raise it? Conclave uses 180 s today, and TabBeam has no limit.
+4. Should TabBeam keep its per-turn sign-in checks for Claude and Codex as they are, or set a caching policy? TabBeam's checks guard against a signed-out CLI, not against the wrong kind of billing.
 
 ## 11. Revision history
 
 **2026-09-28, first review.**
 - **Framing.** Conclave justifies a boundary between applications.
-- **Boundary.** Session maps, managed continuation, and transcript removal stay in `pervue-host`, behind a continuation hook.
+- **Boundary.** Session maps, managed continuation, and transcript removal stay in `tabbeam-host`, behind a continuation hook.
 - **Protocol.** The turn lifecycle is specified.
 - **Runtime loss.** Errors are marked `maybe_started` when a turn may have run.
 - **Namespace.** It is fixed at start and described as accident protection.
@@ -582,50 +585,50 @@ Long-lived provider processes stay out of scope (§4) unless the measurements sh
 - **Sign-in checks.** They never run alongside a turn. Caching is an explicit policy of the application, invalidated by any failure, with its billing tradeoff stated (§5, §8).
 - **Supervision.** A supervisor outside the scheduler thread, and `catch_unwind` around each adapter, produce the runtime-loss outcomes. Panic tests are part of Phase 1 (§6).
 - **IDs.** The runtime generates turn IDs, so no history of used IDs builds up (§6).
-- **Crate ownership.** `pervue-core` becomes `seatline-core` inside the runtime workspace. Applications never depend on Pervue's crates (§4).
+- **Crate ownership.** `__HISTORIC_TABBEAM_CORE__` becomes `seatline-core` inside the runtime workspace. Applications never depend on TabBeam's crates (§4).
 - **Events.** `Started` keeps its current meaning, "the provider accepted the turn", because the start limit depends on it. A new `Launched` event marks the moment the process starts (§6).
-- **Grok.** It landed in Pervue in one-shot headless mode, so it now moves into the runtime as the second stateless provider. The evidence is updated to Pervue `fc7284b` (§1, §7).
+- **Grok.** It landed in TabBeam in one-shot headless mode, so it now moves into the runtime as the second stateless provider. The evidence is updated to TabBeam `fc7284b` (§1, §7).
 
 **2026-09-28, third review.**
 - **Exactly one ending.** Every turn `start_turn` accepts ends exactly once, even if the provider never launches or never reaches `Started`. A lifecycle diagram shows every path (§6).
-- **Second-consumer gate.** Phase 1 now only prepares the runtime inside Pervue. Each provider phase waits until a second application has accepted a plan to use that execution mode, starting with Gemini (§7).
+- **Second-consumer gate.** Phase 1 now only prepares the runtime inside TabBeam. Each provider phase waits until a second application has accepted a plan to use that execution mode, starting with Gemini (§7).
 - **Panic boundary.** It covers every entry into provider-controlled code, including every `Exchange::next` and `Exchange::cancel` call, not just the first call into an adapter (§6).
 - **Environment extensions.** They come only from trusted startup configuration, never from per-turn input (§4).
 - **Execution modes.** The runtime shares one adapter per execution mode, not per CLI. An application may keep a different mode of the same CLI outside the shared set (Summary, §4).
 
 **2026-09-28, three-stage plan.**
 - **Stages.** Three stages, each with an exit bar, replace the provider-by-provider phases:
-  1. harden inside Pervue;
-  2. extract the library with all four adapters at once, with Pervue switching to it first;
+  1. harden inside TabBeam;
+  2. extract the library with all four adapters at once, with TabBeam switching to it first;
   3. Conclave integrates all four providers.
 
   The Gemini-first pilot is dropped (§7).
 - **Second consumer.** Conclave committed to the library's mode for all four CLIs, including `codex exec` and Grok's one-shot headless mode, so all four adapters move together (§4).
 - **Repository.** The library moves to its own repository in Stage 2 (Summary, §7).
-- **Host-side hardening.** Stage 1 now includes a fix in `pervue-host`. A search turn must not resume a Claude or Codex session that carried page context in an earlier turn (§7).
+- **Host-side hardening.** Stage 1 now includes a fix in `tabbeam-host`. A search turn must not resume a Claude or Codex session that carried page context in an earlier turn (§7).
 - **Conclave's proposal.** It moved to the Conclave repository, where it belongs.
 
-**2026-09-28, PR review (davletovb/pervue#40).**
-- **Session event.** A new `Session(handle)` event carries a resumable provider's native session. It comes before `Started`, and again if the session changes, so `pervue-host` can keep its conversation→session map (§4, §6).
-- **One supervisor for both entry points.** The same supervisor now sits beneath both `pervue-host`'s loop and the `service` thread. Every scheduler step runs behind `catch_unwind`, so a scheduler panic no longer unwinds the loop that owns Native Messaging. A turn handle whose channel closes before `Ended` reports `Ended` itself (§6).
+**2026-09-28, PR review (davletovb/tabbeam#40).**
+- **Session event.** A new `Session(handle)` event carries a resumable provider's native session. It comes before `Started`, and again if the session changes, so `tabbeam-host` can keep its conversation→session map (§4, §6).
+- **One supervisor for both entry points.** The same supervisor now sits beneath both `tabbeam-host`'s loop and the `service` thread. Every scheduler step runs behind `catch_unwind`, so a scheduler panic no longer unwinds the loop that owns Native Messaging. A turn handle whose channel closes before `Ended` reports `Ended` itself (§6).
 
-**2026-09-28, second PR review (davletovb/pervue#40).**
-- **Session policy.** Every turn now states `Ephemeral` or `Persistent`, so a shared adapter knows whether to keep the provider's native session. Pervue's first Claude or Codex turn keeps it, and every Conclave call leaves nothing behind (§5, §6).
+**2026-09-28, second PR review (davletovb/tabbeam#40).**
+- **Session policy.** Every turn now states `Ephemeral` or `Persistent`, so a shared adapter knows whether to keep the provider's native session. TabBeam's first Claude or Codex turn keeps it, and every Conclave call leaves nothing behind (§5, §6).
 - **Search turns.** A search turn never resumes a native Claude or Codex session. It starts a new one from the bounded dialogue history, which never includes page context, and the host replaces its mapping. The protection survives host restarts without stored metadata (§7).
 
-**2026-09-28, third PR review (davletovb/pervue#40).**
+**2026-09-28, third PR review (davletovb/tabbeam#40).**
 - **Superseded sessions.** When a conversation's session is replaced, by a search turn or by Claude reporting a different session, the host records the old handle durably and removes its transcript. `conversation.forget` removes every session a conversation has used. A new test covers "page-context turn → search turn → delete" across a host restart (§4, §7).
 - **Ephemeral Codex.** `Ephemeral` `codex exec` turns use `--ephemeral`. Deleting rollout files isn't accepted as a fallback, because Codex's state database can keep the first user message. Every mode's `Ephemeral` behavior is verified by its live smoke test, and a mode that can't meet it refuses `Ephemeral` (§4, §5, §7).
 
 **2026-09-29, LIB-10 preparation (in-tree).**
-- **Boundary.** Before the move, the adapters were made to depend on nothing else in `pervue-host`: a namespaced `Layout` for every path, runtime-only error codes and capabilities (with `tool_isolation`, which Codex already computed as page context), a Turn-based `Provider`, and the `conversations` layer that owns everything about conversations (§4).
-- **Tool policy.** A third value, `ProviderDefault`, so a plain Pervue turn stays unrestricted (§5).
+- **Boundary.** Before the move, the adapters were made to depend on nothing else in `tabbeam-host`: a namespaced `Layout` for every path, runtime-only error codes and capabilities (with `tool_isolation`, which Codex already computed as page context), a Turn-based `Provider`, and the `conversations` layer that owns everything about conversations (§4).
+- **Tool policy.** A third value, `ProviderDefault`, so a plain TabBeam turn stays unrestricted (§5).
 - **Session loss.** A resumed turn that can't resume says `SessionLost` (`Confirmed` or `Suspected`), and the application chooses whether to rebuild from history; Claude and Codex recover differently, as they already did (§6).
 - **Cleanup.** Per-turn cleanup records are grouped by an opaque `cleanup_group` the application supplies, which keeps Gemini's record layout (§4).
 
 **2026-09-29, LIB-10 step 2 (in-tree).**
-- **Crates.** The platform layer is `seatline-platform` and the adapters are `seatline-providers`, beside `seatline-core`, the scheduler and the service. None depends on `pervue-host`, and a CI job (`scripts/check-runtime-independence.mjs`) fails if any `seatline-*` crate depends on another crate of the workspaces, which are the application's.
-- **Tests and fuzzing.** The fake provider is a library (`seatline-fake-provider`) with a small binary in each package that runs it. `seatline-tests` holds the adapter tests at the runtime's level (a `Turn` in, `Update`s out), a provider contract that all four adapters meet through the `Provider` trait alone, the hostile matrix under the scheduler's supervisor, the threaded service against real adapters, and the process and stream tests. Pervue's `test_provider` keeps what maps conversations onto turns, the host's hostile matrix, and the contract as Pervue serves the providers. `stream_lines` moved to `seatline-fuzz`, which depends on `seatline-core` alone; `frame_reader` and `protocol` stay with Pervue.
+- **Crates.** The platform layer is `seatline-platform` and the adapters are `seatline-providers`, beside `seatline-core`, the scheduler and the service. None depends on `tabbeam-host`, and a CI job (`scripts/check-runtime-independence.mjs`) fails if any `seatline-*` crate depends on another crate of the workspaces, which are the application's.
+- **Tests and fuzzing.** The fake provider is a library (`seatline-fake-provider`) with a small binary in each package that runs it. `seatline-tests` holds the adapter tests at the runtime's level (a `Turn` in, `Update`s out), a provider contract that all four adapters meet through the `Provider` trait alone, the hostile matrix under the scheduler's supervisor, the threaded service against real adapters, and the process and stream tests. TabBeam's `test_provider` keeps what maps conversations onto turns, the host's hostile matrix, and the contract as TabBeam serves the providers. `stream_lines` moved to `seatline-fuzz`, which depends on `seatline-core` alone; `frame_reader` and `protocol` stay with TabBeam.
 
 [p-claude]: ../../native/providers/src/claude/mod.rs
 [p-claude-output]: ../../native/providers/src/claude/output.rs
