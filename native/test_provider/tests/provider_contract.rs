@@ -21,6 +21,7 @@ fn ask(text: &str) -> SendRequest {
         native_search: false,
         session_policy: SessionPolicy::Persistent,
         fresh_session: false,
+        conversation: pervue_host::providers::ConversationSlot::default(),
     }
 }
 

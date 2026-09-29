@@ -7,6 +7,7 @@
 //! provider runtime boundary.
 
 pub mod conversation;
+pub mod conversations;
 pub mod diagnostics;
 pub mod framing;
 pub mod host;

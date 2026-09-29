@@ -6,8 +6,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use pervue_host::conversation::{HistoryMessage, Role};
+use pervue_host::conversations::{Conversations, SessionStore};
 use pervue_host::providers::gemini::Gemini;
-use pervue_host::providers::{ConversationProvider, Exchange, SendRequest, Update};
+use pervue_host::providers::{
+    ConversationProvider, ConversationSlot, Exchange, SendRequest, Update,
+};
 use runtime_core::discovery::SearchPath;
 use runtime_core::turn::SessionPolicy;
 
@@ -38,7 +41,12 @@ impl FakeGemini {
         Self { dir, home }
     }
 
-    fn adapter(&self) -> Gemini {
+    /// Gemini, served the way Pervue serves it: conversations over the adapter.
+    fn adapter(&self) -> Conversations<Gemini> {
+        Conversations::new(self.gemini(), SessionStore::new(None))
+    }
+
+    fn gemini(&self) -> Gemini {
         let home_name = if cfg!(unix) { "HOME" } else { "USERPROFILE" };
         Gemini::new(
             SearchPath::new([self.dir.clone()]),
@@ -107,6 +115,7 @@ fn request(conversation_id: Option<String>, native_search: bool) -> SendRequest 
         native_search,
         session_policy: SessionPolicy::Ephemeral,
         fresh_session: false,
+        conversation: ConversationSlot::default(),
     }
 }
 
@@ -143,24 +152,24 @@ fn one_shot_turns_continue_from_bounded_pervue_history() {
     let fake = FakeGemini::install();
     let adapter = fake.adapter();
 
-    let first = collect(adapter.send(request(None, false)));
-    let conversation = first
-        .iter()
-        .find_map(|update| match update {
-            Update::ConversationCreated(id) => Some(id.clone()),
-            _ => None,
-        })
-        .expect("conversation created");
+    let request_one = request(None, false);
+    let slot = request_one.conversation.clone();
+    let first = collect(adapter.send(request_one));
+    assert!(slot.created(), "a new conversation is announced");
+    let conversation = slot.id().expect("conversation created");
     assert_eq!(answer_text(&first), "Gemini answer");
     assert!(matches!(first.last(), Some(Update::Completed)));
 
-    let second = collect(adapter.send(request(Some(conversation.clone()), false)));
+    let request_two = request(Some(conversation.clone()), false);
+    let slot = request_two.conversation.clone();
+    let second = collect(adapter.send(request_two));
+    assert!(!slot.created(), "a continued conversation isn't announced");
+    assert_eq!(slot.id().as_deref(), Some(conversation.as_str()));
     assert!(
-        !second
+        second
             .iter()
-            .any(|update| matches!(update, Update::ConversationCreated(_)))
+            .any(|update| matches!(update, Update::Started { .. }))
     );
-    assert!(second.iter().any(|update| matches!(update, Update::Started { conversation_id: Some(id) } if id == &conversation)));
     assert_eq!(answer_text(&second), "Gemini continued answer");
     assert!(matches!(second.last(), Some(Update::Completed)));
 }
@@ -216,14 +225,13 @@ fn a_failed_first_turn_can_retry_with_empty_completed_history() {
 
     let mut first_request = request(None, false);
     first_request.model = Some("gemini-tool-violation".to_owned());
+    let slot = first_request.conversation.clone();
     let first = collect(adapter.send(first_request));
-    let conversation = first
-        .iter()
-        .find_map(|update| match update {
-            Update::ConversationCreated(id) => Some(id.clone()),
-            _ => None,
-        })
-        .expect("failed first turn still announced its Pervue conversation");
+    assert!(
+        slot.created(),
+        "a failed first turn still created its conversation"
+    );
+    let conversation = slot.id().expect("the conversation the failed turn created");
     assert!(matches!(
         first.last(),
         Some(Update::Failed(error)) if error.reason == "PROVIDER_BOUNDARY_VIOLATION"
@@ -232,11 +240,13 @@ fn a_failed_first_turn_can_retry_with_empty_completed_history() {
     let mut retry = request(Some(conversation.clone()), false);
     retry.history.clear();
     retry.model = Some("gemini-test".to_owned());
+    let slot = retry.conversation.clone();
     let updates = collect(adapter.send(retry));
+    assert_eq!(slot.id().as_deref(), Some(conversation.as_str()));
     assert!(
         updates
             .iter()
-            .any(|update| matches!(update, Update::Started { conversation_id: Some(id) } if id == &conversation))
+            .any(|update| matches!(update, Update::Started { .. }))
     );
     assert!(matches!(updates.last(), Some(Update::Completed)));
 }
@@ -324,7 +334,10 @@ fn persisted_cleanup_records_survive_adapter_restart_and_forget_retries_them() {
     std::fs::write(record.join(agy_id), "pending\n").unwrap();
 
     // A fresh adapter has an empty in-memory map and must recover from disk.
-    let adapter = fake.adapter().with_cleanup_dir(cleanup_dir.clone());
+    let adapter = Conversations::new(
+        fake.gemini().with_cleanup_dir(cleanup_dir.clone()),
+        SessionStore::new(None),
+    );
     let updates = collect(adapter.forget(conversation));
     assert!(matches!(updates.as_slice(), [Update::Completed]));
     assert!(!fake.brain().join(agy_id).exists());

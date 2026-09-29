@@ -27,15 +27,16 @@ use super::environment;
 use super::forget;
 use super::layout::Layout;
 use super::private_fs;
-use super::{ConversationProvider, Exchange, Scripted, SendRequest, Timeouts, Update};
-use crate::conversation::provider_prompt;
+use super::{Exchange, Provider, Scripted, Timeouts, Update};
 use runtime_core::discovery::SearchPath;
 use runtime_core::process::{Event, Exit, Process, ProcessSpec};
+use runtime_core::prompt::{self, SYSTEM_PROMPT_UNSUPPORTED};
 use runtime_core::protocol::Failure as ErrorBody;
 use runtime_core::protocol::{
     Authentication, Availability, Capabilities, Capability, ErrorCode, ModelOption, ProviderState,
 };
 use runtime_core::stream::{BUSY_LIMIT, LineStream, Output};
+use runtime_core::turn::{SessionPolicy, ToolPolicy, Turn as TurnRequest};
 
 pub mod output;
 
@@ -101,11 +102,6 @@ const BOUNDARY_VIOLATION: ErrorBody = ErrorBody {
 const AUTH_MODE_REJECTED: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderNotAuthenticated,
     reason: "AUTH_REJECTED",
-    retryable: false,
-};
-const UNKNOWN_CONVERSATION: ErrorBody = ErrorBody {
-    code: ErrorCode::InvalidRequest,
-    reason: "UNKNOWN_CONVERSATION",
     retryable: false,
 };
 const PERSISTENT_SESSION_UNSUPPORTED: ErrorBody = ErrorBody {
@@ -281,7 +277,7 @@ impl Grok {
     }
 }
 
-impl ConversationProvider for Grok {
+impl Provider for Grok {
     fn id(&self) -> &str {
         ID
     }
@@ -357,11 +353,17 @@ impl ConversationProvider for Grok {
         })
     }
 
-    fn send(&self, request: SendRequest) -> Box<dyn Exchange> {
-        if request.session_policy != runtime_core::turn::SessionPolicy::Ephemeral {
+    fn send(&self, request: TurnRequest) -> Box<dyn Exchange> {
+        if request.session != SessionPolicy::Ephemeral {
             return Box::new(Scripted::failed(PERSISTENT_SESSION_UNSUPPORTED));
         }
-        if request.native_search {
+        if request.validate().is_err() {
+            return Box::new(Scripted::failed(super::INVALID_TURN));
+        }
+        if request.system.is_some() {
+            return Box::new(Scripted::failed(SYSTEM_PROMPT_UNSUPPORTED));
+        }
+        if request.tools == ToolPolicy::NativeWebSearch {
             return Box::new(Scripted::failed(SEARCH_UNSUPPORTED));
         }
         if request
@@ -371,13 +373,6 @@ impl ConversationProvider for Grok {
         {
             return Box::new(Scripted::failed(MODEL_NOT_SUPPORTED));
         }
-        if request
-            .conversation_id
-            .as_deref()
-            .is_some_and(|id| !private_fs::is_conversation_id(id))
-        {
-            return Box::new(Scripted::failed(UNKNOWN_CONVERSATION));
-        }
         let Some(executable) = self.executable() else {
             return Box::new(Scripted::failed(NOT_INSTALLED));
         };
@@ -385,16 +380,12 @@ impl ConversationProvider for Grok {
             return Box::new(Scripted::failed(NO_WORKSPACE));
         };
 
-        let prompt = provider_prompt(&request.history, request.context.as_ref(), &request.text);
+        let prompt = prompt::render(&request.messages, request.tools);
         let workspace = match TurnWorkspace::create(&base, &prompt) {
             Ok(workspace) => workspace,
             Err(_) => return Box::new(Scripted::failed(NO_WORKSPACE)),
         };
 
-        let new_conversation = request.conversation_id.is_none();
-        let conversation_id = request
-            .conversation_id
-            .unwrap_or_else(private_fs::new_conversation_id);
         let args = grok_args(&workspace, request.model.as_deref());
         let expected_cwd = workspace.path().to_path_buf();
         let spec = self
@@ -409,8 +400,6 @@ impl ConversationProvider for Grok {
             stream: LineStream::new(process, MAX_LINE_BYTES).keeping_stderr_tail(STDERR_TAIL_BYTES),
             workspace: Some(workspace),
             queue: VecDeque::from([Update::Launched]),
-            conversation_id,
-            announce_conversation: new_conversation,
             expected_cwd,
             requested_model: request.model,
             initialized: false,
@@ -715,8 +704,6 @@ struct Turn {
     stream: LineStream,
     workspace: Option<TurnWorkspace>,
     queue: VecDeque<Update>,
-    conversation_id: String,
-    announce_conversation: bool,
     expected_cwd: PathBuf,
     requested_model: Option<String>,
     initialized: bool,
@@ -771,12 +758,8 @@ impl Turn {
                     return self.fail(MCP_MISMATCH);
                 }
                 self.initialized = true;
-                if self.announce_conversation {
-                    self.queue
-                        .push_back(Update::ConversationCreated(self.conversation_id.clone()));
-                }
                 self.queue.push_back(Update::Started {
-                    conversation_id: Some(self.conversation_id.clone()),
+                    conversation_id: None,
                 });
             }
             Ok(Line::Assistant {

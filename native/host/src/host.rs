@@ -40,7 +40,9 @@ use crate::protocol::events::{
 };
 use crate::protocol::messages;
 use crate::protocol::request::{self, Method, RequestFailure, RequestId};
-use crate::providers::{Exchange, Providers, Scripted, SendRequest, StatusOfAll, Timeouts, Update};
+use crate::providers::{
+    ConversationSlot, Exchange, Providers, Scripted, SendRequest, StatusOfAll, Timeouts, Update,
+};
 use runtime_core::protocol::{ErrorCode as FailureCode, Failure};
 use runtime_core::stream::split_text;
 
@@ -353,6 +355,11 @@ struct Running {
     /// Whether the host serves the provider the request names.
     provider_served: bool,
     conversation_id: Option<String>,
+    /// Which conversation a `conversation.send` serves, as its provider layer
+    /// reports it.
+    slot: Option<ConversationSlot>,
+    /// `conversation.created` went out for a conversation the request created.
+    announced: bool,
     started_at: Instant,
     stop: Option<Stop>,
 }
@@ -374,6 +381,8 @@ impl Running {
             provider_id,
             provider_served,
             conversation_id,
+            slot: None,
+            announced: false,
             started_at: Instant::now(),
             stop: None,
         }
@@ -523,6 +532,7 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                 let conversation_id = conversation_id.map(|id| id.decode().into_owned());
                 let provider = self.providers.get(&provider_id);
                 let provider_served = provider.is_some();
+                let slot = ConversationSlot::default();
                 let question = text.decode().into_owned();
                 let native_search = search.is_some();
                 let native_supported = provider.as_ref().is_some_and(|provider| {
@@ -562,6 +572,7 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                         let provider_timeouts = provider.timeouts();
                         let persistent = provider.supports_persistent_session();
                         let request = SendRequest {
+                            conversation: slot.clone(),
                             text: question,
                             history,
                             conversation_id: conversation_id.clone(),
@@ -587,14 +598,16 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                     }
                     None => (Box::new(Scripted::failed(PROVIDER_NOT_INSTALLED)), None),
                 };
-                self.start_running(
+                let mut running = self.start_running(
                     id,
                     "conversation.send",
                     Some((provider_id, provider_served)),
                     conversation_id,
                     timeouts,
                     exchange,
-                )
+                );
+                running.slot = Some(slot);
+                running
             }
             Method::ProviderStatus { provider_id } => {
                 let provider_id = provider_id.map(|id| id.decode().into_owned());
@@ -707,6 +720,13 @@ impl<W: Write + ?Sized, L: Write> Session<'_, W, L> {
                     };
                     if let Update::ConversationCreated(conversation_id) = &update {
                         self.conversations.insert(conversation_id.clone());
+                    }
+                    if matches!(update, Update::Started { .. }) {
+                        if let Some(slot) = &self.running[index].slot {
+                            if let (true, Some(id)) = (slot.created(), slot.id()) {
+                                self.conversations.insert(id);
+                            }
+                        }
                     }
                     forward(&mut *self.output, &mut self.running[index], update)?;
                 }
@@ -852,6 +872,20 @@ fn forward<W: Write + ?Sized>(
             written
         }
         Update::Started { conversation_id } => {
+            let conversation_id =
+                conversation_id.or_else(|| running.slot.as_ref().and_then(ConversationSlot::id));
+            let created = running.slot.as_ref().is_some_and(ConversationSlot::created);
+            if let (true, false, Some(id)) = (created, running.announced, &conversation_id) {
+                running.announced = true;
+                write_event(
+                    output,
+                    raw,
+                    Event::ConversationCreated,
+                    &ConversationCreated {
+                        conversation_id: id,
+                    },
+                )?;
+            }
             let payload = ResponseStarted {
                 provider_id: running.provider_id.as_deref().unwrap_or_default(),
                 conversation_id: conversation_id.as_deref(),
@@ -1315,6 +1349,107 @@ mod tests {
 
     fn with(provider: TestProvider) -> Providers {
         Providers::new(vec![Box::new(fake::Fake), Box::new(provider)])
+    }
+
+    /// A provider whose conversation layer reports through the request's
+    /// slot, as `Conversations` does, instead of through updates.
+    struct SlotProvider;
+
+    impl ConversationProvider for SlotProvider {
+        fn id(&self) -> &str {
+            "slotted"
+        }
+
+        fn timeouts(&self) -> Timeouts {
+            Timeouts {
+                start: Duration::from_secs(60),
+                idle: Duration::from_secs(60),
+                max_turn: Duration::from_secs(180),
+                stop_grace: Duration::ZERO,
+            }
+        }
+
+        fn capabilities(&self) -> Capabilities {
+            fake::STATUS.capabilities
+        }
+
+        fn status(&self) -> Box<dyn Exchange> {
+            Box::new(Scripted::new([Update::Completed]))
+        }
+
+        fn send(&self, request: SendRequest) -> Box<dyn Exchange> {
+            match request.conversation_id {
+                Some(id) => request.conversation.set(id, false),
+                None => request.conversation.set("conv_0123456789abcdef", true),
+            }
+            Box::new(Scripted::new([
+                Update::Launched,
+                Update::Started {
+                    conversation_id: None,
+                },
+                Update::Delta("hi".to_owned()),
+                Update::Completed,
+            ]))
+        }
+    }
+
+    #[test]
+    fn a_conversation_the_layer_created_is_announced_just_before_the_response_starts() {
+        let providers = Providers::new(vec![Box::new(SlotProvider)]);
+        let requests = [
+            request(
+                "req_new",
+                "conversation.send",
+                r#"{"provider_id":"slotted","input":{"text":"one"}}"#,
+            ),
+            request(
+                "req_next",
+                "conversation.send",
+                r#"{"provider_id":"slotted","conversation_id":"conv_0123456789abcdef","input":{"text":"two"}}"#,
+            ),
+        ];
+        let frames: Vec<&str> = requests.iter().map(String::as_str).collect();
+        let session = run_session(&providers, framed(&frames).as_slice());
+        assert_eq!(session.result, Ok(()));
+        let events = session.events();
+        let for_request = |id: &str| -> Vec<&Value> {
+            events[1..]
+                .iter()
+                .filter(|event| event["request_id"] == id)
+                .collect()
+        };
+
+        let new = for_request("req_new");
+        let names: Vec<&str> = new.iter().map(|e| e["event"].as_str().unwrap()).collect();
+        assert_eq!(
+            names,
+            [
+                "conversation.created",
+                "response.started",
+                "response.delta",
+                "response.completed"
+            ]
+        );
+        assert_eq!(
+            new[0]["payload"],
+            json!({"conversation_id": "conv_0123456789abcdef"})
+        );
+        assert_eq!(
+            new[1]["payload"],
+            json!({"provider_id": "slotted", "conversation_id": "conv_0123456789abcdef"})
+        );
+
+        // A conversation that already existed isn't announced again.
+        let next = for_request("req_next");
+        let names: Vec<&str> = next.iter().map(|e| e["event"].as_str().unwrap()).collect();
+        assert_eq!(
+            names,
+            ["response.started", "response.delta", "response.completed"]
+        );
+        assert_eq!(
+            next[0]["payload"]["conversation_id"],
+            "conv_0123456789abcdef"
+        );
     }
 
     #[test]

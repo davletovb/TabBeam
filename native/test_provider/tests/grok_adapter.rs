@@ -6,8 +6,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use pervue_host::conversation::{HistoryMessage, Role};
+use pervue_host::conversations::{Conversations, SessionStore};
 use pervue_host::providers::grok::Grok;
-use pervue_host::providers::{ConversationProvider, Exchange, SendRequest, Update};
+use pervue_host::providers::{
+    ConversationProvider, ConversationSlot, Exchange, SendRequest, Update,
+};
 use runtime_core::discovery::SearchPath;
 use runtime_core::turn::SessionPolicy;
 
@@ -54,26 +57,33 @@ impl FakeGrok {
         ]
     }
 
-    fn adapter(&self) -> Grok {
-        Grok::new(
-            SearchPath::new([self.dir.clone()]),
-            self.dir.join("workspace"),
+    /// Grok, served the way Pervue serves it: conversations over the adapter.
+    fn adapter(&self) -> Conversations<Grok> {
+        Conversations::new(
+            Grok::new(
+                SearchPath::new([self.dir.clone()]),
+                self.dir.join("workspace"),
+            )
+            .with_environment(self.environment()),
+            SessionStore::new(None),
         )
-        .with_environment(self.environment())
     }
 
-    fn adapter_with_environment(&self, extra: &[(&str, PathBuf)]) -> Grok {
+    fn adapter_with_environment(&self, extra: &[(&str, PathBuf)]) -> Conversations<Grok> {
         let mut environment = self.environment();
         environment.extend(
             extra
                 .iter()
                 .map(|(name, value)| (OsString::from(name), value.as_os_str().to_os_string())),
         );
-        Grok::new(
-            SearchPath::new([self.dir.clone()]),
-            self.dir.join("workspace"),
+        Conversations::new(
+            Grok::new(
+                SearchPath::new([self.dir.clone()]),
+                self.dir.join("workspace"),
+            )
+            .with_environment(environment),
+            SessionStore::new(None),
         )
-        .with_environment(environment)
     }
 
     fn turn_dirs(&self) -> Vec<PathBuf> {
@@ -140,6 +150,7 @@ fn request(conversation_id: Option<String>, native_search: bool, model: &str) ->
         native_search,
         session_policy: SessionPolicy::Ephemeral,
         fresh_session: false,
+        conversation: ConversationSlot::default(),
     }
 }
 
@@ -218,14 +229,11 @@ fn one_shot_turns_continue_from_bounded_pervue_history() {
     let fake = FakeGrok::install();
     let adapter = fake.adapter();
 
-    let first = collect(adapter.send(request(None, false, "grok-4.6")));
-    let conversation = first
-        .iter()
-        .find_map(|update| match update {
-            Update::ConversationCreated(id) => Some(id.clone()),
-            _ => None,
-        })
-        .expect("conversation created");
+    let first_request = request(None, false, "grok-4.6");
+    let slot = first_request.conversation.clone();
+    let first = collect(adapter.send(first_request));
+    assert!(slot.created(), "a new conversation is announced");
+    let conversation = slot.id().expect("conversation created");
     assert_eq!(answer_text(&first), "Grok answer");
     assert!(
         first
@@ -234,16 +242,16 @@ fn one_shot_turns_continue_from_bounded_pervue_history() {
     );
     assert!(matches!(first.last(), Some(Update::Completed)));
 
-    let second = collect(adapter.send(request(Some(conversation.clone()), false, "grok-4.6")));
+    let second_request = request(Some(conversation.clone()), false, "grok-4.6");
+    let slot = second_request.conversation.clone();
+    let second = collect(adapter.send(second_request));
+    assert!(!slot.created(), "a continued conversation isn't announced");
+    assert_eq!(slot.id().as_deref(), Some(conversation.as_str()));
     assert!(
-        !second
+        second
             .iter()
-            .any(|update| matches!(update, Update::ConversationCreated(_)))
+            .any(|update| matches!(update, Update::Started { .. }))
     );
-    assert!(second.iter().any(|update| matches!(
-        update,
-        Update::Started { conversation_id: Some(id) } if id == &conversation
-    )));
     assert_eq!(answer_text(&second), "Grok follow-up answer");
     assert!(matches!(second.last(), Some(Update::Completed)));
 }

@@ -22,16 +22,17 @@ use super::environment;
 use super::forget;
 use super::layout::Layout;
 use super::private_fs;
-use super::{ConversationProvider, Exchange, Scripted, SendRequest, Timeouts, Update};
-use crate::conversation::{SEARCH_INSTRUCTIONS, provider_prompt};
+use super::{Cleanup, Exchange, Provider, Scripted, Timeouts, Update};
 use crate::search::{NATIVE_SEARCH_NO_SOURCES, SourceCollector, codex_message_sources};
 use runtime_core::discovery::SearchPath;
 use runtime_core::process::{Event, Exit, Process, ProcessSpec};
+use runtime_core::prompt::{self, SYSTEM_PROMPT_UNSUPPORTED};
 use runtime_core::protocol::Failure as ErrorBody;
 use runtime_core::protocol::{
     Authentication, Availability, Capabilities, Capability, ErrorCode, ModelOption, ProviderState,
 };
 use runtime_core::stream::{BUSY_LIMIT, LineStream, Output};
+use runtime_core::turn::{SessionPolicy, ToolPolicy, Turn as TurnRequest, is_cleanup_group};
 
 pub mod output;
 
@@ -101,11 +102,6 @@ const AGENT_NOT_USED: ErrorBody = ErrorBody {
 const PERMISSIONS_TOO_OPEN: ErrorBody = ErrorBody {
     code: ErrorCode::ProviderFailed,
     reason: "PROVIDER_PERMISSIONS_TOO_OPEN",
-    retryable: false,
-};
-const UNKNOWN_CONVERSATION: ErrorBody = ErrorBody {
-    code: ErrorCode::InvalidRequest,
-    reason: "UNKNOWN_CONVERSATION",
     retryable: false,
 };
 const PERSISTENT_SESSION_UNSUPPORTED: ErrorBody = ErrorBody {
@@ -258,7 +254,7 @@ impl Gemini {
     }
 }
 
-impl ConversationProvider for Gemini {
+impl Provider for Gemini {
     fn id(&self) -> &str {
         ID
     }
@@ -319,9 +315,15 @@ impl ConversationProvider for Gemini {
         })
     }
 
-    fn send(&self, request: SendRequest) -> Box<dyn Exchange> {
-        if request.session_policy != runtime_core::turn::SessionPolicy::Ephemeral {
+    fn send(&self, request: TurnRequest) -> Box<dyn Exchange> {
+        if request.session != SessionPolicy::Ephemeral {
             return Box::new(Scripted::failed(PERSISTENT_SESSION_UNSUPPORTED));
+        }
+        if request.validate().is_err() {
+            return Box::new(Scripted::failed(super::INVALID_TURN));
+        }
+        if request.system.is_some() {
+            return Box::new(Scripted::failed(SYSTEM_PROMPT_UNSUPPORTED));
         }
         if request
             .model
@@ -330,37 +332,28 @@ impl ConversationProvider for Gemini {
         {
             return Box::new(Scripted::failed(MODEL_NOT_SUPPORTED));
         }
-        if request
-            .conversation_id
-            .as_deref()
-            .is_some_and(|id| !private_fs::is_conversation_id(id))
-        {
-            return Box::new(Scripted::failed(UNKNOWN_CONVERSATION));
-        }
+        let native_search = request.tools == ToolPolicy::NativeWebSearch;
         let Some(executable) = self.executable() else {
             return Box::new(Scripted::failed(NOT_INSTALLED));
         };
         let Ok(base) = self.launch.base_workspace() else {
             return Box::new(Scripted::failed(NO_WORKSPACE));
         };
-        let workspace = match TurnWorkspace::create(&base, request.native_search) {
+        let workspace = match TurnWorkspace::create(&base, native_search) {
             Ok(workspace) => workspace,
             Err(_) => return Box::new(Scripted::failed(NO_WORKSPACE)),
         };
 
-        let new_conversation = request.conversation_id.is_none();
-        let conversation_id = request
-            .conversation_id
-            .unwrap_or_else(private_fs::new_conversation_id);
-        let agent = if request.native_search {
+        let cleanup_group = request
+            .cleanup_group
+            .clone()
+            .unwrap_or_else(|| UNGROUPED.to_owned());
+        let agent = if native_search {
             SEARCH_AGENT
         } else {
             PLAIN_AGENT
         };
-        let mut prompt = provider_prompt(&request.history, request.context.as_ref(), &request.text);
-        if request.native_search {
-            prompt.insert_str(0, SEARCH_INSTRUCTIONS);
-        }
+        let prompt = prompt::render(&request.messages, request.tools);
         let input = serde_json::json!({
             "event": "user",
             "message": { "content": prompt }
@@ -387,13 +380,12 @@ impl ConversationProvider for Gemini {
             cleanup_dir: self.cleanup_dir.clone(),
             pending_cleanups: Rc::clone(&self.pending_cleanups),
             queue: std::mem::take(&mut launched),
-            conversation_id,
-            announce_conversation: new_conversation,
+            cleanup_group,
             expected_agent: agent,
             initialized: false,
             antigravity_conversation: None,
             cancelled: false,
-            native_search: request.native_search,
+            native_search,
             searched: false,
             saw_delta: false,
             answer: String::new(),
@@ -410,26 +402,26 @@ impl ConversationProvider for Gemini {
         })
     }
 
-    fn forget(&self, conversation_id: &str) -> Box<dyn Exchange> {
-        if !private_fs::is_conversation_id(conversation_id) {
-            return Box::new(Scripted::new([Update::Completed]));
+    fn cleanup_group(&self, group: &str) -> Cleanup {
+        if !is_cleanup_group(group) {
+            return Cleanup::nothing();
         }
         let memory_ids = self
             .pending_cleanups
             .borrow()
-            .get(conversation_id)
+            .get(group)
             .cloned()
             .unwrap_or_default();
         let home = self.launch.home.clone();
         let cleanup_dir = self.cleanup_dir.clone();
         let pending = Rc::clone(&self.pending_cleanups);
-        let conversation = conversation_id.to_owned();
-        let work_conversation = conversation.clone();
-        forget::in_background(
+        let group = group.to_owned();
+        let work_group = group.clone();
+        Cleanup::new(
             move || {
                 let mut ids = memory_ids;
                 if let Some(dir) = cleanup_dir.as_deref() {
-                    ids.extend(read_pending_cleanup_ids(dir, &work_conversation)?);
+                    ids.extend(read_pending_cleanup_ids(dir, &work_group)?);
                 }
                 ids.sort();
                 ids.dedup();
@@ -445,12 +437,12 @@ impl ConversationProvider for Gemini {
                     }
                 }
                 if let Some(dir) = cleanup_dir.as_deref() {
-                    forget_cleanup_record(dir, &work_conversation)?;
+                    forget_cleanup_record(dir, &work_group)?;
                 }
                 Ok(())
             },
             move || {
-                pending.borrow_mut().remove(&conversation);
+                pending.borrow_mut().remove(&group);
             },
         )
     }
@@ -634,8 +626,8 @@ struct Turn {
     cleanup_dir: Option<PathBuf>,
     pending_cleanups: PendingCleanups,
     queue: VecDeque<Update>,
-    conversation_id: String,
-    announce_conversation: bool,
+    /// Groups this turn's cleanup records with the others of its group.
+    cleanup_group: String,
     expected_agent: &'static str,
     initialized: bool,
     antigravity_conversation: Option<String>,
@@ -671,13 +663,13 @@ impl Turn {
     fn register_cleanup_id(&mut self, id: String) {
         {
             let mut pending = self.pending_cleanups.borrow_mut();
-            let ids = pending.entry(self.conversation_id.clone()).or_default();
+            let ids = pending.entry(self.cleanup_group.clone()).or_default();
             if !ids.iter().any(|candidate| candidate == &id) {
                 ids.push(id.clone());
             }
         }
         if let Some(dir) = self.cleanup_dir.as_deref() {
-            let _ = record_pending_cleanup_id(dir, &self.conversation_id, &id);
+            let _ = record_pending_cleanup_id(dir, &self.cleanup_group, &id);
         }
     }
 
@@ -687,23 +679,23 @@ impl Turn {
         }
         let empty = {
             let mut pending = self.pending_cleanups.borrow_mut();
-            let empty = if let Some(ids) = pending.get_mut(&self.conversation_id) {
+            let empty = if let Some(ids) = pending.get_mut(&self.cleanup_group) {
                 ids.retain(|candidate| !removed.contains(candidate));
                 ids.is_empty()
             } else {
                 true
             };
             if empty {
-                pending.remove(&self.conversation_id);
+                pending.remove(&self.cleanup_group);
             }
             empty
         };
         if let Some(dir) = self.cleanup_dir.as_deref() {
             for id in removed {
-                let _ = forget_cleanup_id_record(dir, &self.conversation_id, id);
+                let _ = forget_cleanup_id_record(dir, &self.cleanup_group, id);
             }
             if empty {
-                let _ = forget_cleanup_record(dir, &self.conversation_id);
+                let _ = forget_cleanup_record(dir, &self.cleanup_group);
             }
         }
     }
@@ -739,12 +731,8 @@ impl Turn {
                     return self.fail(PERMISSIONS_TOO_OPEN);
                 }
                 self.initialized = true;
-                if self.announce_conversation {
-                    self.queue
-                        .push_back(Update::ConversationCreated(self.conversation_id.clone()));
-                }
                 self.queue.push_back(Update::Started {
-                    conversation_id: Some(self.conversation_id.clone()),
+                    conversation_id: None,
                 });
             }
             Ok(Line::AgentDelta { index, text, done }) => {
@@ -1044,12 +1032,14 @@ fn remove_antigravity_transcript(home: &Path, id: &str) -> io::Result<()> {
     )
 }
 
+/// The cleanup group of turns whose application names none.
+const UNGROUPED: &str = "ungrouped";
 const MAX_PENDING_CLEANUPS: usize = 256;
 const TRANSCRIPT_SCAN_BUDGET: usize = 512;
 const TRANSCRIPT_SCAN_BYTES: u64 = 1024 * 1024;
 
 fn cleanup_conversation_dir(base: &Path, conversation_id: &str) -> io::Result<PathBuf> {
-    if !private_fs::is_conversation_id(conversation_id) {
+    if !is_cleanup_group(conversation_id) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "unsafe Pervue conversation id",
