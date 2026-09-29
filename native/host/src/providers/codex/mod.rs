@@ -1069,9 +1069,14 @@ impl Turn {
                 self.queue.push_back(Update::Activity);
             }
             Ok(Line::Progress) => self.queue.push_back(Update::Activity),
-            Ok(Line::TurnCompleted) if !self.started => self.end(Update::Failed(MALFORMED_OUTPUT)),
-            Ok(Line::TurnCompleted) => {
+            Ok(Line::TurnCompleted(_)) if !self.started => {
+                self.end(Update::Failed(MALFORMED_OUTPUT))
+            }
+            Ok(Line::TurnCompleted(usage)) => {
                 self.flush_held();
+                if usage.input_tokens.is_some() || usage.output_tokens.is_some() {
+                    self.queue.push_back(Update::Usage(usage));
+                }
                 self.turn_ended(Ok(()));
             }
             Ok(Line::TurnFailed(message)) => {

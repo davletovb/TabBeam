@@ -23,6 +23,7 @@ use serde_json::Value;
 
 use crate::protocol::events::ErrorCode;
 use runtime_core::protocol::Failure as ErrorBody;
+use runtime_core::turn::Usage;
 
 /// One line of Codex output, reduced to what the adapter needs.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,7 +36,7 @@ pub enum Line {
     WebSearch,
     /// Work in progress, with nothing to show.
     Progress,
-    TurnCompleted,
+    TurnCompleted(Usage),
     /// The turn failed; the message is Codex's own and is never forwarded.
     TurnFailed(String),
     /// Nothing the adapter acts on.
@@ -72,7 +73,10 @@ pub fn parse(line: &str) -> Result<Line, Malformed> {
             _ => return Err(Malformed),
         },
         "turn.started" => Line::TurnStarted,
-        "turn.completed" => Line::TurnCompleted,
+        "turn.completed" => Line::TurnCompleted(Usage {
+            input_tokens: event.pointer("/usage/input_tokens").and_then(Value::as_u64),
+            output_tokens: event.pointer("/usage/output_tokens").and_then(Value::as_u64),
+        }),
         "turn.failed" => Line::TurnFailed(
             event
                 .pointer("/error/message")
@@ -171,7 +175,7 @@ mod tests {
                 Line::Progress,
                 Line::TurnStarted,
                 Line::AgentMessage("Hello from the mock — ünïcödé ✓".to_owned()),
-                Line::TurnCompleted,
+                Line::TurnCompleted(Usage { input_tokens: Some(12), output_tokens: Some(7) }),
             ]
         );
     }
@@ -187,7 +191,13 @@ mod tests {
     fn a_resumed_turn_reports_the_same_thread() {
         let (first, resumed) = (parse_all(SUCCESS), parse_all(RESUMED));
         assert_eq!(first[0], resumed[0]);
-        assert_eq!(resumed.last(), Some(&Line::TurnCompleted));
+        assert_eq!(
+            resumed.last(),
+            Some(&Line::TurnCompleted(Usage {
+                input_tokens: Some(24),
+                output_tokens: Some(14),
+            }))
+        );
     }
 
     #[test]

@@ -16,7 +16,6 @@ pub enum Line {
     /// The message being streamed ended.
     MessageStop,
     ToolEvents(Vec<ToolEvent>),
-    Progress,
     ResultSuccess {
         session_id: Option<String>,
         text: String,
