@@ -106,40 +106,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "pervue-host"
-version = "0.1.0-dev"
-dependencies = [
- "provider-runtime-scheduler",
- "runtime-core",
- "runtime-platform",
- "runtime-providers",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "pervue-host-fuzz"
-version = "0.0.0"
-dependencies = [
- "libfuzzer-sys",
- "pervue-host",
- "serde_json",
-]
-
-[[package]]
 name = "proc-macro2"
 version = "1.0.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9"
 dependencies = [
  "unicode-ident",
-]
-
-[[package]]
-name = "provider-runtime-scheduler"
-version = "0.1.0-dev"
-dependencies = [
- "runtime-core",
 ]
 
 [[package]]
@@ -167,20 +139,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "runtime-platform"
-version = "0.1.0-dev"
+name = "runtime-fuzz"
+version = "0.0.0"
 dependencies = [
- "nix",
+ "libfuzzer-sys",
  "runtime-core",
-]
-
-[[package]]
-name = "runtime-providers"
-version = "0.1.0-dev"
-dependencies = [
- "runtime-core",
- "runtime-platform",
- "serde_json",
 ]
 
 [[package]]

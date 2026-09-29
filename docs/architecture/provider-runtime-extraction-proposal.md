@@ -37,7 +37,7 @@
 
 ### Pervue
 
-`pervue-core` already holds the primitives the providers share ([core/README](../../native/core/README.md)): `process`, `stream`, `discovery`, `exchange`, `protocol`, and `framing`. The host holds the rest of the plumbing for its four real providers, and some of it is still copied between adapters:
+`pervue-core` already holds the primitives the providers share ([core/README](../../native/runtime-core/README.md)): `process`, `stream`, `discovery`, `exchange`, `protocol`, and `framing`. The host holds the rest of the plumbing for its four real providers, and some of it is still copied between adapters:
 
 | Host-owned piece | Where | Reuse today |
 |---|---|---|
@@ -136,7 +136,7 @@ In order of impact:
 - **A non-Rust application** would get a sidecar executable: a thin wrapper around the service API that speaks a versioned protocol over stdio. It is built only if a consumer needs it.
 - **Not planned:** a C ABI or a Node addon.
   - Both bring FFI, `unsafe` binding code, and in-process crashes into the host application.
-  - A C ABI also needs a versioned C façade ([core/README](../../native/core/README.md#compatibility-and-extraction)).
+  - A C ABI also needs a versioned C façade ([core/README](../../native/runtime-core/README.md#compatibility-and-extraction)).
   - A pure TypeScript port would duplicate the hardest code, and Node can't reproduce some of its guarantees. For example, it can't kill a process group before reaping the child.
 
 **ADR-0002** records:
@@ -623,18 +623,22 @@ Long-lived provider processes stay out of scope (§4) unless the measurements sh
 - **Session loss.** A resumed turn that can't resume says `SessionLost` (`Confirmed` or `Suspected`), and the application chooses whether to rebuild from history; Claude and Codex recover differently, as they already did (§6).
 - **Cleanup.** Per-turn cleanup records are grouped by an opaque `cleanup_group` the application supplies, which keeps Gemini's record layout (§4).
 
-[p-claude]: ../../native/host/src/providers/claude/mod.rs
-[p-claude-output]: ../../native/host/src/providers/claude/output.rs
-[p-codex]: ../../native/host/src/providers/codex/mod.rs
-[p-codex-output]: ../../native/host/src/providers/codex/output.rs
-[p-gemini]: ../../native/host/src/providers/gemini/mod.rs
-[p-grok]: ../../native/host/src/providers/grok/mod.rs
-[p-private-fs]: ../../native/host/src/providers/private_fs.rs
-[p-env]: ../../native/host/src/providers/environment.rs
-[p-workspace]: ../../native/host/src/providers/codex/workspace.rs
-[p-forget]: ../../native/host/src/providers/forget.rs
+**2026-09-29, LIB-10 step 2 (in-tree).**
+- **Crates.** The platform layer is `runtime-platform` and the adapters are `runtime-providers`, beside `runtime-core`, the scheduler and the service. None depends on `pervue-host`, and a CI job (`scripts/check-runtime-independence.mjs`) fails if any crate not named `pervue*` depends on one that is.
+- **Tests and fuzzing.** The fake provider is a library (`runtime-fake-provider`) with a small binary in each package that runs it. `runtime-tests` holds the adapter tests at the runtime's level (a `Turn` in, `Update`s out), a provider contract that all four adapters meet through the `Provider` trait alone, the hostile matrix under the scheduler's supervisor, the threaded service against real adapters, and the process and stream tests. Pervue's `test_provider` keeps what maps conversations onto turns, the host's hostile matrix, and the contract as Pervue serves the providers. `stream_lines` moved to `runtime-fuzz`, which depends on `runtime-core` alone; `frame_reader` and `protocol` stay with Pervue.
+
+[p-claude]: ../../native/providers/src/claude/mod.rs
+[p-claude-output]: ../../native/providers/src/claude/output.rs
+[p-codex]: ../../native/providers/src/codex/mod.rs
+[p-codex-output]: ../../native/providers/src/codex/output.rs
+[p-gemini]: ../../native/providers/src/gemini/mod.rs
+[p-grok]: ../../native/providers/src/grok/mod.rs
+[p-private-fs]: ../../native/platform/src/private_fs.rs
+[p-env]: ../../native/platform/src/environment.rs
+[p-workspace]: ../../native/platform/src/workspace.rs
+[p-forget]: ../../native/platform/src/forget.rs
 [p-host]: ../../native/host/src/host.rs
-[p-process]: ../../native/core/src/process.rs
+[p-process]: ../../native/runtime-core/src/process.rs
 [p-native-connection]: ../../extension/src/background/native-connection.js
 [p-perf]: ../../extension/src/shared/performance.js
 [c-core]: https://github.com/davletovb/conclave/blob/1379a37ccb13d484247122ee215257e642b166fc/packages/core/src/index.ts

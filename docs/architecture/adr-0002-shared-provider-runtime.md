@@ -158,5 +158,9 @@ The [runtime proposal §10](provider-runtime-extraction-proposal.md#10-open-deci
   - The tool policy gained `ProviderDefault` (see Decision 4), and the neutral turn gained an opaque `cleanup_group` that groups a turn's per-turn cleanup records so an application can retry a group together. Pervue passes the conversation ID, which keeps Gemini's existing on-disk record layout, so installed hosts lose no pending deletion.
   - The conversation, its session map, the superseded-session records, and the choice between resuming and replaying the dialogue live in `pervue-host`'s `conversations` layer, above the adapters, as Decision 2 says. The runtime's `Update` no longer has conversation variants.
   - A lone plain first question is sent as it is to every provider, as it always was to Claude and Codex; Gemini and Grok used to add a "Current user question:" label to it.
+- **2026-09-29, LIB-10 step 2.**
+  - The runtime is now made of crates that need nothing of Pervue: `runtime-core`, `runtime-platform` (environment allowlist, private files and workspaces, discovery policy, layout), `runtime-providers` (the `Provider` trait and the four adapters), the scheduler and the service, with their fake provider (`runtime-fake-provider`), tests (`runtime-tests`) and fuzz target (`runtime-fuzz`). CI fails if a crate not named `pervue*` depends on one that is.
+  - The environment allowlist moved out of the host, as the risks above expected.
+  - The provider contract now runs against all four adapters, at the runtime's level and as Pervue serves them, which closes the part of the LIB-09 gap that concerned Gemini and Grok in that suite. The Gemini and Grok live smoke tests are still to be written.
 
 [conclave-adoption]: https://github.com/davletovb/conclave/blob/claude/eloquent-franklin-8qo1f1/docs/proposals/provider-runtime-adoption.md

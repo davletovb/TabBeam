@@ -1,6 +1,8 @@
 # Deterministic fake provider
 
-`pervue-fake-provider` is a test-only executable used to exercise provider process supervision without coupling tests to Codex, Claude, or any other real provider. Run under the name `codex`, it acts as a fake Codex CLI instead (see [Fake Codex](#fake-codex)).
+`runtime-fake-provider` is a test-only library: the behaviour of a fake provider executable, and the harness that installs it. The executable is used to exercise provider process supervision without coupling tests to Codex, Claude, or any other real provider. Run under the name `codex`, `claude`, `agy` or `grok`, it acts as that provider's CLI instead (see [Fake Codex](#fake-codex) and [The other personas](#the-other-personas)).
+
+A library cannot name the binary a test package builds, so each package that runs the fake builds a binary of its own around `runtime_fake_provider::run()`: `runtime-tests` (`runtime-tests/src/main.rs`, binary `runtime-fake-provider`) for the runtime's tests, and `test_provider` (binary `pervue-fake-provider`) for Pervue's. Each passes the paths its own `env!` values give to `harness::Fixtures`. The library depends on `runtime-core` and `runtime-providers` only.
 
 It emits a deliberately small line-oriented JSON test stream on stdout. This is **not** the public Pervue Native Messaging protocol and is not a provider API contract.
 
@@ -36,17 +38,17 @@ Example:
 
 ```bash
 cd native
-cargo build -p pervue-fake-provider
-./target/debug/pervue-fake-provider --mode normal
+cargo build -p runtime-tests
+./target/debug/runtime-fake-provider --mode normal
 ```
 
 The tests place strict timeouts around the non-terminating modes so CI never relies on manual cleanup.
 
 ## What the tests pin
 
-`tests/modes.rs` verifies both completed-output and mid-stream behavior. Slow mode is run to completion, is separately required to still be running at one second, and is killed at 0.5 seconds to prove its first line was already flushed. On POSIX, `tests/signals.rs` sends SIGTERM directly: `hang` must terminate on SIGTERM, while `ignore-cancel` must survive SIGTERM until the test escalates to SIGKILL and reaps it. `ignore-cancel` blocks SIGTERM before it prints its ready line, so a supervisor that signals right after readiness always hits the ignored state.
+`runtime-tests/tests/modes.rs` verifies both completed-output and mid-stream behavior. Slow mode is run to completion, is separately required to still be running at one second, and is killed at 0.5 seconds to prove its first line was already flushed. On POSIX, `runtime-tests/tests/signals.rs` sends SIGTERM directly: `hang` must terminate on SIGTERM, while `ignore-cancel` must survive SIGTERM until the test escalates to SIGKILL and reaps it. `ignore-cancel` blocks SIGTERM before it prints its ready line, so a supervisor that signals right after readiness always hits the ignored state.
 
-`tests/process_manager.rs` and `tests/process_stress.rs` test the host's provider process manager (NAT-04) against this binary, including the descendant modes; see "Provider processes" in `native/README.md`. `env` and `args` show what a process received: only the environment its spec sets, in the directory it names, with each argument whole (SEC-02). `tests/stream_manager.rs` tests the stream manager (NAT-05) against the same modes, and `partial` exists for it: a stream cancelled while it holds an unfinished line must drop that line.
+`runtime-tests/tests/process_manager.rs` and `runtime-tests/tests/process_stress.rs` test the runtime's provider process manager (NAT-04) against this binary, including the descendant modes; see "Provider processes" in `native/README.md`. `env` and `args` show what a process received: only the environment its spec sets, in the directory it names, with each argument whole (SEC-02). `runtime-tests/tests/stream_manager.rs` tests the stream manager (NAT-05) against the same modes, and `partial` exists for it: a stream cancelled while it holds an unfinished line must drop that line.
 
 ## Fake Codex
 
@@ -55,7 +57,7 @@ When the binary's file name is `codex` (`codex.exe` on Windows), it answers the 
 - `codex login status` exits 0 like a signed-in Codex, printing a masked key to stderr that the adapter must never read;
 - `codex exec --json [...] [resume <thread id>] -` reads the question from stdin to end of file, as Codex does, and prints a JSON event per line: `thread.started`, a non-fatal warning item, `turn.started`, a command item, the answer `You asked: <question>`, and `turn.completed`. It always writes a fake secret token to stderr, which must never reach events or diagnostics.
 
-`tests/codex_adapter.rs` hard-links the binary into a fresh directory as `codex`, in cargo's temporary directory under `target/`, and points the adapter at that directory. A link rather than a copy: a copy is open for writing while it is made, and a process another test thread starts at that moment would keep it busy (`ETXTBSY`) when the test runs it. A file there named `codex-scenario` chooses the behaviors, one `login=<behavior>` line and one `exec=<behavior>` line:
+The harness (`harness::FakeCodex`) hard-links the binary into a fresh directory as `codex`, in cargo's temporary directory under `target/`, and points the adapter at that directory. A link rather than a copy: a copy is open for writing while it is made, and a process another test thread starts at that moment would keep it busy (`ETXTBSY`) when the test runs it. A file there named `codex-scenario` chooses the behaviors, one `login=<behavior>` line and one `exec=<behavior>` line:
 
 ```text
 login=signed-in      exit 0 (the default)
@@ -99,6 +101,10 @@ The floods write many lines to a write, as fast as the pipe takes them. Every be
 
 Each run appends what the adapter sent next to the binary, so tests can check it: its arguments and the first `PATH` entry to `codex-invocations`, its working directory and whole environment to `codex-environment` (a JSON object per line), and each `exec`'s question to `codex-prompts` (NUL-separated) and its process ID to `codex-pids`.
 
-`tests/hostile_matrix.rs` is the hostile fake-process matrix (TST-04): it runs the whole host against the fake `codex` in each hostile behavior, alone and several at once, and checks the normalized outcome, the time it took, and that nothing was left behind; see "Hostile providers" in `native/README.md`. `tests/support/mod.rs` holds the harness both files share: installing the fake `codex`, pacing input frames, and running a host session.
+The hostile fake-process matrix (TST-04) runs the fake `codex` in each hostile behavior, alone and several at once, and checks the normalized outcome, the time it took, and that nothing was left behind; see "Hostile providers" in `native/README.md`. It runs twice: `runtime-tests/tests/hostile_matrix.rs` under the runtime's scheduler, and `test_provider/tests/hostile_matrix.rs` through the whole Pervue host. `harness` holds what the tests share: installing a fake CLI (`Fixtures`, `FakeCodex`, `FakeClaude`, `FakeGemini`, `FakeGrok`) and reading back what it recorded. `resources` measures the test process's threads, file descriptors and peak memory, for the matrices. Pervue's pacing of input frames and its host sessions are in `test_provider/tests/support/mod.rs`.
 
-The fake provider is its own workspace crate outside the default build, so `cargo build` in `native/` produces only the host; `cargo test --workspace` builds and tests the fake provider.
+## The other personas
+
+- **Claude** (`claude`): answers `claude auth status` and `claude -p` in stream-json mode. A `claude-scenario` file chooses `auth=<signed-in|signed-out|broken|hangs>` and `print=<behavior>`: `answers` (the default), `two-messages`, `two-deltas`, `hangs`, `ignores-cancel`, `malformed`, `fails-auth`, `fails-rate`, `no-result`, `flooding` (events the adapter doesn't know, without end), `resume-fails`, `resume-crashes`, `result-session-gone`, `forks-session`, `lingers`, `keeps-talking`, and the search variants `search-narrates`, `search-long`, `search-no-links`, `search-bad-urls` and `search-hostile`. It records `claude-invocations`, `claude-prompts` and `claude-pids` like the fake Codex does.
+- **Antigravity** (`agy`, for the Gemini adapter): answers `agy models` and one-shot stream-json turns. There is no scenario file: the model a turn asks for chooses the behaviour (`gemini-test` answers; `gemini-tool-violation`, `gemini-unknown-step`, `gemini-bad-init`, `gemini-slow-init`, `gemini-cumulative-done`, `gemini-multi-search`, `gemini-auth-fail` and `gemini-hang` each misbehave in one way). It writes a transcript into a fake Antigravity brain directory, as `agy` does, so tests can check it is removed, and records `agy-pids`.
+- **Grok** (`grok`): answers `grok models` and one-shot headless turns. The model chooses the behaviour here too (`grok-4.6` and the alias `grok-4` answer; the `grok-init-*` models each break one boundary of `system/init`; `grok-tool-violation`, `grok-result-auth` and `grok-hang` misbehave in one way). It records `grok-pids`.

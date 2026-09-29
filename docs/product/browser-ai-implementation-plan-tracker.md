@@ -1435,7 +1435,7 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 **Status:** IMPLEMENTED — VERIFY
 
 **Implementation evidence**
-- `native/runtime-core/tests/public_api.rs` exercises the independent public crate, including exchange cancellation; process/stream/discovery unit tests run in `runtime-core`. The `stream_lines` fuzz target compiles directly against `runtime_core::stream`, while `frame_reader` intentionally compiles against the host-owned `pervue_host::framing` boundary. Both run in CI. Provider and host integration tests remain in the workspace.
+- `native/runtime-core/tests/public_api.rs` exercises the independent public crate, including exchange cancellation; process/stream/discovery unit tests run in `runtime-core`. The `stream_lines` fuzz target compiles directly against `runtime_core::stream` (it moved to `native/runtime-fuzz/` in LIB-10), while `frame_reader` intentionally compiles against the host-owned `pervue_host::framing` boundary. Both run in CI. Provider and host integration tests remain in the workspace.
 
 ---
 
@@ -1516,7 +1516,7 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 - Claude/Codex search turns fork fresh native sessions, retain superseded handles durably for deletion/retry, and permit a fresh retry when no completed dialogue history exists yet.
 - Codex and Claude emit cumulative usage snapshots (Claude includes cache-creation/read input); Gemini/Grok live catalogs are ID/label/count bounded before protocol emission; sign-in classifications are runtime-only in protocol v1.
 - Ephemeral CLI flags are covered by unit tests for Claude/Codex, fresh-session/lifecycle behavior by provider contract regression tests, and opt-in live suites remain the final real-CLI verification gate.
-- Correction (2026-09-29): the Gemini and Grok opt-in live smoke tests named in the acceptance criteria do not exist yet. Only `native/host/tests/live_codex.rs` and `live_claude.rs` do, and only `live-codex.yml` runs one. They are required before this item, and Stage 2's exit bar, can be verified. The contract suite (`provider_contract.rs`) also still covers only Codex and Claude.
+- Correction (2026-09-29): the Gemini and Grok opt-in live smoke tests named in the acceptance criteria do not exist yet. Only `native/host/tests/live_codex.rs` and `live_claude.rs` do, and only `live-codex.yml` runs one. They are required before this item, and Stage 2's exit bar, can be verified. The contract suite also covered only Codex and Claude then; it now covers all four (see LIB-10, step 2).
 
 ### LIB-10 — Extract provider runtime to standalone repository
 **Milestone:** ADR-002 Stage 2  
@@ -1530,7 +1530,7 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 
 **Plan (four steps, each green on its own)**
 1. Prepare the boundary in-tree, so the move is a change of location. *Done, below.*
-2. Create the `platform` and `providers` crates in-tree, and move the adapter, contract, hostile-matrix and process tests and the `stream_lines` fuzz target beside them. The fake provider becomes a library with a small binary in each repository.
+2. Create the `platform` and `providers` crates in-tree, and move the adapter, contract, hostile-matrix and process tests and the `stream_lines` fuzz target beside them. The fake provider becomes a library with a small binary in each repository. *Done, below.*
 3. Create the library repository (history kept with `git filter-repo`), with CI on Linux, macOS and Windows, a Rust 1.85 job, a fuzz smoke run and manually started live workflows for all four providers.
 4. Switch Pervue to an exact pinned revision, and remove the in-tree crates.
 
@@ -1543,6 +1543,14 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 - Prompt bytes are pinned against what the adapters built by hand, with one documented difference: a lone plain first question to Gemini or Grok no longer gets a "Current user question:" label.
 - Search-result normalization moved to `runtime-core::search`. Outside `providers/mod.rs` and the `fake` scaffold, nothing under `native/host/src/providers/` imports another part of `pervue-host`.
 - Verified on Linux (Rust stable and 1.85), with the Windows and macOS targets type-checked including tests, clippy and rustfmt clean, the protocol validator green against the built host, and the fuzz crate compiling against the updated lock files.
+
+**Implementation evidence (step 2)**
+- `runtime-platform` holds the environment allowlist, private files and workspaces, discovery policy and layout; `runtime-providers` holds the `Provider` trait and the four adapters. Neither, nor any other runtime crate (`runtime-core`, the scheduler, the service, `runtime-fake-provider`, `runtime-tests`, `runtime-fuzz`), depends on a `pervue*` crate: `scripts/check-runtime-independence.mjs` reads every workspace and fuzz manifest, and its own job in CI fails when one does (it was checked to fail on a planted dependency).
+- The fake provider is a library (`runtime-fake-provider`: the four fake CLIs, and a harness that installs them, reads back what they recorded, and measures the test process's threads, descriptors and memory). Each package that runs it builds a binary of its own: `runtime-tests` and Pervue's `test_provider`. The fake Gemini gained a hang mode, and the fake Gemini and Grok record their launches like the other two, so a test can prove every process was reaped.
+- `runtime-tests` holds, at the runtime's level (a `Turn` in, `Update`s out, with resumption through the session a run reported): the Codex, Claude, Gemini and Grok adapter tests; a **provider contract that all four adapters meet through the `Provider` trait alone** (status matches capabilities, ordering and single ending of updates, sessions kept exactly where a provider can keep one, search served or refused as its capabilities say, refused turns never reach a process, cancellation, dropped exchanges, a caller's deadline held however quiet the provider, harmless cleanup); the **hostile matrix under the scheduler's supervisor**, for Codex and Claude, with the same thread, descriptor and memory bounds; the threaded service against real adapters (answer, refusal, cancel, drop, stop, one silent turn beside an answering one); and the process, stream, mode and signal tests. A planted leak in the Grok adapter's workspace cleanup was caught by the contract suite.
+- Pervue's `test_provider` keeps what maps conversations onto turns, over each adapter (thread and session mapping, rebuilds after a lost session, page-context framing, forget), the host's own hostile matrix, and the contract as Pervue serves the providers, now for all four (LIB-09's Codex-and-Claude-only gap is closed for this suite; the Gemini and Grok live smoke tests remain to be written).
+- `stream_lines` moved to `runtime-fuzz` (its own lock file, `runtime-core` only) with its seed generator; `frame_reader` and `protocol` stay in `fuzz`. CI generates each corpus from its own directory and runs `stream_lines` with `--fuzz-dir runtime-fuzz`.
+- Verified on Linux with Rust stable and 1.85 (476 tests pass), clippy and rustfmt clean, the Windows and macOS targets type-checked including tests with warnings as errors, and both fuzz crates compiling. Not run here: the fuzz smoke run itself (it needs nightly and cargo-fuzz), and the Windows and macOS test runs, which CI provides.
 
 ## Milestone G — Installable Product
 
