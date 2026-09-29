@@ -2,10 +2,12 @@
 
 mod support;
 
-use seatline_core::turn::SessionPolicy;
 use std::ffi::OsString;
 use std::time::{Duration, Instant};
 
+use seatline_core::protocol::ErrorCode;
+use seatline_core::turn::SessionPolicy;
+use support::FakeClaude;
 use tabbeam_host::conversation::{
     BrowserContext, BrowserContextMode, BrowserPageContext, HistoryMessage, Role,
 };
@@ -14,8 +16,6 @@ use tabbeam_host::providers::claude::Claude;
 use tabbeam_host::providers::{
     ConversationProvider, ConversationSlot, Exchange, SendRequest, Update,
 };
-use seatline_core::protocol::ErrorCode;
-use support::FakeClaude;
 
 const DEADLINE: Duration = Duration::from_secs(20);
 

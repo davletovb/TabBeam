@@ -8,12 +8,12 @@ mod support;
 
 use std::time::{Duration, Instant};
 
+use seatline_core::turn::SessionPolicy;
 use tabbeam_host::conversation::{HistoryMessage, Role};
 use tabbeam_host::conversations::{Conversations, SessionStore};
 use tabbeam_host::providers::{
     ConversationProvider, ConversationSlot, Exchange, SendRequest, Update,
 };
-use seatline_core::turn::SessionPolicy;
 
 use support::FakeGemini;
 

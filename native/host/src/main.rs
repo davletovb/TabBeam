@@ -13,7 +13,9 @@ const PARENT_WINDOW_PREFIX: &[u8] = b"--parent-window=";
 
 fn main() -> ExitCode {
     let mut args = std::env::args_os();
-    let program = args.next().unwrap_or_else(|| OsString::from("tabbeam-host"));
+    let program = args
+        .next()
+        .unwrap_or_else(|| OsString::from("tabbeam-host"));
     let arguments: Vec<OsString> = args.collect();
 
     match arguments.as_slice() {

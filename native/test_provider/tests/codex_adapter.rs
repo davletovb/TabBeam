@@ -11,6 +11,9 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use seatline_core::protocol::{Capability, ErrorCode};
+use seatline_core::turn::SessionPolicy;
+use support::{FakeCodex, PacedInput, TEST_LIMITS, names, serve};
 use tabbeam_host::conversation::{
     BrowserContext, BrowserContextMode, BrowserPageContext, HistoryMessage, Role,
 };
@@ -19,9 +22,6 @@ use tabbeam_host::providers::codex::{Codex, Limits};
 use tabbeam_host::providers::{
     ConversationProvider, ConversationSlot, Exchange, SendRequest, Timeouts, Update,
 };
-use seatline_core::protocol::{Capability, ErrorCode};
-use seatline_core::turn::SessionPolicy;
-use support::{FakeCodex, PacedInput, TEST_LIMITS, names, serve};
 
 const DEADLINE: Duration = Duration::from_secs(20);
 

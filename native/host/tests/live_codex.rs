@@ -23,8 +23,8 @@ use std::sync::mpsc::{self, Receiver};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use tabbeam_host::framing;
 use serde_json::Value;
+use tabbeam_host::framing;
 
 const HOST: &str = env!("CARGO_BIN_EXE_tabbeam-host");
 const ORIGIN: &str = "chrome-extension://abcdefghijklmnopabcdefghijklmnop/";
@@ -193,7 +193,11 @@ fn assert_no_credentials(what: &str, text: &str) {
 
 /// Why the test can't run here, when Codex isn't ready.
 fn skip_or_fail(mode: Mode, reason: &str) {
-    assert_ne!(mode, Mode::Required, "TABBEAM_LIVE_CODEX=required: {reason}");
+    assert_ne!(
+        mode,
+        Mode::Required,
+        "TABBEAM_LIVE_CODEX=required: {reason}"
+    );
     eprintln!("skipped: {reason}");
 }
 

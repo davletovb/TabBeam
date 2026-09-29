@@ -8,10 +8,10 @@ mod support;
 use seatline_core::turn::SessionPolicy;
 use std::time::{Duration, Instant};
 
+use support::{FakeClaude, FakeCodex, FakeGemini, FakeGrok};
 use tabbeam_host::conversation::{HistoryMessage, Role};
 use tabbeam_host::protocol::events::{Authentication, Availability, Capability};
 use tabbeam_host::providers::{ConversationProvider, Exchange, SendRequest, Update};
-use support::{FakeClaude, FakeCodex, FakeGemini, FakeGrok};
 
 const DEADLINE: Duration = Duration::from_secs(20);
 

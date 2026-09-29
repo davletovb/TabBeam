@@ -24,8 +24,8 @@ use std::sync::mpsc::{self, Receiver};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use tabbeam_host::framing;
 use serde_json::Value;
+use tabbeam_host::framing;
 
 const HOST: &str = env!("CARGO_BIN_EXE_tabbeam-host");
 const ORIGIN: &str = "chrome-extension://abcdefghijklmnopabcdefghijklmnop/";

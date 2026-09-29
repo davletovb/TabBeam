@@ -12,6 +12,10 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use seatline_fake_provider::harness::{self, Fixtures};
+#[allow(unused_imports)]
+pub use seatline_fake_provider::harness::{PROMPT_STOP_GRACE, TEST_LIMITS};
+use serde_json::Value;
 use tabbeam_host::conversations::{Conversations, Durability, SessionStore};
 use tabbeam_host::diagnostics::Diagnostics;
 use tabbeam_host::framing;
@@ -21,10 +25,6 @@ use tabbeam_host::providers::codex::{Codex, Limits};
 use tabbeam_host::providers::gemini::Gemini;
 use tabbeam_host::providers::grok::Grok;
 use tabbeam_host::providers::{ConversationProvider, Providers};
-use seatline_fake_provider::harness::{self, Fixtures};
-#[allow(unused_imports)]
-pub use seatline_fake_provider::harness::{PROMPT_STOP_GRACE, TEST_LIMITS};
-use serde_json::Value;
 
 pub const PROVIDER: &str = env!("CARGO_BIN_EXE_tabbeam-fake-provider");
 pub const FIXTURES: Fixtures = Fixtures::new(
