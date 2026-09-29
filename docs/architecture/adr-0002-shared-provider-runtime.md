@@ -1,6 +1,6 @@
 # ADR-0002: Extract a shared provider runtime as an in-process Rust library
 
-**Status:** Proposed  
+**Status:** Accepted — Stage 1 in progress  
 **Date:** 2026-09-28  
 **Decided by:** Project owner, pending acceptance  
 **Supersedes:** the C ABI path for non-Rust consumers in [ADR-0001](adr-0001-native-host-in-rust.md) (the last bullet of both Decision and Consequences) and in framework §9.7  

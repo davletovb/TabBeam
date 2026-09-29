@@ -194,6 +194,11 @@ Reached after **Milestone H**:
 | LIB-03 | Extract reusable stream primitives | F | Native Library | NAT-05, TST-10 | IMPLEMENTED — VERIFY |
 | LIB-04 | Extract reusable provider/protocol primitives | F | Native Library | PRO-07, LIB-01, LIB-03 | IMPLEMENTED — VERIFY |
 | LIB-05 | Extract reusable platform/diagnostics primitives where justified | F | Native Library | OBS-01, PRO-05 | IMPLEMENTED — VERIFY |
+| LIB-06 | Reshape native workspace for shared provider runtime | ADR-002 Stage 1 | Native Library | LIB-01–LIB-05, PRO-07, TST-10, TST-11 | IN PROGRESS |
+| LIB-07 | Extract scheduler and absolute turn limits | ADR-002 Stage 1 | Native Runtime | LIB-06 | READY |
+| LIB-08 | Add service API and supervisor panic boundaries | ADR-002 Stage 1 | Native Runtime | LIB-07 | READY |
+| LIB-09 | Harden four-provider execution for shared runtime | ADR-002 Stage 1 | Provider / Testing | LIB-08, PRO-08, PRO-09 | READY |
+| LIB-10 | Extract provider runtime to standalone repository | ADR-002 Stage 2 | Native Library | LIB-09 | BACKLOG |
 | DOC-03 | Document reusable library ownership/API boundaries | F | Documentation | LIB-01, LIB-02, LIB-03, LIB-04 | IMPLEMENTED — VERIFY |
 | TST-11 | Add standalone native-library unit/ABI tests | F | Testing | LIB-01, LIB-02, LIB-03, LIB-04 | IMPLEMENTED — VERIFY |
 | PKG-01 | Build macOS companion package and host registration | G | Packaging | TST-08, EXT-13, LIB-02, LIB-05 | IMPLEMENTED — VERIFY |
@@ -1348,7 +1353,7 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 **Status:** IMPLEMENTED — VERIFY
 
 **Implementation evidence**
-- `native/core/src/process.rs` now owns child spawn, isolated environment, piped I/O, bounded output queue, cancellation, termination, and reaping. Codex and Claude call it through the same `pervue-core` API; their launch policies remain in their adapters.
+- `native/runtime-core/src/process.rs` now owns child spawn, isolated environment, piped I/O, bounded output queue, cancellation, termination, and reaping. Codex and Claude call it through the same `runtime-core` API; their launch policies remain in their adapters.
 
 ### LIB-02 — Extract reusable Native Messaging primitives
 **Area:** Native Library  
@@ -1361,7 +1366,7 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 **Status:** IMPLEMENTED — VERIFY
 
 **Implementation evidence**
-- `native/core/src/framing.rs` owns bounded 1 MiB Native Messaging framing, with original wire tests moved into the standalone crate and the frame fuzz target using its public API.
+- `native/runtime-core/src/framing.rs` owns bounded 1 MiB Native Messaging framing, with original wire tests moved into the standalone crate and the frame fuzz target using its public API.
 
 ### LIB-03 — Extract reusable stream primitives
 **Area:** Native Library  
@@ -1373,7 +1378,7 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 **Status:** IMPLEMENTED — VERIFY
 
 **Implementation evidence**
-- `native/core/src/stream.rs` owns bounded UTF-8 lines, stderr-tail policy, outgoing Unicode chunks, terminal states, and deadlines. Both adapters consume the extracted stream.
+- `native/runtime-core/src/stream.rs` owns bounded UTF-8 lines, stderr-tail policy, outgoing Unicode chunks, terminal states, and deadlines. Both adapters consume the extracted stream.
 
 ### LIB-04 — Extract reusable provider/protocol primitives
 **Area:** Native Library  
@@ -1387,7 +1392,7 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 **Status:** IMPLEMENTED — VERIFY
 
 **Implementation evidence**
-- `native/core/src/protocol.rs` and `exchange.rs` define normalized capabilities/errors/status and provider exchange updates, including cancellation and timeouts; request routing and provider sessions stay in the host.
+- `native/runtime-core/src/protocol.rs` and `exchange.rs` define normalized capabilities/errors/status and provider exchange updates, including cancellation and timeouts; request routing and provider sessions stay in the host.
 
 ### LIB-05 — Extract reusable platform/diagnostics primitives where justified
 **Area:** Native Library  
@@ -1401,7 +1406,7 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 **Status:** IMPLEMENTED — VERIFY
 
 **Implementation evidence**
-- `native/core/src/discovery.rs` provides portable executable lookup; the host owns `PERVUE_PROVIDER_PATH`, credentials/environment policy, configuration paths, and sanitized diagnostics. Platform-specific internals stay behind the search API.
+- `native/runtime-core/src/discovery.rs` provides portable executable lookup; the host owns `PERVUE_PROVIDER_PATH`, credentials/environment policy, configuration paths, and sanitized diagnostics. Platform-specific internals stay behind the search API.
 
 ### DOC-03 — Document reusable library ownership/API boundaries
 **Area:** Documentation  
@@ -1416,7 +1421,7 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 **Status:** IMPLEMENTED — VERIFY
 
 **Implementation evidence**
-- `native/core/README.md` documents the public/private boundary, ownership and cleanup, error handling, extraction rule, and Rust API versus binary protocol compatibility policy.
+- `native/runtime-core/README.md` documents the public/private boundary, ownership and cleanup, error handling, extraction rule, and Rust API versus binary protocol compatibility policy.
 
 ### TST-11 — Add standalone native-library unit/ABI tests
 **Area:** Testing  
@@ -1430,9 +1435,76 @@ This verification promotes every Foundation, A, B, C, D, and MVP-closure item fr
 **Status:** IMPLEMENTED — VERIFY
 
 **Implementation evidence**
-- `native/core/tests/public_api.rs` exercises the independent public crate, including exchange cancellation; existing framing/process/stream/discovery unit tests now run in the core. The frame and stream fuzz targets compile directly against core and run in CI. The stream target compares different chunk boundaries to one-shot parsing and a line-ending oracle, with generated seeds at and beyond its configured line limit; provider and host integration tests remain in the workspace.
+- `native/runtime-core/tests/public_api.rs` exercises the independent public crate, including exchange cancellation; existing framing/process/stream/discovery unit tests now run in the core. The frame and stream fuzz targets compile directly against core and run in CI. The stream target compares different chunk boundaries to one-shot parsing and a line-ending oracle, with generated seeds at and beyond its configured line limit; provider and host integration tests remain in the workspace.
 
 ---
+
+
+### LIB-06 — Reshape native workspace for shared provider runtime
+**Milestone:** ADR-002 Stage 1  
+**Area:** Native Library  
+**Dependencies:** LIB-01, LIB-02, LIB-03, LIB-04, LIB-05, PRO-07, TST-10, TST-11
+
+**Goal:** Establish the neutral runtime boundary before scheduler/service extraction.
+
+**Acceptance criteria**
+- `runtime-core` is renamed to `runtime-core`.
+- Native Messaging framing is owned by `pervue-host`, not the shared runtime.
+- Neutral turn/error/usage/session-policy/timeout types replace browser vocabulary in the runtime.
+- Pervue user-facing error wording remains host-owned.
+- Existing provider/process/stream/protocol/fuzz coverage stays green.
+
+**Status:** IN PROGRESS
+
+**Implementation evidence**
+- `native/runtime-core` is now the shared crate name/path and current workspace consumers import `runtime_core`.
+- Native Messaging framing moved to `native/host/src/framing.rs`; host and fuzz framing callers now use the host-owned module.
+- Neutral turn/error/usage/session-policy/timeout types and the host error-message table remain to complete this item.
+- Verification of the prerequisite `IMPLEMENTED — VERIFY` items remains required before Stage 1 can be called complete.
+
+### LIB-07 — Extract scheduler and absolute turn limits
+**Milestone:** ADR-002 Stage 1  
+**Area:** Native Runtime  
+**Dependencies:** LIB-06  
+**Status:** READY
+
+**Acceptance criteria**
+- Scheduler owns concurrent turns, fairness, cancellation, delta splitting, and start/idle/absolute/stop-grace limits.
+- Only recognized work events reset the idle timer.
+- Every accepted turn ends exactly once.
+
+### LIB-08 — Add service API and supervisor panic boundaries
+**Milestone:** ADR-002 Stage 1  
+**Area:** Native Runtime  
+**Dependencies:** LIB-07  
+**Status:** READY
+
+**Acceptance criteria**
+- The same supervisor sits beneath the Pervue host loop and service thread.
+- Adapter and scheduler panics are isolated with `catch_unwind`.
+- Affected turns end exactly once and owned provider processes are reaped.
+
+### LIB-09 — Harden four-provider execution for shared runtime
+**Milestone:** ADR-002 Stage 1  
+**Area:** Provider / Testing  
+**Dependencies:** LIB-08, PRO-08, PRO-09  
+**Status:** READY
+
+**Acceptance criteria**
+- Usage, live model lists, sign-in classification, namespace-scoped cleanup, and explicit session policy work across shared modes.
+- Search turns never resume Claude/Codex sessions that may contain browser page context.
+- Gemini and Grok have opt-in live smoke tests.
+- Ephemeral turns are verified against real CLI persistence.
+
+### LIB-10 — Extract provider runtime to standalone repository
+**Milestone:** ADR-002 Stage 2  
+**Area:** Native Library  
+**Dependencies:** LIB-09  
+**Status:** BACKLOG
+
+**Acceptance criteria**
+- `runtime-core`, `platform`, `providers`, `scheduler`, and `service` move with shared tests/fuzzing into the runtime repository.
+- Pervue pins an exact revision and passes its full suite, including live smoke tests.
 
 ## Milestone G — Installable Product
 
