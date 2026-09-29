@@ -1,0 +1,16 @@
+[package]
+name = "provider-runtime-scheduler"
+description = "Provider turn scheduler and panic-isolating supervisor"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+test-hooks = []
+
+[dependencies]
+runtime-core = { path = "../runtime-core" }
+
+[lints]
+workspace = true
