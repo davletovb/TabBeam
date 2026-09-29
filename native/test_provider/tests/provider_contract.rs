@@ -1,8 +1,8 @@
-use runtime_core::turn::SessionPolicy;
 //! Provider-neutral contract cases run unchanged against Codex and Claude (TST-10).
 
 mod support;
 
+use runtime_core::turn::SessionPolicy;
 use std::time::{Duration, Instant};
 
 use pervue_host::protocol::events::{Authentication, Availability, Capability};
@@ -42,7 +42,12 @@ fn run_to_end(exchange: &mut dyn Exchange) -> Vec<Update> {
 fn visible(updates: &[Update]) -> Vec<Update> {
     updates
         .iter()
-        .filter(|update| **update != Update::Activity)
+        .filter(|update| {
+            !matches!(
+                update,
+                Update::Activity | Update::Launched | Update::Session(_) | Update::Usage(_)
+            )
+        })
         .cloned()
         .collect()
 }

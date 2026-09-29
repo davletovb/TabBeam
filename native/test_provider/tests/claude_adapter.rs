@@ -1,8 +1,8 @@
-use runtime_core::turn::SessionPolicy;
 //! Claude adapter tests against the fake Claude Code CLI.
 
 mod support;
 
+use runtime_core::turn::SessionPolicy;
 use std::ffi::OsString;
 use std::time::{Duration, Instant};
 
@@ -74,7 +74,12 @@ fn run_until_started(exchange: &mut dyn Exchange) -> Vec<Update> {
 fn visible(updates: &[Update]) -> Vec<Update> {
     updates
         .iter()
-        .filter(|update| **update != Update::Activity)
+        .filter(|update| {
+            !matches!(
+                update,
+                Update::Activity | Update::Launched | Update::Session(_) | Update::Usage(_)
+            )
+        })
         .cloned()
         .collect()
 }

@@ -407,7 +407,7 @@ impl Provider for Grok {
         Box::new(Turn {
             stream: LineStream::new(process, MAX_LINE_BYTES).keeping_stderr_tail(STDERR_TAIL_BYTES),
             workspace: Some(workspace),
-            queue: VecDeque::new(),
+            queue: VecDeque::from([Update::Launched]),
             conversation_id,
             announce_conversation: new_conversation,
             expected_cwd,
