@@ -5,10 +5,10 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use runtime_core::discovery::SearchPath;
 use pervue_host::conversation::{HistoryMessage, Role};
 use pervue_host::providers::grok::Grok;
 use pervue_host::providers::{Exchange, Provider, SendRequest, Update};
+use runtime_core::discovery::SearchPath;
 
 use support::PROVIDER;
 
