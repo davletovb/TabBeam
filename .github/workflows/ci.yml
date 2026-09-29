@@ -333,7 +333,6 @@ jobs:
         run: cargo +stable check --manifest-path seatline-fuzz/Cargo.toml --locked
 
   native-msrv:
-  native-msrv:
     name: Native minimum Rust (1.85)
     runs-on: ubuntu-latest
     timeout-minutes: 15
