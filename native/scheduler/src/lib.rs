@@ -128,7 +128,7 @@ impl Drop for Running {
 pub struct Scheduler {
     next_id: TurnId,
     running: Vec<Running>,
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     panic_next_poll: bool,
     #[cfg(test)]
     panic_after_events: Option<usize>,
@@ -149,7 +149,7 @@ impl Scheduler {
         Self {
             next_id,
             running: Vec::new(),
-            #[cfg(any(test, feature = "test-hooks"))]
+            #[cfg(test)]
             panic_next_poll: false,
             #[cfg(test)]
             panic_after_events: None,
@@ -216,7 +216,7 @@ impl Scheduler {
     }
 
     fn poll_into(&mut self, slice: Duration, out: &mut Vec<Event>) {
-        #[cfg(any(test, feature = "test-hooks"))]
+        #[cfg(test)]
         if std::mem::take(&mut self.panic_next_poll) {
             panic!("injected scheduler panic");
         }
@@ -319,7 +319,7 @@ impl Scheduler {
     #[cfg(not(test))]
     fn maybe_panic_after_output(&mut self, _count: usize) {}
 
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     pub fn inject_scheduler_panic_for_test(&mut self) {
         self.panic_next_poll = true;
     }
@@ -365,7 +365,8 @@ impl Supervisor {
         }
     }
 
-    pub fn generation(&self) -> u64 {
+    #[cfg(test)]
+    fn generation(&self) -> u64 {
         self.generation
     }
 
@@ -411,7 +412,7 @@ impl Supervisor {
         }
     }
 
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     pub fn inject_scheduler_panic_for_test(&mut self) {
         self.scheduler.inject_scheduler_panic_for_test();
     }
