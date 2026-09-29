@@ -799,9 +799,9 @@ fn result_session_id_replaces_the_mapping_for_the_next_turn() {
             .as_mut(),
     );
     assert!(
-        second
-            .iter()
-            .any(|update| matches!(update, Update::Session(session) if session.starts_with("forked-"))),
+        second.iter().any(
+            |update| matches!(update, Update::Session(session) if session.starts_with("forked-"))
+        ),
         "{second:?}"
     );
 

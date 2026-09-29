@@ -612,5 +612,4 @@ mod tests {
         );
         assert!(!scheduler.cancel(id));
     }
-
 }
