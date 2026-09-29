@@ -3,7 +3,7 @@
 //! status and the cached sign-in, the answer, every boundary that fails closed,
 //! and the per-turn workspaces. The adapter knows no conversations, so the
 //! tests that pin how an application maps its own to Grok's stateless turns
-//! belong to that application (Pervue's are in `test_provider`).
+//! belong to that application (TabBeam's are in `test_provider`).
 
 mod support;
 
@@ -239,14 +239,14 @@ fn a_turn_is_owned_and_named_after_the_applications_namespace() {
     let live = fake.turn_dirs();
     assert_eq!(live.len(), 1);
     assert!(live[0].join(".seatline-tests-owner").exists());
-    assert!(!live[0].join(".pervue-owner").exists());
+    assert!(!live[0].join(".tabbeam-owner").exists());
     running.cancel(Duration::from_millis(100));
     run_to_end(running.as_mut());
 
     // The agent it runs as is named the same way.
     let agents = fake.read("grok-agents");
     assert!(agents.contains("name: seatline-tests-text\n"), "{agents}");
-    assert!(!agents.contains("pervue"), "{agents}");
+    assert!(!agents.contains("tabbeam"), "{agents}");
 }
 
 #[test]

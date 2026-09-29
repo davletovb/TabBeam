@@ -2,9 +2,9 @@
 
 `seatline-fake-provider` is a test-only library: the behaviour of a fake provider executable, and the harness that installs it. The executable is used to exercise provider process supervision without coupling tests to Codex, Claude, or any other real provider. Run under the name `codex`, `claude`, `agy` or `grok`, it acts as that provider's CLI instead (see [Fake Codex](#fake-codex) and [The other personas](#the-other-personas)).
 
-A library cannot name the binary a test package builds, so each package that runs the fake builds a binary of its own around `seatline_fake_provider::run()`: `seatline-tests` (`seatline-tests/src/main.rs`, binary `seatline-fake-provider`) for the runtime's tests, and `test_provider` (binary `pervue-fake-provider`) for Pervue's. Each passes the paths its own `env!` values give to `harness::Fixtures`, with the namespace of the application it stands for (which names the Gemini agents and the Grok owner file). The library depends on `seatline-core` and `seatline-providers` only.
+A library cannot name the binary a test package builds, so each package that runs the fake builds a binary of its own around `seatline_fake_provider::run()`: `seatline-tests` (`seatline-tests/src/main.rs`, binary `seatline-fake-provider`) for the runtime's tests, and `test_provider` (binary `tabbeam-fake-provider`) for TabBeam's. Each passes the paths its own `env!` values give to `harness::Fixtures`, with the namespace of the application it stands for (which names the Gemini agents and the Grok owner file). The library depends on `seatline-core` and `seatline-providers` only.
 
-It emits a deliberately small line-oriented JSON test stream on stdout. This is **not** the public Pervue Native Messaging protocol and is not a provider API contract.
+It emits a deliberately small line-oriented JSON test stream on stdout. This is **not** the public TabBeam Native Messaging protocol and is not a provider API contract.
 
 ## Modes
 
@@ -89,7 +89,7 @@ exec=stdout-flood    report 100,000 progress events, then answer "Done flooding.
 exec=endless-flood   start the turn, then report progress without end
 exec=floods-and-ignores-cancel
                      block SIGTERM, start the turn, then report progress without end
-exec=unknown-flood   start the turn, then print events Pervue doesn't know, without end
+exec=unknown-flood   start the turn, then print events TabBeam doesn't know, without end
 exec=exits-nonzero   start the turn, then exit 3
 exec=invalid-utf8    print an answer line that isn't UTF-8, then hang
 exec=endless-line    print one line that never ends
@@ -101,7 +101,7 @@ The floods write many lines to a write, as fast as the pipe takes them. Every be
 
 Each run appends what the adapter sent next to the binary, so tests can check it: its arguments and the first `PATH` entry to `codex-invocations`, its working directory and whole environment to `codex-environment` (a JSON object per line), and each `exec`'s question to `codex-prompts` (NUL-separated) and its process ID to `codex-pids`.
 
-The hostile fake-process matrix (TST-04) runs the fake `codex` in each hostile behavior, alone and several at once, and checks the normalized outcome, the time it took, and that nothing was left behind; see "Hostile providers" in `native/README.md`. It runs twice: `seatline-tests/tests/hostile_matrix.rs` under the runtime's scheduler, and `test_provider/tests/hostile_matrix.rs` through the whole Pervue host. `harness` holds what the tests share: installing a fake CLI (`Fixtures`, `FakeCodex`, `FakeClaude`, `FakeGemini`, `FakeGrok`) and reading back what it recorded. `resources` measures the test process's threads, file descriptors and peak memory, for the matrices. Pervue's pacing of input frames and its host sessions are in `test_provider/tests/support/mod.rs`.
+The hostile fake-process matrix (TST-04) runs the fake `codex` in each hostile behavior, alone and several at once, and checks the normalized outcome, the time it took, and that nothing was left behind; see "Hostile providers" in `native/README.md`. It runs twice: `seatline-tests/tests/hostile_matrix.rs` under the runtime's scheduler, and `test_provider/tests/hostile_matrix.rs` through the whole TabBeam host. `harness` holds what the tests share: installing a fake CLI (`Fixtures`, `FakeCodex`, `FakeClaude`, `FakeGemini`, `FakeGrok`) and reading back what it recorded. `resources` measures the test process's threads, file descriptors and peak memory, for the matrices. TabBeam's pacing of input frames and its host sessions are in `test_provider/tests/support/mod.rs`.
 
 ## The other personas
 

@@ -3,7 +3,7 @@
 //! status, the answer and the sources, what fails closed, and that no
 //! Antigravity transcript outlives a turn. The adapter knows no conversations,
 //! so the tests that pin how an application maps its own to Gemini's stateless
-//! turns belong to that application (Pervue's are in `test_provider`).
+//! turns belong to that application (TabBeam's are in `test_provider`).
 
 mod support;
 
@@ -274,7 +274,7 @@ fn a_turn_runs_as_an_agent_named_after_the_applications_namespace() {
         })
         .collect();
     assert_eq!(agents, ["seatline-tests-text", "seatline-tests-search"]);
-    assert!(!fake.invocations().concat().contains("pervue"));
+    assert!(!fake.invocations().concat().contains("tabbeam"));
 }
 
 #[test]

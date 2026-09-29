@@ -106,7 +106,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pervue-host"
+name = "tabbeam-host"
 version = "0.1.0-dev"
 dependencies = [
  "seatline-core",
@@ -118,11 +118,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "pervue-host-fuzz"
+name = "tabbeam-host-fuzz"
 version = "0.0.0"
 dependencies = [
  "libfuzzer-sys",
- "pervue-host",
+ "tabbeam-host",
  "serde_json",
 ]
 
