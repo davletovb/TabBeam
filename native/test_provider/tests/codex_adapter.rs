@@ -18,6 +18,7 @@ use pervue_host::protocol::events::{Authentication, Availability, Capability, Er
 use pervue_host::providers::codex::{CODEX_VARIABLES, Codex, LIMITS, Limits};
 use pervue_host::providers::environment::INHERITED;
 use pervue_host::providers::{Exchange, Provider, SendRequest, Timeouts, Update};
+use runtime_core::turn::SessionPolicy;
 use serde_json::Value;
 use support::{FakeCodex, PROMPT_STOP_GRACE, PacedInput, TEST_LIMITS, names, serve};
 
@@ -855,7 +856,6 @@ fn codex_runs_in_its_own_workspace() {
 #[test]
 fn codex_gets_the_workspace_s_real_path() {
     use runtime_core::discovery::SearchPath;
-    use runtime_core::turn::SessionPolicy;
     use std::path::Path;
 
     // Reached through a link, the workspace is checked, and given to Codex,
@@ -1086,11 +1086,8 @@ fn failed_turns_map_to_normalized_errors() {
         let Some(Update::Failed(error)) = updates.last() else {
             unreachable!()
         };
-        assert!(
-            !error.message.contains("sk-"),
-            "{scenario}: {}",
-            error.message
-        );
+        let debug = format!("{error:?}");
+        assert!(!debug.contains("sk-"), "{scenario}: {debug}");
         codex.assert_nothing_left_running();
     }
 }
