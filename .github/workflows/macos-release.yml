@@ -21,8 +21,9 @@ jobs:
       # the repository rename has landed and the first TabBeam release is cut.
       - name: Verify TabBeam repository rename
         run: |
-          repo_name="${GITHUB_REPOSITORY##*/}"
-          if [[ "${repo_name,,}" != "tabbeam" ]]; then
+          # The macOS runner's bash is 3.2, which cannot lowercase in-shell.
+          repo_name="$(printf '%s' "${GITHUB_REPOSITORY##*/}" | tr '[:upper:]' '[:lower:]')"
+          if [ "$repo_name" != "tabbeam" ]; then
             echo "Rename this repository to TabBeam before creating a TabBeam release candidate." >&2
             exit 1
           fi
