@@ -116,6 +116,12 @@ const UNKNOWN_CONVERSATION: ErrorBody<'static> = ErrorBody {
     message: "This Grok conversation ID is not one Pervue issued. Start a new conversation.",
     retryable: false,
 };
+const PERSISTENT_SESSION_UNSUPPORTED: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::InvalidRequest,
+    reason: "PERSISTENT_SESSION_UNSUPPORTED",
+    message: "Grok runs statelessly in Pervue; provider-native session persistence is unavailable.",
+    retryable: false,
+};
 const MODEL_NOT_SUPPORTED: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::InvalidRequest,
     reason: "MODEL_NOT_SUPPORTED",
@@ -351,6 +357,9 @@ impl Provider for Grok {
     }
 
     fn send(&self, request: SendRequest) -> Box<dyn Exchange> {
+        if request.session_policy != runtime_core::turn::SessionPolicy::Ephemeral {
+            return Box::new(Scripted::failed(PERSISTENT_SESSION_UNSUPPORTED));
+        }
         if request.native_search {
             return Box::new(Scripted::failed(SEARCH_UNSUPPORTED));
         }

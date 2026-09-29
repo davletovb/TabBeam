@@ -117,6 +117,12 @@ const UNKNOWN_CONVERSATION: ErrorBody<'static> = ErrorBody {
     message: "This Gemini conversation ID is not one Pervue issued. Start a new conversation.",
     retryable: false,
 };
+const PERSISTENT_SESSION_UNSUPPORTED: ErrorBody<'static> = ErrorBody {
+    code: ErrorCode::InvalidRequest,
+    reason: "PERSISTENT_SESSION_UNSUPPORTED",
+    message: "Gemini runs statelessly in Pervue; provider-native session persistence is unavailable.",
+    retryable: false,
+};
 const MODEL_NOT_SUPPORTED: ErrorBody<'static> = ErrorBody {
     code: ErrorCode::InvalidRequest,
     reason: "MODEL_NOT_SUPPORTED",
@@ -310,6 +316,9 @@ impl Provider for Gemini {
     }
 
     fn send(&self, request: SendRequest) -> Box<dyn Exchange> {
+        if request.session_policy != runtime_core::turn::SessionPolicy::Ephemeral {
+            return Box::new(Scripted::failed(PERSISTENT_SESSION_UNSUPPORTED));
+        }
         if request
             .model
             .as_deref()
@@ -360,6 +369,7 @@ impl Provider for Gemini {
         let Ok(mut process) = Process::spawn(&spec) else {
             return Box::new(Scripted::failed(START_FAILED));
         };
+        let mut launched = VecDeque::from([Update::Launched]);
         if process.write(input.as_bytes()).is_err() {
             process.kill();
             return Box::new(Scripted::failed(START_FAILED));
@@ -372,7 +382,7 @@ impl Provider for Gemini {
             home: self.launch.home.clone(),
             cleanup_dir: self.cleanup_dir.clone(),
             pending_cleanups: Rc::clone(&self.pending_cleanups),
-            queue: VecDeque::new(),
+            queue: std::mem::take(&mut launched),
             conversation_id,
             announce_conversation: new_conversation,
             expected_agent: agent,
