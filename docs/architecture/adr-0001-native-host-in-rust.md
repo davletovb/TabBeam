@@ -1,7 +1,7 @@
 # ADR-0001: Write the native host in Rust
 
 
-> **Naming note (2026-09-29):** The application was renamed from **Pervue** to **TabBeam** before release. Historical references to `pervue-core` are intentionally retained because that crate was later renamed to `seatline-core`; current application identifiers use TabBeam.
+> **Naming note (2026-09-29):** The application was renamed from **Pervue** to **TabBeam** before release. Historical references to Pervue and `pervue-core` are intentionally retained; current application identifiers use TabBeam, while `pervue-core` became `seatline-core`.
 
 **Status:** Accepted  
 **Date:** 2026-09-24  
