@@ -218,16 +218,40 @@ mod tests {
     #[test]
     fn provider_wording_preserves_specific_remedies() {
         let cases = [
-            ("codex", failure("PROVIDER_UNAVAILABLE", false), "Reinstall the Codex CLI"),
-            ("claude", failure("PROVIDER_UNAVAILABLE", false), "Reinstall Claude Code"),
-            ("gemini", failure("PROVIDER_PERMISSIONS_TOO_OPEN", false), "review requests"),
-            ("gemini", failure("MALFORMED_PROVIDER_OUTPUT", false), "Update Antigravity CLI"),
+            (
+                "codex",
+                failure("PROVIDER_UNAVAILABLE", false),
+                "Reinstall the Codex CLI",
+            ),
+            (
+                "claude",
+                failure("PROVIDER_UNAVAILABLE", false),
+                "Reinstall Claude Code",
+            ),
+            (
+                "gemini",
+                failure("PROVIDER_PERMISSIONS_TOO_OPEN", false),
+                "review requests",
+            ),
+            (
+                "gemini",
+                failure("MALFORMED_PROVIDER_OUTPUT", false),
+                "Update Antigravity CLI",
+            ),
             ("grok", failure("SEARCH_UNSUPPORTED", false), "Turn Web off"),
-            ("codex", failure("WORKSPACE_UNAVAILABLE", false), "only you can change it"),
+            (
+                "codex",
+                failure("WORKSPACE_UNAVAILABLE", false),
+                "only you can change it",
+            ),
         ];
         for (provider, failure, expected) in cases {
             let rendered = provider_failure(Some(provider), failure);
-            assert!(rendered.message.contains(expected), "{provider}: {}", rendered.message);
+            assert!(
+                rendered.message.contains(expected),
+                "{provider}: {}",
+                rendered.message
+            );
             assert!(!rendered.message.contains("sk-"));
         }
     }

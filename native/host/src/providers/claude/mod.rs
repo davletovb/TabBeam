@@ -905,9 +905,9 @@ impl Turn {
                             .as_deref()
                             .map(|dir| superseded_session_dir(dir, &id).join(&old));
                         forget::tracked_cleanup(marker, move || {
-                            config
-                                .as_deref()
-                                .map_or(Ok(()), |config| forget_transcript(config, &workspace, &old))
+                            config.as_deref().map_or(Ok(()), |config| {
+                                forget_transcript(config, &workspace, &old)
+                            })
                         });
                         id
                     }
@@ -1094,14 +1094,11 @@ impl Turn {
         }
 
         if let Some(old) = current {
-            let marker = self
-                .session_dir
-                .as_deref()
-                .and_then(|dir| {
-                    record_superseded_session(dir, conversation, &old)
-                        .ok()
-                        .map(|()| superseded_session_dir(dir, conversation).join(&old))
-                });
+            let marker = self.session_dir.as_deref().and_then(|dir| {
+                record_superseded_session(dir, conversation, &old)
+                    .ok()
+                    .map(|()| superseded_session_dir(dir, conversation).join(&old))
+            });
             if self.session_dir.is_none() || marker.is_some() {
                 let config = claude_config_dir(&self.launch);
                 let workspace = self.launch.work_dir.clone();
