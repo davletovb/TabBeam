@@ -19,6 +19,7 @@ use super::codex::workspace;
 use super::discovery;
 use super::environment;
 use super::forget;
+use super::layout::Layout;
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
 use crate::conversation::{provider_prompt, search_prompt};
 use crate::protocol::events::{
@@ -214,13 +215,10 @@ pub struct Claude {
 }
 
 impl Claude {
-    pub fn installed() -> Self {
+    pub fn installed(layout: &Layout) -> Self {
         let host: Vec<_> = std::env::vars_os().collect();
-        let mut claude = Self::new(
-            discovery::installed(),
-            workspace::default_for(&host, "claude"),
-        );
-        claude.session_dir = installed_session_dir();
+        let mut claude = Self::new(discovery::installed(), layout.workspace(&host, "claude"));
+        claude.session_dir = layout.data_dir().map(|dir| dir.join("claude-sessions"));
         claude
     }
 
@@ -501,20 +499,6 @@ fn signed_in(exit: &Exit) -> Authentication {
 fn after(duration: Duration) -> Instant {
     let now = Instant::now();
     now.checked_add(duration).unwrap_or(now)
-}
-
-fn installed_session_dir() -> Option<PathBuf> {
-    #[cfg(windows)]
-    let base = std::env::var_os("LOCALAPPDATA").or_else(|| std::env::var_os("APPDATA"));
-    #[cfg(not(windows))]
-    let base = std::env::var_os("XDG_DATA_HOME")
-        .filter(|path| Path::new(path).is_absolute())
-        .or_else(|| {
-            std::env::var_os("HOME")
-                .map(|home| PathBuf::from(home).join(".local/share").into_os_string())
-        });
-    base.map(PathBuf::from)
-        .map(|path| path.join("pervue/claude-sessions"))
 }
 
 fn session_name(id: &str) -> bool {

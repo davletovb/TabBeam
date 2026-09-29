@@ -218,7 +218,7 @@ where
     W: Write + ?Sized,
     L: Write,
 {
-    let providers = Providers::installed();
+    let providers = Providers::installed(&crate::layout());
     run_with(&providers, input, output, log)
 }
 

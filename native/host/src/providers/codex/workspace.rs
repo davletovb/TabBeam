@@ -10,62 +10,8 @@
 //! `.git` and `AGENTS.md` to it. A directory its group can write to
 //! qualifies only if the group is the user's own (see [`private_group`]).
 
-use std::ffi::OsString;
-use std::hash::{BuildHasher, RandomState};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
-
-use crate::providers::environment;
-
-/// Where an installed host runs Codex: `codex-workspace` in Pervue's
-/// directory in the user's cache. Without a cache directory, a new directory
-/// with a random name in the temporary directory, which [`prepare`] accepts
-/// only where the temporary directory is private to the user, as it is on
-/// macOS and Windows.
-pub fn default(host: &[(OsString, OsString)]) -> PathBuf {
-    default_for(host, "codex")
-}
-
-/// A provider-specific private workspace, using the same trust checks as Codex.
-pub(crate) fn default_for(host: &[(OsString, OsString)], provider: &str) -> PathBuf {
-    cache_dir(host).map_or_else(
-        || {
-            std::env::temp_dir().join(format!(
-                "pervue-{provider}-{:016x}",
-                RandomState::new().hash_one(SystemTime::now())
-            ))
-        },
-        |cache| cache.join(format!("{provider}-workspace")),
-    )
-}
-
-/// Pervue's directory in the user's cache.
-#[cfg(target_vendor = "apple")]
-fn cache_dir(host: &[(OsString, OsString)]) -> Option<PathBuf> {
-    absolute(host, "HOME").map(|home| home.join("Library/Caches/Pervue"))
-}
-
-/// Pervue's directory in the user's cache.
-#[cfg(all(unix, not(target_vendor = "apple")))]
-fn cache_dir(host: &[(OsString, OsString)]) -> Option<PathBuf> {
-    absolute(host, "XDG_CACHE_HOME")
-        .map(|cache| cache.join("pervue"))
-        .or_else(|| absolute(host, "HOME").map(|home| home.join(".cache/pervue")))
-}
-
-/// Pervue's directory in the user's cache.
-#[cfg(not(unix))]
-fn cache_dir(host: &[(OsString, OsString)]) -> Option<PathBuf> {
-    absolute(host, "LOCALAPPDATA").map(|local| local.join("Pervue"))
-}
-
-/// The variable `name` as a path, if it is set to an absolute one.
-fn absolute(host: &[(OsString, OsString)], name: &str) -> Option<PathBuf> {
-    environment::lookup(host, name)
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-}
 
 /// Creates the workspace `dir` if needed and checks that only its user can
 /// change what Codex finds there. Returns the path to give Codex: on POSIX,
@@ -190,61 +136,6 @@ fn not_private(path: &Path) -> io::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn vars(pairs: &[(&str, &str)]) -> Vec<(OsString, OsString)> {
-        pairs
-            .iter()
-            .map(|(name, value)| (OsString::from(name), OsString::from(value)))
-            .collect()
-    }
-
-    #[cfg(target_vendor = "apple")]
-    #[test]
-    fn the_workspace_is_in_the_users_cache() {
-        assert_eq!(
-            default(&vars(&[("HOME", "/Users/me")])),
-            PathBuf::from("/Users/me/Library/Caches/Pervue/codex-workspace")
-        );
-    }
-
-    #[cfg(all(unix, not(target_vendor = "apple")))]
-    #[test]
-    fn the_workspace_is_in_the_users_cache() {
-        assert_eq!(
-            default(&vars(&[("HOME", "/home/me")])),
-            PathBuf::from("/home/me/.cache/pervue/codex-workspace")
-        );
-        assert_eq!(
-            default(&vars(&[("HOME", "/home/me"), ("XDG_CACHE_HOME", "/cache")])),
-            PathBuf::from("/cache/pervue/codex-workspace")
-        );
-        // A relative cache directory would depend on the working directory.
-        assert_eq!(
-            default(&vars(&[("HOME", "/home/me"), ("XDG_CACHE_HOME", "cache")])),
-            PathBuf::from("/home/me/.cache/pervue/codex-workspace")
-        );
-    }
-
-    #[cfg(not(unix))]
-    #[test]
-    fn the_workspace_is_in_the_users_cache() {
-        assert_eq!(
-            default(&vars(&[("LOCALAPPDATA", r"C:\Users\me\AppData\Local")])),
-            PathBuf::from(r"C:\Users\me\AppData\Local\Pervue\codex-workspace")
-        );
-    }
-
-    #[test]
-    fn without_a_cache_the_workspace_gets_a_new_name() {
-        let first = default(&vars(&[("HOME", "relative"), ("LOCALAPPDATA", "relative")]));
-        let second = default(&[]);
-        for dir in [&first, &second] {
-            assert_eq!(dir.parent(), Some(std::env::temp_dir().as_path()));
-            let name = dir.file_name().unwrap().to_str().unwrap();
-            assert!(name.starts_with("pervue-codex-"), "{name}");
-        }
-        assert_ne!(first, second);
-    }
 
     /// A new directory for one test, beside the test binary in the target
     /// directory: the temporary directory can't hold a workspace, because

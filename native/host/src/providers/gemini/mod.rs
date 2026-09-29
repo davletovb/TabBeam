@@ -20,6 +20,7 @@ use super::codex::workspace;
 use super::discovery;
 use super::environment;
 use super::forget;
+use super::layout::Layout;
 use super::private_fs;
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
 use crate::conversation::{SEARCH_INSTRUCTIONS, provider_prompt};
@@ -207,13 +208,13 @@ pub struct Gemini {
 }
 
 impl Gemini {
-    pub fn installed() -> Self {
+    pub fn installed(layout: &Layout) -> Self {
         let host: Vec<_> = std::env::vars_os().collect();
         let mut gemini = Self::new(
             discovery::installed(),
-            workspace::default_for(&host, "antigravity"),
+            layout.workspace(&host, "antigravity"),
         );
-        gemini.cleanup_dir = installed_cleanup_dir();
+        gemini.cleanup_dir = layout.data_dir().map(|dir| dir.join("gemini-cleanups"));
         gemini
     }
 
@@ -1047,20 +1048,6 @@ fn remove_antigravity_transcript(home: &Path, id: &str) -> io::Result<()> {
 const MAX_PENDING_CLEANUPS: usize = 256;
 const TRANSCRIPT_SCAN_BUDGET: usize = 512;
 const TRANSCRIPT_SCAN_BYTES: u64 = 1024 * 1024;
-
-fn installed_cleanup_dir() -> Option<PathBuf> {
-    #[cfg(windows)]
-    let base = std::env::var_os("LOCALAPPDATA").or_else(|| std::env::var_os("APPDATA"));
-    #[cfg(not(windows))]
-    let base = std::env::var_os("XDG_DATA_HOME")
-        .filter(|path| Path::new(path).is_absolute())
-        .or_else(|| {
-            std::env::var_os("HOME")
-                .map(|home| PathBuf::from(home).join(".local/share").into_os_string())
-        });
-    base.map(PathBuf::from)
-        .map(|path| path.join("pervue/gemini-cleanups"))
-}
 
 fn cleanup_conversation_dir(base: &Path, conversation_id: &str) -> io::Result<PathBuf> {
     if !private_fs::is_conversation_id(conversation_id) {

@@ -30,6 +30,7 @@ use std::time::{Duration, Instant, SystemTime};
 use super::discovery;
 use super::environment;
 use super::forget;
+use super::layout::Layout;
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
 use crate::conversation::{provider_prompt, search_prompt};
 use crate::protocol::events::{
@@ -219,10 +220,10 @@ impl Codex {
     /// The adapter of an installed host: the platform lookup rules, an empty
     /// workspace in the user's own cache directory, and conversation mappings
     /// in the user's data directory.
-    pub fn installed() -> Self {
+    pub fn installed(layout: &Layout) -> Self {
         let host: Vec<_> = std::env::vars_os().collect();
-        let mut codex = Self::new(discovery::installed(), workspace::default(&host));
-        codex.session_dir = installed_session_dir();
+        let mut codex = Self::new(discovery::installed(), layout.workspace(&host, "codex"));
+        codex.session_dir = layout.data_dir().map(|dir| dir.join("codex-sessions"));
         codex
     }
 
@@ -587,20 +588,6 @@ fn signed_in(exit: &Exit) -> Authentication {
 fn after(duration: Duration) -> Instant {
     let now = Instant::now();
     now.checked_add(duration).unwrap_or(now)
-}
-
-fn installed_session_dir() -> Option<PathBuf> {
-    #[cfg(windows)]
-    let base = std::env::var_os("LOCALAPPDATA").or_else(|| std::env::var_os("APPDATA"));
-    #[cfg(not(windows))]
-    let base = std::env::var_os("XDG_DATA_HOME")
-        .filter(|path| Path::new(path).is_absolute())
-        .or_else(|| {
-            std::env::var_os("HOME")
-                .map(|home| PathBuf::from(home).join(".local/share").into_os_string())
-        });
-    base.map(PathBuf::from)
-        .map(|path| path.join("pervue/codex-sessions"))
 }
 
 fn session_name(id: &str) -> bool {

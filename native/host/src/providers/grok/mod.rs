@@ -25,6 +25,7 @@ use super::codex::workspace;
 use super::discovery;
 use super::environment;
 use super::forget;
+use super::layout::Layout;
 use super::private_fs;
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
 use crate::conversation::provider_prompt;
@@ -238,12 +239,9 @@ pub struct Grok {
 }
 
 impl Grok {
-    pub fn installed() -> Self {
+    pub fn installed(layout: &Layout) -> Self {
         let host: Vec<_> = std::env::vars_os().collect();
-        Self::new(
-            discovery::installed(),
-            workspace::default_for(&host, "grok"),
-        )
+        Self::new(discovery::installed(), layout.workspace(&host, "grok"))
     }
 
     pub fn new(search: SearchPath, work_dir: PathBuf) -> Self {

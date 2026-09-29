@@ -27,7 +27,10 @@ pub mod fake;
 pub mod forget;
 pub mod gemini;
 pub mod grok;
+pub mod layout;
 pub(crate) mod private_fs;
+
+pub use layout::Layout;
 
 /// One `conversation.send`, in provider-neutral terms.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,13 +110,13 @@ impl Providers {
     /// The providers of an installed host. The fake scaffold stays registered
     /// for deterministic protocol diagnostics; real adapters use the same
     /// platform discovery rules.
-    pub fn installed() -> Self {
+    pub fn installed(layout: &Layout) -> Self {
         Self(vec![
             Box::new(fake::Fake),
-            Box::new(codex::Codex::installed()),
-            Box::new(claude::Claude::installed()),
-            Box::new(gemini::Gemini::installed()),
-            Box::new(grok::Grok::installed()),
+            Box::new(codex::Codex::installed(layout)),
+            Box::new(claude::Claude::installed(layout)),
+            Box::new(gemini::Gemini::installed(layout)),
+            Box::new(grok::Grok::installed(layout)),
         ])
     }
 
