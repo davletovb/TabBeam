@@ -320,7 +320,7 @@ mod tests {
             parse(
                 r#"{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}}"#
             ),
-            Ok(Line::Progress)
+            Ok(Line::Ignored)
         );
         assert_eq!(
             parse(r#"{"type":"stream_event","event":{"type":"message_stop"}}"#),

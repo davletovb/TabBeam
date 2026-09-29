@@ -297,17 +297,26 @@ mod tests {
 
     #[test]
     fn failures_are_normalized_without_forwarding_provider_text() {
-        for (message, reason) in [
-            ("authentication required", "AUTH_REJECTED"),
+        for (message, code, reason) in [
+            (
+                "authentication required",
+                ErrorCode::ProviderNotAuthenticated,
+                "AUTH_REJECTED",
+            ),
             (
                 "http 429 RESOURCE_EXHAUSTED quota exceeded",
+                ErrorCode::ProviderFailed,
                 "PROVIDER_RATE_LIMITED",
             ),
-            ("secret provider detail", "PROVIDER_UNAVAILABLE"),
+            (
+                "secret provider detail",
+                ErrorCode::ProviderFailed,
+                "PROVIDER_UNAVAILABLE",
+            ),
         ] {
             let failure = provider_failure(message);
+            assert_eq!(failure.code, code);
             assert_eq!(failure.reason, reason);
-            assert_eq!(failure.code, ErrorCode::ProviderFailed);
         }
     }
 
