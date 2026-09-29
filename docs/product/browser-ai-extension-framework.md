@@ -166,7 +166,7 @@ Suggested structure:
 │ Ask                              ⋮   │
 │                                      │
 │ ┌──────────────────────────────────┐ │
-│ │ Ask anything…                    │ │
+│ │ Ask Beam…                        │ │
 │ └──────────────────────────────────┘ │
 │                                      │
 │ Provider ▾     Page context ▾        │
@@ -174,7 +174,7 @@ Suggested structure:
 │ Streaming answer...                  │
 │ Sources / citations                   │
 │                                      │
-│ Ask a follow-up…                     │
+│ Ask Beam a follow-up…                │
 │                                      │
 │ ↗ Continue in full view              │
 └──────────────────────────────────────┘
