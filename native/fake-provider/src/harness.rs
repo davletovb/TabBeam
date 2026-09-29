@@ -184,6 +184,14 @@ impl FakeCodex {
         Codex::new(SearchPath::new([self.dir.clone()]), self.dir.join("work")).with_limits(limits)
     }
 
+    /// [`FakeCodex::adapter`] with the environment Codex gets from `host`.
+    pub fn adapter_with_env<I>(&self, host: I) -> Codex
+    where
+        I: IntoIterator<Item = (OsString, OsString)>,
+    {
+        self.adapter().with_environment(host)
+    }
+
     recorded!("codex");
 }
 
@@ -231,6 +239,14 @@ impl FakeClaude {
             self.dir.join("claude-work"),
         )
         .with_limits(CLAUDE_TEST_LIMITS)
+    }
+
+    /// [`FakeClaude::adapter`] with the environment Claude gets from `host`.
+    pub fn adapter_with_env<I>(&self, host: I) -> Claude
+    where
+        I: IntoIterator<Item = (OsString, OsString)>,
+    {
+        self.adapter().with_environment(host)
     }
 
     recorded!("claude");

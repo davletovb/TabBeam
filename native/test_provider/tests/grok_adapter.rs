@@ -1,3 +1,9 @@
+//! Pervue's conversations over the Grok adapter, against a fake `grok`. Grok
+//! keeps no session, so a conversation continues from the dialogue Pervue
+//! replays; this tests that mapping, and that a conversation the host never
+//! made is refused before Grok runs. The adapter's own behaviour is tested at
+//! the runtime's level, in `runtime-tests`.
+
 mod support;
 
 use std::time::{Duration, Instant};
@@ -68,66 +74,6 @@ fn answer_text(updates: &[Update]) -> String {
 }
 
 #[test]
-fn status_uses_grok_models_and_cached_oauth() {
-    let fake = FakeGrok::install();
-    let updates = collect(fake.adapter().status());
-    match &updates[0] {
-        Update::Status {
-            provider_id,
-            status,
-        } => {
-            assert_eq!(provider_id, "grok");
-            assert_eq!(
-                status.availability,
-                pervue_host::protocol::events::Availability::Available
-            );
-            assert_eq!(
-                status.authentication,
-                pervue_host::protocol::events::Authentication::Authenticated
-            );
-            assert_eq!(
-                status.capabilities,
-                pervue_host::providers::grok::CAPABILITIES
-            );
-        }
-        other => panic!("unexpected update: {other:?}"),
-    }
-    assert!(matches!(updates.last(), Some(Update::Completed)));
-}
-
-#[test]
-fn signed_out_status_is_reported_as_available_but_unauthenticated() {
-    let fake = FakeGrok::install();
-    std::fs::remove_file(fake.home.join(".grok/auth.json")).unwrap();
-    let updates = collect(fake.adapter().status());
-    assert!(matches!(
-        &updates[0],
-        Update::Status { status, .. }
-            if status.availability == pervue_host::protocol::events::Availability::Available
-                && status.authentication == pervue_host::protocol::events::Authentication::Unauthenticated
-    ));
-}
-
-#[test]
-fn relocated_grok_home_is_used_only_to_find_the_cached_auth_file() {
-    let fake = FakeGrok::install();
-    std::fs::remove_file(fake.home.join(".grok/auth.json")).unwrap();
-    let custom = fake.home.join("custom-grok");
-    std::fs::create_dir_all(&custom).unwrap();
-    std::fs::write(custom.join("auth.json"), "{}").unwrap();
-
-    let updates = collect(
-        fake.adapter_with_environment(&[("GROK_HOME", custom)])
-            .status(),
-    );
-    assert!(matches!(
-        &updates[0],
-        Update::Status { status, .. }
-            if status.authentication == pervue_host::protocol::events::Authentication::Authenticated
-    ));
-}
-
-#[test]
 fn one_shot_turns_continue_from_bounded_pervue_history() {
     let fake = FakeGrok::install();
     let adapter = fake.adapter();
@@ -157,99 +103,6 @@ fn one_shot_turns_continue_from_bounded_pervue_history() {
     );
     assert_eq!(answer_text(&second), "Grok follow-up answer");
     assert!(matches!(second.last(), Some(Update::Completed)));
-}
-
-#[test]
-fn resolved_model_alias_is_accepted() {
-    let fake = FakeGrok::install();
-    let updates = collect(fake.adapter().send(request(None, false, "grok-4")));
-    assert_eq!(answer_text(&updates), "Grok answer");
-    assert!(matches!(updates.last(), Some(Update::Completed)));
-}
-
-#[test]
-fn web_search_is_not_advertised_or_launched_on_shipped_grok() {
-    let fake = FakeGrok::install();
-    assert_eq!(
-        pervue_host::providers::grok::CAPABILITIES.web_search,
-        pervue_host::protocol::events::Capability::Unsupported
-    );
-    let updates = collect(fake.adapter().send(request(None, true, "grok-4.6")));
-    assert!(matches!(
-        updates.as_slice(),
-        [Update::Failed(error)] if error.reason == "SEARCH_UNSUPPORTED"
-    ));
-    assert!(fake.turn_dirs().is_empty());
-}
-
-#[test]
-fn every_init_boundary_fails_closed_with_a_specific_reason() {
-    let fake = FakeGrok::install();
-    let adapter = fake.adapter();
-    for (model, reason) in [
-        ("grok-init-auth", "AUTH_REJECTED"),
-        ("grok-init-model", "MODEL_MISMATCH"),
-        ("grok-init-cwd", "WORKSPACE_MISMATCH"),
-        ("grok-init-tools", "TOOLSET_MISMATCH"),
-        ("grok-init-skills", "SKILLS_MISMATCH"),
-        ("grok-init-mcp", "MCP_MISMATCH"),
-    ] {
-        let updates = collect(adapter.send(request(None, false, model)));
-        assert!(
-            matches!(updates.last(), Some(Update::Failed(error)) if error.reason == reason),
-            "{model}: {updates:?}"
-        );
-    }
-}
-
-#[test]
-fn unexpected_client_tool_activity_fails_closed() {
-    let fake = FakeGrok::install();
-    let updates = collect(
-        fake.adapter()
-            .send(request(None, false, "grok-tool-violation")),
-    );
-    assert!(matches!(
-        updates.last(),
-        Some(Update::Failed(error)) if error.reason == "PROVIDER_BOUNDARY_VIOLATION"
-    ));
-}
-
-#[test]
-fn failed_results_are_normalized() {
-    let fake = FakeGrok::install();
-    let updates = collect(
-        fake.adapter()
-            .send(request(None, false, "grok-result-auth")),
-    );
-    assert!(matches!(
-        updates.last(),
-        Some(Update::Failed(error)) if error.reason == "AUTH_REJECTED"
-    ));
-}
-
-#[test]
-fn a_second_host_does_not_remove_a_live_turn_workspace() {
-    let fake = FakeGrok::install();
-    let first_adapter = fake.adapter();
-    let mut running = first_adapter.send(request(None, false, "grok-hang"));
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while let Some(update) = running.next(deadline) {
-        if matches!(update, Update::Started) {
-            break;
-        }
-    }
-    let live = fake.turn_dirs();
-    assert_eq!(live.len(), 1, "expected one live turn workspace");
-
-    let _second_host = fake.adapter();
-    for path in live {
-        assert!(path.exists(), "a second host removed {path:?}");
-    }
-
-    running.cancel(Duration::from_millis(100));
-    let updates = collect(running);
-    assert!(matches!(updates.last(), Some(Update::Stopped)));
 }
 
 #[test]
