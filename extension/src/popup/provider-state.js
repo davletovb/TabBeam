@@ -236,5 +236,5 @@ export function providerView(response, fallbackLabel) {
  * @returns {ProviderView}
  */
 function unknownView(label) {
-  return { state: "unknown", kind: null, message: `Pervue couldn't check ${label}.` };
+  return { state: "unknown", kind: null, message: `TabBeam couldn't check ${label}.` };
 }

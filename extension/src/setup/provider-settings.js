@@ -112,7 +112,7 @@ export function bindProviderSettings(elements, runtime, storage, storageChanges)
     if (response === undefined) {
       note(`Checking what ${label} supports…`);
     } else if (response === null) {
-      note(`Pervue couldn't check what ${label} supports, so its model can't be chosen yet. Reopen this page once the companion is connected.`);
+      note(`TabBeam couldn't check what ${label} supports, so its model can't be chosen yet. Reopen this page once the companion is connected.`);
     } else if (!supported) {
       note(`${label} uses the model set in its own configuration. This companion can't switch its model.`);
     } else if (!saved) {

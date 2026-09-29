@@ -13,7 +13,7 @@ export const READY_STATUS = "Press Enter to ask. Shift+Enter adds a line.";
 export const DELETED_STATUS = "This conversation was deleted. Ask something to start a new one.";
 
 /** When the extension's own service worker is gone before an answer ends. */
-export const WORKER_LOST = "Pervue stopped unexpectedly. Reopen it, then try again.";
+export const WORKER_LOST = "TabBeam stopped unexpectedly. Reopen it, then try again.";
 
 /**
  * @typedef {{
@@ -147,7 +147,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
     const generation = ++viewGeneration;
     loadPending = true;
     try {
-      const result = await runtime.sendMessage?.({ type: "pervue.conversations.get", conversation_id: id });
+      const result = await runtime.sendMessage?.({ type: "tabbeam.conversations.get", conversation_id: id });
       if (generation !== viewGeneration || active) return false;
       if (result?.ok !== true || !result.value) throw new Error("unavailable");
       const nextConversationId = result.value.id;
@@ -167,7 +167,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
   }
 
   options.storageChanges?.addListener((changes, area) => {
-    const change = area === "local" && conversationId ? changes[`pervue.conversation.${conversationId}`] : undefined;
+    const change = area === "local" && conversationId ? changes[`tabbeam.conversation.${conversationId}`] : undefined;
     if (!change || active) return;
     if (change.newValue === undefined) {
       // Deleted, here or in another view: there's nothing left to show or to
@@ -198,7 +198,7 @@ export function bindAskForm(elements, runtime, contextControls, options = {}) {
     item.className = `message message-${role}`;
     item.setAttribute("data-state", state);
     const label = owner.createElement("strong");
-    label.textContent = role === "user" ? "You" : "Pervue";
+    label.textContent = role === "user" ? "You" : "TabBeam";
     const body = owner.createElement("div");
     body.className = "message-body";
     if (role === "assistant" && text && options.renderMessage) {
