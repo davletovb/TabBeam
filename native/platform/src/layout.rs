@@ -14,7 +14,6 @@
 //! directory. Once an application ships, both are compatibility contracts:
 //! changing either can strand files that an installed application expects.
 
-use std::borrow::Cow;
 use std::ffi::OsString;
 use std::fmt;
 use std::hash::{BuildHasher, RandomState};
@@ -29,10 +28,9 @@ use crate::environment;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Layout {
     namespace: Namespace,
-    /// The exact display casing of the macOS/Windows cache directory, when it
-    /// is not the default one derived from the namespace.
-    #[cfg_attr(all(unix, not(target_vendor = "apple")), allow(dead_code))]
-    cache_title: Option<String>,
+    /// The display casing of the namespace that macOS and Windows use for the
+    /// cache directory.
+    cache_title: String,
 }
 
 /// A cache title that is not the application's namespace with only its ASCII
@@ -50,9 +48,10 @@ impl std::error::Error for CacheTitleError {}
 
 impl Layout {
     pub fn new(namespace: Namespace) -> Self {
+        let cache_title = default_cache_title(&namespace);
         Self {
             namespace,
-            cache_title: None,
+            cache_title,
         }
     }
 
@@ -67,11 +66,9 @@ impl Layout {
         if !title.eq_ignore_ascii_case(namespace.as_str()) {
             return Err(CacheTitleError);
         }
-        // The default casing needs no field, so it compares equal to `new`.
-        let cache_title = (title != default_cache_title(&namespace)).then(|| title.to_owned());
         Ok(Self {
             namespace,
-            cache_title,
+            cache_title: title.to_owned(),
         })
     }
 
@@ -122,7 +119,7 @@ impl Layout {
     /// namespace or cache-title casing can strand files it expects.
     #[cfg(target_vendor = "apple")]
     pub fn cache_dir(&self, host: &[(OsString, OsString)]) -> Option<PathBuf> {
-        absolute(host, "HOME").map(|home| home.join("Library/Caches").join(&*self.title()))
+        absolute(host, "HOME").map(|home| home.join("Library/Caches").join(self.title()))
     }
 
     /// The application's directory in the user's cache.
@@ -138,7 +135,7 @@ impl Layout {
     /// The application's directory in the user's cache.
     #[cfg(not(unix))]
     pub fn cache_dir(&self, host: &[(OsString, OsString)]) -> Option<PathBuf> {
-        absolute(host, "LOCALAPPDATA").map(|local| local.join(&*self.title()))
+        absolute(host, "LOCALAPPDATA").map(|local| local.join(self.title()))
     }
 
     /// The application's directory in the user's data directory, where
@@ -164,11 +161,8 @@ impl Layout {
     /// The cache-directory display casing of the namespace. Linux cache paths
     /// use the namespace as it is, so only macOS and Windows read it.
     #[cfg_attr(all(unix, not(target_vendor = "apple")), allow(dead_code))]
-    fn title(&self) -> Cow<'_, str> {
-        self.cache_title.as_deref().map_or_else(
-            || Cow::Owned(default_cache_title(&self.namespace)),
-            Cow::Borrowed,
-        )
+    fn title(&self) -> &str {
+        &self.cache_title
     }
 }
 
