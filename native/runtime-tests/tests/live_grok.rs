@@ -27,8 +27,8 @@ use runtime_platform::layout::Layout;
 use runtime_providers::grok::Grok;
 use runtime_providers::{Provider, Update};
 use support::live::{
-    ANSWER_TIMEOUT, Mode, answer_of, assert_no_marker, home, marker, mode, run_within, scratch,
-    skip_or_fail, status_of,
+    ANSWER_TIMEOUT, Mode, answer_of, assert_completed, assert_no_marker, home, marker, mode,
+    run_within, scratch, skip_or_fail, status_of,
 };
 
 const VARIABLE: &str = "RUNTIME_LIVE_GROK";
@@ -120,7 +120,7 @@ fn live_grok_answers_and_leaves_nothing_behind() {
     if matches!(last, Update::Failed(error) if error.code == ErrorCode::ProviderNotAuthenticated) {
         return skip_or_fail(VARIABLE, mode, "Grok isn't signed in");
     }
-    assert_eq!(last, &Update::Completed, "{plain:?}");
+    assert_completed("the plain turn", &plain);
     let plain_answer = answer_of("the plain answer", &plain, CREDENTIAL_VARIABLES);
     eprintln!("Grok answered: {plain_answer}");
     assert!(
@@ -141,11 +141,7 @@ fn live_grok_answers_and_leaves_nothing_behind() {
             .as_mut(),
             ANSWER_TIMEOUT,
         );
-        assert_eq!(
-            instructed.last(),
-            Some(&Update::Completed),
-            "{instructed:?}"
-        );
+        assert_completed("the instructed turn", &instructed);
         followed = answer_of("the instructed answer", &instructed, CREDENTIAL_VARIABLES);
         eprintln!("with a system prompt (attempt {attempt}), Grok answered: {followed}");
         if followed.to_lowercase().contains("marmalade") {

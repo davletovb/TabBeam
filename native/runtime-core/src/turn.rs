@@ -71,9 +71,9 @@ pub enum SessionPolicy {
 pub struct Turn {
     /// The application's own instructions for the conversation, as opposed to
     /// what its user said. It never goes on a command line, where anyone on the
-    /// machine could read it. Antigravity (Gemini) reads its system prompt from
-    /// an agent file the adapter writes, so it goes there; the other adapters
-    /// send it as the first part of the prompt, under
+    /// machine could read it. Antigravity (Gemini) and Grok read their system
+    /// prompts from an agent file the adapter writes, so it goes there; the
+    /// other adapters send it as the first part of the prompt, under
     /// [`crate::prompt::SYSTEM_INTRO`]. It goes with every turn that carries it,
     /// including one that resumes a native session, where it repeats what the
     /// session already holds: an application that resumes sessions sends it on

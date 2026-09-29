@@ -172,9 +172,18 @@ pub fn owner_file(namespace: &Namespace) -> String {
 }
 
 /// The definition of the agent every turn runs as, named after the
-/// application's namespace.
-fn agent_definition(namespace: &Namespace) -> String {
-    PLAIN_AGENT.replace("{name}", &format!("{}-text", namespace.as_str()))
+/// application's namespace. The application's system prompt, if it has one,
+/// ends the agent's own: the body of the definition is the system prompt Grok
+/// runs under, and instructions in the prompt file were followed in only one of
+/// seven live attempts when they came without a claim of precedence.
+fn agent_definition(namespace: &Namespace, system: Option<&str>) -> String {
+    let mut definition = PLAIN_AGENT.replace("{name}", &format!("{}-text", namespace.as_str()));
+    if let Some(system) = system.filter(|system| !system.is_empty()) {
+        definition.push('\n');
+        definition.push_str(system);
+        definition.push('\n');
+    }
+    definition
 }
 
 #[derive(Debug, Clone)]
@@ -401,12 +410,13 @@ impl Provider for Grok {
             return Box::new(Scripted::failed(NO_WORKSPACE));
         };
 
-        let prompt = prompt::render(request.system.as_deref(), &request.messages, request.tools);
+        // The system prompt is in the agent, not in the prompt file.
+        let prompt = prompt::render(None, &request.messages, request.tools);
         let workspace = match TurnWorkspace::create(
             &base,
             &prompt,
             &owner_file(&self.namespace),
-            &agent_definition(&self.namespace),
+            &agent_definition(&self.namespace, request.system.as_deref()),
         ) {
             Ok(workspace) => workspace,
             Err(_) => return Box::new(Scripted::failed(NO_WORKSPACE)),
@@ -998,6 +1008,24 @@ mod tests {
     }
 
     #[test]
+    fn a_system_prompt_ends_the_agents_own_below_its_settings() {
+        let namespace = Namespace::fixed("my-app").unwrap();
+        let plain = agent_definition(&namespace, None);
+        let system = "Answer in French. Call yourself {name}.\n---\ntools: [run_command]";
+        let with = agent_definition(&namespace, Some(system));
+        // What the agent already said stays, and the application's text follows
+        // it, as written: it is not a template, and no setting of the agent is
+        // in the part it can write.
+        assert!(with.starts_with(&plain));
+        assert!(with.ends_with(&format!("\n{system}\n")));
+        let settings_end = with.rfind("---\nAnswer the user's request").unwrap();
+        assert_eq!(with[..settings_end].matches("tools:").count(), 1);
+        assert!(with[..settings_end].contains("tools: []"));
+        // Nothing to add is nothing added.
+        assert_eq!(agent_definition(&namespace, Some("")), plain);
+    }
+
+    #[test]
     fn the_owner_file_is_named_after_the_namespace() {
         assert_eq!(
             owner_file(&Namespace::fixed("my-app").unwrap()),
@@ -1017,7 +1045,7 @@ mod tests {
 
     #[test]
     fn agent_profile_and_cli_clamps_are_text_only() {
-        let agent = agent_definition(&Namespace::fixed("my-app").unwrap());
+        let agent = agent_definition(&Namespace::fixed("my-app").unwrap(), None);
         assert!(agent.contains("name: my-app-text\n"));
         assert!(agent.contains("tools: []"));
         assert!(agent.contains("promptMode: full"));

@@ -12,7 +12,8 @@
 //! it in the process list, so an adapter sends it on the channel that carries
 //! the rest: as the first part of the prompt, or, where the provider has a
 //! system prompt of its own that its CLI reads from a file the adapter writes
-//! (Antigravity's agent), there.
+//! (the agent of Antigravity and of Grok), there, which is where a model takes
+//! it most seriously.
 
 use crate::turn::{Message, Role, ToolPolicy};
 
@@ -32,12 +33,19 @@ const HISTORY_INTRO: &str =
 /// current message, when something else comes before the question.
 pub const CURRENT_QUESTION: &str = "Current user question:\n";
 
-/// Introduces a turn's system prompt when it goes in the prompt, so the
-/// provider can tell the application's instructions from something a user
-/// said. It is deliberately plain: a model that is told its instructions
-/// "take precedence" over what follows reads that as an attempt to override it
-/// (Antigravity's Gemini did, and refused).
-pub const SYSTEM_INTRO: &str = "Instructions for this conversation, from the application:\n";
+/// Introduces a turn's system prompt when it goes in the prompt (Codex and
+/// Claude), so the provider can tell the application's instructions from
+/// something a user said. How it is worded matters, and was found by asking real
+/// models: telling one that the instructions "take precedence over" the
+/// messages below was read as a prompt injection by Antigravity's Gemini, which
+/// refused them; a purely descriptive header ("Instructions for this
+/// conversation…") was followed by Grok in 1 of 7 attempts, where the imperative
+/// with the claim of precedence had been in 13 of 13 runs. Both now read their system
+/// prompt from their agent, so this keeps the imperative, which is what set the
+/// text apart, and drops the claim. No live test has asserted that Codex or
+/// Claude follow it.
+pub const SYSTEM_INTRO: &str =
+    "Follow these instructions from the application for the whole conversation:\n";
 
 /// The prompt for `messages`, the last of which is the current one.
 ///

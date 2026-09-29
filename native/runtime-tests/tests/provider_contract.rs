@@ -475,20 +475,25 @@ fn a_system_prompt_reaches_every_provider_ahead_of_the_question() {
         assert_eq!(updates.last(), Some(&Update::Completed), "{kind:?}");
 
         // The instructions come first, under their introduction, and then the
-        // question, in the prompt; except for Antigravity, which reads its
-        // system prompt from the agent it runs as and resists it in a message,
-        // and gets the question alone. Either way they are not on a command
-        // line, where anyone on the machine could read them.
-        match &rig.fixture {
-            Fixture::Gemini(fake) => {
+        // question, in the prompt; except for Antigravity and Grok, which read
+        // their system prompt from the agent they run as and follow it there
+        // much more readily than in a message, and get the question alone.
+        // Either way they are not on a command line, where anyone on the
+        // machine could read them.
+        let agent_file = match &rig.fixture {
+            Fixture::Gemini(fake) => Some(fake.read("agy-agents")),
+            Fixture::Grok(fake) => Some(fake.read("grok-agents")),
+            Fixture::Codex(_) | Fixture::Claude(_) => None,
+        };
+        match agent_file {
+            Some(agents) => {
                 assert_eq!(rig.prompts(), ["What is muse?"], "{kind:?}");
                 assert!(
-                    fake.read("agy-agents")
-                        .contains("\nAnswer in French. SYSTEM-MARKER\n"),
+                    agents.contains("\nAnswer in French. SYSTEM-MARKER\n"),
                     "{kind:?}: the agent lacks the system prompt"
                 );
             }
-            _ => assert_eq!(
+            None => assert_eq!(
                 rig.prompts(),
                 [format!(
                     "{}Answer in French. SYSTEM-MARKER\n\nWhat is muse?",

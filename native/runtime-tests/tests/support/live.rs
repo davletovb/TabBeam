@@ -84,6 +84,19 @@ pub fn status_of(provider: &dyn Provider) -> Vec<Update> {
     updates
 }
 
+/// Panics unless the turn ended with `Completed`, and says how it did end: the
+/// terminal update and how many updates came before it, not all of them.
+pub fn assert_completed(what: &str, updates: &[Update]) {
+    match updates.last() {
+        Some(Update::Completed) => {}
+        Some(other) => panic!(
+            "{what} ended with {other:?} after {} updates",
+            updates.len()
+        ),
+        None => panic!("{what} gave no updates"),
+    }
+}
+
 /// A scratch directory of this test run, under cargo's temporary directory,
 /// removed when it goes out of scope, a panic included.
 pub struct Scratch(PathBuf);
