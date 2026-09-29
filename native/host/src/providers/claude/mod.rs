@@ -904,15 +904,10 @@ impl Turn {
                             .session_dir
                             .as_deref()
                             .map(|dir| superseded_session_dir(dir, &id).join(&old));
-                        forget::work_in_background(move || {
-                            let removed = config.as_deref().map_or(Ok(()), |config| {
-                                forget_transcript(config, &workspace, &old)
-                            });
-                            if removed.is_ok() {
-                                if let Some(marker) = marker {
-                                    let _ = forget::remove(&marker);
-                                }
-                            }
+                        forget::tracked_cleanup(marker, move || {
+                            config
+                                .as_deref()
+                                .map_or(Ok(()), |config| forget_transcript(config, &workspace, &old))
                         });
                         id
                     }
@@ -1110,15 +1105,10 @@ impl Turn {
             if self.session_dir.is_none() || marker.is_some() {
                 let config = claude_config_dir(&self.launch);
                 let workspace = self.launch.work_dir.clone();
-                forget::work_in_background(move || {
-                    let removed = config
+                forget::tracked_cleanup(marker, move || {
+                    config
                         .as_deref()
-                        .map_or(Ok(()), |config| forget_transcript(config, &workspace, &old));
-                    if removed.is_ok() {
-                        if let Some(marker) = marker {
-                            let _ = forget::remove(&marker);
-                        }
-                    }
+                        .map_or(Ok(()), |config| forget_transcript(config, &workspace, &old))
                 });
             }
         }

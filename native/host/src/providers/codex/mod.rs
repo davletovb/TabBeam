@@ -1147,15 +1147,10 @@ impl Turn {
                                 .session_dir
                                 .as_deref()
                                 .map(|dir| superseded_thread_dir(dir, conversation_id).join(&old));
-                            forget::work_in_background(move || {
-                                let removed = home
+                            forget::tracked_cleanup(marker, move || {
+                                home
                                     .as_deref()
-                                    .map_or(Ok(()), |home| forget_rollouts(home, &workspace, &old));
-                                if removed.is_ok() {
-                                    if let Some(marker) = marker {
-                                        let _ = forget::remove(&marker);
-                                    }
-                                }
+                                    .map_or(Ok(()), |home| forget_rollouts(home, &workspace, &old))
                             });
                         }
                     }
