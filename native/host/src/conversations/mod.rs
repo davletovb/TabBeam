@@ -260,9 +260,14 @@ impl<P: Provider + 'static> Conversations<P> {
             Some(replay) if fresh_session && prior.is_some() => (replay, None, conversation_id),
             // No session to resume, but the dialogue: a new conversation.
             Some(replay) if resume.is_none() => (replay, None, None),
+            // The dialogue in reserve, for a rebuild: the request already
+            // passed its sign-in check, so the rebuild doesn't ask again.
             replay => (
                 draft.turn(false, resume.clone(), group),
-                replay,
+                replay.map(|turn| Turn {
+                    check_sign_in: false,
+                    ..turn
+                }),
                 conversation_id,
             ),
         };

@@ -14,9 +14,12 @@ use pervue_host::conversation::{
     BrowserContext, BrowserContextMode, BrowserPageContext, HistoryMessage, Role,
     SEARCH_INSTRUCTIONS,
 };
+use pervue_host::conversations::Conversations;
 use pervue_host::providers::codex::{CODEX_VARIABLES, Codex, LIMITS, Limits};
 use pervue_host::providers::environment::INHERITED;
-use pervue_host::providers::{ConversationProvider, Exchange, SendRequest, Timeouts, Update};
+use pervue_host::providers::{
+    ConversationProvider, ConversationSlot, Exchange, SendRequest, Timeouts, Update,
+};
 use runtime_core::protocol::{Authentication, Availability, Capability, ErrorCode};
 use runtime_core::turn::SessionPolicy;
 use serde_json::Value;
@@ -84,6 +87,34 @@ fn visible(updates: &[Update]) -> Vec<Update> {
         .collect()
 }
 
+/// Runs `request` to its end: its updates, and the conversation slot the
+/// conversation layer filled in for it.
+fn ran(adapter: &Conversations<Codex>, request: SendRequest) -> (Vec<Update>, ConversationSlot) {
+    let slot = request.conversation.clone();
+    (run_to_end(adapter.send(request).as_mut()), slot)
+}
+
+/// The conversation a request created.
+fn created(slot: &ConversationSlot) -> String {
+    assert!(
+        slot.created(),
+        "the request should have created a conversation"
+    );
+    slot.id().expect("a conversation ID")
+}
+
+/// Asserts that a request continued `conversation` rather than creating one.
+fn continued(slot: &ConversationSlot, conversation: &str) {
+    assert!(!slot.created(), "the request created a new conversation");
+    assert_eq!(slot.id().as_deref(), Some(conversation));
+}
+
+/// A new conversation's ID, from its first turn.
+fn first_conversation(adapter: &Conversations<Codex>) -> String {
+    let (_, slot) = ran(adapter, ask("first"));
+    created(&slot)
+}
+
 fn failure(updates: &[Update]) -> (ErrorCode, &'static str) {
     match updates.last() {
         Some(Update::Failed(error)) => (error.code, error.reason),
@@ -91,7 +122,7 @@ fn failure(updates: &[Update]) -> (ErrorCode, &'static str) {
     }
 }
 
-fn status(codex: &Codex) -> (Availability, Authentication) {
+fn status(codex: &Conversations<Codex>) -> (Availability, Authentication) {
     let updates = run_to_end(codex.status().as_mut());
     assert_eq!(updates.last(), Some(&Update::Completed));
     match &updates[0] {
@@ -208,10 +239,10 @@ fn browser_context(text: &str) -> BrowserContext {
     }
 }
 
-fn context_adapter(codex: &FakeCodex) -> Codex {
+fn context_adapter(codex: &FakeCodex) -> Conversations<Codex> {
     let home = codex.dir.join("context-codex-home");
     std::fs::create_dir_all(&home).unwrap();
-    codex.adapter().with_environment([
+    codex.adapter_with_env([
         (OsString::from("CODEX_HOME"), home.into_os_string()),
         (
             OsString::from("PATH"),
@@ -312,14 +343,14 @@ fn a_search_turn_asks_for_a_cited_search_and_shows_the_answer_not_the_narration(
 fn hostile_cited_links_are_plain_text_and_never_reach_a_command_line() {
     let codex = FakeCodex::install("search-hostile", "signed-in");
     let adapter = context_adapter(&codex);
-    let first = visible(&run_to_end(
-        adapter
-            .send(SendRequest {
-                native_search: true,
-                ..ask("Search this")
-            })
-            .as_mut(),
-    ));
+    let (first, slot) = ran(
+        &adapter,
+        SendRequest {
+            native_search: true,
+            ..ask("Search this")
+        },
+    );
+    let first = visible(&first);
     assert_eq!(first.last(), Some(&Update::Completed));
     let sources: Vec<_> = first
         .iter()
@@ -335,9 +366,7 @@ fn hostile_cited_links_are_plain_text_and_never_reach_a_command_line() {
     assert_eq!(sources[0].url, "https://example.com/codex-hostile");
     assert_eq!(sources[0].title, "--config=evil $(touch pwned) bold");
 
-    let Update::ConversationCreated(conversation) = first[0].clone() else {
-        panic!("missing conversation: {first:?}");
-    };
+    let conversation = created(&slot);
     let second = visible(&run_to_end(
         adapter
             .send(SendRequest {
@@ -491,7 +520,7 @@ fn inactive_plugin_artifacts_do_not_block_browser_context() {
     )
     .unwrap();
 
-    let adapter = codex.adapter().with_environment([
+    let adapter = codex.adapter_with_env([
         (OsString::from("CODEX_HOME"), home.into_os_string()),
         (
             OsString::from("PATH"),
@@ -527,7 +556,7 @@ fn context_fails_closed_when_user_mcp_servers_are_configured() {
         "[mcp_servers.example]\ncommand = \"example-mcp\"\n",
     )
     .unwrap();
-    let adapter = codex.adapter().with_environment([
+    let adapter = codex.adapter_with_env([
         (OsString::from("CODEX_HOME"), home.into_os_string()),
         (
             OsString::from("PATH"),
@@ -544,7 +573,7 @@ fn context_fails_closed_when_user_mcp_servers_are_configured() {
     );
     assert_eq!(
         failure(&updates),
-        (ErrorCode::InvalidRequest, "PAGE_CONTEXT_TOOLS_ENABLED")
+        (ErrorCode::InvalidRequest, "TOOL_ISOLATION_UNAVAILABLE")
     );
     assert_eq!(
         adapter.capabilities().tool_isolation,
@@ -599,23 +628,21 @@ fn a_signed_out_codex_fails_the_request_before_it_runs() {
 fn a_question_streams_its_answer_and_opens_a_conversation() {
     let codex = FakeCodex::install("answers", "signed-in");
     let question = "Why? \"quoted\" $(id) `id` ; rm -rf ~\n é✓😀";
-    let all = run_to_end(codex.adapter().send(ask(question)).as_mut());
+    let (all, slot) = ran(&codex.adapter(), ask(question));
     assert!(all.contains(&Update::Activity));
     let updates = visible(&all);
 
-    let Update::ConversationCreated(conversation_id) = &updates[0] else {
-        panic!("expected a new conversation: {updates:?}");
-    };
+    let conversation_id = created(&slot);
     assert!(conversation_id.starts_with("conv_"), "{conversation_id}");
     assert!(
         !conversation_id.contains("thread"),
         "the Codex thread leaked"
     );
     assert_eq!(
-        updates[1..],
+        updates,
         [
             Update::Started {
-                conversation_id: Some(conversation_id.clone())
+                conversation_id: None
             },
             Update::Delta(format!("You asked: {question}")),
             Update::Completed,
@@ -648,18 +675,15 @@ fn a_chosen_model_goes_to_codex_as_one_argument() {
         adapter.capabilities().model_selection,
         Capability::Supported
     );
-    let first = run_to_end(
-        adapter
-            .send(SendRequest {
-                model: Some("gpt-5-codex".to_owned()),
-                ..ask("first")
-            })
-            .as_mut(),
+    let (first, slot) = ran(
+        &adapter,
+        SendRequest {
+            model: Some("gpt-5-codex".to_owned()),
+            ..ask("first")
+        },
     );
     assert_eq!(first.last(), Some(&Update::Completed), "{first:?}");
-    let Update::ConversationCreated(conversation_id) = visible(&first)[0].clone() else {
-        panic!("expected a new conversation: {first:?}");
-    };
+    let conversation_id = created(&slot);
     let invocations = codex.invocations();
     let (command, _) = invocations[1].split_once('\t').unwrap();
     assert_eq!(
@@ -691,24 +715,21 @@ fn a_chosen_model_goes_to_codex_as_one_argument() {
 fn a_conversation_continues_its_codex_thread() {
     let codex = FakeCodex::install("answers", "signed-in");
     let adapter = codex.adapter();
-    let first = visible(&run_to_end(adapter.send(ask("first")).as_mut()));
-    let Update::ConversationCreated(conversation_id) = first[0].clone() else {
-        panic!("expected a new conversation: {first:?}");
-    };
+    let conversation_id = first_conversation(&adapter);
 
-    let second = run_to_end(
-        adapter
-            .send(SendRequest {
-                conversation_id: Some(conversation_id.clone()),
-                ..ask("second")
-            })
-            .as_mut(),
+    let (second, slot) = ran(
+        &adapter,
+        SendRequest {
+            conversation_id: Some(conversation_id.clone()),
+            ..ask("second")
+        },
     );
+    continued(&slot, &conversation_id);
     assert_eq!(
         visible(&second),
         [
             Update::Started {
-                conversation_id: Some(conversation_id)
+                conversation_id: None
             },
             Update::Delta("You asked: second".to_owned()),
             Update::Completed,
@@ -784,7 +805,7 @@ fn codex_gets_only_the_environment_it_needs() {
     ] {
         host.push((name.into(), value));
     }
-    let adapter = codex.adapter().with_environment(host.clone());
+    let adapter = codex.adapter_with_env(host.clone());
     assert_eq!(status(&adapter).1, Authentication::Authenticated);
     let updates = run_to_end(adapter.send(ask("hi")).as_mut());
     assert_eq!(updates.last(), Some(&Update::Completed));
@@ -868,11 +889,14 @@ fn codex_gets_the_workspace_s_real_path() {
     let real = codex.dir.join("real");
     std::fs::create_dir(&real).unwrap();
     std::os::unix::fs::symlink(&real, codex.dir.join("link")).unwrap();
-    let adapter = Codex::new(
-        SearchPath::new([codex.dir.clone()]),
-        codex.dir.join("link/work"),
-    )
-    .with_limits(TEST_LIMITS);
+    let adapter = Conversations::new(
+        Codex::new(
+            SearchPath::new([codex.dir.clone()]),
+            codex.dir.join("link/work"),
+        )
+        .with_limits(TEST_LIMITS),
+        codex.sessions(),
+    );
     run_to_end(adapter.send(ask("hi")).as_mut());
 
     let resolved = std::fs::canonicalize(&real).unwrap().join("work");
@@ -940,28 +964,25 @@ fn assert_refused(codex: &FakeCodex) {
 #[test]
 fn a_new_host_recovers_the_codex_thread_without_exposing_it() {
     let codex = FakeCodex::install("answers", "signed-in");
-    let first = visible(&run_to_end(codex.adapter().send(ask("first")).as_mut()));
-    let Update::ConversationCreated(conversation_id) = &first[0] else {
-        panic!("expected a conversation: {first:?}");
-    };
-    let stored = std::fs::read_to_string(codex.dir.join("work.sessions").join(conversation_id))
+    let conversation_id = first_conversation(&codex.adapter());
+    let stored = std::fs::read_to_string(codex.dir.join("work.sessions").join(&conversation_id))
         .expect("the native mapping survives the host");
     assert!(!conversation_id.contains(stored.as_str()));
 
     // adapter() constructs a new registry with an empty in-memory map.
-    let second = visible(&run_to_end(
-        codex
-            .adapter()
-            .send(SendRequest {
-                conversation_id: Some(conversation_id.clone()),
-                ..ask("second")
-            })
-            .as_mut(),
-    ));
+    let (second, slot) = ran(
+        &codex.adapter(),
+        SendRequest {
+            conversation_id: Some(conversation_id.clone()),
+            ..ask("second")
+        },
+    );
+    continued(&slot, &conversation_id);
+    let second = visible(&second);
     assert_eq!(
         second[0],
         Update::Started {
-            conversation_id: Some(conversation_id.clone())
+            conversation_id: None
         }
     );
     assert_eq!(second[1], Update::Delta("You asked: second".to_owned()));
@@ -979,10 +1000,7 @@ fn a_new_host_recovers_the_codex_thread_without_exposing_it() {
 fn search_retry_without_completed_history_starts_a_fresh_codex_session() {
     let codex = FakeCodex::install("answers", "signed-in");
     let adapter = codex.adapter();
-    let first = visible(&run_to_end(adapter.send(ask("first")).as_mut()));
-    let Update::ConversationCreated(conversation_id) = first[0].clone() else {
-        panic!("missing conversation: {first:?}");
-    };
+    let conversation_id = first_conversation(&adapter);
 
     codex.set("search-no-links", "signed-in");
     let before = codex.invocations().len();
@@ -1010,26 +1028,24 @@ fn search_retry_without_completed_history_starts_a_fresh_codex_session() {
 #[test]
 fn a_missing_native_session_uses_the_bounded_dialogue() {
     let codex = FakeCodex::install("answers", "signed-in");
-    let updates = visible(&run_to_end(
-        codex
-            .adapter()
-            .send(SendRequest {
-                conversation_id: Some("conv_missing".to_owned()),
-                history: vec![
-                    HistoryMessage {
-                        role: Role::User,
-                        text: "first question".to_owned(),
-                    },
-                    HistoryMessage {
-                        role: Role::Assistant,
-                        text: "first answer".to_owned(),
-                    },
-                ],
-                ..ask("follow up")
-            })
-            .as_mut(),
-    ));
-    assert!(matches!(&updates[0], Update::ConversationCreated(_)));
+    let (_, slot) = ran(
+        &codex.adapter(),
+        SendRequest {
+            conversation_id: Some("conv_missing".to_owned()),
+            history: vec![
+                HistoryMessage {
+                    role: Role::User,
+                    text: "first question".to_owned(),
+                },
+                HistoryMessage {
+                    role: Role::Assistant,
+                    text: "first answer".to_owned(),
+                },
+            ],
+            ..ask("follow up")
+        },
+    );
+    assert!(slot.created(), "a lost mapping starts a new conversation");
     assert!(codex.prompts()[0].contains("first question"));
     assert!(codex.prompts()[0].contains("first answer"));
     assert!(codex.prompts()[0].ends_with("follow up"));
@@ -1042,8 +1058,7 @@ fn an_unknown_conversation_fails_without_running_codex() {
     // names, even a real thread ID, reaches Codex's command line.
     let codex = FakeCodex::install("answers", "signed-in");
     let adapter = codex.adapter();
-    let issued = visible(&run_to_end(adapter.send(ask("first")).as_mut()));
-    assert!(matches!(issued[0], Update::ConversationCreated(_)));
+    first_conversation(&adapter);
     let thread = format!("thread-{}", codex.pids()[0]);
     let before = codex.invocations().len();
     for conversation_id in [
@@ -1076,9 +1091,10 @@ fn an_unknown_conversation_fails_without_running_codex() {
 #[test]
 fn several_messages_arrive_as_separate_deltas() {
     let codex = FakeCodex::install("two-messages", "signed-in");
-    let updates = visible(&run_to_end(codex.adapter().send(ask("hi")).as_mut()));
+    let (updates, _) = ran(&codex.adapter(), ask("hi"));
+    let updates = visible(&updates);
     assert_eq!(
-        updates[2..],
+        updates[1..],
         [
             Update::Delta("First.".to_owned()),
             Update::Delta("\n\nSecond.".to_owned()),
@@ -1132,10 +1148,7 @@ fn failed_turns_map_to_normalized_errors() {
 fn a_lost_codex_session_fails_as_a_process_exit() {
     let codex = FakeCodex::install("answers", "signed-in");
     let adapter = codex.adapter();
-    let first = visible(&run_to_end(adapter.send(ask("first")).as_mut()));
-    let Update::ConversationCreated(conversation_id) = first[0].clone() else {
-        panic!("expected a new conversation: {first:?}");
-    };
+    let conversation_id = first_conversation(&adapter);
     codex.set("resume-fails", "signed-in");
     let updates = run_to_end(
         adapter
@@ -1155,30 +1168,28 @@ fn a_lost_codex_session_fails_as_a_process_exit() {
 fn a_lost_codex_thread_retries_once_with_dialogue() {
     let codex = FakeCodex::install("answers", "signed-in");
     let adapter = codex.adapter();
-    let first = visible(&run_to_end(adapter.send(ask("first")).as_mut()));
-    let Update::ConversationCreated(conversation_id) = first[0].clone() else {
-        panic!("expected a conversation");
-    };
+    let conversation_id = first_conversation(&adapter);
     codex.set("resume-fails", "signed-in");
-    let updates = visible(&run_to_end(
-        adapter
-            .send(SendRequest {
-                conversation_id: Some(conversation_id.clone()),
-                history: vec![
-                    HistoryMessage {
-                        role: Role::User,
-                        text: "first".to_owned(),
-                    },
-                    HistoryMessage {
-                        role: Role::Assistant,
-                        text: "first answer".to_owned(),
-                    },
-                ],
-                ..ask("again")
-            })
-            .as_mut(),
-    ));
-    assert!(matches!(&updates[0], Update::ConversationCreated(id) if id != &conversation_id));
+    let (updates, slot) = ran(
+        &adapter,
+        SendRequest {
+            conversation_id: Some(conversation_id.clone()),
+            history: vec![
+                HistoryMessage {
+                    role: Role::User,
+                    text: "first".to_owned(),
+                },
+                HistoryMessage {
+                    role: Role::Assistant,
+                    text: "first answer".to_owned(),
+                },
+            ],
+            ..ask("again")
+        },
+    );
+    // Why the resume failed isn't known, so the dialogue starts a new
+    // conversation and the old one stays as it was.
+    assert_ne!(created(&slot), conversation_id);
     assert!(matches!(updates.last(), Some(Update::Completed)));
     assert!(
         codex
@@ -1414,17 +1425,14 @@ fn rollout(path: &std::path::Path, thread: &str, cwd: &std::path::Path) {
 fn forget_removes_the_mapping_and_only_pervues_codex_sessions() {
     let codex = FakeCodex::install("answers", "signed-in");
     let home = codex.dir.join("forget-codex-home");
-    let adapter = codex.adapter().with_environment([
+    let adapter = codex.adapter_with_env([
         (OsString::from("CODEX_HOME"), home.clone().into_os_string()),
         (
             OsString::from("PATH"),
             std::env::var_os("PATH").unwrap_or_default(),
         ),
     ]);
-    let first = visible(&run_to_end(adapter.send(ask("first")).as_mut()));
-    let Update::ConversationCreated(conversation) = first[0].clone() else {
-        panic!("expected a new conversation: {first:?}");
-    };
+    let conversation = first_conversation(&adapter);
     let mapping = codex.dir.join("work.sessions").join(&conversation);
     let thread = std::fs::read_to_string(&mapping).unwrap();
 

@@ -10,8 +10,11 @@ use pervue_host::conversation::{
     BrowserContext, BrowserContextMode, BrowserPageContext, HistoryMessage, Role,
     SEARCH_INSTRUCTIONS,
 };
+use pervue_host::conversations::Conversations;
 use pervue_host::providers::claude::Claude;
-use pervue_host::providers::{ConversationProvider, Exchange, SendRequest, Update};
+use pervue_host::providers::{
+    ConversationProvider, ConversationSlot, Exchange, SendRequest, Update,
+};
 use runtime_core::protocol::{Authentication, Availability, Capability, ErrorCode};
 use serde_json::Value;
 use support::FakeClaude;
@@ -85,6 +88,28 @@ fn visible(updates: &[Update]) -> Vec<Update> {
         .collect()
 }
 
+/// Runs `request` to its end: its visible updates, and the conversation slot
+/// the conversation layer filled in for it.
+fn ran(adapter: &Conversations<Claude>, request: SendRequest) -> (Vec<Update>, ConversationSlot) {
+    let slot = request.conversation.clone();
+    (visible(&run_to_end(adapter.send(request).as_mut())), slot)
+}
+
+/// The conversation a request created.
+fn created(slot: &ConversationSlot) -> String {
+    assert!(
+        slot.created(),
+        "the request should have created a conversation"
+    );
+    slot.id().expect("a conversation ID")
+}
+
+/// Asserts that a request continued `conversation` rather than creating one.
+fn continued(slot: &ConversationSlot, conversation: &str) {
+    assert!(!slot.created(), "the request created a new conversation");
+    assert_eq!(slot.id().as_deref(), Some(conversation));
+}
+
 fn failure(updates: &[Update]) -> (ErrorCode, &'static str) {
     match updates.last() {
         Some(Update::Failed(error)) => (error.code, error.reason),
@@ -92,7 +117,7 @@ fn failure(updates: &[Update]) -> (ErrorCode, &'static str) {
     }
 }
 
-fn status(claude: &Claude) -> (Availability, Authentication) {
+fn status(claude: &Conversations<Claude>) -> (Availability, Authentication) {
     let updates = run_to_end(claude.status().as_mut());
     match &updates[0] {
         Update::Status {
@@ -189,16 +214,13 @@ fn missing_claude_is_not_found() {
 fn request_streams_with_tools_disabled_and_keeps_question_off_argv() {
     let claude = FakeClaude::install("answers", "signed-in");
     let question = "Why? $(id) ; rm -rf ~ é✓😀";
-    let updates = visible(&run_to_end(claude.adapter().send(ask(question)).as_mut()));
-    let Update::ConversationCreated(conversation) = &updates[0] else {
-        panic!("missing conversation: {updates:?}");
-    };
-    assert!(conversation.starts_with("conv_"));
+    let (updates, slot) = ran(&claude.adapter(), ask(question));
+    assert!(created(&slot).starts_with("conv_"));
     assert_eq!(
-        updates[1..],
+        updates,
         [
             Update::Started {
-                conversation_id: Some(conversation.clone())
+                conversation_id: None
             },
             Update::Delta("You asked: ".to_owned()),
             Update::Delta(question.to_owned()),
@@ -394,14 +416,13 @@ fn page_context_reaches_claude_as_untrusted_reference_data_with_no_tools() {
 fn hostile_search_results_are_plain_text_and_never_reach_a_command_line() {
     let claude = FakeClaude::install("search-hostile", "signed-in");
     let adapter = claude.adapter();
-    let first = visible(&run_to_end(
-        adapter
-            .send(SendRequest {
-                native_search: true,
-                ..ask("Search this")
-            })
-            .as_mut(),
-    ));
+    let (first, slot) = ran(
+        &adapter,
+        SendRequest {
+            native_search: true,
+            ..ask("Search this")
+        },
+    );
     assert_eq!(first.last(), Some(&Update::Completed));
     let sources: Vec<_> = first
         .iter()
@@ -438,9 +459,7 @@ fn hostile_search_results_are_plain_text_and_never_reach_a_command_line() {
         }
     }
 
-    let Update::ConversationCreated(conversation) = first[0].clone() else {
-        panic!("missing conversation: {first:?}");
-    };
+    let conversation = created(&slot);
     let second = visible(&run_to_end(
         adapter
             .send(SendRequest {
@@ -516,17 +535,14 @@ fn a_search_whose_only_links_a_browser_would_refuse_fails_instead_of_completing(
 fn search_then_plain_followup_resumes_with_plain_tool_policy() {
     let claude = FakeClaude::install("answers", "signed-in");
     let adapter = claude.adapter();
-    let first = visible(&run_to_end(
-        adapter
-            .send(SendRequest {
-                native_search: true,
-                ..ask("Search this")
-            })
-            .as_mut(),
-    ));
-    let Update::ConversationCreated(conversation) = first[0].clone() else {
-        panic!("missing conversation: {first:?}");
-    };
+    let (first, slot) = ran(
+        &adapter,
+        SendRequest {
+            native_search: true,
+            ..ask("Search this")
+        },
+    );
+    let conversation = created(&slot);
     assert_eq!(first.last(), Some(&Update::Completed));
 
     let second = visible(&run_to_end(
@@ -553,7 +569,7 @@ fn search_then_plain_followup_resumes_with_plain_tool_policy() {
 #[test]
 fn claude_inherits_node_extra_ca_certs_but_not_arbitrary_secrets() {
     let claude = FakeClaude::install("answers", "signed-in");
-    let adapter = claude.adapter().with_environment([
+    let adapter = claude.adapter_with_env([
         (
             OsString::from("NODE_EXTRA_CA_CERTS"),
             OsString::from("/tmp/company-ca.pem"),
@@ -580,26 +596,24 @@ fn claude_inherits_node_extra_ca_certs_but_not_arbitrary_secrets() {
 fn continuation_resumes_and_survives_adapter_restart() {
     let claude = FakeClaude::install("answers", "signed-in");
     let adapter = claude.adapter();
-    let first = visible(&run_to_end(adapter.send(ask("first")).as_mut()));
-    let Update::ConversationCreated(conversation) = first[0].clone() else {
-        panic!("missing conversation");
-    };
+    let (_, slot) = ran(&adapter, ask("first"));
+    let conversation = created(&slot);
     drop(adapter);
 
     let restarted = claude.adapter();
-    let second = visible(&run_to_end(
-        restarted
-            .send(SendRequest {
-                conversation_id: Some(conversation.clone()),
-                ..ask("second")
-            })
-            .as_mut(),
-    ));
+    let (second, slot) = ran(
+        &restarted,
+        SendRequest {
+            conversation_id: Some(conversation.clone()),
+            ..ask("second")
+        },
+    );
+    continued(&slot, &conversation);
     assert_eq!(
         second,
         [
             Update::Started {
-                conversation_id: Some(conversation)
+                conversation_id: None
             },
             Update::Delta("You asked: ".to_owned()),
             Update::Delta("second".to_owned()),
@@ -623,12 +637,9 @@ fn prints(claude: &FakeClaude) -> Vec<String> {
         .collect()
 }
 
-fn first_conversation(adapter: &Claude) -> String {
-    let first = visible(&run_to_end(adapter.send(ask("first")).as_mut()));
-    let Update::ConversationCreated(conversation) = first[0].clone() else {
-        panic!("missing conversation: {first:?}");
-    };
-    conversation
+fn first_conversation(adapter: &Conversations<Claude>) -> String {
+    let (_, slot) = ran(adapter, ask("first"));
+    created(&slot)
 }
 
 fn follow_up(conversation: &str, history: Vec<HistoryMessage>) -> SendRequest {
@@ -646,21 +657,15 @@ fn stale_resume_rebuilds_once_from_bounded_history_under_the_same_conversation()
     let conversation = first_conversation(&adapter);
 
     claude.set("resume-fails", "signed-in");
-    let updates = visible(&run_to_end(
-        adapter.send(follow_up(&conversation, history())).as_mut(),
-    ));
+    let (updates, slot) = ran(&adapter, follow_up(&conversation, history()));
     // The stale session is replaced behind the same conversation ID: no new
     // conversation, and one Started.
+    continued(&slot, &conversation);
     assert_eq!(
         updates[0],
         Update::Started {
-            conversation_id: Some(conversation.clone())
+            conversation_id: None
         }
-    );
-    assert!(
-        !updates
-            .iter()
-            .any(|update| matches!(update, Update::ConversationCreated(_)))
     );
     assert_eq!(updates.last(), Some(&Update::Completed));
     let prompts = claude.prompts();
@@ -725,9 +730,7 @@ fn missing_session_reported_in_result_rebuilds_without_a_second_started() {
     let conversation = first_conversation(&adapter);
 
     claude.set("result-session-gone", "signed-in");
-    let updates = visible(&run_to_end(
-        adapter.send(follow_up(&conversation, history())).as_mut(),
-    ));
+    let (updates, slot) = ran(&adapter, follow_up(&conversation, history()));
     let started: Vec<_> = updates
         .iter()
         .filter(|update| matches!(update, Update::Started { .. }))
@@ -735,14 +738,10 @@ fn missing_session_reported_in_result_rebuilds_without_a_second_started() {
     assert_eq!(
         started,
         [&Update::Started {
-            conversation_id: Some(conversation)
+            conversation_id: None
         }]
     );
-    assert!(
-        !updates
-            .iter()
-            .any(|update| matches!(update, Update::ConversationCreated(_)))
-    );
+    continued(&slot, &conversation);
     assert_eq!(updates.last(), Some(&Update::Completed));
     assert!(!prints(&claude)[2].contains("--resume"));
 }
@@ -772,7 +771,7 @@ fn missing_session_without_history_fails_as_unknown() {
 #[test]
 fn without_a_session_directory_conversations_continue_in_memory() {
     let claude = FakeClaude::install("answers", "signed-in");
-    let adapter = claude.adapter().without_session_dir();
+    let adapter = claude.adapter_in_memory();
     let conversation = first_conversation(&adapter);
     let updates = visible(&run_to_end(
         adapter.send(follow_up(&conversation, Vec::new())).as_mut(),
@@ -785,10 +784,7 @@ fn without_a_session_directory_conversations_continue_in_memory() {
 fn result_session_id_replaces_the_mapping_for_the_next_turn() {
     let claude = FakeClaude::install("answers", "signed-in");
     let adapter = claude.adapter();
-    let first = visible(&run_to_end(adapter.send(ask("first")).as_mut()));
-    let Update::ConversationCreated(conversation) = first[0].clone() else {
-        panic!("missing conversation");
-    };
+    let conversation = first_conversation(&adapter);
 
     claude.set("forks-session", "signed-in");
     let second = run_to_end(
@@ -829,10 +825,7 @@ fn result_session_id_replaces_the_mapping_for_the_next_turn() {
 fn search_retry_without_completed_history_starts_a_fresh_claude_session() {
     let claude = FakeClaude::install("answers", "signed-in");
     let adapter = claude.adapter();
-    let first = visible(&run_to_end(adapter.send(ask("first")).as_mut()));
-    let Update::ConversationCreated(conversation_id) = first[0].clone() else {
-        panic!("missing conversation: {first:?}");
-    };
+    let conversation_id = first_conversation(&adapter);
 
     claude.set("search-no-links", "signed-in");
     let before = claude.invocations().len();
@@ -860,17 +853,15 @@ fn search_retry_without_completed_history_starts_a_fresh_claude_session() {
 #[test]
 fn missing_native_session_rebuilds_from_bounded_history() {
     let claude = FakeClaude::install("no-partial", "signed-in");
-    let updates = visible(&run_to_end(
-        claude
-            .adapter()
-            .send(SendRequest {
-                conversation_id: Some("conv_missing".to_owned()),
-                history: history(),
-                ..ask("follow up")
-            })
-            .as_mut(),
-    ));
-    assert!(matches!(updates[0], Update::ConversationCreated(_)));
+    let (_, slot) = ran(
+        &claude.adapter(),
+        SendRequest {
+            conversation_id: Some("conv_missing".to_owned()),
+            history: history(),
+            ..ask("follow up")
+        },
+    );
+    assert!(slot.created(), "a lost mapping starts a new conversation");
     let prompts = claude.prompts();
     let prompt = prompts.last().expect("history prompt");
     assert!(prompt.contains("first question"));
@@ -981,7 +972,7 @@ fn transcript(path: &std::path::Path, session: &str, cwd: &std::path::Path) {
 fn forget_removes_the_mapping_and_only_pervues_claude_files() {
     let claude = FakeClaude::install("answers", "signed-in");
     let config = claude.dir.join("claude-config");
-    let adapter = claude.adapter().with_environment([(
+    let adapter = claude.adapter_with_env([(
         OsString::from("CLAUDE_CONFIG_DIR"),
         config.clone().into_os_string(),
     )]);
@@ -1035,7 +1026,7 @@ fn forget_removes_the_mapping_and_only_pervues_claude_files() {
 fn a_failed_forget_keeps_an_in_memory_session_for_the_retry() {
     let claude = FakeClaude::install("answers", "signed-in");
     let config = claude.dir.join("claude-config");
-    let adapter = claude.adapter().without_session_dir().with_environment([(
+    let adapter = claude.adapter_in_memory_with_env([(
         OsString::from("CLAUDE_CONFIG_DIR"),
         config.clone().into_os_string(),
     )]);

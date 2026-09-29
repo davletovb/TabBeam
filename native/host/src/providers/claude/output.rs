@@ -199,9 +199,9 @@ const RATE_LIMITED: ErrorBody = ErrorBody {
     retryable: true,
 };
 
-const UNKNOWN_CONVERSATION: ErrorBody = ErrorBody {
+const UNKNOWN_SESSION: ErrorBody = ErrorBody {
     code: ErrorCode::InvalidRequest,
-    reason: "UNKNOWN_CONVERSATION",
+    reason: "UNKNOWN_SESSION",
     retryable: false,
 };
 
@@ -234,7 +234,7 @@ pub fn names_unknown_session(message: &str) -> bool {
 pub fn result_failure(message: &str) -> ErrorBody {
     let lower = message.to_ascii_lowercase();
     if names_unknown_session(message) {
-        UNKNOWN_CONVERSATION
+        UNKNOWN_SESSION
     } else if [
         "authentication failed",
         "authentication_error",
@@ -379,11 +379,11 @@ mod tests {
         );
         assert_eq!(
             result_failure("session no longer exists").reason,
-            "UNKNOWN_CONVERSATION"
+            "UNKNOWN_SESSION"
         );
         assert_eq!(
             result_failure("No conversation found with session ID: abc").reason,
-            "UNKNOWN_CONVERSATION"
+            "UNKNOWN_SESSION"
         );
         assert_eq!(
             result_failure(

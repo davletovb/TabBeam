@@ -5,11 +5,23 @@ use runtime_core::protocol::Failure;
 use super::events::ErrorBody;
 
 pub fn provider_failure(provider: Option<&str>, failure: Failure) -> ErrorBody<'static> {
+    let reason = wire_reason(failure.reason);
     ErrorBody {
         code: failure.code.into(),
-        reason: failure.reason,
-        message: message(provider, failure.reason, failure.retryable),
+        reason,
+        message: message(provider, reason, failure.retryable),
         retryable: failure.retryable,
+    }
+}
+
+/// The name protocol v1 gives a failure the runtime names in its own terms.
+/// Pervue only asks for a tool-free turn to carry page context, and only
+/// resumes a session on behalf of a conversation.
+fn wire_reason(reason: &'static str) -> &'static str {
+    match reason {
+        "TOOL_ISOLATION_UNAVAILABLE" => "PAGE_CONTEXT_TOOLS_ENABLED",
+        "UNKNOWN_SESSION" => "UNKNOWN_CONVERSATION",
+        reason => reason,
     }
 }
 
@@ -261,5 +273,54 @@ mod tests {
         let rendered = provider_failure(Some("claude"), failure("PROVIDER_UNAVAILABLE", true));
         assert!(rendered.message.contains("answer right now"));
         assert!(!rendered.message.contains("Reinstall"));
+    }
+
+    #[test]
+    fn runtime_reasons_keep_the_names_protocol_v1_gives_them() {
+        // A tool-free turn is only asked for to carry page context.
+        let refused = provider_failure(
+            Some("codex"),
+            Failure {
+                code: ErrorCode::InvalidRequest,
+                reason: "TOOL_ISOLATION_UNAVAILABLE",
+                retryable: false,
+            },
+        );
+        assert_eq!(refused.reason, "PAGE_CONTEXT_TOOLS_ENABLED");
+        assert_eq!(
+            refused.message,
+            provider_failure(
+                Some("codex"),
+                Failure {
+                    code: ErrorCode::InvalidRequest,
+                    reason: "PAGE_CONTEXT_TOOLS_ENABLED",
+                    retryable: false,
+                }
+            )
+            .message
+        );
+
+        // A session is only resumed on behalf of a conversation.
+        let lost = provider_failure(
+            Some("claude"),
+            Failure {
+                code: ErrorCode::InvalidRequest,
+                reason: "UNKNOWN_SESSION",
+                retryable: false,
+            },
+        );
+        assert_eq!(lost.reason, "UNKNOWN_CONVERSATION");
+        assert_eq!(
+            lost.message,
+            provider_failure(
+                Some("claude"),
+                Failure {
+                    code: ErrorCode::InvalidRequest,
+                    reason: "UNKNOWN_CONVERSATION",
+                    retryable: false,
+                }
+            )
+            .message
+        );
     }
 }

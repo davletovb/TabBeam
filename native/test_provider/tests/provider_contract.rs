@@ -70,7 +70,9 @@ fn common_contract(provider: &dyn ConversationProvider) {
     assert_eq!(state.capabilities.web_search, Capability::Supported);
     assert_eq!(state.capabilities.cancellation, Capability::Supported);
 
-    let first_raw = run_to_end(provider.send(ask("first")).as_mut());
+    let first_request = ask("first");
+    let slot = first_request.conversation.clone();
+    let first_raw = run_to_end(provider.send(first_request).as_mut());
     let launched = first_raw
         .iter()
         .position(|update| matches!(update, Update::Launched))
@@ -86,9 +88,8 @@ fn common_contract(provider: &dyn ConversationProvider) {
     assert!(launched < started);
     assert!(session < started);
     let first = visible(&first_raw);
-    let Update::ConversationCreated(conversation_id) = first[0].clone() else {
-        panic!("missing conversation: {first:?}");
-    };
+    assert!(slot.created(), "the first turn creates a conversation");
+    let conversation_id = slot.id().expect("a conversation ID");
     assert_eq!(
         first.last(),
         Some(&Update::Completed),
@@ -101,18 +102,18 @@ fn common_contract(provider: &dyn ConversationProvider) {
             .any(|update| matches!(update, Update::Delta(text) if !text.is_empty()))
     );
 
-    let second = visible(&run_to_end(
-        provider
-            .send(SendRequest {
-                conversation_id: Some(conversation_id.clone()),
-                ..ask("second")
-            })
-            .as_mut(),
-    ));
+    let second_request = SendRequest {
+        conversation_id: Some(conversation_id.clone()),
+        ..ask("second")
+    };
+    let slot = second_request.conversation.clone();
+    let second = visible(&run_to_end(provider.send(second_request).as_mut()));
+    assert!(!slot.created(), "a follow-up continues its conversation");
+    assert_eq!(slot.id(), Some(conversation_id));
     assert_eq!(
         second.first(),
         Some(&Update::Started {
-            conversation_id: Some(conversation_id),
+            conversation_id: None,
         })
     );
     assert_eq!(second.last(), Some(&Update::Completed));

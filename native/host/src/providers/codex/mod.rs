@@ -3,12 +3,11 @@
 //!
 //! A request runs `codex exec --json` in a read-only sandbox, from an empty
 //! working directory, with the question on stdin. Its JSON lines become
-//! protocol updates (see [`output`]). Codex's own session IDs stay inside the
-//! adapter: each conversation gets a Pervue ID, mapped to the Codex thread it
-//! continues with `codex exec resume`. The provider-specific mapping is kept
-//! in private native files, so a new host can resume a stored conversation.
+//! runtime updates (see [`output`]). The adapter knows no conversations: a
+//! persistent turn reports the Codex thread it runs in as an opaque handle,
+//! and continues one it is given with `codex exec resume`.
 //!
-//! Before each request, `codex login status` checks the sign-in, because a
+//! Before a request that asks for it, `codex login status` checks the sign-in, because a
 //! signed-out `codex exec` retries the network instead of failing. Only its
 //! exit status is read: its output names the account and a masked key.
 //!
@@ -18,29 +17,29 @@
 //! starts with Codex's directory.
 
 use std::borrow::Cow;
-use std::cell::RefCell;
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::ffi::{OsStr, OsString};
-use std::hash::{BuildHasher, RandomState};
-use std::io::{self, Read, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use super::discovery;
 use super::environment;
 use super::forget;
 use super::layout::Layout;
-use super::{ConversationProvider, Exchange, Scripted, SendRequest, Timeouts, Update};
-use crate::conversation::{provider_prompt, search_prompt};
+use super::{Cleanup, Exchange, Provider, Scripted, Timeouts, Update};
 use crate::search::{NATIVE_SEARCH_NO_SOURCES, SourceCollector, codex_message_sources};
 use runtime_core::discovery::SearchPath;
+use runtime_core::exchange::SessionLoss;
 use runtime_core::process::{Event, Exit, Process, ProcessSpec};
+use runtime_core::prompt::{self, SYSTEM_PROMPT_UNSUPPORTED};
 use runtime_core::protocol::Failure as ErrorBody;
 use runtime_core::protocol::{
     Authentication, Availability, Capabilities, Capability, ErrorCode, ProviderState,
 };
 use runtime_core::stream::{BUSY_LIMIT, LineStream, Output};
+use runtime_core::turn::{SessionPolicy, ToolPolicy, Turn as TurnRequest};
 
 pub mod output;
 pub(crate) mod workspace;
@@ -112,21 +111,17 @@ const NOT_SIGNED_IN: ErrorBody = ErrorBody {
     retryable: false,
 };
 
-const CONTEXT_TOOLS_ENABLED: ErrorBody = ErrorBody {
+/// A tool-free turn was asked for, but the user's own Codex configuration
+/// exposes tools the adapter can't switch off.
+const TOOL_ISOLATION_UNAVAILABLE: ErrorBody = ErrorBody {
     code: ErrorCode::InvalidRequest,
-    reason: "PAGE_CONTEXT_TOOLS_ENABLED",
+    reason: "TOOL_ISOLATION_UNAVAILABLE",
     retryable: false,
 };
 
 const SEARCH_TOOLS_ENABLED: ErrorBody = ErrorBody {
     code: ErrorCode::SearchFailed,
     reason: "NATIVE_SEARCH_CONFIGURATION_UNSAFE",
-    retryable: false,
-};
-
-const UNKNOWN_CONVERSATION: ErrorBody = ErrorBody {
-    code: ErrorCode::InvalidRequest,
-    reason: "UNKNOWN_CONVERSATION",
     retryable: false,
 };
 
@@ -153,15 +148,6 @@ const MALFORMED_OUTPUT: ErrorBody = ErrorBody {
     reason: "MALFORMED_PROVIDER_OUTPUT",
     retryable: false,
 };
-
-const SESSION_STORE_FAILED: ErrorBody = ErrorBody {
-    code: ErrorCode::InternalError,
-    reason: "SESSION_STORE_FAILED",
-    retryable: true,
-};
-
-/// Pervue conversation IDs mapped to the Codex threads they continue.
-type Conversations = Rc<RefCell<HashMap<String, String>>>;
 
 /// How Codex processes start: where they run, and what environment they get.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -210,33 +196,25 @@ impl Launch {
 pub struct Codex {
     search: SearchPath,
     launch: Rc<Launch>,
-    session_dir: Option<PathBuf>,
     limits: Limits,
-    conversations: Conversations,
 }
 
 impl Codex {
-    /// The adapter of an installed host: the platform lookup rules, an empty
-    /// workspace in the user's own cache directory, and conversation mappings
-    /// in the user's data directory.
+    /// The adapter of an installed host: the platform lookup rules, and an
+    /// empty workspace in the user's own cache directory.
     pub fn installed(layout: &Layout) -> Self {
         let host: Vec<_> = std::env::vars_os().collect();
-        let mut codex = Self::new(discovery::installed(), layout.workspace(&host, "codex"));
-        codex.session_dir = layout.data_dir().map(|dir| dir.join("codex-sessions"));
-        codex
+        Self::new(discovery::installed(), layout.workspace(&host, "codex"))
     }
 
     /// Looks for `codex` in `search`, and runs it in `work_dir`, which it
     /// creates when needed and refuses if other users could change it, with
-    /// variables from the host's environment. Conversation mappings go
-    /// beside `work_dir`, never inside it, in `<work_dir>.sessions`.
+    /// variables from the host's environment.
     pub fn new(search: SearchPath, work_dir: PathBuf) -> Self {
         Self {
             search,
-            session_dir: Some(work_dir.with_extension("sessions")),
             launch: Rc::new(Launch::new(work_dir, std::env::vars_os().collect())),
             limits: LIMITS,
-            conversations: Rc::default(),
         }
     }
 
@@ -261,43 +239,26 @@ impl Codex {
         self
     }
 
-    /// Overrides the native mapping directory, for isolated host tests.
-    #[must_use]
-    pub fn with_session_dir(mut self, session_dir: PathBuf) -> Self {
-        self.session_dir = Some(session_dir);
-        self
-    }
-
     fn executable(&self) -> Option<PathBuf> {
         self.search.find(EXECUTABLE)
     }
 
-    fn validate_request(&self, request: &SendRequest) -> Result<(), ErrorBody> {
-        let context_turn = request.context.is_some();
-        let reference_turn = context_turn || request.native_search;
-        if reference_turn && !context_configuration_is_safe(&self.launch) {
-            return Err(if context_turn {
-                CONTEXT_TOOLS_ENABLED
-            } else {
+    /// Refuses a turn that needs tools switched off while the user's own
+    /// configuration exposes some Codex can't switch off. A turn that leaves
+    /// the provider's own configuration in charge runs whatever it says.
+    fn check_tools(&self, tools: ToolPolicy) -> Result<(), ErrorBody> {
+        if tools != ToolPolicy::ProviderDefault && !context_configuration_is_safe(&self.launch) {
+            return Err(if tools == ToolPolicy::NativeWebSearch {
                 SEARCH_TOOLS_ENABLED
+            } else {
+                TOOL_ISOLATION_UNAVAILABLE
             });
-        }
-        if let Some(conversation_id) = request.conversation_id.as_deref() {
-            let known = self.conversations.borrow().contains_key(conversation_id)
-                || self
-                    .session_dir
-                    .as_deref()
-                    .and_then(|dir| read_thread(dir, conversation_id))
-                    .is_some();
-            if !known && request.history.is_empty() {
-                return Err(UNKNOWN_CONVERSATION);
-            }
         }
         Ok(())
     }
 }
 
-impl ConversationProvider for Codex {
+impl Provider for Codex {
     fn id(&self) -> &str {
         ID
     }
@@ -351,135 +312,51 @@ impl ConversationProvider for Codex {
         })
     }
 
-    fn forget(&self, conversation_id: &str) -> Box<dyn Exchange> {
-        let thread = self
-            .conversations
-            .borrow()
-            .get(conversation_id)
-            .cloned()
-            .or_else(|| {
-                self.session_dir
-                    .as_deref()
-                    .and_then(|dir| read_thread(dir, conversation_id))
-            });
+    fn cleanup_sessions(&self, sessions: &[String]) -> Cleanup {
         let home = codex_home(&self.launch);
         let workspace = self.launch.work_dir.clone();
-        let session_dir = self.session_dir.clone();
-        let conversation = conversation_id.to_owned();
-        let superseded = self
-            .session_dir
-            .as_deref()
-            .map(|dir| read_superseded_threads(dir, conversation_id))
-            .unwrap_or_default();
-        let conversations = Rc::clone(&self.conversations);
-        let forgotten = conversation_id.to_owned();
-        // The files go on their own thread. The mappings go last, the one in
-        // memory only once everything else is gone: if Codex's files can't
-        // all be removed, a retry can still find them.
-        forget::in_background(
+        let sessions = sessions.to_vec();
+        Cleanup::new(
             move || {
-                if let Some(home) = home {
-                    if let Some(thread) = thread {
-                        forget_rollouts(&home, &workspace, &thread)?;
-                    }
-                    for thread in &superseded {
-                        forget_rollouts(&home, &workspace, thread)?;
-                    }
+                let Some(home) = home else {
+                    return Ok(());
+                };
+                for session in &sessions {
+                    forget_rollouts(&home, &workspace, session)?;
                 }
-                session_dir.map_or(Ok(()), |dir| {
-                    forget_thread(&dir, &conversation)?;
-                    forget::remove(&superseded_thread_dir(&dir, &conversation))
-                })
+                Ok(())
             },
-            move || {
-                conversations.borrow_mut().remove(&forgotten);
-            },
+            || {},
         )
     }
 
-    fn send(&self, request: SendRequest) -> Box<dyn Exchange> {
+    fn send(&self, request: TurnRequest) -> Box<dyn Exchange> {
         let Some(executable) = self.executable() else {
             return Box::new(Scripted::failed(NOT_INSTALLED));
         };
-        if let Err(error) = self.validate_request(&request) {
+        if request.validate().is_err() {
+            return Box::new(Scripted::failed(super::INVALID_TURN));
+        }
+        if request.system.is_some() {
+            return Box::new(Scripted::failed(SYSTEM_PROMPT_UNSUPPORTED));
+        }
+        if let Err(error) = self.check_tools(request.tools) {
             return Box::new(Scripted::failed(error));
         }
-        let context_turn = request.context.is_some();
-        let reference_turn = context_turn || request.native_search;
 
-        let mut conversation_id = request.conversation_id;
-        let mut fallback_prompt = (!request.history.is_empty()).then(|| {
-            if request.native_search {
-                search_prompt(&request.history, &request.text)
-            } else {
-                provider_prompt(&request.history, request.context.as_ref(), &request.text)
-            }
-        });
-        let mut prompt = if request.native_search {
-            search_prompt(&[], &request.text)
-        } else if request.context.is_some() {
-            provider_prompt(&[], request.context.as_ref(), &request.text)
-        } else {
-            request.text
-        };
-        let prior_session = match &conversation_id {
-            None => None,
-            Some(conversation_id) => self
-                .conversations
-                .borrow()
-                .get(conversation_id)
-                .cloned()
-                .or_else(|| {
-                    self.session_dir
-                        .as_deref()
-                        .and_then(|dir| read_thread(dir, conversation_id))
-                }),
-        };
-        let resume = if request.fresh_session {
-            None
-        } else {
-            match &conversation_id {
-                None => None,
-                Some(conversation_id) => match self
-                    .conversations
-                    .borrow()
-                    .get(conversation_id)
-                    .cloned()
-                    .or_else(|| {
-                        self.session_dir
-                            .as_deref()
-                            .and_then(|dir| read_thread(dir, conversation_id))
-                    }) {
-                    Some(thread_id) => Some(thread_id),
-                    None if !request.history.is_empty() => None,
-                    None => return Box::new(Scripted::failed(UNKNOWN_CONVERSATION)),
-                },
-            }
-        };
-        if request.fresh_session && prior_session.is_some() && !request.history.is_empty() {
-            prompt = fallback_prompt.take().expect("history is present");
-        } else if resume.is_none() && !request.history.is_empty() {
-            // If a provider has no native session (or its mapping was lost),
-            // the ordered, bounded dialogue still reaches the new turn.
-            prompt = fallback_prompt.take().expect("history is present");
-            conversation_id = None;
-        }
         let mut turn = Turn {
             stage: Stage::Done,
             executable,
             launch: Rc::clone(&self.launch),
-            session_dir: self.session_dir.clone(),
-            prompt,
-            fallback_prompt,
-            resume,
-            conversation_id,
-            conversations: Rc::clone(&self.conversations),
-            superseded_session: request.fresh_session.then_some(prior_session).flatten(),
-            session_policy: request.session_policy,
+            prompt: prompt::render(&request.messages, request.tools),
+            resume: request.continuation,
+            session_policy: request.session,
             finish_grace: self.limits.finish,
-            restrict_tools: reference_turn,
-            context_turn,
-            native_search: request.native_search,
+            // Page text and search results are attacker-controlled: a turn
+            // that isn't left to the user's own configuration runs answer-only.
+            restrict_tools: request.tools != ToolPolicy::ProviderDefault,
+            context_turn: request.tools == ToolPolicy::None,
+            native_search: request.tools == ToolPolicy::NativeWebSearch,
             model: request.model,
             queue: VecDeque::new(),
             sources: SourceCollector::new(ID),
@@ -491,15 +368,18 @@ impl ConversationProvider for Codex {
             outcome: None,
             finish_by: None,
         };
-        match probe(&turn.launch, &turn.executable) {
-            Ok(process) => {
+        let probe = request
+            .check_sign_in
+            .then(|| probe(&turn.launch, &turn.executable));
+        match probe {
+            Some(Ok(process)) => {
                 turn.stage = Stage::Probing {
                     process,
                     give_up: after(self.limits.probe),
                 };
             }
             // The sign-in can't be checked; the request itself will tell.
-            Err(_) => turn.start(),
+            Some(Err(_)) | None => turn.start(),
         }
         Box::new(turn)
     }
@@ -589,34 +469,6 @@ fn after(duration: Duration) -> Instant {
     now.checked_add(duration).unwrap_or(now)
 }
 
-fn session_name(id: &str) -> bool {
-    id.len() == 21
-        && id.starts_with("conv_")
-        && id[5..].bytes().all(|byte| byte.is_ascii_hexdigit())
-}
-
-fn read_thread(dir: &Path, id: &str) -> Option<String> {
-    if !session_name(id) {
-        return None;
-    }
-    let mut content = String::new();
-    std::fs::File::open(dir.join(id))
-        .ok()?
-        .take(129)
-        .read_to_string(&mut content)
-        .ok()?;
-    output::is_thread_id(&content).then_some(content)
-}
-
-/// Removes a conversation's thread mapping.
-fn forget_thread(dir: &Path, id: &str) -> io::Result<()> {
-    if session_name(id) {
-        forget::remove(&dir.join(id))
-    } else {
-        Ok(())
-    }
-}
-
 /// Removes Codex's saved sessions of `thread` that Codex wrote for Pervue:
 /// `sessions/YYYY/MM/DD/rollout-…-<thread>.jsonl` and
 /// `archived_sessions/rollout-…-<thread>.jsonl` files whose `session_meta`
@@ -673,62 +525,6 @@ fn rollout_written_for_pervue(path: &Path, thread: &str, workspace: &Path) -> bo
                         .is_some_and(|cwd| forget::same_directory(cwd, workspace))
             })
     })
-}
-
-fn superseded_thread_dir(dir: &Path, conversation: &str) -> PathBuf {
-    dir.join("superseded").join(conversation)
-}
-
-fn record_superseded_thread(dir: &Path, conversation: &str, thread: &str) -> io::Result<()> {
-    if !session_name(conversation) || !output::is_thread_id(thread) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "invalid superseded thread",
-        ));
-    }
-    let base = superseded_thread_dir(dir, conversation);
-    super::private_fs::create_private_dir(&base)?;
-    super::private_fs::write_private_file(&base.join(thread), b"pending\n")
-}
-
-fn read_superseded_threads(dir: &Path, conversation: &str) -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(superseded_thread_dir(dir, conversation)) else {
-        return Vec::new();
-    };
-    entries
-        .flatten()
-        .filter_map(|entry| entry.file_name().into_string().ok())
-        .filter(|thread| output::is_thread_id(thread))
-        .collect()
-}
-
-fn save_thread(dir: &Path, id: &str, thread: &str) -> io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        let mut builder = std::fs::DirBuilder::new();
-        builder.recursive(true).mode(0o700).create(dir)?;
-    }
-    #[cfg(not(unix))]
-    std::fs::create_dir_all(dir)?;
-
-    let path = dir.join(id);
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(&path)?;
-    if let Err(error) = file
-        .write_all(thread.as_bytes())
-        .and_then(|()| file.sync_all())
-    {
-        let _ = std::fs::remove_file(path);
-        return Err(error);
-    }
-    Ok(())
 }
 
 /// The `codex exec` command line for one turn. The question itself goes on
@@ -830,18 +626,6 @@ fn exec_args_for_session(
 
 /// A new Pervue conversation ID. It is random so it reveals nothing about the
 /// Codex thread behind it.
-fn new_conversation_id(conversations: &HashMap<String, String>) -> String {
-    loop {
-        let id = format!(
-            "conv_{:016x}",
-            RandomState::new().hash_one((SystemTime::now(), conversations.len()))
-        );
-        if !conversations.contains_key(&id) {
-            return id;
-        }
-    }
-}
-
 /// The `provider.status` check.
 enum StatusCheck {
     Probing {
@@ -940,16 +724,10 @@ struct Turn {
     stage: Stage,
     executable: PathBuf,
     launch: Rc<Launch>,
-    session_dir: Option<PathBuf>,
     prompt: String,
-    /// Used once if a mapped Codex thread no longer exists before the turn starts.
-    fallback_prompt: Option<String>,
-    /// The Codex thread to resume, when continuing a conversation.
+    /// The Codex thread to resume.
     resume: Option<String>,
-    conversation_id: Option<String>,
-    conversations: Conversations,
-    superseded_session: Option<String>,
-    session_policy: runtime_core::turn::SessionPolicy,
+    session_policy: SessionPolicy,
     finish_grace: Duration,
     /// Browser context or native search requires all unrelated Codex tool
     /// surfaces to be disabled.
@@ -1104,61 +882,11 @@ impl Turn {
             return self.end(Update::Failed(MALFORMED_OUTPUT));
         };
         self.started = true;
-
-        let persistent = self.session_policy == runtime_core::turn::SessionPolicy::Persistent;
-        let conversation_id =
-            match &self.conversation_id {
-                Some(conversation_id) => {
-                    if persistent && self.resume.as_deref() != Some(thread_id.as_str()) {
-                        if let Some(old) = self.superseded_session.take() {
-                            if let Some(dir) = self.session_dir.as_deref() {
-                                if record_superseded_thread(dir, conversation_id, &old).is_err()
-                                    || forget_thread(dir, conversation_id).is_err()
-                                    || save_thread(dir, conversation_id, &thread_id).is_err()
-                                {
-                                    return self.end(Update::Failed(SESSION_STORE_FAILED));
-                                }
-                            }
-                            self.conversations
-                                .borrow_mut()
-                                .insert(conversation_id.clone(), thread_id.clone());
-                            let home = codex_home(&self.launch);
-                            let workspace = self.launch.work_dir.clone();
-                            let marker = self
-                                .session_dir
-                                .as_deref()
-                                .map(|dir| superseded_thread_dir(dir, conversation_id).join(&old));
-                            forget::tracked_cleanup(marker, move || {
-                                home.as_deref()
-                                    .map_or(Ok(()), |home| forget_rollouts(home, &workspace, &old))
-                            });
-                        }
-                    }
-                    conversation_id.clone()
-                }
-                None => {
-                    let conversation_id = new_conversation_id(&self.conversations.borrow());
-                    if persistent {
-                        if self.session_dir.as_deref().is_none_or(|dir| {
-                            save_thread(dir, &conversation_id, &thread_id).is_err()
-                        }) {
-                            return self.end(Update::Failed(SESSION_STORE_FAILED));
-                        }
-                        self.conversations
-                            .borrow_mut()
-                            .insert(conversation_id.clone(), thread_id.clone());
-                    }
-                    self.queue
-                        .push_back(Update::ConversationCreated(conversation_id.clone()));
-                    self.conversation_id = Some(conversation_id.clone());
-                    conversation_id
-                }
-            };
-        if persistent {
+        if self.session_policy == SessionPolicy::Persistent {
             self.queue.push_back(Update::Session(thread_id));
         }
         self.queue.push_back(Update::Started {
-            conversation_id: Some(conversation_id),
+            conversation_id: None,
         });
     }
 
@@ -1226,27 +954,19 @@ impl Exchange for Turn {
                         .map_or(deadline, |finish_by| deadline.min(finish_by));
                     match stream.next(wait) {
                         Some(Output::Line(line)) => self.on_line(&line),
-                        Some(Output::Final(_))
-                            if !self.cancelled
-                                && !self.started
-                                && self.resume.is_some()
-                                && self.fallback_prompt.is_some() =>
-                        {
-                            self.resume = None;
-                            self.conversation_id = None;
-                            self.thread_id = None;
-                            self.outcome = None;
-                            self.sources.reset();
-                            self.finish_by = None;
-                            self.prompt = self.fallback_prompt.take().expect("checked above");
-                            self.start();
-                        }
                         Some(Output::Final(exit) | Output::Stopped(exit)) => {
+                            let lost = !self.cancelled && !self.started && self.resume.is_some();
                             let update = if self.cancelled {
                                 Update::Stopped
                             } else {
                                 self.exited(&exit)
                             };
+                            if lost && matches!(update, Update::Failed(_)) {
+                                // A resumed run that ended before the turn began:
+                                // the thread may be gone, or Codex may have crashed.
+                                self.queue
+                                    .push_back(Update::SessionLost(SessionLoss::Suspected));
+                            }
                             self.end(update);
                         }
                         Some(Output::Error(_)) => {

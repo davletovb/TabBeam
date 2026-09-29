@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use pervue_host::conversations::{Conversations, Durability, SessionStore};
 use pervue_host::diagnostics::Diagnostics;
 use pervue_host::framing;
 use pervue_host::host;
@@ -88,12 +89,35 @@ impl FakeCodex {
         .expect("write the scenario");
     }
 
-    pub fn adapter(&self) -> Codex {
+    /// Codex, served the way Pervue serves it: conversations over the adapter,
+    /// mapped to Codex threads in a directory beside the workspace.
+    pub fn adapter(&self) -> Conversations<Codex> {
         self.adapter_with(TEST_LIMITS)
     }
 
-    pub fn adapter_with(&self, limits: Limits) -> Codex {
+    pub fn adapter_with(&self, limits: Limits) -> Conversations<Codex> {
+        Conversations::new(self.codex(limits), self.sessions())
+    }
+
+    /// [`FakeCodex::adapter`] with the environment Codex gets from `host`.
+    pub fn adapter_with_env<I>(&self, host: I) -> Conversations<Codex>
+    where
+        I: IntoIterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+    {
+        Conversations::new(
+            self.codex(TEST_LIMITS).with_environment(host),
+            self.sessions(),
+        )
+    }
+
+    /// The bare adapter, which knows no conversations.
+    pub fn codex(&self, limits: Limits) -> Codex {
         Codex::new(SearchPath::new([self.dir.clone()]), self.dir.join("work")).with_limits(limits)
+    }
+
+    pub fn sessions(&self) -> SessionStore {
+        SessionStore::new(Some(self.dir.join("work.sessions")))
+            .with_durability(Durability::Required)
     }
 
     pub fn read(&self, file: &str) -> String {
@@ -194,12 +218,47 @@ impl FakeClaude {
         .expect("write Claude scenario");
     }
 
-    pub fn adapter(&self) -> Claude {
+    /// Claude, served the way Pervue serves it: conversations over the
+    /// adapter, mapped to Claude sessions in a directory beside the workspace.
+    pub fn adapter(&self) -> Conversations<Claude> {
+        Conversations::new(self.claude(), self.sessions())
+    }
+
+    /// [`FakeClaude::adapter`] with the environment Claude gets from `host`.
+    pub fn adapter_with_env<I>(&self, host: I) -> Conversations<Claude>
+    where
+        I: IntoIterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+    {
+        Conversations::new(self.claude().with_environment(host), self.sessions())
+    }
+
+    /// As [`FakeClaude::adapter`], with no directory for mappings: they live
+    /// in memory, as when the host has no data directory.
+    pub fn adapter_in_memory(&self) -> Conversations<Claude> {
+        Conversations::new(self.claude(), SessionStore::new(None))
+    }
+
+    pub fn adapter_in_memory_with_env<I>(&self, host: I) -> Conversations<Claude>
+    where
+        I: IntoIterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+    {
+        Conversations::new(
+            self.claude().with_environment(host),
+            SessionStore::new(None),
+        )
+    }
+
+    /// The bare adapter, which knows no conversations.
+    pub fn claude(&self) -> Claude {
         Claude::new(
             SearchPath::new([self.dir.clone()]),
             self.dir.join("claude-work"),
         )
         .with_limits(CLAUDE_TEST_LIMITS)
+    }
+
+    pub fn sessions(&self) -> SessionStore {
+        SessionStore::new(Some(self.dir.join("claude-work.sessions")))
     }
 
     pub fn read(&self, file: &str) -> String {
@@ -306,7 +365,10 @@ impl Read for PacedInput {
 }
 
 /// Runs a host serving only `codex`, and returns its events and records.
-pub fn serve(codex: Codex, mut input: PacedInput) -> (Vec<Value>, Vec<Value>) {
+pub fn serve(
+    codex: impl ConversationProvider + 'static,
+    mut input: PacedInput,
+) -> (Vec<Value>, Vec<Value>) {
     let providers = Providers::new(vec![Box::new(codex)]);
     let mut output = Vec::new();
     let mut log = Diagnostics::new(Vec::new());

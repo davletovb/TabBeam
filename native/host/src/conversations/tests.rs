@@ -586,6 +586,9 @@ fn a_session_the_provider_says_is_gone_is_rebuilt_under_the_same_conversation() 
     assert_eq!(turns[1].continuation.as_deref(), Some("session-1"));
     assert_eq!(turns[2].continuation, None);
     assert_eq!(text_of(&turns[2])[1], "first answer");
+    // The request's sign-in was checked once, by the run that failed.
+    assert!(turns[1].check_sign_in);
+    assert!(!turns[2].check_sign_in);
     // The rebuilt session is the conversation's now, even after a restart.
     assert_eq!(conversations.store().get(&id).as_deref(), Some("session-2"));
     assert_eq!(scratch.store().get(&id).as_deref(), Some("session-2"));

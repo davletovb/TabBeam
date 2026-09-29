@@ -18,7 +18,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use crate::conversation::{BrowserContext, HistoryMessage};
-use crate::conversations::{Conversations, SessionStore};
+use crate::conversations::{Conversations, Durability, SessionStore};
 use runtime_core::protocol::{Capabilities, ErrorCode, Failure};
 pub use runtime_core::stream::BUSY_LIMIT;
 use runtime_core::turn::{SessionPolicy, Turn};
@@ -256,10 +256,20 @@ impl Providers {
     /// for deterministic protocol diagnostics; real adapters use the same
     /// platform discovery rules.
     pub fn installed(layout: &Layout) -> Self {
+        let data = layout.data_dir();
+        let sessions = |name: &str| SessionStore::new(data.as_ref().map(|dir| dir.join(name)));
         Self(vec![
             Box::new(fake::Fake),
-            Box::new(codex::Codex::installed(layout)),
-            Box::new(claude::Claude::installed(layout)),
+            // Codex refuses to start a conversation it couldn't resume after a
+            // restart; Claude keeps one in memory when there is no directory.
+            Box::new(Conversations::new(
+                codex::Codex::installed(layout),
+                sessions("codex-sessions").with_durability(Durability::Required),
+            )),
+            Box::new(Conversations::new(
+                claude::Claude::installed(layout),
+                sessions("claude-sessions"),
+            )),
             Box::new(Conversations::new(
                 gemini::Gemini::installed(layout),
                 SessionStore::new(None),

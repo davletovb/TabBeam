@@ -1,35 +1,36 @@
 //! Claude Code CLI adapter (PRO-05/06).
 //!
-//! Pervue discovers the fixed `claude` executable through the shared provider
-//! search path, checks `claude auth status`, and drives print mode through
-//! stream-json on stdin/stdout. Provider session IDs remain private to this
-//! adapter; the host and extension see only opaque Pervue conversation IDs.
+//! The adapter discovers the fixed `claude` executable through the shared
+//! provider search path, checks `claude auth status`, and drives print mode
+//! through stream-json on stdin/stdout. It runs one turn per process, and
+//! knows no conversations: a persistent turn reports the native session it
+//! runs in as an opaque handle, and resumes one it is given.
 
 use std::borrow::Cow;
-use std::cell::RefCell;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 use std::ffi::{OsStr, OsString};
-use std::hash::{BuildHasher, RandomState};
-use std::io::{self, Read, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use super::codex::workspace;
 use super::discovery;
 use super::environment;
 use super::forget;
 use super::layout::Layout;
-use super::{ConversationProvider, Exchange, Scripted, SendRequest, Timeouts, Update};
-use crate::conversation::{provider_prompt, search_prompt};
+use super::{Cleanup, Exchange, Provider, Scripted, Timeouts, Update};
 use crate::search::{NATIVE_SEARCH_NO_SOURCES, SourceCollector, claude_tool_result_sources};
 use runtime_core::discovery::SearchPath;
+use runtime_core::exchange::SessionLoss;
 use runtime_core::process::{Event, Exit, Process, ProcessSpec};
+use runtime_core::prompt::{self, SYSTEM_PROMPT_UNSUPPORTED};
 use runtime_core::protocol::Failure as ErrorBody;
 use runtime_core::protocol::{
     Authentication, Availability, Capabilities, Capability, ErrorCode, ModelOption, ProviderState,
 };
 use runtime_core::stream::{BUSY_LIMIT, LineStream, Output};
+use runtime_core::turn::{SessionPolicy, ToolPolicy, Turn as TurnRequest};
 
 pub mod output;
 
@@ -116,12 +117,6 @@ const NOT_SIGNED_IN: ErrorBody = ErrorBody {
     retryable: false,
 };
 
-const UNKNOWN_CONVERSATION: ErrorBody = ErrorBody {
-    code: ErrorCode::InvalidRequest,
-    reason: "UNKNOWN_CONVERSATION",
-    retryable: false,
-};
-
 /// How much of a search turn's message is held back before it counts as the
 /// answer rather than narration before a search. Narration is a sentence or
 /// two; past this, the answer streams live.
@@ -151,19 +146,12 @@ const MALFORMED_OUTPUT: ErrorBody = ErrorBody {
     retryable: false,
 };
 
-const SESSION_GONE: ErrorBody = ErrorBody {
+/// The session a turn was asked to resume doesn't exist.
+const UNKNOWN_SESSION: ErrorBody = ErrorBody {
     code: ErrorCode::InvalidRequest,
-    reason: "UNKNOWN_CONVERSATION",
+    reason: "UNKNOWN_SESSION",
     retryable: false,
 };
-
-const SESSION_STORE_FAILED: ErrorBody = ErrorBody {
-    code: ErrorCode::InternalError,
-    reason: "SESSION_STORE_FAILED",
-    retryable: true,
-};
-
-type Conversations = Rc<RefCell<HashMap<String, String>>>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Launch {
@@ -206,28 +194,20 @@ impl Launch {
 pub struct Claude {
     search: SearchPath,
     launch: Rc<Launch>,
-    /// Where conversation-to-session mappings are kept across host restarts.
-    /// Without one (no data directory), they are kept in memory only.
-    session_dir: Option<PathBuf>,
     limits: Limits,
-    conversations: Conversations,
 }
 
 impl Claude {
     pub fn installed(layout: &Layout) -> Self {
         let host: Vec<_> = std::env::vars_os().collect();
-        let mut claude = Self::new(discovery::installed(), layout.workspace(&host, "claude"));
-        claude.session_dir = layout.data_dir().map(|dir| dir.join("claude-sessions"));
-        claude
+        Self::new(discovery::installed(), layout.workspace(&host, "claude"))
     }
 
     pub fn new(search: SearchPath, work_dir: PathBuf) -> Self {
         Self {
             search,
-            session_dir: Some(work_dir.with_extension("sessions")),
             launch: Rc::new(Launch::new(work_dir, std::env::vars_os().collect())),
             limits: LIMITS,
-            conversations: Rc::default(),
         }
     }
 
@@ -249,41 +229,12 @@ impl Claude {
         self
     }
 
-    #[must_use]
-    pub fn with_session_dir(mut self, session_dir: PathBuf) -> Self {
-        self.session_dir = Some(session_dir);
-        self
-    }
-
-    /// Keeps conversation mappings in memory only, as when the host has no
-    /// data directory.
-    #[must_use]
-    pub fn without_session_dir(mut self) -> Self {
-        self.session_dir = None;
-        self
-    }
-
     fn executable(&self) -> Option<PathBuf> {
         self.search.find(EXECUTABLE)
     }
-
-    fn validate_request(&self, request: &SendRequest) -> Result<(), ErrorBody> {
-        if let Some(conversation_id) = request.conversation_id.as_deref() {
-            let known = self.conversations.borrow().contains_key(conversation_id)
-                || self
-                    .session_dir
-                    .as_deref()
-                    .and_then(|dir| read_session(dir, conversation_id))
-                    .is_some();
-            if !known && request.history.is_empty() {
-                return Err(UNKNOWN_CONVERSATION);
-            }
-        }
-        Ok(())
-    }
 }
 
-impl ConversationProvider for Claude {
+impl Provider for Claude {
     fn id(&self) -> &str {
         ID
     }
@@ -319,132 +270,51 @@ impl ConversationProvider for Claude {
         })
     }
 
-    fn forget(&self, conversation_id: &str) -> Box<dyn Exchange> {
-        let session = self
-            .conversations
-            .borrow()
-            .get(conversation_id)
-            .cloned()
-            .or_else(|| {
-                self.session_dir
-                    .as_deref()
-                    .and_then(|dir| read_session(dir, conversation_id))
-            });
+    fn cleanup_sessions(&self, sessions: &[String]) -> Cleanup {
         let config = claude_config_dir(&self.launch);
         let workspace = self.launch.work_dir.clone();
-        let session_dir = self.session_dir.clone();
-        let conversation = conversation_id.to_owned();
-        let superseded = self
-            .session_dir
-            .as_deref()
-            .map(|dir| read_superseded_sessions(dir, conversation_id))
-            .unwrap_or_default();
-        let conversations = Rc::clone(&self.conversations);
-        let forgotten = conversation_id.to_owned();
-        // The files go on their own thread. The mappings go last, the one in
-        // memory only once everything else is gone: if Claude's files can't
-        // all be removed, a retry can still find them.
-        forget::in_background(
+        let sessions = sessions.to_vec();
+        Cleanup::new(
             move || {
-                if let Some(config) = config {
-                    if let Some(session) = session {
-                        forget_transcript(&config, &workspace, &session)?;
-                    }
-                    for session in &superseded {
-                        forget_transcript(&config, &workspace, session)?;
-                    }
+                let Some(config) = config else {
+                    return Ok(());
+                };
+                for session in &sessions {
+                    forget_transcript(&config, &workspace, session)?;
                 }
-                session_dir.map_or(Ok(()), |dir| {
-                    forget_session(&dir, &conversation)?;
-                    forget::remove(&superseded_session_dir(&dir, &conversation))
-                })
+                Ok(())
             },
-            move || {
-                conversations.borrow_mut().remove(&forgotten);
-            },
+            || {},
         )
     }
 
-    fn send(&self, request: SendRequest) -> Box<dyn Exchange> {
+    fn send(&self, request: TurnRequest) -> Box<dyn Exchange> {
         let Some(executable) = self.executable() else {
             return Box::new(Scripted::failed(NOT_INSTALLED));
         };
-        if let Err(error) = self.validate_request(&request) {
-            return Box::new(Scripted::failed(error));
+        if request.validate().is_err() {
+            return Box::new(Scripted::failed(super::INVALID_TURN));
         }
-        // The host refuses search with context before this is called.
-        if request.context.is_some() && request.native_search {
-            return Box::new(Scripted::failed(MALFORMED_OUTPUT));
-        }
-
-        let mut conversation_id = request.conversation_id;
-        let mut fallback_prompt = (!request.history.is_empty()).then(|| {
-            if request.native_search {
-                search_prompt(&request.history, &request.text)
-            } else {
-                provider_prompt(&request.history, request.context.as_ref(), &request.text)
-            }
-        });
-        let mut prompt = if request.native_search {
-            search_prompt(&[], &request.text)
-        } else if request.context.is_some() {
-            provider_prompt(&[], request.context.as_ref(), &request.text)
-        } else {
-            request.text
-        };
-        let prior_session = match &conversation_id {
-            None => None,
-            Some(id) => self.conversations.borrow().get(id).cloned().or_else(|| {
-                self.session_dir
-                    .as_deref()
-                    .and_then(|dir| read_session(dir, id))
-            }),
-        };
-        let resume = if request.fresh_session {
-            None
-        } else {
-            match &conversation_id {
-                None => None,
-                Some(id) => match self.conversations.borrow().get(id).cloned().or_else(|| {
-                    self.session_dir
-                        .as_deref()
-                        .and_then(|dir| read_session(dir, id))
-                }) {
-                    Some(session) => Some(session),
-                    None if !request.history.is_empty() => None,
-                    None => return Box::new(Scripted::failed(UNKNOWN_CONVERSATION)),
-                },
-            }
-        };
-        if request.fresh_session && prior_session.is_some() && !request.history.is_empty() {
-            prompt = fallback_prompt.take().expect("history is present");
-        } else if resume.is_none() && !request.history.is_empty() {
-            prompt = fallback_prompt.take().expect("history is present");
-            conversation_id = None;
+        if request.system.is_some() {
+            return Box::new(Scripted::failed(SYSTEM_PROMPT_UNSUPPORTED));
         }
 
         let mut turn = Turn {
             stage: Stage::Done,
             executable,
             launch: Rc::clone(&self.launch),
-            session_dir: self.session_dir.clone(),
-            prompt,
-            fallback_prompt,
-            resume,
-            conversation_id,
-            conversations: Rc::clone(&self.conversations),
-            superseded_session: request.fresh_session.then_some(prior_session).flatten(),
-            session_policy: request.session_policy,
+            prompt: prompt::render(&request.messages, request.tools),
+            resume: request.continuation,
+            session_policy: request.session,
+            reported_session: None,
             finish_grace: self.limits.finish,
             model: request.model,
-            native_search: request.native_search,
+            native_search: request.tools == ToolPolicy::NativeWebSearch,
             queue: VecDeque::new(),
             sources: SourceCollector::new(ID),
             web_search_uses: HashSet::new(),
             cancelled: false,
             started: false,
-            announced: false,
-            rebuilding: false,
             saw_delta: false,
             messages: 0,
             break_before_text: false,
@@ -453,14 +323,17 @@ impl ConversationProvider for Claude {
             outcome: None,
             finish_by: None,
         };
-        match probe(&turn.launch, &turn.executable) {
-            Ok(process) => {
+        let probe = request
+            .check_sign_in
+            .then(|| probe(&turn.launch, &turn.executable));
+        match probe {
+            Some(Ok(process)) => {
                 turn.stage = Stage::Probing {
                     process,
                     give_up: after(self.limits.probe),
                 };
             }
-            Err(_) => turn.start(),
+            Some(Err(_)) | None => turn.start(),
         }
         Box::new(turn)
     }
@@ -498,90 +371,6 @@ fn signed_in(exit: &Exit) -> Authentication {
 fn after(duration: Duration) -> Instant {
     let now = Instant::now();
     now.checked_add(duration).unwrap_or(now)
-}
-
-fn session_name(id: &str) -> bool {
-    id.len() == 21
-        && id.starts_with("conv_")
-        && id[5..].bytes().all(|byte| byte.is_ascii_hexdigit())
-}
-
-fn read_session(dir: &Path, id: &str) -> Option<String> {
-    if !session_name(id) {
-        return None;
-    }
-    let mut content = String::new();
-    std::fs::File::open(dir.join(id))
-        .ok()?
-        .take(129)
-        .read_to_string(&mut content)
-        .ok()?;
-    output::is_session_id(&content).then_some(content)
-}
-
-fn superseded_session_dir(dir: &Path, conversation: &str) -> PathBuf {
-    dir.join("superseded").join(conversation)
-}
-
-fn record_superseded_session(dir: &Path, conversation: &str, session: &str) -> io::Result<()> {
-    if !session_name(conversation) || !output::is_session_id(session) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "invalid superseded session",
-        ));
-    }
-    let base = superseded_session_dir(dir, conversation);
-    super::private_fs::create_private_dir(&base)?;
-    super::private_fs::write_private_file(&base.join(session), b"pending\n")
-}
-
-fn read_superseded_sessions(dir: &Path, conversation: &str) -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(superseded_session_dir(dir, conversation)) else {
-        return Vec::new();
-    };
-    entries
-        .flatten()
-        .filter_map(|entry| entry.file_name().into_string().ok())
-        .filter(|session| output::is_session_id(session))
-        .collect()
-}
-
-fn save_session(dir: &Path, id: &str, session: &str) -> io::Result<()> {
-    if !session_name(id) || !output::is_session_id(session) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "invalid session mapping",
-        ));
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        let mut builder = std::fs::DirBuilder::new();
-        builder.recursive(true).mode(0o700).create(dir)?;
-    }
-    #[cfg(not(unix))]
-    std::fs::create_dir_all(dir)?;
-
-    let path = dir.join(id);
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(path)?;
-    file.write_all(session.as_bytes())?;
-    file.sync_all()
-}
-
-/// Removes a stored mapping, if any.
-fn forget_session(dir: &Path, id: &str) -> io::Result<()> {
-    if session_name(id) {
-        forget::remove(&dir.join(id))
-    } else {
-        Ok(())
-    }
 }
 
 /// Claude Code's own directory: `CLAUDE_CONFIG_DIR`, or `.claude` in the
@@ -645,18 +434,6 @@ fn transcript_written_for_pervue(transcript: &Path, session: &str, workspace: &P
                         .is_some_and(|cwd| forget::same_directory(cwd, workspace))
             })
     })
-}
-
-fn new_conversation_id(conversations: &HashMap<String, String>) -> String {
-    loop {
-        let id = format!(
-            "conv_{:016x}",
-            RandomState::new().hash_one((SystemTime::now(), conversations.len()))
-        );
-        if !conversations.contains_key(&id) {
-            return id;
-        }
-    }
 }
 
 enum StatusCheck {
@@ -760,15 +537,13 @@ struct Turn {
     stage: Stage,
     executable: PathBuf,
     launch: Rc<Launch>,
-    session_dir: Option<PathBuf>,
     prompt: String,
-    /// Used once when a mapped Claude session is stale.
-    fallback_prompt: Option<String>,
+    /// The Claude session this run resumes.
     resume: Option<String>,
-    conversation_id: Option<String>,
-    conversations: Conversations,
-    superseded_session: Option<String>,
-    session_policy: runtime_core::turn::SessionPolicy,
+    session_policy: SessionPolicy,
+    /// The session last reported, so a later result naming another one is
+    /// reported again.
+    reported_session: Option<String>,
     finish_grace: Duration,
     /// The model to answer with, or `None` for Claude's own default.
     model: Option<String>,
@@ -781,12 +556,6 @@ struct Turn {
     cancelled: bool,
     /// This Claude run sent `init`.
     started: bool,
-    /// `Started` went to the host. A history rebuild after that doesn't send
-    /// it again.
-    announced: bool,
-    /// Rerunning from history under the same conversation ID, after Claude
-    /// said the mapped session no longer exists.
-    rebuilding: bool,
     saw_delta: bool,
     messages: usize,
     break_before_text: bool,
@@ -860,61 +629,13 @@ impl Turn {
                     return self.end(Update::Failed(MALFORMED_OUTPUT));
                 }
                 self.started = true;
-                let conversation = match self.conversation_id.clone() {
-                    // A rebuild replaces the stale session behind the same
-                    // conversation ID, so the extension sees no new one.
-                    Some(id) if self.rebuilding => {
-                        if self.remember(&id, session.clone()).is_err() {
-                            return self.end(Update::Failed(SESSION_STORE_FAILED));
-                        }
-                        id
-                    }
-                    Some(id) if self.superseded_session.is_some() => {
-                        let old = self.superseded_session.take().expect("checked");
-                        if let Some(dir) = self.session_dir.as_deref() {
-                            if record_superseded_session(dir, &id, &old).is_err()
-                                || save_session(dir, &id, &session).is_err()
-                            {
-                                return self.end(Update::Failed(SESSION_STORE_FAILED));
-                            }
-                        }
-                        self.conversations
-                            .borrow_mut()
-                            .insert(id.clone(), session.clone());
-                        let config = claude_config_dir(&self.launch);
-                        let workspace = self.launch.work_dir.clone();
-                        let marker = self
-                            .session_dir
-                            .as_deref()
-                            .map(|dir| superseded_session_dir(dir, &id).join(&old));
-                        forget::tracked_cleanup(marker, move || {
-                            config.as_deref().map_or(Ok(()), |config| {
-                                forget_transcript(config, &workspace, &old)
-                            })
-                        });
-                        id
-                    }
-                    Some(id) => id,
-                    None => {
-                        let id = new_conversation_id(&self.conversations.borrow());
-                        if self.remember(&id, session.clone()).is_err() {
-                            return self.end(Update::Failed(SESSION_STORE_FAILED));
-                        }
-                        self.conversation_id = Some(id.clone());
-                        self.queue
-                            .push_back(Update::ConversationCreated(id.clone()));
-                        id
-                    }
-                };
-                if self.session_policy == runtime_core::turn::SessionPolicy::Persistent {
+                if self.session_policy == SessionPolicy::Persistent {
+                    self.reported_session = Some(session.clone());
                     self.queue.push_back(Update::Session(session));
                 }
-                if !self.announced {
-                    self.announced = true;
-                    self.queue.push_back(Update::Started {
-                        conversation_id: Some(conversation),
-                    });
-                }
+                self.queue.push_back(Update::Started {
+                    conversation_id: None,
+                });
             }
             Ok(Line::ToolEvents(events)) => {
                 if !self.started {
@@ -988,10 +709,15 @@ impl Turn {
                 if !self.started {
                     return self.end(Update::Failed(MALFORMED_OUTPUT));
                 }
-                if let (Some(session), Some(conversation)) =
-                    (session_id, self.conversation_id.clone())
-                {
-                    self.follow_session(&conversation, session);
+                // A resumed or forked session can end up under another ID: say so,
+                // so the application follows it.
+                if let Some(session) = session_id {
+                    if self.session_policy == SessionPolicy::Persistent
+                        && self.reported_session.as_deref() != Some(session.as_str())
+                    {
+                        self.reported_session = Some(session.clone());
+                        self.queue.push_back(Update::Session(session));
+                    }
                 }
                 self.flush_held();
                 if !self.saw_delta && !text.is_empty() {
@@ -1036,98 +762,9 @@ impl Turn {
         self.queue.push_back(Update::Delta(text));
     }
 
-    /// Records `session` for `conversation`: on disk when there is a session
-    /// directory, and in memory.
-    fn remember(&self, conversation: &str, session: String) -> io::Result<()> {
-        if let Some(dir) = &self.session_dir {
-            save_session(dir, conversation, &session)?;
-        }
-        self.conversations
-            .borrow_mut()
-            .insert(conversation.to_owned(), session);
-        Ok(())
-    }
-
-    /// Follows the session a finished turn reports, which a resumed or forked
-    /// session may have changed. The answer is already out, so a failed write
-    /// doesn't fail the turn: the new session is kept in memory, and the stale
-    /// mapping is dropped so a restarted host rebuilds from history instead of
-    /// resuming the wrong session.
-    fn follow_session(&mut self, conversation: &str, session: String) {
-        let current = self
-            .conversations
-            .borrow()
-            .get(conversation)
-            .cloned()
-            .or_else(|| self.resume.clone());
-        if current.as_deref() == Some(session.as_str()) {
-            return;
-        }
-
-        if self.remember(conversation, session.clone()).is_err() {
-            if let Some(dir) = &self.session_dir {
-                let _ = forget_session(dir, conversation);
-            }
-            self.conversations
-                .borrow_mut()
-                .insert(conversation.to_owned(), session.clone());
-        }
-        if self.session_policy == runtime_core::turn::SessionPolicy::Persistent {
-            self.queue.push_back(Update::Session(session));
-        }
-
-        if let Some(old) = current {
-            let marker = self.session_dir.as_deref().and_then(|dir| {
-                record_superseded_session(dir, conversation, &old)
-                    .ok()
-                    .map(|()| superseded_session_dir(dir, conversation).join(&old))
-            });
-            if self.session_dir.is_none() || marker.is_some() {
-                let config = claude_config_dir(&self.launch);
-                let workspace = self.launch.work_dir.clone();
-                forget::tracked_cleanup(marker, move || {
-                    config
-                        .as_deref()
-                        .map_or(Ok(()), |config| forget_transcript(config, &workspace, &old))
-                });
-            }
-        }
-    }
-
-    /// Drops a mapping Claude says no longer exists. Best effort: a mapping
-    /// that can't be removed is replaced by the rebuild's own.
-    fn drop_stale_mapping(&self, conversation: &str) {
-        self.conversations.borrow_mut().remove(conversation);
-        if let Some(dir) = &self.session_dir {
-            let _ = forget_session(dir, conversation);
-        }
-    }
-
     fn turn_ended(&mut self, outcome: Result<(), ErrorBody>) {
         self.outcome = Some(outcome);
         self.finish_by = Some(after(self.finish_grace));
-    }
-
-    /// Reruns the turn from bounded history under the same conversation ID,
-    /// once, after Claude said the mapped session no longer exists.
-    fn rebuild_from_history(&mut self) {
-        self.resume = None;
-        self.rebuilding = true;
-        self.outcome = None;
-        self.finish_by = None;
-        self.started = false;
-        self.saw_delta = false;
-        self.messages = 0;
-        self.break_before_text = false;
-        self.held.clear();
-        self.live = false;
-        self.sources.reset();
-        self.web_search_uses.clear();
-        self.prompt = self
-            .fallback_prompt
-            .take()
-            .expect("checked before fallback");
-        self.start();
     }
 
     /// Claude exited. `session_gone` says it reported, on stderr before `init`,
@@ -1136,25 +773,20 @@ impl Turn {
         if self.cancelled {
             return self.end(Update::Stopped);
         }
-        let stale = self.resume.is_some()
+        let lost = self.resume.is_some()
             && !self.saw_delta
             && match self.outcome {
-                Some(Err(error)) => error.reason == "UNKNOWN_CONVERSATION",
+                Some(Err(error)) => error.reason == UNKNOWN_SESSION.reason,
                 Some(Ok(())) => false,
                 None => session_gone && exit.status.is_some_and(|status| !status.success()),
             };
-        if !stale {
-            let update = self.exited(exit);
-            return self.end(update);
+        if lost {
+            self.queue
+                .push_back(Update::SessionLost(SessionLoss::Confirmed));
+            return self.end(Update::Failed(UNKNOWN_SESSION));
         }
-        if let Some(conversation) = self.conversation_id.clone() {
-            self.drop_stale_mapping(&conversation);
-        }
-        if self.fallback_prompt.is_some() {
-            self.rebuild_from_history();
-        } else {
-            self.end(Update::Failed(SESSION_GONE));
-        }
+        let update = self.exited(exit);
+        self.end(update)
     }
 
     fn exited(&mut self, exit: &Exit) -> Update {
