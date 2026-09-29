@@ -1,12 +1,14 @@
 #!/usr/bin/env node
-// The provider runtime must not depend on Pervue (ADR-0002): a crate whose name
-// does not start with `pervue` may not depend, in any dependency section, on one
-// that does. The runtime crates are meant to move to a repository of their own,
-// and a dependency on the application would make that move impossible.
+// The provider runtime must not depend on an application (ADR-0002): a crate
+// that carries the library's name (`seatline-*`) may not depend, in any
+// dependency section, on any other crate of these workspaces, which are the
+// application's. The runtime crates are meant to move to a repository of their
+// own, and a dependency on the application would make that move impossible.
 //
 // The rule is read from the crates' names, so a new runtime crate is held to it
-// without being listed. The crates listed below only guard against the check
-// passing for want of something to check.
+// without being listed, and it does not name the application, so renaming the
+// application changes nothing here. The crates listed below only guard against
+// the check passing for want of something to check.
 
 import { execFileSync } from "node:child_process";
 import path from "node:path";
@@ -18,7 +20,7 @@ const MANIFESTS = [
   "native/fuzz/Cargo.toml",
   "native/seatline-fuzz/Cargo.toml",
 ];
-const APPLICATION = /^pervue(-|$)/;
+const RUNTIME = /^seatline-/;
 const EXPECTED_RUNTIME_CRATES = [
   "seatline-core",
   "seatline-platform",
@@ -60,11 +62,14 @@ function packagesOf(manifest) {
 }
 
 const packages = MANIFESTS.flatMap(packagesOf);
-const runtime = packages.filter((pkg) => !APPLICATION.test(pkg.name));
+const runtime = packages.filter((pkg) => RUNTIME.test(pkg.name));
+const applications = new Set(
+  packages.filter((pkg) => !RUNTIME.test(pkg.name)).map((pkg) => pkg.name),
+);
 const violations = [];
 for (const pkg of runtime) {
   for (const dependency of pkg.dependencies) {
-    if (APPLICATION.test(dependency.name)) {
+    if (applications.has(dependency.name)) {
       violations.push(
         `${pkg.name} depends on ${dependency.name} (${dependency.kind ?? "normal"})`,
       );
@@ -81,11 +86,18 @@ if (missing.length) {
   );
   process.exit(1);
 }
+if (applications.size === 0) {
+  console.error(
+    "No application crates found, so there is nothing the runtime could depend on. " +
+      `Are the manifests listed in scripts/check-runtime-independence.mjs still the right ones? (${MANIFESTS.join(", ")})`,
+  );
+  process.exit(1);
+}
 if (violations.length) {
-  console.error("The provider runtime must not depend on Pervue:");
+  console.error("The provider runtime must not depend on an application:");
   for (const violation of violations) console.error(`  ${violation}`);
   process.exit(1);
 }
 console.log(
-  `Runtime independence OK: ${runtime.length} crates, none depends on a pervue* crate.`,
+  `Runtime independence OK: ${runtime.length} runtime crates, none depends on an application crate (${[...applications].sort().join(", ")}).`,
 );

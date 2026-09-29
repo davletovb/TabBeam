@@ -624,7 +624,7 @@ Long-lived provider processes stay out of scope (§4) unless the measurements sh
 - **Cleanup.** Per-turn cleanup records are grouped by an opaque `cleanup_group` the application supplies, which keeps Gemini's record layout (§4).
 
 **2026-09-29, LIB-10 step 2 (in-tree).**
-- **Crates.** The platform layer is `seatline-platform` and the adapters are `seatline-providers`, beside `seatline-core`, the scheduler and the service. None depends on `pervue-host`, and a CI job (`scripts/check-runtime-independence.mjs`) fails if any crate not named `pervue*` depends on one that is.
+- **Crates.** The platform layer is `seatline-platform` and the adapters are `seatline-providers`, beside `seatline-core`, the scheduler and the service. None depends on `pervue-host`, and a CI job (`scripts/check-runtime-independence.mjs`) fails if any `seatline-*` crate depends on another crate of the workspaces, which are the application's.
 - **Tests and fuzzing.** The fake provider is a library (`seatline-fake-provider`) with a small binary in each package that runs it. `seatline-tests` holds the adapter tests at the runtime's level (a `Turn` in, `Update`s out), a provider contract that all four adapters meet through the `Provider` trait alone, the hostile matrix under the scheduler's supervisor, the threaded service against real adapters, and the process and stream tests. Pervue's `test_provider` keeps what maps conversations onto turns, the host's hostile matrix, and the contract as Pervue serves the providers. `stream_lines` moved to `seatline-fuzz`, which depends on `seatline-core` alone; `frame_reader` and `protocol` stay with Pervue.
 
 [p-claude]: ../../native/providers/src/claude/mod.rs

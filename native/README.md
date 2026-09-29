@@ -14,7 +14,7 @@ The host serves the Chrome extension over Native Messaging. It validates each pr
 native/
 ├── Cargo.toml       Cargo workspace: shared version, Rust 1.85+, `unsafe` forbidden
 │
-│   The provider runtime (ADR-0002). None of these crates may depend on a `pervue*` crate
+│   The provider runtime (ADR-0002). None of these crates may depend on an application's crate
 │   (`scripts/check-runtime-independence.mjs`); they are meant to move to a repository of their own.
 ├── seatline-core/    seatline-core: reusable process, stream, discovery, turn, prompt, and search primitives
 ├── platform/        seatline-platform: environment allow-lists, private files and workspaces, discovery policy, layout
