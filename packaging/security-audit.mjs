@@ -25,8 +25,15 @@ assert.ok(appId, "TabBeam.iss must declare a well-formed AppId GUID");
 // Pervue's development installer used this AppId. Reusing it would make a
 // locally installed Pervue build look like a TabBeam upgrade.
 assert.notEqual(appId.toUpperCase(), "D7A1D4E8-774F-4E2B-A745-04B43E51A93C");
+assert.ok(
+  fs.existsSync(new URL("../.github/workflows/ci.yml", import.meta.url)),
+  "this audit reads .github/workflows/ci.yml, so run it from a full checkout"
+);
 const ci = read("../.github/workflows/ci.yml");
-const uninstallKeys = [...ci.matchAll(/Uninstall\\\{([0-9A-F-]{36})\}_is1/gi)].map((match) => match[1]);
+// Only the assignment the Windows job runs counts, not a comment or a mention.
+const uninstallKeys = [
+  ...ci.matchAll(/^[ \t]*\$uninstallKey\s*=\s*'[^']*\\Uninstall\\\{([0-9A-F-]{36})\}_is1'/gim)
+].map((match) => match[1]);
 assert.ok(uninstallKeys.length > 0, "CI must check the installer's uninstall key");
 for (const guid of uninstallKeys) {
   assert.equal(guid.toUpperCase(), appId.toUpperCase(), "CI's uninstall key must match TabBeam.iss's AppId");
