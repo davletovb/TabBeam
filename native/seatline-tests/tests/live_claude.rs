@@ -10,8 +10,8 @@
 //! `SEATLINE_LIVE_CLAUDE` turns it on: `1` runs it when `claude` is installed and
 //! signed in and skips it, passing, when it isn't; `required` fails instead.
 //! Unset, as in normal CI runs, it passes at once. What a model says is checked
-//! for credentials before it is printed. Pervue's own live test of Claude
-//! (`pervue-host`'s `live_claude`) covers the host on top of the same adapter.
+//! for credentials before it is printed. TabBeam's own live test of Claude
+//! (`tabbeam-host`'s `live_claude`) covers the host on top of the same adapter.
 //!
 //! ```bash
 //! cd native
