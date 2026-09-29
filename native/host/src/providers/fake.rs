@@ -2,6 +2,7 @@
 //! at once, in process, with a fixed event sequence. Protocol tests and the
 //! golden fixtures use it; it starts no processes.
 
+use std::borrow::Cow;
 use std::time::Duration;
 
 use super::{Exchange, Provider, Scripted, SendRequest, Timeouts, Update};
@@ -29,7 +30,8 @@ pub const STATUS: ProviderState = ProviderState {
         model_selection: Capability::Unsupported,
         cancellation: Capability::Unsupported,
     },
-    models: &[],
+    models: Cow::Borrowed(&[]),
+    sign_in: None,
 };
 
 pub struct Fake;

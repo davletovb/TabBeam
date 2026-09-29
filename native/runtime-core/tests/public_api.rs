@@ -1,5 +1,6 @@
 //! Exercises only the standalone crate's public surface (no host or browser).
 
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::io::Read;
 use std::time::{Duration, Instant};
@@ -94,7 +95,8 @@ fn exchange_and_platform_types_do_not_depend_on_host() {
             model_selection: Capability::Unknown,
             cancellation: Capability::Supported,
         },
-        models: &[],
+        models: Cow::Borrowed(&[]),
+        sign_in: None,
     };
     let mut exchange: Box<dyn Exchange> = Box::new(Scripted::new([
         Update::Status {
