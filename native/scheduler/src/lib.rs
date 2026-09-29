@@ -4,7 +4,6 @@
 //! browser or Native Messaging concepts. The supervisor is the panic boundary
 //! shared by synchronous and service-thread entry points.
 
-use std::collections::VecDeque;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::time::{Duration, Instant};
 

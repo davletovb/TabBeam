@@ -337,6 +337,7 @@ impl Provider for Codex {
                 process,
                 give_up: after(self.limits.probe),
                 capabilities,
+                output: Vec::new(),
             },
             Err(_) => StatusCheck::Done(VecDeque::from([
                 status_update(

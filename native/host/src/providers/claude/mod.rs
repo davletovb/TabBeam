@@ -881,7 +881,7 @@ impl Turn {
                     // A rebuild replaces the stale session behind the same
                     // conversation ID, so the extension sees no new one.
                     Some(id) if self.rebuilding => {
-                        if self.remember(&id, session).is_err() {
+                        if self.remember(&id, session.clone()).is_err() {
                             return self.end(Update::Failed(SESSION_STORE_FAILED));
                         }
                         id
@@ -919,7 +919,7 @@ impl Turn {
                     Some(id) => id,
                     None => {
                         let id = new_conversation_id(&self.conversations.borrow());
-                        if self.remember(&id, session).is_err() {
+                        if self.remember(&id, session.clone()).is_err() {
                             return self.end(Update::Failed(SESSION_STORE_FAILED));
                         }
                         self.conversation_id = Some(id.clone());
