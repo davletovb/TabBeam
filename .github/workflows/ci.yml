@@ -23,6 +23,15 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
+      # Temporary, for the Pervue -> TabBeam cutover: the setup page links to
+      # github.com/davletovb/tabbeam, which exists only once the repository is
+      # renamed. This warns without failing; remove it after the rename.
+      - name: Warn while the repository is not renamed
+        run: |
+          repo_name="$(printf '%s' "${GITHUB_REPOSITORY##*/}" | tr '[:upper:]' '[:lower:]')"
+          if [ "$repo_name" != "tabbeam" ]; then
+            echo "::warning title=Repository not renamed yet::The extension's setup page links to github.com/davletovb/tabbeam, which does not exist until this repository is renamed to TabBeam. Rename it before merging or distributing."
+          fi
       - uses: actions/setup-node@v5
         with:
           node-version: "22"
