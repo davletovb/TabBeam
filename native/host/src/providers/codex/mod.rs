@@ -894,7 +894,7 @@ impl Exchange for StatusCheck {
                         // Keep only a bounded probe prefix for billing-mode
                         // classification; it is never logged or forwarded.
                         Some(Event::Stdout(bytes) | Event::Stderr(bytes)) => {
-                            keep_status_output(output, &bytes);
+                            super::keep_bounded_output(output, &bytes, STATUS_OUTPUT_BYTES);
                             if Instant::now() >= busy_until {
                                 return None;
                             }
@@ -931,11 +931,6 @@ impl Exchange for StatusCheck {
 }
 
 const STATUS_OUTPUT_BYTES: usize = 4096;
-
-fn keep_status_output(output: &mut Vec<u8>, bytes: &[u8]) {
-    let remaining = STATUS_OUTPUT_BYTES.saturating_sub(output.len());
-    output.extend_from_slice(&bytes[..bytes.len().min(remaining)]);
-}
 
 fn classify_sign_in(
     authentication: Authentication,

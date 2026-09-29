@@ -494,11 +494,6 @@ fn parse_models(bytes: &[u8]) -> Vec<ModelOption> {
         .collect()
 }
 
-fn keep_status_output(output: &mut Vec<u8>, bytes: &[u8]) {
-    let remaining = STATUS_OUTPUT_BYTES.saturating_sub(output.len());
-    output.extend_from_slice(&bytes[..bytes.len().min(remaining)]);
-}
-
 enum StatusCheck {
     Probing {
         process: Process,
@@ -532,7 +527,7 @@ impl Exchange for StatusCheck {
                     };
                     match process.next_event(poll_until) {
                         Some(Event::Stdout(bytes)) => {
-                            keep_status_output(stdout, &bytes);
+                            super::keep_bounded_output(stdout, &bytes, STATUS_OUTPUT_BYTES);
                         }
                         Some(Event::Stderr(bytes)) => {
                             private_fs::keep_tail(stderr_tail, &bytes, STDERR_TAIL_BYTES);

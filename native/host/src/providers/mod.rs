@@ -56,6 +56,11 @@ pub struct SendRequest {
 
 pub use runtime_core::exchange::{Exchange, Scripted, Timeouts, Update};
 
+pub(crate) fn keep_bounded_output(output: &mut Vec<u8>, bytes: &[u8], limit: usize) {
+    let remaining = limit.saturating_sub(output.len());
+    output.extend_from_slice(&bytes[..bytes.len().min(remaining)]);
+}
+
 /// A provider adapter.
 pub trait Provider {
     /// The provider ID requests name, such as `codex`.
