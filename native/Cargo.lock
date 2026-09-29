@@ -71,6 +71,7 @@ dependencies = [
 [[package]]
 name = "seatline-core"
 version = "0.1.0-dev"
+source = "git+https://github.com/davletovb/seatline?rev=e021c2acf05132073d82bf3e2149f1ff64f1f49f#e021c2acf05132073d82bf3e2149f1ff64f1f49f"
 dependencies = [
  "nix",
  "serde",
@@ -80,6 +81,7 @@ dependencies = [
 [[package]]
 name = "seatline-fake-provider"
 version = "0.1.0-dev"
+source = "git+https://github.com/davletovb/seatline?rev=e021c2acf05132073d82bf3e2149f1ff64f1f49f#e021c2acf05132073d82bf3e2149f1ff64f1f49f"
 dependencies = [
  "nix",
  "seatline-core",
@@ -90,6 +92,7 @@ dependencies = [
 [[package]]
 name = "seatline-platform"
 version = "0.1.0-dev"
+source = "git+https://github.com/davletovb/seatline?rev=e021c2acf05132073d82bf3e2149f1ff64f1f49f#e021c2acf05132073d82bf3e2149f1ff64f1f49f"
 dependencies = [
  "nix",
  "seatline-core",
@@ -98,6 +101,7 @@ dependencies = [
 [[package]]
 name = "seatline-providers"
 version = "0.1.0-dev"
+source = "git+https://github.com/davletovb/seatline?rev=e021c2acf05132073d82bf3e2149f1ff64f1f49f#e021c2acf05132073d82bf3e2149f1ff64f1f49f"
 dependencies = [
  "seatline-core",
  "seatline-platform",
@@ -107,6 +111,7 @@ dependencies = [
 [[package]]
 name = "seatline-scheduler"
 version = "0.1.0-dev"
+source = "git+https://github.com/davletovb/seatline?rev=e021c2acf05132073d82bf3e2149f1ff64f1f49f#e021c2acf05132073d82bf3e2149f1ff64f1f49f"
 dependencies = [
  "seatline-core",
 ]
