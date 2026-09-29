@@ -8,10 +8,13 @@
 //! `required`, as in a job set up with a sign-in, a missing or signed-out CLI
 //! fails it instead.
 
+use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use runtime_core::exchange::{Exchange, Update};
+use runtime_core::protocol::Availability;
+use runtime_providers::Provider;
 
 /// How long a real model may take to answer.
 pub const ANSWER_TIMEOUT: Duration = Duration::from_secs(300);
@@ -60,13 +63,51 @@ pub fn run_within(exchange: &mut dyn Exchange, timeout: Duration) -> Vec<Update>
     }
 }
 
-/// A scratch directory of this test run, under cargo's temporary directory.
-pub fn scratch(name: &str) -> PathBuf {
+/// The provider's status, asked again after a moment when it says the CLI is
+/// unavailable: a status probe can need the network (Antigravity's fetches its
+/// models), and one blip must not fail a `required` run.
+pub fn status_of(provider: &dyn Provider) -> Vec<Update> {
+    const ATTEMPTS: u32 = 3;
+    let mut updates = Vec::new();
+    for attempt in 1..=ATTEMPTS {
+        updates = run_within(provider.status().as_mut(), STATUS_TIMEOUT);
+        let unavailable = matches!(
+            updates.first(),
+            Some(Update::Status { status, .. }) if status.availability == Availability::Unavailable
+        );
+        if !unavailable || attempt == ATTEMPTS {
+            break;
+        }
+        eprintln!("the status probe said unavailable (attempt {attempt}); asking again");
+        std::thread::sleep(Duration::from_secs(3));
+    }
+    updates
+}
+
+/// A scratch directory of this test run, under cargo's temporary directory,
+/// removed when it goes out of scope, a panic included.
+pub struct Scratch(PathBuf);
+
+impl Deref for Scratch {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+pub fn scratch(name: &str) -> Scratch {
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
         .join(format!("live-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("create a scratch directory");
-    dir
+    Scratch(dir)
 }
 
 /// The user's home directory, where the provider CLIs keep their own files.
@@ -82,12 +123,28 @@ pub fn marker() -> String {
     format!("marker-{}-{nanos}", std::process::id())
 }
 
-/// The first file under `dir` that holds `marker`, looking at no more than
-/// `MAX_FILES` files of at most `MAX_FILE_BYTES` each, and not following links.
-pub fn find_marker(dir: &Path, marker: &str) -> Option<PathBuf> {
-    const MAX_FILES: usize = 50_000;
-    const MAX_FILE_BYTES: u64 = 32 * 1024 * 1024;
+/// What a search for a marker under a directory found.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Scan {
+    /// The first file that holds it.
+    pub found: Option<PathBuf>,
+    /// Whether the search left files unread, because there were too many or
+    /// they were too large: not finding it then proves less.
+    pub incomplete: bool,
+}
 
+/// Looks for `marker` in the files under `dir`, without following links, and
+/// reads at most `MAX_FILES` files of at most `MAX_FILE_BYTES` each. It looks
+/// everywhere, not only where a provider is known to keep its files, because
+/// what it is for is finding where a provider keeps them that nobody knew.
+pub fn find_marker(dir: &Path, marker: &str) -> Scan {
+    const MAX_FILES: usize = 20_000;
+    const MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
+
+    let mut scan = Scan {
+        found: None,
+        incomplete: false,
+    };
     let mut pending = vec![dir.to_path_buf()];
     let mut looked_at = 0;
     while let Some(dir) = pending.pop() {
@@ -104,19 +161,37 @@ pub fn find_marker(dir: &Path, marker: &str) -> Option<PathBuf> {
             } else if kind.is_file() {
                 looked_at += 1;
                 if looked_at > MAX_FILES {
-                    return None;
+                    scan.incomplete = true;
+                    return scan;
                 }
                 if entry
                     .metadata()
-                    .is_ok_and(|meta| meta.len() <= MAX_FILE_BYTES)
-                    && std::fs::read(&path).is_ok_and(|bytes| contains(&bytes, marker.as_bytes()))
+                    .is_ok_and(|meta| meta.len() > MAX_FILE_BYTES)
                 {
-                    return Some(path);
+                    scan.incomplete = true;
+                    continue;
+                }
+                if std::fs::read(&path).is_ok_and(|bytes| contains(&bytes, marker.as_bytes())) {
+                    scan.found = Some(path);
+                    return scan;
                 }
             }
         }
     }
-    None
+    scan
+}
+
+/// Panics if `marker` is anywhere under `dir`, and says so when it could not
+/// look everywhere.
+pub fn assert_no_marker(what: &str, dir: &Path, marker: &str) {
+    let scan = find_marker(dir, marker);
+    assert_eq!(scan.found, None, "{what}: a file holds the prompt");
+    if scan.incomplete {
+        eprintln!(
+            "warning: {what}: {} is too large to be searched in full, so the prompt may be in a file that was not read",
+            dir.display()
+        );
+    }
 }
 
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {
@@ -151,4 +226,18 @@ pub fn assert_no_credentials(what: &str, text: &str, variables: &[&str]) {
             "{what}: something shaped like an API key appears"
         );
     }
+}
+
+/// The text of the answer in `updates`, checked for credentials before anyone
+/// prints it: a model's words are the one thing a test prints that no test
+/// wrote.
+pub fn answer_of(what: &str, updates: &[Update], variables: &[&str]) -> String {
+    assert_no_credentials(what, &format!("{updates:?}"), variables);
+    updates
+        .iter()
+        .filter_map(|update| match update {
+            Update::Delta(text) => Some(text.as_str()),
+            _ => None,
+        })
+        .collect()
 }

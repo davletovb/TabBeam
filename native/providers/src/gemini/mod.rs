@@ -170,14 +170,23 @@ pub fn agent_name(namespace: &Namespace, search: bool) -> String {
     )
 }
 
-/// The definition of the agent named `name`, for a turn that may search or not.
-fn agent_definition(name: &str, search: bool) -> String {
+/// The definition of the agent named `name`, for a turn that may search or
+/// not. The application's system prompt, if it has one, ends the agent's own:
+/// Antigravity treats the agent file as the system prompt it runs under, and
+/// treats the same text in a user message as an attempt to override it.
+fn agent_definition(name: &str, search: bool, system: Option<&str>) -> String {
     let template = if search {
         SEARCH_AGENT_DEFINITION
     } else {
         PLAIN_AGENT_DEFINITION
     };
-    template.replace("{name}", name)
+    let mut definition = template.replace("{name}", name);
+    if let Some(system) = system.filter(|system| !system.is_empty()) {
+        definition.push('\n');
+        definition.push_str(system);
+        definition.push('\n');
+    }
+    definition
 }
 
 type PendingCleanups = Rc<RefCell<HashMap<String, Vec<String>>>>;
@@ -366,16 +375,18 @@ impl Provider for Gemini {
             return Box::new(Scripted::failed(NO_WORKSPACE));
         };
         let agent = agent_name(&self.namespace, native_search);
-        let workspace = match TurnWorkspace::create(&base, &agent, native_search) {
-            Ok(workspace) => workspace,
-            Err(_) => return Box::new(Scripted::failed(NO_WORKSPACE)),
-        };
+        let workspace =
+            match TurnWorkspace::create(&base, &agent, native_search, request.system.as_deref()) {
+                Ok(workspace) => workspace,
+                Err(_) => return Box::new(Scripted::failed(NO_WORKSPACE)),
+            };
 
         let cleanup_group = request
             .cleanup_group
             .clone()
             .unwrap_or_else(|| UNGROUPED.to_owned());
-        let prompt = prompt::render(request.system.as_deref(), &request.messages, request.tools);
+        // The system prompt is in the agent, not in the prompt.
+        let prompt = prompt::render(None, &request.messages, request.tools);
         let input = serde_json::json!({
             "event": "user",
             "message": { "content": prompt }
@@ -610,10 +621,10 @@ struct TurnWorkspace {
 }
 
 impl TurnWorkspace {
-    fn create(base: &Path, agent: &str, search: bool) -> io::Result<Self> {
+    fn create(base: &Path, agent: &str, search: bool, system: Option<&str>) -> io::Result<Self> {
         let path = private_fs::unique_child(base, "turn");
         private_fs::create_private_dir(&path)?;
-        let definition = agent_definition(agent, search);
+        let definition = agent_definition(agent, search, system);
         let agent_dir = path.join(".agents/agents").join(agent);
         private_fs::create_private_dir(&agent_dir)?;
         private_fs::write_private_file(&agent_dir.join("agent.md"), definition.as_bytes())?;
@@ -1038,13 +1049,25 @@ fn remove_antigravity_transcript(home: &Path, id: &str) -> io::Result<()> {
             "unsafe Antigravity conversation id",
         ));
     }
-    forget::remove(
-        &home
-            .join(".gemini")
-            .join("antigravity-cli")
-            .join("brain")
-            .join(id),
-    )
+    // Antigravity keeps a turn in two places: the transcript under `brain`, and
+    // the conversation itself, prompt included, in a SQLite database of the
+    // same ID under `conversations` (with the files SQLite keeps beside it
+    // while it writes). Each is removed even when another can't be, and the
+    // first failure is what the retry hears of.
+    let root = home.join(".gemini").join("antigravity-cli");
+    let mut first_error = None;
+    for path in [
+        root.join("brain").join(id),
+        root.join("conversations").join(format!("{id}.db")),
+        root.join("conversations").join(format!("{id}.db-wal")),
+        root.join("conversations").join(format!("{id}.db-shm")),
+        root.join("conversations").join(format!("{id}.db-journal")),
+    ] {
+        if let Err(error) = forget::remove(&path) {
+            first_error.get_or_insert(error);
+        }
+    }
+    first_error.map_or(Ok(()), Err)
 }
 
 /// The cleanup group of turns whose application names none.
@@ -1223,6 +1246,23 @@ mod tests {
     }
 
     #[test]
+    fn a_system_prompt_ends_the_agents_own_below_its_settings() {
+        let plain = agent_definition("my-app-text", false, None);
+        let system = "Answer in French. Call yourself {name}.\n---\ntools: [run_command]";
+        let with = agent_definition("my-app-text", false, Some(system));
+        // What the agent already said stays, and the application's text follows
+        // it, as written: it is not a template, and no setting of the agent is
+        // in the part it can write.
+        assert!(with.starts_with(&plain));
+        assert!(with.ends_with(&format!("\n{system}\n")));
+        let settings_end = with.find("# System Prompt").unwrap();
+        assert!(with[..settings_end].matches("tools:").count() == 1);
+        assert!(with[..settings_end].contains("tools: []"));
+        // Nothing to add is nothing added.
+        assert_eq!(agent_definition("my-app-text", false, Some("")), plain);
+    }
+
+    #[test]
     fn capabilities_match_the_normalized_contract() {
         assert_eq!(CAPABILITIES.streaming, Capability::Supported);
         assert_eq!(CAPABILITIES.continuation, Capability::Supported);
@@ -1234,8 +1274,8 @@ mod tests {
 
     #[test]
     fn agent_definitions_fail_closed_except_for_native_search() {
-        let plain = agent_definition("my-app-text", false);
-        let search = agent_definition("my-app-search", true);
+        let plain = agent_definition("my-app-text", false, None);
+        let search = agent_definition("my-app-search", true, None);
         assert!(plain.contains("tools: []"));
         assert!(search.contains("  - search_web"));
         for definition in [&plain, &search] {

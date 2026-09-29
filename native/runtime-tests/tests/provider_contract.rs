@@ -217,9 +217,7 @@ impl Rig {
     fn left_behind(&self) -> usize {
         match &self.fixture {
             Fixture::Codex(_) | Fixture::Claude(_) => 0,
-            Fixture::Gemini(fake) => {
-                std::fs::read_dir(fake.brain()).map_or(0, |entries| entries.count())
-            }
+            Fixture::Gemini(fake) => fake.kept(),
             Fixture::Grok(fake) => fake.turn_dirs().len(),
         }
     }
@@ -477,16 +475,28 @@ fn a_system_prompt_reaches_every_provider_ahead_of_the_question() {
         assert_eq!(updates.last(), Some(&Update::Completed), "{kind:?}");
 
         // The instructions come first, under their introduction, and then the
-        // question; and they go where the question goes, not onto a command
-        // line where anyone on the machine could read them.
-        assert_eq!(
-            rig.prompts(),
-            [format!(
-                "{}Answer in French. SYSTEM-MARKER\n\nWhat is muse?",
-                runtime_core::prompt::SYSTEM_INTRO
-            )],
-            "{kind:?}"
-        );
+        // question, in the prompt; except for Antigravity, which reads its
+        // system prompt from the agent it runs as and resists it in a message,
+        // and gets the question alone. Either way they are not on a command
+        // line, where anyone on the machine could read them.
+        match &rig.fixture {
+            Fixture::Gemini(fake) => {
+                assert_eq!(rig.prompts(), ["What is muse?"], "{kind:?}");
+                assert!(
+                    fake.read("agy-agents")
+                        .contains("\nAnswer in French. SYSTEM-MARKER\n"),
+                    "{kind:?}: the agent lacks the system prompt"
+                );
+            }
+            _ => assert_eq!(
+                rig.prompts(),
+                [format!(
+                    "{}Answer in French. SYSTEM-MARKER\n\nWhat is muse?",
+                    runtime_core::prompt::SYSTEM_INTRO
+                )],
+                "{kind:?}"
+            ),
+        }
         assert!(
             !rig.command_lines().contains("SYSTEM-MARKER"),
             "{kind:?}: the system prompt reached the command line"

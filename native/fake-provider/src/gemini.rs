@@ -59,6 +59,7 @@ fn run(args: Vec<OsString>) -> Result<(), ()> {
             .join("agent.md"),
     )
     .map_err(|_| ())?;
+    crate::record("agy", "agents", &format!("{definition}\0"));
     if !definition.contains("inheritCustomizations: false")
         || !definition.contains("inheritMcp: false")
         || !definition.contains("hooks: []")
@@ -299,7 +300,8 @@ fn write_transcript(session: &str, prompt: &str) -> Result<(), ()> {
     let Some(home) = home else {
         return Ok(());
     };
-    let dir = PathBuf::from(home)
+    let home = PathBuf::from(home);
+    let dir = home
         .join(".gemini")
         .join("antigravity-cli")
         .join("brain")
@@ -311,7 +313,19 @@ fn write_transcript(session: &str, prompt: &str) -> Result<(), ()> {
         "cwd": cwd.to_string_lossy(),
         "prompt": prompt
     });
-    fs::write(dir.join("transcript.jsonl"), format!("{record}\n")).map_err(|_| ())
+    fs::write(dir.join("transcript.jsonl"), format!("{record}\n")).map_err(|_| ())?;
+    // Real Antigravity also keeps the conversation, prompt included, in a
+    // database named after it, beside the brain.
+    let conversations = home
+        .join(".gemini")
+        .join("antigravity-cli")
+        .join("conversations");
+    fs::create_dir_all(&conversations).map_err(|_| ())?;
+    fs::write(
+        conversations.join(format!("{session}.db")),
+        format!("SQLite format 3\0{record}\n"),
+    )
+    .map_err(|_| ())
 }
 
 fn hang_briefly() {

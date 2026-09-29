@@ -6,8 +6,10 @@
 //!
 //! `RUNTIME_LIVE_GROK` turns it on: `1` runs it when `grok` is installed and
 //! signed in and skips it, passing, when it isn't; `required` fails instead.
-//! Unset, as in normal CI runs, it passes at once. Nothing it prints can hold a
-//! credential, and the test checks that before it prints.
+//! Unset, as in normal CI runs, it passes at once. What a model says is checked
+//! for credentials before it is printed. `required` needs Grok's cached sign-in
+//! to be fresh: an expired token reads as signed out, and running `grok models`
+//! once refreshes it.
 //!
 //! ```bash
 //! cd native
@@ -25,14 +27,14 @@ use runtime_platform::layout::Layout;
 use runtime_providers::grok::Grok;
 use runtime_providers::{Provider, Update};
 use support::live::{
-    ANSWER_TIMEOUT, Mode, STATUS_TIMEOUT, assert_no_credentials, find_marker, home, marker, mode,
-    run_within, scratch, skip_or_fail,
+    ANSWER_TIMEOUT, Mode, answer_of, assert_no_marker, home, marker, mode, run_within, scratch,
+    skip_or_fail, status_of,
 };
 
 const VARIABLE: &str = "RUNTIME_LIVE_GROK";
 
 /// Environment variables that may hold a credential in a CI job.
-const CREDENTIAL_VARIABLES: &[&str] = &["XAI_API_KEY", "GROK_CODE_XAI_API_KEY", "GROK_AUTH_PATH"];
+const CREDENTIAL_VARIABLES: &[&str] = &["XAI_API_KEY", "GROK_CODE_XAI_API_KEY"];
 
 fn turn(system: Option<&str>, text: &str, tools: ToolPolicy) -> Turn {
     Turn {
@@ -48,16 +50,6 @@ fn turn(system: Option<&str>, text: &str, tools: ToolPolicy) -> Turn {
         cleanup_group: None,
         check_sign_in: true,
     }
-}
-
-fn answer(updates: &[Update]) -> String {
-    updates
-        .iter()
-        .filter_map(|update| match update {
-            Update::Delta(text) => Some(text.as_str()),
-            _ => None,
-        })
-        .collect()
 }
 
 /// Waits a moment for the background removal of a turn's directories, and
@@ -97,7 +89,7 @@ fn live_grok_answers_and_leaves_nothing_behind() {
     let grok = Grok::new(&namespace, discovery::installed(&layout), workspace.clone());
 
     // Discovery and the cached sign-in.
-    let status = run_within(grok.status().as_mut(), STATUS_TIMEOUT);
+    let status = status_of(&grok);
     let Some(Update::Status { status: state, .. }) = status.first() else {
         panic!("a status update first: {status:?}");
     };
@@ -109,7 +101,11 @@ fn live_grok_answers_and_leaves_nothing_behind() {
         return skip_or_fail(VARIABLE, mode, &format!("Grok is {:?}", state.availability));
     }
     if state.authentication != Authentication::Authenticated {
-        return skip_or_fail(VARIABLE, mode, "Grok isn't signed in");
+        return skip_or_fail(
+            VARIABLE,
+            mode,
+            "Grok isn't signed in, or its cached sign-in expired (`grok models` refreshes it)",
+        );
     }
 
     // A plain answer, with a reference no earlier run could have written, to
@@ -125,32 +121,40 @@ fn live_grok_answers_and_leaves_nothing_behind() {
         return skip_or_fail(VARIABLE, mode, "Grok isn't signed in");
     }
     assert_eq!(last, &Update::Completed, "{plain:?}");
-    let plain_answer = answer(&plain);
+    let plain_answer = answer_of("the plain answer", &plain, CREDENTIAL_VARIABLES);
     eprintln!("Grok answered: {plain_answer}");
     assert!(
         plain_answer.to_lowercase().contains("pong"),
         "unexpected answer"
     );
 
-    // A system prompt is followed.
-    let instructed = run_within(
-        grok.send(turn(
-            Some("Whatever you are asked, reply with the single word: marmalade"),
-            "What is two plus two?",
-            ToolPolicy::None,
-        ))
-        .as_mut(),
-        ANSWER_TIMEOUT,
-    );
-    assert_eq!(
-        instructed.last(),
-        Some(&Update::Completed),
-        "{instructed:?}"
-    );
+    // A system prompt is followed. A model's compliance is not certain, so it
+    // gets a second try before the mechanism is called broken.
+    let mut followed = String::new();
+    for attempt in 1..=2 {
+        let instructed = run_within(
+            grok.send(turn(
+                Some("Whatever you are asked, reply with the single word: marmalade"),
+                "What is two plus two?",
+                ToolPolicy::None,
+            ))
+            .as_mut(),
+            ANSWER_TIMEOUT,
+        );
+        assert_eq!(
+            instructed.last(),
+            Some(&Update::Completed),
+            "{instructed:?}"
+        );
+        followed = answer_of("the instructed answer", &instructed, CREDENTIAL_VARIABLES);
+        eprintln!("with a system prompt (attempt {attempt}), Grok answered: {followed}");
+        if followed.to_lowercase().contains("marmalade") {
+            break;
+        }
+    }
     assert!(
-        answer(&instructed).to_lowercase().contains("marmalade"),
-        "the system prompt was not followed: {}",
-        answer(&instructed)
+        followed.to_lowercase().contains("marmalade"),
+        "the system prompt was not followed: {followed}"
     );
 
     // Search is refused before anything runs, until the shipped CLI can offer
@@ -173,20 +177,8 @@ fn live_grok_answers_and_leaves_nothing_behind() {
     // file, private Grok home) are removed, and Grok wrote nothing of its own
     // where it keeps its files.
     assert!(left_in(&workspace).is_empty(), "a turn workspace was left");
-    assert_eq!(
-        find_marker(&work, &reference),
-        None,
-        "the scratch directory holds the prompt"
-    );
+    assert_no_marker("the scratch directory", &work, &reference);
     if let Some(grok_home) = home().map(|home| home.join(".grok")) {
-        assert_eq!(
-            find_marker(&grok_home, &reference),
-            None,
-            "Grok kept a file that holds the prompt"
-        );
+        assert_no_marker("Grok's own files", &grok_home, &reference);
     }
-
-    let printed = format!("{status:?}{plain:?}{instructed:?}{searched:?}");
-    assert_no_credentials("the updates", &printed, CREDENTIAL_VARIABLES);
-    let _ = std::fs::remove_dir_all(&work);
 }

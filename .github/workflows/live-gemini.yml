@@ -8,6 +8,7 @@ name: Live Gemini smoke test
 # repository secret, and a GitHub-hosted runner would only fail the check. Start
 # it on a self-hosted runner that is set up that way, or add install and
 # sign-in steps here once there is a supported non-interactive way to do both.
+# The runner needs `rustup`, which the job uses to install the stable toolchain.
 on:
   workflow_dispatch:
     inputs:

@@ -144,6 +144,9 @@ fn persisted_cleanup_records_survive_adapter_restart_and_forget_retries_them() {
     let agy_id = "agy-restart-1";
 
     let transcript = fake.brain().join(agy_id).join(".system_generated/logs");
+    std::fs::create_dir_all(fake.conversations()).unwrap();
+    let database = fake.conversations().join(format!("{agy_id}.db"));
+    std::fs::write(&database, "left behind").unwrap();
     std::fs::create_dir_all(&transcript).unwrap();
     std::fs::write(transcript.join("transcript.jsonl"), "left behind").unwrap();
 
@@ -159,6 +162,7 @@ fn persisted_cleanup_records_survive_adapter_restart_and_forget_retries_them() {
     let updates = collect(adapter.forget(conversation));
     assert!(matches!(updates.as_slice(), [Update::Completed]));
     assert!(!fake.brain().join(agy_id).exists());
+    assert!(!database.exists());
     assert!(!record.exists());
 }
 

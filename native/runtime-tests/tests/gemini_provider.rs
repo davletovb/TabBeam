@@ -46,11 +46,9 @@ fn model(model: &str) -> Turn {
     }
 }
 
-/// How many Antigravity transcripts the fake has kept.
+/// How many transcripts and conversation databases the fake has kept.
 fn transcripts(fake: &FakeGemini) -> usize {
-    std::fs::read_dir(fake.brain())
-        .map(|entries| entries.count())
-        .unwrap_or(0)
+    fake.kept()
 }
 
 #[test]
@@ -291,12 +289,18 @@ fn a_system_prompt_goes_ahead_of_the_question_and_never_onto_the_command_line() 
             .as_mut(),
     );
     assert_eq!(updates.last(), Some(&Update::Completed));
-    assert_eq!(
-        fake.prompts(),
-        [format!(
-            "{}Answer in French. SYSTEM-MARKER\n\nWhat is muse?",
-            runtime_core::prompt::SYSTEM_INTRO
-        )]
+    // Antigravity reads its system prompt from the agent it runs as, and
+    // treats instructions in the user's message as something to resist: so the
+    // question arrives alone, and the instructions end the agent's own.
+    assert_eq!(fake.prompts(), ["What is muse?"]);
+    let agents = fake.read("agy-agents");
+    assert!(
+        agents.contains("\nAnswer in French. SYSTEM-MARKER\n"),
+        "{agents}"
+    );
+    assert!(
+        agents.find("# System Prompt").unwrap() < agents.find("SYSTEM-MARKER").unwrap(),
+        "{agents}"
     );
     assert!(
         !fake.invocations().concat().contains("SYSTEM-MARKER"),
@@ -353,10 +357,15 @@ fn a_cleanup_group_names_the_transcripts_a_restarted_adapter_removes() {
     let group = "conv_0000000000000001";
     let agy_id = "agy-restart-1";
 
-    // A transcript a turn of this group left behind, and the record of it.
+    // A transcript and a conversation database a turn of this group left
+    // behind, and the record of them.
     let transcript = fake.brain().join(agy_id).join(".system_generated/logs");
     std::fs::create_dir_all(&transcript).unwrap();
     std::fs::write(transcript.join("transcript.jsonl"), "left behind").unwrap();
+    std::fs::create_dir_all(fake.conversations()).unwrap();
+    let database = fake.conversations().join(format!("{agy_id}.db"));
+    std::fs::write(&database, "left behind").unwrap();
+    std::fs::write(format!("{}-wal", database.display()), "left behind").unwrap();
     let record = cleanup_dir.join(group);
     std::fs::create_dir_all(&record).unwrap();
     std::fs::write(record.join(agy_id), "pending\n").unwrap();
@@ -367,6 +376,8 @@ fn a_cleanup_group_names_the_transcripts_a_restarted_adapter_removes() {
     (cleanup.work)().expect("the cleanup works");
     (cleanup.completed)();
     assert!(!fake.brain().join(agy_id).exists());
+    assert!(!database.exists());
+    assert!(!std::path::Path::new(&format!("{}-wal", database.display())).exists());
     assert!(!record.exists());
 
     // A name that isn't a group, or a group with nothing left, is nothing.

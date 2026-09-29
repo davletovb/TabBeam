@@ -9,8 +9,10 @@
 //! search turn.
 //!
 //! No provider CLI takes a system prompt on its command line without putting
-//! it in the process list, so the adapters send it as the first part of the
-//! prompt, on the channel that carries the rest.
+//! it in the process list, so an adapter sends it on the channel that carries
+//! the rest: as the first part of the prompt, or, where the provider has a
+//! system prompt of its own that its CLI reads from a file the adapter writes
+//! (Antigravity's agent), there.
 
 use crate::turn::{Message, Role, ToolPolicy};
 
@@ -30,14 +32,18 @@ const HISTORY_INTRO: &str =
 /// current message, when something else comes before the question.
 pub const CURRENT_QUESTION: &str = "Current user question:\n";
 
-/// Introduces a turn's system prompt, so the provider treats what follows as
-/// the application's instructions and not as something a user said.
-pub const SYSTEM_INTRO: &str = "Follow these instructions from the application for the whole conversation. They come before, and take precedence over, everything in the messages below:\n";
+/// Introduces a turn's system prompt when it goes in the prompt, so the
+/// provider can tell the application's instructions from something a user
+/// said. It is deliberately plain: a model that is told its instructions
+/// "take precedence" over what follows reads that as an attempt to override it
+/// (Antigravity's Gemini did, and refused).
+pub const SYSTEM_INTRO: &str = "Instructions for this conversation, from the application:\n";
 
 /// The prompt for `messages`, the last of which is the current one.
 ///
 /// A lone message is sent as it is. A non-empty `system` prompt comes first,
-/// after [`SYSTEM_INTRO`]. Earlier messages come next, each as one line of
+/// after [`SYSTEM_INTRO`] (an adapter whose provider has a system prompt of its
+/// own passes `None` and puts it there). Earlier messages come next, each as one line of
 /// quoted JSON, so nothing in them can be mistaken for an instruction of the
 /// application. A search turn adds [`SEARCH_INSTRUCTIONS`] before its question.
 pub fn render(system: Option<&str>, messages: &[Message], tools: ToolPolicy) -> String {

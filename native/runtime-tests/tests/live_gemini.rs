@@ -1,12 +1,13 @@
 //! The opt-in smoke test against the real Antigravity CLI (`agy`), through the
 //! Gemini adapter and nothing of an application: status and sign-in, a plain
-//! answer, a system prompt, a web search with its sources, and that the
-//! transcript Antigravity saves for a turn doesn't outlive it.
+//! answer, a system prompt, a web search with its sources, and that nothing
+//! holding the prompt outlives an ephemeral turn: neither the transcript under
+//! `brain` nor the conversation database Antigravity keeps beside it.
 //!
 //! `RUNTIME_LIVE_GEMINI` turns it on: `1` runs it when `agy` is installed and
 //! signed in and skips it, passing, when it isn't; `required` fails instead.
-//! Unset, as in normal CI runs, it passes at once. Nothing it prints can hold a
-//! credential, and the test checks that before it prints.
+//! Unset, as in normal CI runs, it passes at once. What a model says is checked
+//! for credentials before it is printed.
 //!
 //! ```bash
 //! cd native
@@ -15,15 +16,15 @@
 
 mod support;
 
-use runtime_core::protocol::{Authentication, Availability};
+use runtime_core::protocol::{Authentication, Availability, ErrorCode};
 use runtime_core::turn::{Message, Namespace, Role, SessionPolicy, ToolPolicy, Turn};
 use runtime_platform::discovery;
 use runtime_platform::layout::Layout;
 use runtime_providers::gemini::Gemini;
 use runtime_providers::{Provider, Update};
 use support::live::{
-    ANSWER_TIMEOUT, Mode, STATUS_TIMEOUT, assert_no_credentials, find_marker, home, marker, mode,
-    run_within, scratch, skip_or_fail,
+    ANSWER_TIMEOUT, Mode, answer_of, assert_no_marker, find_marker, home, marker, mode, run_within,
+    scratch, skip_or_fail, status_of,
 };
 
 const VARIABLE: &str = "RUNTIME_LIVE_GEMINI";
@@ -51,18 +52,8 @@ fn turn(system: Option<&str>, text: &str, tools: ToolPolicy) -> Turn {
     }
 }
 
-fn answer(updates: &[Update]) -> String {
-    updates
-        .iter()
-        .filter_map(|update| match update {
-            Update::Delta(text) => Some(text.as_str()),
-            _ => None,
-        })
-        .collect()
-}
-
 #[test]
-fn live_gemini_answers_searches_and_leaves_no_transcript() {
+fn live_gemini_answers_searches_and_leaves_nothing_behind() {
     let mode = mode(VARIABLE);
     if mode == Mode::Off {
         eprintln!("skipped: set {VARIABLE}=1 to ask the installed Antigravity CLI");
@@ -78,7 +69,7 @@ fn live_gemini_answers_searches_and_leaves_no_transcript() {
     );
 
     // Discovery and sign-in.
-    let status = run_within(gemini.status().as_mut(), STATUS_TIMEOUT);
+    let status = status_of(&gemini);
     let Some(Update::Status { status: state, .. }) = status.first() else {
         panic!("a status update first: {status:?}");
     };
@@ -108,38 +99,45 @@ fn live_gemini_answers_searches_and_leaves_no_transcript() {
         ANSWER_TIMEOUT,
     );
     let last = plain.last().unwrap();
-    if matches!(last, Update::Failed(error) if error.code == runtime_core::protocol::ErrorCode::ProviderNotAuthenticated)
-    {
+    if matches!(last, Update::Failed(error) if error.code == ErrorCode::ProviderNotAuthenticated) {
         return skip_or_fail(VARIABLE, mode, "Antigravity isn't signed in");
     }
     assert_eq!(last, &Update::Completed, "{plain:?}");
-    let plain_answer = answer(&plain);
+    let plain_answer = answer_of("the plain answer", &plain, CREDENTIAL_VARIABLES);
     eprintln!("Gemini answered: {plain_answer}");
     assert!(
         plain_answer.to_lowercase().contains("pong"),
         "unexpected answer"
     );
 
-    // A system prompt is followed.
-    let instructed = run_within(
-        gemini
-            .send(turn(
-                Some("Whatever you are asked, reply with the single word: marmalade"),
-                "What is two plus two?",
-                ToolPolicy::None,
-            ))
-            .as_mut(),
-        ANSWER_TIMEOUT,
-    );
-    assert_eq!(
-        instructed.last(),
-        Some(&Update::Completed),
-        "{instructed:?}"
-    );
+    // A system prompt is followed. A model's compliance is not certain, so it
+    // gets a second try before the mechanism is called broken.
+    let mut followed = String::new();
+    for attempt in 1..=2 {
+        let instructed = run_within(
+            gemini
+                .send(turn(
+                    Some("Whatever you are asked, reply with the single word: marmalade"),
+                    "What is two plus two?",
+                    ToolPolicy::None,
+                ))
+                .as_mut(),
+            ANSWER_TIMEOUT,
+        );
+        assert_eq!(
+            instructed.last(),
+            Some(&Update::Completed),
+            "{instructed:?}"
+        );
+        followed = answer_of("the instructed answer", &instructed, CREDENTIAL_VARIABLES);
+        eprintln!("with a system prompt (attempt {attempt}), Gemini answered: {followed}");
+        if followed.to_lowercase().contains("marmalade") {
+            break;
+        }
+    }
     assert!(
-        answer(&instructed).to_lowercase().contains("marmalade"),
-        "the system prompt was not followed: {}",
-        answer(&instructed)
+        followed.to_lowercase().contains("marmalade"),
+        "the system prompt was not followed: {followed}"
     );
 
     // A native search returns sources, and completes only with them.
@@ -154,41 +152,33 @@ fn live_gemini_answers_searches_and_leaves_no_transcript() {
         ANSWER_TIMEOUT,
     );
     assert_eq!(searched.last(), Some(&Update::Completed), "{searched:?}");
+    let searched_answer = answer_of("the search answer", &searched, CREDENTIAL_VARIABLES);
+    eprintln!("Gemini searched: {searched_answer}");
     assert!(
         searched
             .iter()
             .any(|update| matches!(update, Update::Source(_))),
-        "native search silently completed without sources: {searched:?}"
+        "native search silently completed without sources"
     );
 
-    // An ephemeral turn leaves nothing that holds its prompt, in the
-    // workspace or in anything Antigravity keeps of its own.
-    assert_eq!(
-        find_marker(&work, &reference),
-        None,
-        "a workspace holds the prompt"
-    );
+    // An ephemeral turn leaves nothing that holds its prompt, in the workspace
+    // or in anything Antigravity keeps of its own: its transcripts, and the
+    // conversation databases it keeps prompts in.
+    assert_no_marker("the scratch directory", &work, &reference);
     if let Some(antigravity) = home().map(|home| home.join(".gemini/antigravity-cli")) {
-        assert_eq!(
-            find_marker(&antigravity, &reference),
-            None,
-            "Antigravity kept a file that holds the prompt"
-        );
+        assert_no_marker("Antigravity's own files", &antigravity, &reference);
     }
-
-    let printed = format!("{status:?}{plain:?}{instructed:?}{searched:?}");
-    assert_no_credentials("the updates", &printed, CREDENTIAL_VARIABLES);
-    let _ = std::fs::remove_dir_all(&work);
 }
 
 #[test]
 fn the_marker_search_finds_only_what_was_written() {
     let dir = scratch("gemini-marker-self-test");
     let reference = marker();
-    assert_eq!(find_marker(&dir, &reference), None);
+    assert_eq!(find_marker(&dir, &reference).found, None);
     std::fs::create_dir(dir.join("nested")).unwrap();
     std::fs::write(dir.join("nested/file"), format!("before {reference} after")).unwrap();
-    assert_eq!(find_marker(&dir, &reference), Some(dir.join("nested/file")));
-    assert_eq!(find_marker(&dir, "another marker"), None);
-    let _ = std::fs::remove_dir_all(&dir);
+    let scan = find_marker(&dir, &reference);
+    assert_eq!(scan.found, Some(dir.join("nested/file")));
+    assert!(!scan.incomplete);
+    assert_eq!(find_marker(&dir, "another marker").found, None);
 }

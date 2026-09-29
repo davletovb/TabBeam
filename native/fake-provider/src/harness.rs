@@ -347,6 +347,21 @@ impl FakeGemini {
     pub fn brain(&self) -> PathBuf {
         self.home.join(".gemini/antigravity-cli/brain")
     }
+
+    /// Where Antigravity keeps the databases of its conversations, prompts
+    /// included.
+    pub fn conversations(&self) -> PathBuf {
+        self.home.join(".gemini/antigravity-cli/conversations")
+    }
+
+    /// How many things Antigravity keeps of its turns: transcripts and
+    /// conversation databases.
+    pub fn kept(&self) -> usize {
+        [self.brain(), self.conversations()]
+            .iter()
+            .map(|dir| std::fs::read_dir(dir).map_or(0, |entries| entries.count()))
+            .sum()
+    }
 }
 
 impl Drop for FakeGemini {
