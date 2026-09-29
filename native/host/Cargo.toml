@@ -15,10 +15,10 @@ name = "tabbeam-host"
 path = "src/main.rs"
 
 [dependencies]
-seatline-core = { path = "../seatline-core" }
-seatline-platform = { path = "../platform" }
-seatline-providers = { path = "../providers" }
-seatline-scheduler = { path = "../scheduler" }
+seatline-core.workspace = true
+seatline-platform.workspace = true
+seatline-providers.workspace = true
+seatline-scheduler.workspace = true
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 

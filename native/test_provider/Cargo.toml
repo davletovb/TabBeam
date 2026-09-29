@@ -11,15 +11,15 @@ name = "tabbeam-fake-provider"
 path = "src/main.rs"
 
 [dependencies]
-seatline-fake-provider = { path = "../fake-provider" }
+seatline-fake-provider.workspace = true
 
 [dev-dependencies]
 # TabBeam's tests run the host, and the adapters it serves, against the fake
 # provider this package builds a binary of.
 tabbeam-host = { path = "../host" }
-seatline-core = { path = "../seatline-core" }
-seatline-platform = { path = "../platform" }
-seatline-providers = { path = "../providers" }
+seatline-core.workspace = true
+seatline-platform.workspace = true
+seatline-providers.workspace = true
 serde_json = "1.0"
 
 [target.'cfg(unix)'.dev-dependencies]

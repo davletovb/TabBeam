@@ -1,9 +1,7 @@
 [workspace]
-members = ["seatline-core", "platform", "providers", "fake-provider", "seatline-tests", "scheduler", "service", "host", "test_provider"]
-# `cargo build` produces only the shippable host; the fake provider is a test
-# fixture and is built by `cargo test --workspace`.
+members = ["host", "test_provider"]
 default-members = ["host"]
-exclude = ["fuzz", "seatline-fuzz"]
+exclude = ["fuzz"]
 resolver = "3"
 
 [workspace.package]
@@ -11,6 +9,13 @@ version = "0.1.0-dev"
 edition = "2024"
 rust-version = "1.85"
 publish = false
+
+[workspace.dependencies]
+seatline-core = { git = "https://github.com/davletovb/seatline", rev = "e021c2acf05132073d82bf3e2149f1ff64f1f49f" }
+seatline-platform = { git = "https://github.com/davletovb/seatline", rev = "e021c2acf05132073d82bf3e2149f1ff64f1f49f" }
+seatline-providers = { git = "https://github.com/davletovb/seatline", rev = "e021c2acf05132073d82bf3e2149f1ff64f1f49f" }
+seatline-scheduler = { git = "https://github.com/davletovb/seatline", rev = "e021c2acf05132073d82bf3e2149f1ff64f1f49f" }
+seatline-fake-provider = { git = "https://github.com/davletovb/seatline", rev = "e021c2acf05132073d82bf3e2149f1ff64f1f49f" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
