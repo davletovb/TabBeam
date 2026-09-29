@@ -51,11 +51,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "pervue-fake-provider"
+name = "tabbeam-fake-provider"
 version = "0.1.0-dev"
 dependencies = [
  "nix",
- "pervue-host",
+ "tabbeam-host",
  "seatline-core",
  "seatline-fake-provider",
  "seatline-platform",
@@ -64,7 +64,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pervue-host"
+name = "tabbeam-host"
 version = "0.1.0-dev"
 dependencies = [
  "seatline-core",

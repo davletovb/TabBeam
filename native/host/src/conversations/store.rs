@@ -1,4 +1,4 @@
-//! Where Pervue keeps which native session each of its conversations uses.
+//! Where TabBeam keeps which native session each of its conversations uses.
 //!
 //! One file per conversation, named by its `conv_…` ID and holding the
 //! provider's opaque session handle, and a `superseded/<conversation>/`
@@ -151,7 +151,7 @@ impl SessionStore {
     /// The sessions `conversation` left whose transcripts are still recorded
     /// as pending.
     pub fn superseded(&self, conversation: &str) -> Vec<String> {
-        // A conversation ID is joined into a path: only Pervue's own shape.
+        // A conversation ID is joined into a path: only TabBeam's own shape.
         let Some(dir) = self
             .dir
             .as_ref()
@@ -183,7 +183,7 @@ impl SessionStore {
     /// [`forget_memory`]: SessionStore::forget_memory
     pub fn files_to_remove(&self, conversation: &str) -> Option<Removal> {
         // A request can name any conversation, and this removes a directory
-        // named after it: only Pervue's own IDs may.
+        // named after it: only TabBeam's own IDs may.
         if !is_conversation_id(conversation) {
             return None;
         }
@@ -281,7 +281,7 @@ mod tests {
     impl Scratch {
         fn new(name: &str) -> Self {
             let dir = std::env::temp_dir().join(format!(
-                "pervue-store-{name}-{}-{:x}",
+                "tabbeam-store-{name}-{}-{:x}",
                 std::process::id(),
                 RandomState::new().hash_one(SystemTime::now())
             ));
@@ -408,7 +408,7 @@ mod tests {
     #[test]
     fn a_conversation_id_can_never_name_a_path_outside_the_store() {
         let scratch = Scratch::new("traversal");
-        let store_dir = scratch.0.join("pervue").join("claude-sessions");
+        let store_dir = scratch.0.join("tabbeam").join("claude-sessions");
         let store = SessionStore::new(Some(store_dir.clone()));
         store.remember_new(CONVERSATION, "session-1").unwrap();
         store
@@ -416,7 +416,7 @@ mod tests {
             .unwrap();
         // Something a traversal would delete: the store's own directory, its
         // parent, and a sibling.
-        let sibling = scratch.0.join("pervue").join("important");
+        let sibling = scratch.0.join("tabbeam").join("important");
         std::fs::create_dir_all(&sibling).unwrap();
         std::fs::write(sibling.join("data"), b"keep").unwrap();
 

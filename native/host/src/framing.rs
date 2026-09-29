@@ -8,7 +8,7 @@
 use std::io::{self, Read, Write};
 
 /// Maximum bytes in one Native Messaging payload. Chrome caps host-to-browser
-/// frames at 1 MiB; Pervue applies that bound to reads as well.
+/// frames at 1 MiB; TabBeam applies that bound to reads as well.
 pub const MAX_FRAME_SIZE: usize = 1024 * 1024;
 
 /// Size of the length prefix that precedes every payload.

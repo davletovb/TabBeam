@@ -1,4 +1,4 @@
-//! Pervue native host.
+//! TabBeam native host.
 //!
 //! The host owns Chrome Native Messaging framing and protocol-v1 encoding.
 //! It validates browser requests, applies product policy, and routes provider
@@ -20,15 +20,15 @@ pub mod search;
 /// Host version reported by `--version` and in the `host.ready` event.
 pub const HOST_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Pervue's provider-runtime namespace (ADR-0002): its workspaces, conversation
+/// TabBeam's provider-runtime namespace (ADR-0002): its workspaces, conversation
 /// mappings and cleanup records live under this name. Changing it would strand
 /// installed hosts' files.
-pub const NAMESPACE: &str = "pervue";
+pub const NAMESPACE: &str = "tabbeam";
 
-/// The directories Pervue's provider adapters use.
+/// The directories TabBeam's provider adapters use.
 pub fn layout() -> providers::Layout {
     providers::Layout::new(
-        seatline_core::turn::Namespace::fixed(NAMESPACE).expect("Pervue's namespace is valid"),
+        seatline_core::turn::Namespace::fixed(NAMESPACE).expect("TabBeam's namespace is valid"),
     )
 }
 
@@ -49,84 +49,84 @@ mod tests {
     }
 
     #[test]
-    fn pervues_namespace_is_valid_and_unchanged() {
-        assert_eq!(layout().namespace().as_str(), "pervue");
-        assert_eq!(NAMESPACE, "pervue");
+    fn tabbeams_namespace_is_valid_and_unchanged() {
+        assert_eq!(layout().namespace().as_str(), "tabbeam");
+        assert_eq!(NAMESPACE, "tabbeam");
     }
 
-    /// Installed hosts keep finding the directories Pervue has always used, and
+    /// Installed hosts keep finding the directories TabBeam has always used, and
     /// the names it has always given what it leaves in them.
     #[test]
     fn installed_hosts_keep_their_override_and_the_names_they_look_for() {
-        assert_eq!(layout().search_path_variable(), "PERVUE_PROVIDER_PATH");
+        assert_eq!(layout().search_path_variable(), "TABBEAM_PROVIDER_PATH");
         // A killed host's leftover Grok workspaces are found by this file.
-        assert_eq!(grok::owner_file(layout().namespace()), ".pervue-owner");
+        assert_eq!(grok::owner_file(layout().namespace()), ".tabbeam-owner");
         assert_eq!(
             gemini::agent_name(layout().namespace(), false),
-            "pervue-text"
+            "tabbeam-text"
         );
         assert_eq!(
             gemini::agent_name(layout().namespace(), true),
-            "pervue-search"
+            "tabbeam-search"
         );
     }
 
     #[cfg(target_vendor = "apple")]
     #[test]
-    fn pervue_keeps_its_cache_directory() {
+    fn tabbeam_keeps_its_cache_directory() {
         assert_eq!(
             layout().workspace(&vars(&[("HOME", "/Users/me")]), "codex"),
-            PathBuf::from("/Users/me/Library/Caches/Pervue/codex-workspace")
+            PathBuf::from("/Users/me/Library/Caches/TabBeam/codex-workspace")
         );
     }
 
     #[cfg(all(unix, not(target_vendor = "apple")))]
     #[test]
-    fn pervue_keeps_its_cache_directory() {
+    fn tabbeam_keeps_its_cache_directory() {
         assert_eq!(
             layout().workspace(&vars(&[("HOME", "/home/me")]), "codex"),
-            PathBuf::from("/home/me/.cache/pervue/codex-workspace")
+            PathBuf::from("/home/me/.cache/tabbeam/codex-workspace")
         );
         assert_eq!(
             layout().workspace(
                 &vars(&[("HOME", "/home/me"), ("XDG_CACHE_HOME", "/cache")]),
                 "claude"
             ),
-            PathBuf::from("/cache/pervue/claude-workspace")
+            PathBuf::from("/cache/tabbeam/claude-workspace")
         );
     }
 
     #[cfg(not(unix))]
     #[test]
-    fn pervue_keeps_its_cache_directory() {
+    fn tabbeam_keeps_its_cache_directory() {
         assert_eq!(
             layout().workspace(
                 &vars(&[("LOCALAPPDATA", r"C:\Users\me\AppData\Local")]),
                 "codex"
             ),
-            PathBuf::from(r"C:\Users\me\AppData\Local\Pervue\codex-workspace")
+            PathBuf::from(r"C:\Users\me\AppData\Local\TabBeam\codex-workspace")
         );
     }
 
     #[cfg(not(windows))]
     #[test]
-    fn pervue_keeps_its_data_directory() {
+    fn tabbeam_keeps_its_data_directory() {
         assert_eq!(
             layout().data_dir_in(&vars(&[("HOME", "/home/me")])),
-            Some(PathBuf::from("/home/me/.local/share/pervue"))
+            Some(PathBuf::from("/home/me/.local/share/tabbeam"))
         );
         assert_eq!(
             layout().data_dir_in(&vars(&[("HOME", "/home/me"), ("XDG_DATA_HOME", "/data")])),
-            Some(PathBuf::from("/data/pervue"))
+            Some(PathBuf::from("/data/tabbeam"))
         );
     }
 
     #[cfg(windows)]
     #[test]
-    fn pervue_keeps_its_data_directory() {
+    fn tabbeam_keeps_its_data_directory() {
         assert_eq!(
             layout().data_dir_in(&vars(&[("LOCALAPPDATA", r"C:\Users\me\AppData\Local")])),
-            Some(PathBuf::from(r"C:\Users\me\AppData\Local\pervue"))
+            Some(PathBuf::from(r"C:\Users\me\AppData\Local\tabbeam"))
         );
     }
 }
