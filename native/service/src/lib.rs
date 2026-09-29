@@ -351,5 +351,4 @@ mod tests {
         }
         assert!(cancelled.load(Ordering::SeqCst));
     }
-
 }

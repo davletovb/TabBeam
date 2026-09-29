@@ -856,7 +856,6 @@ fn search_retry_without_completed_history_starts_a_fresh_claude_session() {
     );
 }
 
-
 #[test]
 fn missing_native_session_rebuilds_from_bounded_history() {
     let claude = FakeClaude::install("no-partial", "signed-in");

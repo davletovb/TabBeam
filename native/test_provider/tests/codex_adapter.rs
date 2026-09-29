@@ -1003,7 +1003,6 @@ fn search_retry_without_completed_history_starts_a_fresh_codex_session() {
     );
 }
 
-
 #[test]
 fn a_missing_native_session_uses_the_bounded_dialogue() {
     let codex = FakeCodex::install("answers", "signed-in");
