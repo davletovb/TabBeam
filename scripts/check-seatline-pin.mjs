@@ -27,4 +27,7 @@ if (manifest.includes('path = "../seatline-core"') || manifest.includes('path = 
   console.error("An in-tree Seatline path dependency remains");
   process.exit(1);
 }
+if (process.env.GITHUB_OUTPUT) {
+  fs.appendFileSync(process.env.GITHUB_OUTPUT, `rev=${rev}\n`);
+}
 console.log(`Seatline pin OK: ${expectedRepo}@${rev}`);
