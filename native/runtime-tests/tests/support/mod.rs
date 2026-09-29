@@ -3,6 +3,8 @@
 
 #![allow(dead_code, reason = "each test crate uses part of the support")]
 
+pub mod live;
+
 use std::time::{Duration, Instant};
 
 use runtime_fake_provider::harness::Fixtures;
