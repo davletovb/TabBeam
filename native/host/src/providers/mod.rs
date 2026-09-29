@@ -25,16 +25,11 @@ use runtime_core::turn::{SessionPolicy, Turn};
 
 pub mod claude;
 pub mod codex;
-pub mod discovery;
-pub mod environment;
 pub mod fake;
-pub mod forget;
 pub mod gemini;
 pub mod grok;
-pub mod layout;
-pub(crate) mod private_fs;
 
-pub use layout::Layout;
+pub use runtime_platform::layout::Layout;
 
 /// One `conversation.send`, in provider-neutral terms.
 #[derive(Debug, Clone, PartialEq, Eq)]

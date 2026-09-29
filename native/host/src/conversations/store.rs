@@ -14,7 +14,9 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use crate::providers::{forget, private_fs};
+use runtime_platform::{forget, private_fs};
+
+use super::is_conversation_id;
 use runtime_core::turn::{MAX_CONTINUATION_BYTES, is_session_handle};
 
 /// What a new conversation needs of its mapping.
@@ -134,7 +136,7 @@ impl SessionStore {
         let Some(dir) = &self.dir else {
             return Ok(None);
         };
-        if !private_fs::is_conversation_id(conversation) || !is_session_handle(old) {
+        if !is_conversation_id(conversation) || !is_session_handle(old) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "invalid superseded session",
@@ -153,7 +155,7 @@ impl SessionStore {
         let Some(dir) = self
             .dir
             .as_ref()
-            .filter(|_| private_fs::is_conversation_id(conversation))
+            .filter(|_| is_conversation_id(conversation))
         else {
             return Vec::new();
         };
@@ -182,7 +184,7 @@ impl SessionStore {
     pub fn files_to_remove(&self, conversation: &str) -> Option<Removal> {
         // A request can name any conversation, and this removes a directory
         // named after it: only Pervue's own IDs may.
-        if !private_fs::is_conversation_id(conversation) {
+        if !is_conversation_id(conversation) {
             return None;
         }
         let dir = self.dir.clone()?;
@@ -224,7 +226,7 @@ fn superseded_dir(dir: &Path, conversation: &str) -> PathBuf {
 }
 
 fn read(dir: &Path, conversation: &str) -> Option<String> {
-    if !private_fs::is_conversation_id(conversation) {
+    if !is_conversation_id(conversation) {
         return None;
     }
     let mut content = String::new();
@@ -237,7 +239,7 @@ fn read(dir: &Path, conversation: &str) -> Option<String> {
 }
 
 fn write(dir: &Path, conversation: &str, session: &str, only_if_new: bool) -> io::Result<()> {
-    if !private_fs::is_conversation_id(conversation) || !is_session_handle(session) {
+    if !is_conversation_id(conversation) || !is_session_handle(session) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "invalid session mapping",
@@ -263,7 +265,7 @@ fn write(dir: &Path, conversation: &str, session: &str, only_if_new: bool) -> io
 
 /// Removes a stored mapping, if any.
 fn forget_file(dir: &Path, conversation: &str) -> io::Result<()> {
-    if private_fs::is_conversation_id(conversation) {
+    if is_conversation_id(conversation) {
         forget::remove(&dir.join(conversation))
     } else {
         Ok(())
@@ -441,6 +443,6 @@ mod tests {
     #[test]
     fn generated_ids_are_conversation_ids() {
         let store = SessionStore::new(None);
-        assert!(private_fs::is_conversation_id(&store.new_id()));
+        assert!(is_conversation_id(&store.new_id()));
     }
 }

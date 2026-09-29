@@ -18,7 +18,7 @@ use std::time::SystemTime;
 
 use runtime_core::turn::Namespace;
 
-use super::environment;
+use crate::environment;
 
 /// The directories one application's adapters use.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,10 +35,25 @@ impl Layout {
         &self.namespace
     }
 
+    /// The environment variable that replaces the executable lookup for this
+    /// application: the namespace in capitals with `_` for `-`, then
+    /// `_PROVIDER_PATH` (`PERVUE_PROVIDER_PATH` for `pervue`). Set to a list
+    /// of directories in `PATH` form, it names the only places providers are
+    /// looked for, for unusual installs and hermetic tests.
+    pub fn search_path_variable(&self) -> String {
+        format!(
+            "{}_PROVIDER_PATH",
+            self.namespace
+                .as_str()
+                .to_ascii_uppercase()
+                .replace('-', "_")
+        )
+    }
+
     /// A provider's private workspace: `<provider>-workspace` in the
     /// application's cache directory. Without a cache directory, a new
     /// directory with a random name in the temporary directory, which
-    /// [`super::codex::workspace::prepare`] accepts only where the temporary
+    /// [`crate::workspace::prepare`] accepts only where the temporary
     /// directory is private to the user, as it is on macOS and Windows.
     pub fn workspace(&self, host: &[(OsString, OsString)], provider: &str) -> PathBuf {
         self.cache_dir(host).map_or_else(

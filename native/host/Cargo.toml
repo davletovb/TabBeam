@@ -17,12 +17,9 @@ path = "src/main.rs"
 [dependencies]
 provider-runtime-scheduler = { path = "../scheduler" }
 runtime-core = { path = "../runtime-core" }
+runtime-platform = { path = "../platform" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-
-# Determines the owner of Codex's workspace (SEC-02).
-[target.'cfg(unix)'.dependencies]
-nix = { version = "0.31", default-features = false, features = ["user"] }
 
 [lints]
 workspace = true

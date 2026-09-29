@@ -24,10 +24,6 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use super::discovery;
-use super::environment;
-use super::forget;
-use super::layout::Layout;
 use super::{Cleanup, Exchange, Provider, Scripted, Timeouts, Update};
 use runtime_core::discovery::SearchPath;
 use runtime_core::exchange::SessionLoss;
@@ -40,9 +36,13 @@ use runtime_core::protocol::{
 use runtime_core::search::{NATIVE_SEARCH_NO_SOURCES, SourceCollector, codex_message_sources};
 use runtime_core::stream::{BUSY_LIMIT, LineStream, Output};
 use runtime_core::turn::{SessionPolicy, ToolPolicy, Turn as TurnRequest};
+use runtime_platform::discovery;
+use runtime_platform::environment;
+use runtime_platform::forget;
+use runtime_platform::layout::Layout;
+use runtime_platform::workspace;
 
 pub mod output;
-pub(crate) mod workspace;
 
 use output::Line;
 
@@ -204,7 +204,10 @@ impl Codex {
     /// empty workspace in the user's own cache directory.
     pub fn installed(layout: &Layout) -> Self {
         let host: Vec<_> = std::env::vars_os().collect();
-        Self::new(discovery::installed(), layout.workspace(&host, "codex"))
+        Self::new(
+            discovery::installed(layout),
+            layout.workspace(&host, "codex"),
+        )
     }
 
     /// Looks for `codex` in `search`, and runs it in `work_dir`, which it

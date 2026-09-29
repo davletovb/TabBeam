@@ -13,7 +13,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::{Exchange, Scripted, Update};
+use runtime_core::exchange::{Exchange, Scripted, Update};
 use runtime_core::protocol::ErrorCode;
 use runtime_core::protocol::Failure as ErrorBody;
 
@@ -29,7 +29,7 @@ pub const SESSION_FORGET_FAILED: ErrorBody = ErrorBody {
 /// [`SESSION_FORGET_FAILED`]. `completed` runs on the caller's thread once
 /// `work` succeeded, and never otherwise: what it drops, such as an
 /// in-memory mapping, stays for a retry after a failure.
-pub(crate) fn in_background(
+pub fn in_background(
     work: impl FnOnce() -> io::Result<()> + Send + 'static,
     completed: impl FnOnce() + 'static,
 ) -> Box<dyn Exchange> {
@@ -85,7 +85,7 @@ impl Exchange for Background {
 
 /// Runs best-effort provider cleanup away from the host loop. The work must
 /// preserve its durable retry record when it fails.
-pub(crate) fn work_in_background(work: impl FnOnce() + Send + 'static) {
+pub fn work_in_background(work: impl FnOnce() + Send + 'static) {
     let _ = thread::Builder::new()
         .name("pervue-provider-cleanup".to_owned())
         .spawn(work);
@@ -93,7 +93,7 @@ pub(crate) fn work_in_background(work: impl FnOnce() + Send + 'static) {
 
 /// Runs best-effort provider cleanup and removes its durable retry marker only
 /// after the cleanup succeeds.
-pub(crate) fn tracked_cleanup(
+pub fn tracked_cleanup(
     marker: Option<PathBuf>,
     work: impl FnOnce() -> io::Result<()> + Send + 'static,
 ) {
@@ -111,7 +111,7 @@ const HEAD_BYTES: u64 = 1024 * 1024;
 
 /// The complete lines within the first megabyte of `path`, or `None` if it
 /// can't be read as a regular file.
-pub(crate) fn head_lines(path: &Path) -> Option<Vec<String>> {
+pub fn head_lines(path: &Path) -> Option<Vec<String>> {
     if !fs::symlink_metadata(path).ok()?.is_file() {
         return None;
     }
@@ -134,7 +134,7 @@ pub(crate) fn head_lines(path: &Path) -> Option<Vec<String>> {
 }
 
 /// Whether the working directory a provider `recorded` is `workspace`.
-pub(crate) fn same_directory(recorded: &str, workspace: &Path) -> bool {
+pub fn same_directory(recorded: &str, workspace: &Path) -> bool {
     let recorded = Path::new(recorded);
     match (fs::canonicalize(recorded), fs::canonicalize(workspace)) {
         (Ok(recorded), Ok(workspace)) => recorded == workspace,
@@ -144,7 +144,7 @@ pub(crate) fn same_directory(recorded: &str, workspace: &Path) -> bool {
 
 /// Removes `path`: a file, a symbolic link (not its target), or a directory
 /// tree. A path that doesn't exist is already removed.
-pub(crate) fn remove(path: &Path) -> io::Result<()> {
+pub fn remove(path: &Path) -> io::Result<()> {
     match fs::symlink_metadata(path) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error),
@@ -153,7 +153,7 @@ pub(crate) fn remove(path: &Path) -> io::Result<()> {
     }
 }
 
-pub(crate) fn remove_in_background(path: std::path::PathBuf) {
+pub fn remove_in_background(path: std::path::PathBuf) {
     let _ = thread::Builder::new()
         .name("pervue-provider-cleanup".to_owned())
         .spawn(move || {

@@ -234,7 +234,7 @@ fn a_provider_without_sessions_gets_the_whole_dialogue_and_an_id() {
     run(conversations.send(first));
     let id = slot.id().expect("an ID");
     assert!(slot.created());
-    assert!(private_fs::is_conversation_id(&id));
+    assert!(is_conversation_id(&id));
 
     let mut follow_up = SendRequest {
         conversation_id: Some(id.clone()),

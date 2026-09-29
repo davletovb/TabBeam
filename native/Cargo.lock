@@ -57,6 +57,7 @@ dependencies = [
  "nix",
  "pervue-host",
  "runtime-core",
+ "runtime-platform",
  "serde_json",
 ]
 
@@ -64,9 +65,9 @@ dependencies = [
 name = "pervue-host"
 version = "0.1.0-dev"
 dependencies = [
- "nix",
  "provider-runtime-scheduler",
  "runtime-core",
+ "runtime-platform",
  "serde",
  "serde_json",
 ]
@@ -111,6 +112,14 @@ dependencies = [
  "nix",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "runtime-platform"
+version = "0.1.0-dev"
+dependencies = [
+ "nix",
+ "runtime-core",
 ]
 
 [[package]]

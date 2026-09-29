@@ -22,6 +22,7 @@ nix = { version = "0.31", default-features = false, features = ["resource", "sig
 # core directly and run against this crate's fake-provider binary.
 pervue-host = { path = "../host" }
 runtime-core = { path = "../runtime-core" }
+runtime-platform = { path = "../platform" }
 
 [target.'cfg(unix)'.dev-dependencies]
 nix = { version = "0.31", default-features = false, features = ["process", "signal"] }

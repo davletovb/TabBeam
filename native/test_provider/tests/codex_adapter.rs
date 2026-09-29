@@ -15,13 +15,13 @@ use pervue_host::conversation::{
 };
 use pervue_host::conversations::Conversations;
 use pervue_host::providers::codex::{CODEX_VARIABLES, Codex, LIMITS, Limits};
-use pervue_host::providers::environment::INHERITED;
 use pervue_host::providers::{
     ConversationProvider, ConversationSlot, Exchange, SendRequest, Timeouts, Update,
 };
 use runtime_core::prompt::SEARCH_INSTRUCTIONS;
 use runtime_core::protocol::{Authentication, Availability, Capability, ErrorCode};
 use runtime_core::turn::SessionPolicy;
+use runtime_platform::environment::INHERITED;
 use serde_json::Value;
 use support::{FakeCodex, PROMPT_STOP_GRACE, PacedInput, TEST_LIMITS, names, serve};
 

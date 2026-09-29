@@ -14,11 +14,6 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use super::codex::workspace;
-use super::discovery;
-use super::environment;
-use super::forget;
-use super::layout::Layout;
 use super::{Cleanup, Exchange, Provider, Scripted, Timeouts, Update};
 use runtime_core::discovery::SearchPath;
 use runtime_core::exchange::SessionLoss;
@@ -31,6 +26,11 @@ use runtime_core::protocol::{
 use runtime_core::search::{NATIVE_SEARCH_NO_SOURCES, SourceCollector, claude_tool_result_sources};
 use runtime_core::stream::{BUSY_LIMIT, LineStream, Output};
 use runtime_core::turn::{SessionPolicy, ToolPolicy, Turn as TurnRequest};
+use runtime_platform::discovery;
+use runtime_platform::environment;
+use runtime_platform::forget;
+use runtime_platform::layout::Layout;
+use runtime_platform::workspace;
 
 pub mod output;
 
@@ -200,7 +200,10 @@ pub struct Claude {
 impl Claude {
     pub fn installed(layout: &Layout) -> Self {
         let host: Vec<_> = std::env::vars_os().collect();
-        Self::new(discovery::installed(), layout.workspace(&host, "claude"))
+        Self::new(
+            discovery::installed(layout),
+            layout.workspace(&host, "claude"),
+        )
     }
 
     pub fn new(search: SearchPath, work_dir: PathBuf) -> Self {

@@ -20,21 +20,40 @@
 //! conversation ID.
 
 use std::collections::VecDeque;
+use std::hash::{BuildHasher, RandomState};
 use std::rc::Rc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use crate::conversation::{BrowserContext, HistoryMessage, Role as HistoryRole, provider_prompt};
 use crate::providers::{
     Cleanup, ConversationProvider, ConversationSlot, Exchange, Provider, Scripted, SendRequest,
-    Timeouts, Update, forget, private_fs,
+    Timeouts, Update,
 };
 use runtime_core::exchange::SessionLoss;
 use runtime_core::protocol::{Capabilities, ErrorCode, Failure};
 use runtime_core::turn::{Message, Role, SessionPolicy, ToolPolicy, Turn};
+use runtime_platform::forget;
 
 mod store;
 
 pub use store::{Durability, SessionStore};
+
+/// Whether `id` has the shape of a conversation ID Pervue issues: `conv_` and
+/// sixteen hex digits. Nothing else may be joined into a path or named to a
+/// provider.
+pub(crate) fn is_conversation_id(id: &str) -> bool {
+    id.len() == 21
+        && id.starts_with("conv_")
+        && id[5..].bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// A conversation ID for a conversation no session store tracks.
+pub(crate) fn new_conversation_id() -> String {
+    format!(
+        "conv_{:016x}",
+        RandomState::new().hash_one((SystemTime::now(), std::process::id()))
+    )
+}
 
 /// A conversation ID the layer doesn't know, and no history to rebuild it.
 pub const UNKNOWN_CONVERSATION: Failure = Failure {
@@ -225,12 +244,12 @@ impl<P: Provider + 'static> Conversations<P> {
     ) -> Box<dyn Exchange> {
         if conversation_id
             .as_deref()
-            .is_some_and(|id| !private_fs::is_conversation_id(id))
+            .is_some_and(|id| !is_conversation_id(id))
         {
             return Box::new(Scripted::failed(UNKNOWN_CONVERSATION));
         }
         let created = conversation_id.is_none();
-        let id = conversation_id.unwrap_or_else(private_fs::new_conversation_id);
+        let id = conversation_id.unwrap_or_else(new_conversation_id);
         slot.set(&id, created);
         self.provider.send(draft.turn(true, None, Some(&id)))
     }
