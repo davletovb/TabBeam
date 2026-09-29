@@ -1,4 +1,4 @@
-//! Pervue's side of web search: the request carries search intent, and the
+//! TabBeam's side of web search: the request carries search intent, and the
 //! provider's own search does the rest. Normalizing what the provider returns
 //! belongs to the runtime ([`seatline_core::search`]).
 

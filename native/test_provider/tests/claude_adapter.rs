@@ -6,12 +6,12 @@ use seatline_core::turn::SessionPolicy;
 use std::ffi::OsString;
 use std::time::{Duration, Instant};
 
-use pervue_host::conversation::{
+use tabbeam_host::conversation::{
     BrowserContext, BrowserContextMode, BrowserPageContext, HistoryMessage, Role,
 };
-use pervue_host::conversations::Conversations;
-use pervue_host::providers::claude::Claude;
-use pervue_host::providers::{
+use tabbeam_host::conversations::Conversations;
+use tabbeam_host::providers::claude::Claude;
+use tabbeam_host::providers::{
     ConversationProvider, ConversationSlot, Exchange, SendRequest, Update,
 };
 use seatline_core::protocol::ErrorCode;
@@ -29,7 +29,7 @@ fn ask(text: &str) -> SendRequest {
         native_search: false,
         session_policy: SessionPolicy::Persistent,
         fresh_session: false,
-        conversation: pervue_host::providers::ConversationSlot::default(),
+        conversation: tabbeam_host::providers::ConversationSlot::default(),
     }
 }
 
@@ -486,7 +486,7 @@ fn transcript(path: &std::path::Path, session: &str, cwd: &std::path::Path) {
 }
 
 #[test]
-fn forget_removes_the_mapping_and_only_pervues_claude_files() {
+fn forget_removes_the_mapping_and_only_tabbeams_claude_files() {
     let claude = FakeClaude::install("answers", "signed-in");
     let config = claude.dir.join("claude-config");
     let adapter = claude.adapter_with_env([(
@@ -498,12 +498,12 @@ fn forget_removes_the_mapping_and_only_pervues_claude_files() {
     let session = std::fs::read_to_string(&mapping).unwrap();
     let workspace = std::fs::canonicalize(claude.dir.join("claude-work")).unwrap();
 
-    let ours = config.join("projects/-pervue-claude-workspace");
+    let ours = config.join("projects/-tabbeam-claude-workspace");
     let theirs = config.join("projects/-home-someone-project");
     transcript(&ours.join(format!("{session}.jsonl")), &session, &workspace);
     std::fs::create_dir_all(ours.join(&session).join("subagents")).unwrap();
     std::fs::create_dir_all(config.join("session-env").join(&session)).unwrap();
-    // The same session ID, but run somewhere else: not Pervue's to remove.
+    // The same session ID, but run somewhere else: not TabBeam's to remove.
     transcript(
         &theirs.join(format!("{session}.jsonl")),
         &session,
@@ -551,7 +551,7 @@ fn a_failed_forget_keeps_an_in_memory_session_for_the_retry() {
     let session = format!("claude-{}", claude.pids()[0]);
     let workspace = std::fs::canonicalize(claude.dir.join("claude-work")).unwrap();
     let saved = config
-        .join("projects/-pervue-claude-workspace")
+        .join("projects/-tabbeam-claude-workspace")
         .join(format!("{session}.jsonl"));
     transcript(&saved, &session, &workspace);
     // A file where Claude keeps its session-env directories: removing the
@@ -564,7 +564,7 @@ fn a_failed_forget_keeps_an_in_memory_session_for_the_retry() {
     );
     assert!(
         saved.exists(),
-        "the transcript, the proof it's Pervue's, stays for the retry"
+        "the transcript, the proof it's TabBeam's, stays for the retry"
     );
 
     // The retry still knows the session, which lives only in memory: it

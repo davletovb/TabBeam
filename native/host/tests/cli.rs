@@ -1,9 +1,9 @@
-//! Launch-shape checks for the `pervue-host` binary.
+//! Launch-shape checks for the `tabbeam-host` binary.
 
 use std::io::Write;
 use std::process::{Command, Output, Stdio};
 
-const HOST: &str = env!("CARGO_BIN_EXE_pervue-host");
+const HOST: &str = env!("CARGO_BIN_EXE_tabbeam-host");
 const EXTENSION_ID: &str = "abcdefghijklmnopabcdefghijklmnop";
 const ORIGIN: &str = "chrome-extension://abcdefghijklmnopabcdefghijklmnop/";
 
@@ -14,18 +14,18 @@ const ORIGIN: &str = "chrome-extension://abcdefghijklmnopabcdefghijklmnop/";
 fn run_host(args: &[&str], stdin: &[u8]) -> Output {
     // An empty provider search path: whatever is installed on this machine,
     // the host finds no provider executables.
-    let no_providers = std::env::temp_dir().join("pervue-cli-tests-no-providers");
+    let no_providers = std::env::temp_dir().join("tabbeam-cli-tests-no-providers");
     let mut child = Command::new(HOST)
         .args(args)
-        .env("PERVUE_PROVIDER_PATH", no_providers)
+        .env("TABBEAM_PROVIDER_PATH", no_providers)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("spawn pervue-host");
+        .expect("spawn tabbeam-host");
     // The host may exit before reading stdin (for example on a usage error).
     let _ = child.stdin.take().expect("stdin").write_all(stdin);
-    child.wait_with_output().expect("wait for pervue-host")
+    child.wait_with_output().expect("wait for tabbeam-host")
 }
 
 fn frame(payload: &str) -> Vec<u8> {
@@ -72,7 +72,7 @@ fn the_chrome_launch_shape_serves_requests() {
     let output = run_host(&[ORIGIN], &frame(request));
     assert_eq!(output.status.code(), Some(0));
 
-    let failure = r#"{"version":1,"type":"event","request_id":"req_cli","event":"response.failed","payload":{"error":{"code":"PROVIDER_NOT_FOUND","reason":"PROVIDER_NOT_INSTALLED","message":"Pervue's companion app doesn't support this AI provider yet. Update it, then try again.","retryable":false}}}"#;
+    let failure = r#"{"version":1,"type":"event","request_id":"req_cli","event":"response.failed","payload":{"error":{"code":"PROVIDER_NOT_FOUND","reason":"PROVIDER_NOT_INSTALLED","message":"TabBeam's companion app doesn't support this AI provider yet. Update it, then try again.","retryable":false}}}"#;
     assert!(
         output.stdout.ends_with(&frame(failure)),
         "{}",
@@ -136,7 +136,7 @@ fn only_exact_extension_origins_start_the_host() {
     // Chrome passes `chrome-extension://<32 characters a-p>/`; anything else is
     // refused before the host reads a frame.
     for origin in [
-        "chrome-extension://pervue-test-extension/",
+        "chrome-extension://tabbeam-test-extension/",
         "chrome-extension://abcdefghijklmnopabcdefghijklmno/",
         "chrome-extension://abcdefghijklmnopabcdefghijklmnopa/",
         "chrome-extension://abcdefghijklmnopabcdefghijklmnoq/",
@@ -160,7 +160,7 @@ fn print_manifest_registers_this_binary_for_exact_origins() {
 
     let manifest: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("the manifest is JSON");
-    assert_eq!(manifest["name"], "com.pervue.host");
+    assert_eq!(manifest["name"], "com.tabbeam.host");
     assert_eq!(manifest["type"], "stdio");
     assert_eq!(
         manifest["allowed_origins"],

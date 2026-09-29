@@ -2,7 +2,7 @@
 //! finds the installed Codex, checks its sign-in, asks it one question, and
 //! streams the answer to completion: discovery → send → stream → completion.
 //!
-//! `PERVUE_LIVE_CODEX` turns it on. Unset, as in normal CI runs, the test
+//! `TABBEAM_LIVE_CODEX` turns it on. Unset, as in normal CI runs, the test
 //! passes at once. Set to `1`, it runs when Codex is installed and signed in,
 //! and is skipped, passing, when it isn't. Set to `required`, as in a job set
 //! up with a sign-in, a missing or signed-out Codex fails it instead.
@@ -14,7 +14,7 @@
 //!
 //! ```bash
 //! cd native
-//! PERVUE_LIVE_CODEX=1 cargo test -p pervue-host --test live_codex -- --nocapture
+//! TABBEAM_LIVE_CODEX=1 cargo test -p tabbeam-host --test live_codex -- --nocapture
 //! ```
 
 use std::io::{Read, Write};
@@ -23,10 +23,10 @@ use std::sync::mpsc::{self, Receiver};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use pervue_host::framing;
+use tabbeam_host::framing;
 use serde_json::Value;
 
-const HOST: &str = env!("CARGO_BIN_EXE_pervue-host");
+const HOST: &str = env!("CARGO_BIN_EXE_tabbeam-host");
 const ORIGIN: &str = "chrome-extension://abcdefghijklmnopabcdefghijklmnop/";
 /// Codex's own status check gives up after 10 seconds.
 const STATUS_TIMEOUT: Duration = Duration::from_secs(30);
@@ -57,7 +57,7 @@ enum Mode {
 }
 
 fn mode() -> Mode {
-    match std::env::var("PERVUE_LIVE_CODEX").as_deref() {
+    match std::env::var("TABBEAM_LIVE_CODEX").as_deref() {
         Err(_) | Ok("" | "0") => Mode::Off,
         Ok("required") => Mode::Required,
         Ok(_) => Mode::IfReady,
@@ -193,7 +193,7 @@ fn assert_no_credentials(what: &str, text: &str) {
 
 /// Why the test can't run here, when Codex isn't ready.
 fn skip_or_fail(mode: Mode, reason: &str) {
-    assert_ne!(mode, Mode::Required, "PERVUE_LIVE_CODEX=required: {reason}");
+    assert_ne!(mode, Mode::Required, "TABBEAM_LIVE_CODEX=required: {reason}");
     eprintln!("skipped: {reason}");
 }
 
@@ -201,7 +201,7 @@ fn skip_or_fail(mode: Mode, reason: &str) {
 fn live_codex_answers_a_question() {
     let mode = mode();
     if mode == Mode::Off {
-        eprintln!("skipped: set PERVUE_LIVE_CODEX=1 to ask the installed Codex");
+        eprintln!("skipped: set TABBEAM_LIVE_CODEX=1 to ask the installed Codex");
         return;
     }
     let mut host = Host::start();
