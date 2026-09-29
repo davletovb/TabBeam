@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use super::{Cleanup, Exchange, Provider, Scripted, Timeouts, Update};
+use crate::{Cleanup, Exchange, Provider, Scripted, Timeouts, Update};
 use runtime_core::discovery::SearchPath;
 use runtime_core::process::{Event, Exit, Process, ProcessSpec};
 use runtime_core::prompt::{self, SYSTEM_PROMPT_UNSUPPORTED};
@@ -320,7 +320,7 @@ impl Provider for Gemini {
             return Box::new(Scripted::failed(PERSISTENT_SESSION_UNSUPPORTED));
         }
         if request.validate().is_err() {
-            return Box::new(Scripted::failed(super::INVALID_TURN));
+            return Box::new(Scripted::failed(crate::INVALID_TURN));
         }
         if request.system.is_some() {
             return Box::new(Scripted::failed(SYSTEM_PROMPT_UNSUPPORTED));
@@ -519,7 +519,7 @@ impl Exchange for StatusCheck {
                     };
                     match process.next_event(poll_until) {
                         Some(Event::Stdout(bytes)) => {
-                            super::keep_bounded_output(stdout, &bytes, STATUS_OUTPUT_BYTES);
+                            crate::keep_bounded_output(stdout, &bytes, STATUS_OUTPUT_BYTES);
                         }
                         Some(Event::Stderr(bytes)) => {
                             private_fs::keep_tail(stderr_tail, &bytes, STDERR_TAIL_BYTES);

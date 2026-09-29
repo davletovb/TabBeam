@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use super::{Cleanup, Exchange, Provider, Scripted, Timeouts, Update};
+use crate::{Cleanup, Exchange, Provider, Scripted, Timeouts, Update};
 use runtime_core::discovery::SearchPath;
 use runtime_core::exchange::SessionLoss;
 use runtime_core::process::{Event, Exit, Process, ProcessSpec};
@@ -296,7 +296,7 @@ impl Provider for Claude {
             return Box::new(Scripted::failed(NOT_INSTALLED));
         };
         if request.validate().is_err() {
-            return Box::new(Scripted::failed(super::INVALID_TURN));
+            return Box::new(Scripted::failed(crate::INVALID_TURN));
         }
         if request.system.is_some() {
             return Box::new(Scripted::failed(SYSTEM_PROMPT_UNSUPPORTED));

@@ -112,6 +112,7 @@ dependencies = [
  "provider-runtime-scheduler",
  "runtime-core",
  "runtime-platform",
+ "runtime-providers",
  "serde",
  "serde_json",
 ]
@@ -172,6 +173,15 @@ version = "0.1.0-dev"
 dependencies = [
  "nix",
  "runtime-core",
+]
+
+[[package]]
+name = "runtime-providers"
+version = "0.1.0-dev"
+dependencies = [
+ "runtime-core",
+ "runtime-platform",
+ "serde_json",
 ]
 
 [[package]]

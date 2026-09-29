@@ -1,33 +1,27 @@
-//! Provider adapters (PRO-01).
+//! The providers as Pervue serves them.
 //!
-//! The adapter contract is the shared surface proven by the Codex and Claude
-//! adapters (PRO-07). A [`Provider`] reports its status and serves requests
-//! through [`Exchange`]s: state machines the host loop drives, which never
-//! block past the deadline they are given, and never keep working past it for
-//! longer than [`BUSY_LIMIT`], however fast a provider writes. That lets one
-//! host serve several requests, and read cancellations, while providers work.
-//!
-//! Everything provider-specific stays inside the adapter: command lines,
-//! output formats, and provider session IDs. The host sees only [`Update`]s in
-//! protocol terms, and the popup sees only protocol events.
+//! The adapters and the runtime [`Provider`] contract they implement live in
+//! `runtime-providers`, and know nothing of conversations. This module is
+//! Pervue's side: the [`ConversationProvider`] the request loop drives (a
+//! conversation the extension names, with its history and browser context),
+//! the registry of what an installed host serves, and the `fake` scaffold.
+//! [`crate::conversations::Conversations`] implements the first over the
+//! second.
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
-use std::io;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use crate::conversation::{BrowserContext, HistoryMessage};
 use crate::conversations::{Conversations, Durability, SessionStore};
-use runtime_core::protocol::{Capabilities, ErrorCode, Failure};
+use runtime_core::protocol::Capabilities;
 pub use runtime_core::stream::BUSY_LIMIT;
-use runtime_core::turn::{SessionPolicy, Turn};
+use runtime_core::turn::SessionPolicy;
 
-pub mod claude;
-pub mod codex;
 pub mod fake;
-pub mod gemini;
-pub mod grok;
+
+pub use runtime_providers::{Cleanup, INVALID_TURN, Provider, claude, codex, gemini, grok};
 
 pub use runtime_platform::layout::Layout;
 
@@ -101,107 +95,6 @@ impl PartialEq for ConversationSlot {
 impl Eq for ConversationSlot {}
 
 pub use runtime_core::exchange::{Exchange, Scripted, Timeouts, Update};
-
-pub(crate) fn keep_bounded_output(output: &mut Vec<u8>, bytes: &[u8], limit: usize) {
-    let remaining = limit.saturating_sub(output.len());
-    output.extend_from_slice(&bytes[..bytes.len().min(remaining)]);
-}
-
-/// File-system work that removes what a provider saved. It owns everything it
-/// needs, so it runs on a thread of its own and never holds up the caller.
-pub struct Cleanup {
-    /// The removal itself, on that thread.
-    pub work: Box<dyn FnOnce() -> io::Result<()> + Send>,
-    /// Runs on the caller's thread once `work` succeeded, and never
-    /// otherwise: what it drops, such as an in-memory record, stays for a
-    /// retry after a failure.
-    pub completed: Box<dyn FnOnce()>,
-}
-
-impl Cleanup {
-    /// Nothing to remove.
-    pub fn nothing() -> Self {
-        Self::new(|| Ok(()), || {})
-    }
-
-    pub fn new(
-        work: impl FnOnce() -> io::Result<()> + Send + 'static,
-        completed: impl FnOnce() + 'static,
-    ) -> Self {
-        Self {
-            work: Box::new(work),
-            completed: Box::new(completed),
-        }
-    }
-
-    /// This cleanup, then `next`: the second runs only if the first
-    /// succeeded, and both `completed` steps run once both worked.
-    #[must_use]
-    pub fn then(self, next: Self) -> Self {
-        let (first, second) = (self.work, next.work);
-        let (first_done, second_done) = (self.completed, next.completed);
-        Self::new(
-            move || {
-                first()?;
-                second()
-            },
-            move || {
-                first_done();
-                second_done();
-            },
-        )
-    }
-}
-
-/// A turn a caller built wrongly: an adapter refuses it instead of passing
-/// what it holds to a command line.
-pub const INVALID_TURN: Failure = Failure {
-    code: ErrorCode::InvalidRequest,
-    reason: "INVALID_TURN",
-    retryable: false,
-};
-
-/// One execution mode of a provider CLI, in terms that belong to no
-/// application: it runs a [`Turn`], and knows nothing of conversations, of
-/// browsers, or of which sessions an application keeps.
-pub trait Provider {
-    /// The provider ID requests name, such as `codex`.
-    fn id(&self) -> &str;
-
-    fn timeouts(&self) -> Timeouts;
-
-    /// What this mode can do. It can change while the runtime runs, for
-    /// example when the user's own provider configuration changes.
-    fn capabilities(&self) -> Capabilities;
-
-    /// Whether this mode can keep a native session and resume it by an opaque
-    /// handle. Only such modes accept a persistent [`Turn`].
-    fn supports_persistent_session(&self) -> bool {
-        false
-    }
-
-    /// Starts checking availability, authentication, and capabilities. The
-    /// exchange reports one `Status` and then `Completed`.
-    fn status(&self) -> Box<dyn Exchange>;
-
-    /// Starts serving `turn`. A persistent turn reports the native session it
-    /// runs in, before `Started`, as an opaque handle.
-    fn send(&self, turn: Turn) -> Box<dyn Exchange>;
-
-    /// Removes what the provider saved for these native sessions, where the
-    /// adapter can prove the provider wrote it for this application.
-    fn cleanup_sessions(&self, sessions: &[String]) -> Cleanup {
-        let _ = sessions;
-        Cleanup::nothing()
-    }
-
-    /// Retries the per-turn cleanups that failed earlier for the turns of
-    /// `group` (`Turn::cleanup_group`).
-    fn cleanup_group(&self, group: &str) -> Cleanup {
-        let _ = group;
-        Cleanup::nothing()
-    }
-}
 
 /// A provider as the host serves it: a conversation the extension names, with
 /// its history and browser context, over a runtime [`Provider`].

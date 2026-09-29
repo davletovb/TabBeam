@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use super::{Cleanup, Exchange, Provider, Scripted, Timeouts, Update};
+use crate::{Cleanup, Exchange, Provider, Scripted, Timeouts, Update};
 use runtime_core::discovery::SearchPath;
 use runtime_core::exchange::SessionLoss;
 use runtime_core::process::{Event, Exit, Process, ProcessSpec};
@@ -338,7 +338,7 @@ impl Provider for Codex {
             return Box::new(Scripted::failed(NOT_INSTALLED));
         };
         if request.validate().is_err() {
-            return Box::new(Scripted::failed(super::INVALID_TURN));
+            return Box::new(Scripted::failed(crate::INVALID_TURN));
         }
         if request.system.is_some() {
             return Box::new(Scripted::failed(SYSTEM_PROMPT_UNSUPPORTED));
@@ -667,7 +667,7 @@ impl Exchange for StatusCheck {
                         // Keep only a bounded probe prefix for billing-mode
                         // classification; it is never logged or forwarded.
                         Some(Event::Stdout(bytes) | Event::Stderr(bytes)) => {
-                            super::keep_bounded_output(output, &bytes, STATUS_OUTPUT_BYTES);
+                            crate::keep_bounded_output(output, &bytes, STATUS_OUTPUT_BYTES);
                             if Instant::now() >= busy_until {
                                 return None;
                             }

@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime};
 
-use super::{Exchange, Provider, Scripted, Timeouts, Update};
+use crate::{Exchange, Provider, Scripted, Timeouts, Update};
 use runtime_core::discovery::SearchPath;
 use runtime_core::process::{Event, Exit, Process, ProcessSpec};
 use runtime_core::prompt::{self, SYSTEM_PROMPT_UNSUPPORTED};
@@ -361,7 +361,7 @@ impl Provider for Grok {
             return Box::new(Scripted::failed(PERSISTENT_SESSION_UNSUPPORTED));
         }
         if request.validate().is_err() {
-            return Box::new(Scripted::failed(super::INVALID_TURN));
+            return Box::new(Scripted::failed(crate::INVALID_TURN));
         }
         if request.system.is_some() {
             return Box::new(Scripted::failed(SYSTEM_PROMPT_UNSUPPORTED));
