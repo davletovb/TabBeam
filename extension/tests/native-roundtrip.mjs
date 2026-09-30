@@ -22,7 +22,7 @@ import { MockEvent } from "./support/mock-port.mjs";
 // This test uses the built tabbeam-host, not a mock of its JSON router or
 // Native Messaging framing. Browser-only ports and DOM elements are in memory.
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const hostPath = process.argv[2] ?? path.join(root, "native/target/debug/tabbeam-host");
+const hostPath = process.argv[2] ?? process.env.SEATLINE_NATIVE_TEST_BRIDGE ?? path.join(root, "native/target/debug/tabbeam-host");
 const origin = "chrome-extension://abcdefghijklmnopabcdefghijklmnop/";
 const littleEndian = new Uint8Array(new Uint32Array([1]).buffer)[0] === 1;
 const encoder = new TextEncoder();
