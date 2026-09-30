@@ -10,13 +10,17 @@ const windowsPackageStep = document.querySelector("#windows-package");
 const macUninstallNote = document.querySelector("#macos-uninstall");
 const windowsUninstallNote = document.querySelector("#windows-uninstall");
 const manualSetup = document.querySelector("#manual-setup");
+const authorizeCommand = document.querySelector("#authorize-command");
+if (authorizeCommand instanceof HTMLElement && /^[a-p]{32}$/.test(chrome.runtime.id)) {
+  authorizeCommand.textContent = `seatline-companion authorize tabbeam codex,claude,gemini,grok chrome-extension://${chrome.runtime.id}/ --cache-title=TabBeam`;
+}
 if (manualSetup instanceof HTMLDetailsElement) {
   chrome.runtime.getPlatformInfo().then((/** @type {{os: string}} */ { os }) => {
     if (macPackageStep instanceof HTMLElement) macPackageStep.hidden = os !== "mac";
     if (windowsPackageStep instanceof HTMLElement) windowsPackageStep.hidden = os !== "win";
     if (macUninstallNote instanceof HTMLElement) macUninstallNote.hidden = os !== "mac";
     if (windowsUninstallNote instanceof HTMLElement) windowsUninstallNote.hidden = os !== "win";
-    manualSetup.open = os !== "mac" && os !== "win";
+    manualSetup.open = true;
   }, () => { manualSetup.open = true; });
 }
 if (select instanceof HTMLSelectElement && toggle instanceof HTMLElement) {

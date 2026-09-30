@@ -27,6 +27,9 @@ fn wire_reason(reason: &'static str) -> &'static str {
 
 fn message(provider: Option<&str>, reason: &str, retryable: bool) -> &'static str {
     match (provider, reason, retryable) {
+        (_, "APP_NOT_AUTHORIZED", _) => {
+            "Authorize TabBeam in your shared Seatline companion, then reopen TabBeam."
+        }
         (Some("codex"), "EXECUTABLE_NOT_FOUND", _) => {
             "Codex isn't installed. Install the Codex CLI, then try again."
         }

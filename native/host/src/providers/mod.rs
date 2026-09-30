@@ -138,7 +138,9 @@ fn installed_provider(metadata: impl Provider) -> seatline_companion::client::Re
 }
 
 #[cfg(not(feature = "shared-companion"))]
-fn installed_provider(provider: impl Provider) -> impl Provider { provider }
+fn installed_provider(provider: impl Provider) -> impl Provider {
+    provider
+}
 
 /// The providers a host serves, in the order `provider.status` reports them.
 pub struct Providers(Vec<Box<dyn ConversationProvider>>);

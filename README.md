@@ -12,7 +12,12 @@ and, when deeper work is needed:
 
 > **Invoke → Ask → Deepen → Continue in full view**
 
-The initial architecture uses a thin Chrome Manifest V3 extension and a native Rust companion/host that bridges to authenticated AI runtimes such as Codex/OpenAI and Claude through a normalized provider interface.
+TabBeam uses a thin Chrome Manifest V3 extension, its own Rust conversation
+integration, and one shared Seatline companion for provider execution. Conclave
+and other authorized apps can use the same Seatline installation.
+
+See [shared companion setup](docs/architecture/shared-companion.md) for the
+current development integration and the existing standalone packaging mode.
 
 ## Project status
 
@@ -28,29 +33,11 @@ The implementation tracker is the source of truth for work sequencing, dependenc
 
 ## Planned architecture
 
-```text
-Chrome Extension
-  ├─ Popup UI
-  ├─ Full-page UI
-  ├─ Service Worker
-  ├─ Content Script
-  └─ Context Menu / Commands
-          │
-          │ Chrome Native Messaging
-          ▼
-Native Rust Host / Companion
-  ├─ Message framing
-  ├─ Request router
-  ├─ Provider registry
-  ├─ Process / stream management
-  ├─ Conversation bridge
-  ├─ Configuration
-  └─ Diagnostics
-          │
-          ├─ Codex / OpenAI adapter
-          ├─ Claude adapter
-          └─ Future provider adapters
-```
+| Component | Owns |
+| --- | --- |
+| TabBeam extension | Browser UI, explicit page capture, conversation history |
+| TabBeam native integration | TabBeam protocol and conversation/session policy |
+| Seatline companion | Shared provider execution, scheduling, app authorization and scoped IPC |
 
 ## Implementation principle
 

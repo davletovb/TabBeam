@@ -18,6 +18,7 @@ fn run_host(args: &[&str], stdin: &[u8]) -> Output {
     let mut child = Command::new(HOST)
         .args(args)
         .env("TABBEAM_PROVIDER_PATH", no_providers)
+        .env("SEATLINE_DATA_DIR", std::env::temp_dir().join(format!("tabbeam-cli-no-grants-{}",std::process::id())))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -81,6 +82,7 @@ fn the_chrome_launch_shape_serves_requests() {
 }
 
 #[test]
+#[cfg(not(feature = "shared-companion"))]
 fn the_installed_host_reports_a_missing_codex() {
     let request = r#"{"version":1,"type":"request","request_id":"req_codex","method":"provider.status","payload":{"provider_id":"codex"}}"#;
     let output = run_host(&[ORIGIN], &frame(request));
@@ -160,7 +162,7 @@ fn print_manifest_registers_this_binary_for_exact_origins() {
 
     let manifest: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("the manifest is JSON");
-    assert_eq!(manifest["name"], "com.tabbeam.host");
+    assert_eq!(manifest["name"], tabbeam_host::manifest::HOST_NAME);
     assert_eq!(manifest["type"], "stdio");
     assert_eq!(
         manifest["allowed_origins"],
@@ -253,4 +255,13 @@ fn the_logged_exit_code_matches_the_process() {
     assert_eq!(last["reason"], "frame_too_large");
     assert_eq!(last["exit_code"], 4);
     assert!(output.stdout.len() > 4, "host.ready is still written");
+}
+
+#[cfg(feature = "shared-companion")]
+#[test]
+fn the_shared_host_refuses_provider_work_without_an_app_grant() {
+    let request = r#"{"version":1,"type":"request","request_id":"req_a","method":"provider.status","payload":{"provider_id":"codex"}}"#;
+    let output = run_host(&[ORIGIN], &frame(request));
+    let frames = frames_only(&output.stdout);
+    assert!(frames.iter().any(|value| value["payload"]["error"]["reason"]=="APP_NOT_AUTHORIZED"));
 }
