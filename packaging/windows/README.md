@@ -1,5 +1,7 @@
 # Windows companion release and verification
 
+> **Standalone configuration.** This installer is built with `--no-default-features` and registers `com.tabbeam.host`. The default extension build connects to `com.seatline.host` (the shared Seatline companion) and does not work with it, and this installer does not work with that extension. A signed shared-host installer is still to do. See `docs/architecture/shared-companion.md`.
+
 The Windows package is a per-user installer. It installs the release host, Native Messaging manifest, build provenance, and uninstaller under `%LOCALAPPDATA%\Programs\TabBeam`, deliberately separate from TabBeam runtime state under `%LOCALAPPDATA%\TabBeam`. It registers `com.tabbeam.host` in the 64-bit `HKCU\Software\Google\Chrome\NativeMessagingHosts` registry view. Provider credentials, provider profiles, conversation/session mappings, and browser storage are neither copied into the package nor removed by uninstall.
 
 The manifest uses `tabbeam-host.exe` as a path relative to its own directory. Chrome permits relative native-host paths on Windows, while the registry value itself points to the manifest by its full installed path. This keeps the package portable across Windows user-profile locations without generating a manifest from runtime input.

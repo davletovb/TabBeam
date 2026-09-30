@@ -44,6 +44,13 @@ mod tests {
         assert_eq!(contract["max_page_bytes"], MAX_PAGE_BYTES);
         assert_eq!(contract["max_context_title_bytes"], MAX_CONTEXT_TITLE_BYTES);
         assert_eq!(contract["max_context_url_bytes"], MAX_CONTEXT_URL_BYTES);
-        assert_eq!(contract["host_name"], HOST_NAME);
+        // The default build registers the shared Seatline host; the standalone
+        // packages, built without the shared-companion feature, keep the old name.
+        let expected = if cfg!(feature = "shared-companion") {
+            &contract["host_name"]
+        } else {
+            &contract["legacy_host_name"]
+        };
+        assert_eq!(expected, HOST_NAME);
     }
 }

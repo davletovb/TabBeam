@@ -12,7 +12,7 @@ const windowsUninstallNote = document.querySelector("#windows-uninstall");
 const manualSetup = document.querySelector("#manual-setup");
 const authorizeCommand = document.querySelector("#authorize-command");
 if (authorizeCommand instanceof HTMLElement && /^[a-p]{32}$/.test(chrome.runtime.id)) {
-  authorizeCommand.textContent = `seatline-companion authorize tabbeam codex,claude,gemini,grok chrome-extension://${chrome.runtime.id}/ --cache-title=TabBeam`;
+  authorizeCommand.textContent = `seatline-companion authorize tabbeam codex,claude,gemini,grok chrome-extension://${chrome.runtime.id}/ --cache-title=TabBeam --allow-provider-default`;
 }
 if (manualSetup instanceof HTMLDetailsElement) {
   chrome.runtime.getPlatformInfo().then((/** @type {{os: string}} */ { os }) => {

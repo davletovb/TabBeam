@@ -62,13 +62,13 @@
         <li class="step" id="macos-package" hidden>
           <div class="step-body">
             <h2>Install the macOS companion</h2>
-            <p>Install Seatline once using the <a href="https://github.com/davletovb/seatline/blob/main/companion/README.md" target="_blank" rel="noopener noreferrer">shared companion setup</a>. This development build provides a native binary; a signed macOS installer is not available yet. If you already use Seatline with another app, authorize TabBeam below.</p>
+            <p>Install Seatline once using the <a href="https://github.com/davletovb/seatline/blob/main/companion/README.md" target="_blank" rel="noopener noreferrer">shared companion setup</a>. This development build provides a native binary; a signed macOS installer is not available yet. Installers from the TabBeam releases page register the older <code>com.tabbeam.host</code> and do not work with this extension build, which connects to <code>com.seatline.host</code>. If you already use Seatline with another app, authorize TabBeam below.</p>
           </div>
         </li>
         <li class="step" id="windows-package" hidden>
           <div class="step-body">
             <h2>Install the Windows companion</h2>
-            <p>Install Seatline once using the <a href="https://github.com/davletovb/seatline/blob/main/companion/README.md" target="_blank" rel="noopener noreferrer">shared companion setup</a>. This development build provides a native binary; a signed Windows installer is not available yet. If you already use Seatline with another app, authorize TabBeam below.</p>
+            <p>Install Seatline once using the <a href="https://github.com/davletovb/seatline/blob/main/companion/README.md" target="_blank" rel="noopener noreferrer">shared companion setup</a>. This development build provides a native binary; a signed Windows installer is not available yet. Installers from the TabBeam releases page register the older <code>com.tabbeam.host</code> and do not work with this extension build, which connects to <code>com.seatline.host</code>. If you already use Seatline with another app, authorize TabBeam below.</p>
           </div>
         </li>
         <li class="step">
@@ -99,9 +99,9 @@
           <code>seatline-companion install</code>
           <button class="copy-command" type="button" aria-label="Copy command" title="Copy"><svg class="icon icon-sm" aria-hidden="true"><use href="../shared/icons.svg#copy"/></svg><svg class="icon icon-sm icon-copied" aria-hidden="true"><use href="../shared/icons.svg#check"/></svg></button>
         </div>
-        <p>Authorize this extension:</p>
+        <p>Authorize this extension. <code>--allow-provider-default</code> lets TabBeam's plain questions, which send no page context, use your provider's own tool settings; without it those questions are refused.</p>
         <div class="command">
-          <code id="authorize-command">seatline-companion authorize tabbeam codex,claude,gemini,grok chrome-extension://EXTENSION_ID/ --cache-title=TabBeam</code>
+          <code id="authorize-command">seatline-companion authorize tabbeam codex,claude,gemini,grok chrome-extension://EXTENSION_ID/ --cache-title=TabBeam --allow-provider-default</code>
           <button class="copy-command" type="button" aria-label="Copy command" title="Copy"><svg class="icon icon-sm" aria-hidden="true"><use href="../shared/icons.svg#copy"/></svg><svg class="icon icon-sm icon-copied" aria-hidden="true"><use href="../shared/icons.svg#check"/></svg></button>
         </div>
         <p>Register TabBeam's built native integration at its permanent location:</p>
