@@ -306,6 +306,13 @@ jobs:
         run: npm --prefix scripts run validate
       - name: Build native host for contract conformance
         run: cargo build --manifest-path native/Cargo.toml --locked
+      - name: Install and authorize the shared provider broker
+        shell: bash
+        run: |
+          cargo install --root "$RUNNER_TEMP/seatline-install" --git https://github.com/davletovb/seatline --rev 928626e7fd853da1828fbdead5226f65b183a644 --locked seatline-companion
+          seatline_bin="$RUNNER_TEMP/seatline-install/bin/seatline-companion"
+          "$seatline_bin" install
+          "$seatline_bin" authorize tabbeam codex,claude,gemini,grok --cache-title=TabBeam
       - name: Validate built host against golden protocol
         run: npm --prefix scripts run validate:host -- --host native/target/debug/tabbeam-host
 
