@@ -1,13 +1,14 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { parseArgs } from "node:util";
 import {
   decodeUtf8,
   frameNativeMessage,
   jsonValueWireBytes,
   loadJson,
+  NATIVE_LITTLE_ENDIAN,
   parseNativeFrames,
   ROOT,
 } from "./protocol-support.mjs";
@@ -123,11 +124,44 @@ for (const [index, fixture] of golden.invalid_cases.entries()) {
 const noProviders = fs.mkdtempSync(path.join(os.tmpdir(), "tabbeam-no-providers-"));
 let proc;
 try {
-  proc = spawnSync(host, [CALLER_ORIGIN], {
-    input: Buffer.concat(input),
-    env: { ...process.env, TABBEAM_PROVIDER_PATH: noProviders },
-    encoding: null,
-    maxBuffer: 64 * 1024 * 1024,
+  // Keep the native port open until every request ends. EOF intentionally
+  // cancels unfinished provider work, including asynchronous shared IPC calls.
+  proc = await new Promise((resolve, reject) => {
+    const child = spawn(host, [CALLER_ORIGIN], {
+      env: { ...process.env, TABBEAM_PROVIDER_PATH: noProviders },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const stdout = []; const stderr = [];
+    let pending = Buffer.alloc(0); let bytes = 0; let terminals = 0;
+    const fail = error => { clearTimeout(timer); child.kill(); reject(error); };
+    const timer = setTimeout(() => fail(new Error("host protocol validation timed out")), 20_000);
+    child.once("error", fail);
+    child.stdin.on("error", fail);
+    child.stdout.on("data", chunk => {
+      try {
+        bytes += chunk.length; if (bytes > 64 * 1024 * 1024) throw new Error("host output exceeds validation limit");
+        stdout.push(chunk); pending = Buffer.concat([pending, chunk]);
+        while (pending.length >= 4) {
+          const length = NATIVE_LITTLE_ENDIAN ? pending.readUInt32LE(0) : pending.readUInt32BE(0);
+          if (length > 1024 * 1024) throw new Error("host frame exceeds protocol limit");
+          if (pending.length < length + 4) break;
+          const event = parseNativeFrames(pending.subarray(0, length + 4))[0];
+          pending = pending.subarray(length + 4);
+          if (["response.completed", "response.failed", "request.cancelled"].includes(event.event)) terminals++;
+        }
+        if (terminals >= driven.length) child.stdin.end();
+      } catch (error) { fail(error); }
+    });
+    child.stderr.on("data", chunk => {
+      bytes += chunk.length;
+      if (bytes > 64 * 1024 * 1024) fail(new Error("host diagnostics exceed validation limit"));
+      else stderr.push(chunk);
+    });
+    child.once("close", (status, signal) => {
+      clearTimeout(timer);
+      resolve({ status, signal, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr) });
+    });
+    child.stdin.write(Buffer.concat(input));
   });
 } finally {
   fs.rmSync(noProviders, { recursive: true, force: true });
