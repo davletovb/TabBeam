@@ -132,6 +132,14 @@ pub trait ConversationProvider {
     }
 }
 
+#[cfg(feature = "shared-companion")]
+fn installed_provider(metadata: impl Provider) -> seatline_companion::client::RemoteProvider {
+    seatline_companion::client::RemoteProvider::new("tabbeam", &metadata)
+}
+
+#[cfg(not(feature = "shared-companion"))]
+fn installed_provider(provider: impl Provider) -> impl Provider { provider }
+
 /// The providers a host serves, in the order `provider.status` reports them.
 pub struct Providers(Vec<Box<dyn ConversationProvider>>);
 
@@ -151,19 +159,19 @@ impl Providers {
             // Codex refuses to start a conversation it couldn't resume after a
             // restart; Claude keeps one in memory when there is no directory.
             Box::new(Conversations::new(
-                codex::Codex::installed(layout),
+                installed_provider(codex::Codex::installed(layout)),
                 sessions("codex-sessions").with_durability(Durability::Required),
             )),
             Box::new(Conversations::new(
-                claude::Claude::installed(layout),
+                installed_provider(claude::Claude::installed(layout)),
                 sessions("claude-sessions"),
             )),
             Box::new(Conversations::new(
-                gemini::Gemini::installed(layout),
+                installed_provider(gemini::Gemini::installed(layout)),
                 SessionStore::new(None),
             )),
             Box::new(Conversations::new(
-                grok::Grok::installed(layout),
+                installed_provider(grok::Grok::installed(layout)),
                 SessionStore::new(None),
             )),
         ])

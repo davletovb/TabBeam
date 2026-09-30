@@ -26,9 +26,9 @@ $target = 'x86_64-pc-windows-msvc'
 if ($LASTEXITCODE -ne 0) {
     throw "rustup target add $target failed with exit code $LASTEXITCODE"
 }
-& cargo build --manifest-path (Join-Path $root 'native\Cargo.toml') --release --locked --target $target -p tabbeam-host
+& cargo build --no-default-features --manifest-path (Join-Path $root 'native\Cargo.toml') --release --locked --target $target -p tabbeam-host
 if ($LASTEXITCODE -ne 0) {
-    throw "cargo build failed with exit code $LASTEXITCODE"
+    throw "cargo build --no-default-features failed with exit code $LASTEXITCODE"
 }
 
 $hostSource = Join-Path $root "native\target\$target\release\tabbeam-host.exe"

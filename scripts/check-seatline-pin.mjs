@@ -4,8 +4,8 @@ import fs from "node:fs";
 const expectedRepo = "https://github.com/davletovb/seatline";
 const manifest = fs.readFileSync(new URL("../native/Cargo.toml", import.meta.url), "utf8");
 const lines = manifest.split(/\r?\n/).filter((line) => /^seatline-[a-z-]+\s*=/.test(line.trim()));
-if (lines.length !== 5) {
-  console.error(`Expected 5 Seatline workspace dependency pins, found ${lines.length}`);
+if (lines.length !== 6) {
+  console.error(`Expected 6 Seatline workspace dependency pins, found ${lines.length}`);
   process.exit(1);
 }
 const revs = new Set();

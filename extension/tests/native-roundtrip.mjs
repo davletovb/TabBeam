@@ -236,7 +236,7 @@ const store = createConversationStore({
 const inFlight = new Set();
 const manager = createNativeConnectionManager({
   connectNative(name) {
-    assert.equal(name, "com.tabbeam.host");
+    assert.equal(name, "com.seatline.host");
     assert.equal(native, undefined, "the host should be reused");
     native = new HostPort();
     return native;

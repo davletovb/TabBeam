@@ -12,6 +12,9 @@ use std::path::Path;
 use serde::Serialize;
 
 /// The name the extension connects to and the manifest registers.
+#[cfg(feature = "shared-companion")]
+pub const HOST_NAME: &str = "com.seatline.host";
+#[cfg(not(feature = "shared-companion"))]
 pub const HOST_NAME: &str = "com.tabbeam.host";
 
 const DESCRIPTION: &str = "TabBeam native host";
@@ -168,7 +171,7 @@ mod tests {
         assert_eq!(
             manifest,
             serde_json::json!({
-                "name": "com.tabbeam.host",
+                "name": HOST_NAME,
                 "description": "TabBeam native host",
                 "path": path.to_str().unwrap(),
                 "type": "stdio",

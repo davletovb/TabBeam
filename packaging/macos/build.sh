@@ -17,7 +17,7 @@ trap 'rm -rf "$stage"; rm -f "$components"' EXIT
 # Ship one universal host so Installer cannot put the wrong architecture on a Mac.
 rustup target add aarch64-apple-darwin x86_64-apple-darwin
 for target in aarch64-apple-darwin x86_64-apple-darwin; do
-  cargo build --manifest-path "$root/native/Cargo.toml" --release --locked \
+  cargo build --no-default-features --manifest-path "$root/native/Cargo.toml" --release --locked \
     --target "$target" -p tabbeam-host
 done
 host="$stage/Library/Application Support/TabBeam/tabbeam-host"

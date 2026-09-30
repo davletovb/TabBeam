@@ -3,16 +3,16 @@ import { recordDuration } from "../shared/performance.js";
 import { PROTOCOL_VERSION } from "../shared/diagnostics.js";
 import { failed } from "./ask-bridge.js";
 
-export const NATIVE_HOST_NAME = "com.tabbeam.host";
+export const NATIVE_HOST_NAME = "com.seatline.host";
 export const HOST_READY_TIMEOUT_MS = 5_000;
 export const HOST_PROTOCOL_MISMATCH = Object.freeze({
   code: "HOST_UNAVAILABLE", reason: "HOST_PROTOCOL_MISMATCH",
-  message: "TabBeam's companion app needs an update. Open setup to install the matching version.",
+  message: "Seatline companion needs an update. Open setup to install the matching version.",
   retryable: false
 });
 export const HOST_READY_TIMEOUT = Object.freeze({
   code: "HOST_UNAVAILABLE", reason: "HOST_READY_TIMEOUT",
-  message: "TabBeam's companion app did not start. Open setup and reinstall it.",
+  message: "Seatline companion did not start. Open setup and reinstall it.",
   retryable: true
 });
 
