@@ -33,7 +33,7 @@
           Companion setup
         </span>
         <h1>Provider &amp; setup</h1>
-        <p class="lede">Choose which AI TabBeam asks, and connect the small companion app it talks to on this computer.</p>
+        <p class="lede">Choose which AI TabBeam asks, and connect your shared Seatline companion.</p>
       </section>
 
       <section class="settings-card" aria-labelledby="provider-title">
@@ -56,24 +56,25 @@
       </section>
 
       <h2 class="section-title">Connect the companion</h2>
-      <p class="section-lede">TabBeam checks the companion and each provider above. Connect a companion compatible with this extension, then follow your provider's own sign-in flow.</p>
+      <p class="section-lede">TabBeam uses the same Seatline installation as your other authorized apps. Connect it, then follow your provider's own sign-in flow.</p>
 
       <ol class="steps">
         <li class="step" id="macos-package" hidden>
           <div class="step-body">
             <h2>Install the macOS companion</h2>
-            <p>Download the TabBeam companion package from the <a href="https://github.com/davletovb/tabbeam/releases" target="_blank" rel="noopener noreferrer">TabBeam releases</a> and open it in Finder. The installer registers the host with Chrome automatically. If the popup says the companion needs an update, install the matching newer package.</p>
+            <p>Install Seatline once using the <a href="https://github.com/davletovb/seatline/blob/main/companion/README.md" target="_blank" rel="noopener noreferrer">shared companion setup</a>. This development build provides a native binary; a signed macOS installer is not available yet. Installers from the TabBeam releases page register the older <code>com.tabbeam.host</code> and do not work with this extension build, which connects to <code>com.seatline.host</code>. If you already use Seatline with another app, authorize TabBeam below.</p>
           </div>
         </li>
         <li class="step" id="windows-package" hidden>
           <div class="step-body">
             <h2>Install the Windows companion</h2>
-            <p>Download the signed TabBeam companion installer from the <a href="https://github.com/davletovb/tabbeam/releases" target="_blank" rel="noopener noreferrer">TabBeam releases</a> and open it normally. Windows should identify the expected publisher; do not continue with an unknown-publisher release build. It installs for your Windows account and registers the host with Chrome automatically. If the popup says the companion needs an update, install the matching newer package.</p>
+            <p>Install Seatline once using the <a href="https://github.com/davletovb/seatline/blob/main/companion/README.md" target="_blank" rel="noopener noreferrer">shared companion setup</a>. This development build provides a native binary; a signed Windows installer is not available yet. Installers from the TabBeam releases page register the older <code>com.tabbeam.host</code> and do not work with this extension build, which connects to <code>com.seatline.host</code>. If you already use Seatline with another app, authorize TabBeam below.</p>
           </div>
         </li>
         <li class="step">
           <div class="step-body">
             <h2>Choose a provider</h2>
+            <p>Seatline is installed once and shared by TabBeam, Conclave, and other authorized apps.</p>
             <p>Choose Codex or Claude above. The status beside each provider tells you whether its tool is found and signed in.</p>
           </div>
         </li>
@@ -91,29 +92,34 @@
         </li>
       </ol>
 
-      <details id="manual-setup" class="manual-setup">
-        <summary>Development build or Linux</summary>
-        <p>For Linux or an unpacked extension with its own ID, build the native host from a checkout and register it for the exact ID shown on TabBeam's card at <code>chrome://extensions</code>. Windows development registration can use the HKCU path described below.</p>
+      <details id="manual-setup" class="manual-setup" open>
+        <summary>Shared companion setup</summary>
+        <p>Install Seatline once, then follow the <a href="https://github.com/davletovb/TabBeam/blob/main/docs/architecture/shared-companion.md" target="_blank" rel="noopener noreferrer">TabBeam integration setup</a> for this development build.</p>
         <div class="command">
-          <code>cargo build --manifest-path native/Cargo.toml</code>
+          <code>seatline-companion install</code>
           <button class="copy-command" type="button" aria-label="Copy command" title="Copy"><svg class="icon icon-sm" aria-hidden="true"><use href="../shared/icons.svg#copy"/></svg><svg class="icon icon-sm icon-copied" aria-hidden="true"><use href="../shared/icons.svg#check"/></svg></button>
         </div>
-        <p>Print the manifest with the built host, using the extension ID from Chrome:</p>
+        <p>Authorize this extension. <code>--allow-provider-default</code> lets TabBeam's plain questions, which send no page context, use your provider's own tool settings; without it those questions are refused.</p>
         <div class="command">
-          <code>native/target/debug/tabbeam-host --print-manifest &lt;extension-id&gt;</code>
+          <code id="authorize-command">seatline-companion authorize tabbeam codex,claude,gemini,grok chrome-extension://EXTENSION_ID/ --cache-title=TabBeam --allow-provider-default</code>
           <button class="copy-command" type="button" aria-label="Copy command" title="Copy"><svg class="icon icon-sm" aria-hidden="true"><use href="../shared/icons.svg#copy"/></svg><svg class="icon icon-sm icon-copied" aria-hidden="true"><use href="../shared/icons.svg#check"/></svg></button>
         </div>
-        <p>Save the resulting JSON as <code>com.tabbeam.host.json</code> in Chrome's NativeMessagingHosts directory: <code>~/.config/google-chrome/NativeMessagingHosts</code> on Linux or <code>~/Library/Application Support/Google/Chrome/NativeMessagingHosts</code> on macOS. On Windows, save it at a stable path and set the default value of <code>HKCU\Software\Google\Chrome\NativeMessagingHosts\com.tabbeam.host</code> to that full path. The manifest's host path must be absolute on Linux and macOS; on Windows Chrome also permits a path relative to the manifest file.</p>
+        <p>Register TabBeam's built native integration at its permanent location:</p>
+        <div class="command">
+          <code>seatline-companion register-native tabbeam /absolute/path/to/tabbeam-host</code>
+          <button class="copy-command" type="button" aria-label="Copy command" title="Copy"><svg class="icon icon-sm" aria-hidden="true"><use href="../shared/icons.svg#copy"/></svg><svg class="icon icon-sm icon-copied" aria-hidden="true"><use href="../shared/icons.svg#check"/></svg></button>
+        </div>
+        <p>Use the full path to <code>tabbeam-host.exe</code> on Windows. Reopen TabBeam after authorization.</p>
       </details>
 
       <aside class="note" id="macos-uninstall" hidden>
         <svg class="icon" aria-hidden="true"><use href="../shared/icons.svg#shield"/></svg>
-        <p>To remove the companion on macOS, open <strong>Applications → Uninstall TabBeam</strong>. Remove the extension separately in Chrome. Provider credentials stay with the provider tool.</p>
+        <p>Remove TabBeam in Chrome. To remove its Seatline access, run <code>seatline-companion revoke tabbeam</code>. Your other apps keep using Seatline, and provider credentials stay with the provider tool.</p>
       </aside>
 
       <aside class="note" id="windows-uninstall" hidden>
         <svg class="icon" aria-hidden="true"><use href="../shared/icons.svg#shield"/></svg>
-        <p>To remove the companion on Windows, quit Chrome, then open <strong>Settings → Apps → Installed apps → TabBeam Companion → Uninstall</strong>. Remove the extension separately in Chrome. Provider credentials and TabBeam runtime state stay untouched.</p>
+        <p>Remove TabBeam in Chrome. To remove its Seatline access, run <code>seatline-companion revoke tabbeam</code>. Your other apps keep using Seatline, and provider credentials stay with the provider tool.</p>
       </aside>
     </main>
     <script type="module" src="./setup.js"></script>

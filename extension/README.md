@@ -63,7 +63,7 @@ Answers type out as they arrive (`src/shared/stream-reveal.js`). Codex's `exec -
 - A subsequent request reconnects automatically.
 - Stale callbacks from an old port are ignored after a replacement connection is established.
 
-The canonical Native Messaging host name is currently `com.tabbeam.host`. Packaging/registration work later in the tracker must register the companion under that same name.
+The extension connects to the Native Messaging host `com.seatline.host`, the shared Seatline companion (`docs/protocol/native-messaging-v1.json`, `host_name`). The standalone macOS/Windows packages are a separate configuration: they register the older `com.tabbeam.host` (`legacy_host_name`) and do not work with this extension build. See `docs/architecture/shared-companion.md`.
 
 ## Popup ask flow
 
@@ -124,11 +124,12 @@ The content script responds only to explicit capture messages. Selection support
 
 ### Trying it against the local host
 
-For a user-facing macOS install, use the companion package paired with the extension's published ID. The setup page links to the package and provider guidance. Packaging and the clean-machine verification checklist live in `packaging/macos/README.md`.
+For the default (shared-host) build, install Seatline and authorize TabBeam as `docs/architecture/shared-companion.md` describes; the setup page shows the exact commands for the current extension ID. The macOS package below belongs to the standalone configuration, whose extension connects to `com.tabbeam.host`; there is no signed shared-host installer yet. Packaging and the clean-machine verification checklist live in `packaging/macos/README.md`.
 
-For local development before installing a paired package, register a development build by hand:
+For local development of the **standalone** configuration (built with `--no-default-features`, host name `com.tabbeam.host`), register a development build by hand. The default build is registered by Seatline instead (`seatline-companion install` and `authorize`); do not save this manifest over Seatline's `com.seatline.host` registration.
 
-1. Build the host: `cargo build -p tabbeam-host` in `native/`.
+
+1. Build the host: `cargo build -p tabbeam-host --no-default-features` in `native/`.
 2. Load this directory unpacked and copy the extension ID from `chrome://extensions`.
 3. Have the host print its manifest for that ID, and save it as `com.tabbeam.host.json` in Chrome's per-user `NativeMessagingHosts` directory, creating the directory if needed. For example, on Linux:
 

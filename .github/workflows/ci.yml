@@ -59,8 +59,24 @@ jobs:
         run: rustup toolchain install stable --profile minimal
       - name: Build host
         run: cargo +stable build --manifest-path native/Cargo.toml --locked
+      - name: Install shared broker for the round trip
+        shell: bash
+        run: |
+          cargo +stable install --root "$RUNNER_TEMP/seatline-install" --git https://github.com/davletovb/seatline --rev dc1086582c8b98498aa48dae91c8d174bc3cfc3c --locked seatline-companion
+          seatline_bin="$RUNNER_TEMP/seatline-install/bin/seatline-companion"
+          "$seatline_bin" install
+          "$seatline_bin" authorize tabbeam codex,claude,gemini,grok chrome-extension://abcdefghijklmnopabcdefghijklmnop/ --cache-title=TabBeam --allow-provider-default
+          "$seatline_bin" register-native tabbeam "$GITHUB_WORKSPACE/native/target/debug/tabbeam-host"
       - name: Exercise Native Messaging through popup
+        env:
+          SEATLINE_NATIVE_TEST_BRIDGE: ${{ runner.temp }}/seatline-install/bin/seatline-companion
         run: npm --prefix extension run test:roundtrip
+      # The round trip above asks the host's `fake` scaffold, which never reaches
+      # the broker. This sends real plain and context asks through it.
+      - name: Send plain and context asks through the broker
+        env:
+          SEATLINE_BIN: ${{ runner.temp }}/seatline-install/bin/seatline-companion
+        run: node scripts/validate-brokered-ask.mjs --companion "$SEATLINE_BIN" --host native/target/debug/tabbeam-host
 
   macos-package:
     name: macOS package install and removal (${{ matrix.os }})
@@ -296,6 +312,13 @@ jobs:
         run: npm --prefix scripts run validate
       - name: Build native host for contract conformance
         run: cargo build --manifest-path native/Cargo.toml --locked
+      - name: Install and authorize the shared provider broker
+        shell: bash
+        run: |
+          cargo install --root "$RUNNER_TEMP/seatline-install" --git https://github.com/davletovb/seatline --rev dc1086582c8b98498aa48dae91c8d174bc3cfc3c --locked seatline-companion
+          seatline_bin="$RUNNER_TEMP/seatline-install/bin/seatline-companion"
+          "$seatline_bin" install
+          "$seatline_bin" authorize tabbeam codex,claude,gemini,grok --cache-title=TabBeam --allow-provider-default
       - name: Validate built host against golden protocol
         run: npm --prefix scripts run validate:host -- --host native/target/debug/tabbeam-host
 
@@ -380,6 +403,12 @@ jobs:
       - name: Test release profile
         if: matrix.os == 'ubuntu-latest'
         run: cargo test --workspace --locked --release
+      # The macOS and Windows packages build the standalone host without the
+      # shared-companion feature, so that configuration needs its own tests.
+      - name: Clippy the standalone package configuration
+        run: cargo clippy --workspace --all-targets --locked --no-default-features -- -D warnings
+      - name: Test the standalone package configuration
+        run: cargo test --workspace --locked --no-default-features
 
   native-fuzz:
     name: Native fuzz smoke

@@ -11,11 +11,12 @@ rust-version = "1.85"
 publish = false
 
 [workspace.dependencies]
-seatline-core = { git = "https://github.com/davletovb/seatline", rev = "e021c2acf05132073d82bf3e2149f1ff64f1f49f" }
-seatline-platform = { git = "https://github.com/davletovb/seatline", rev = "e021c2acf05132073d82bf3e2149f1ff64f1f49f" }
-seatline-providers = { git = "https://github.com/davletovb/seatline", rev = "e021c2acf05132073d82bf3e2149f1ff64f1f49f" }
-seatline-scheduler = { git = "https://github.com/davletovb/seatline", rev = "e021c2acf05132073d82bf3e2149f1ff64f1f49f" }
-seatline-fake-provider = { git = "https://github.com/davletovb/seatline", rev = "e021c2acf05132073d82bf3e2149f1ff64f1f49f" }
+seatline-companion = { git = "https://github.com/davletovb/seatline", rev = "dc1086582c8b98498aa48dae91c8d174bc3cfc3c", default-features = false }
+seatline-core = { git = "https://github.com/davletovb/seatline", rev = "dc1086582c8b98498aa48dae91c8d174bc3cfc3c" }
+seatline-platform = { git = "https://github.com/davletovb/seatline", rev = "dc1086582c8b98498aa48dae91c8d174bc3cfc3c" }
+seatline-providers = { git = "https://github.com/davletovb/seatline", rev = "dc1086582c8b98498aa48dae91c8d174bc3cfc3c" }
+seatline-scheduler = { git = "https://github.com/davletovb/seatline", rev = "dc1086582c8b98498aa48dae91c8d174bc3cfc3c" }
+seatline-fake-provider = { git = "https://github.com/davletovb/seatline", rev = "dc1086582c8b98498aa48dae91c8d174bc3cfc3c" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

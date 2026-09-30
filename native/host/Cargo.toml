@@ -14,7 +14,12 @@ path = "src/lib.rs"
 name = "tabbeam-host"
 path = "src/main.rs"
 
+[features]
+default = ["shared-companion"]
+shared-companion = ["dep:seatline-companion"]
+
 [dependencies]
+seatline-companion = { workspace = true, optional = true }
 seatline-core.workspace = true
 seatline-platform.workspace = true
 seatline-providers.workspace = true

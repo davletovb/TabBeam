@@ -125,7 +125,7 @@ Chrome starts the host only for the extensions its Native Messaging manifest lis
 ./target/debug/tabbeam-host --print-manifest <extension-id> [<extension-id>...]
 ```
 
-The output names `com.tabbeam.host`, points `path` at the absolute path the host was run from, and lists one `chrome-extension://<id>/` origin per ID. Anything that isn't a 32-character `a`–`p` ID, such as a wildcard or a full origin, is refused with status 64. The path isn't canonicalized: on macOS a symlink or `..` is kept as typed, while Linux reports the resolved path. That is deliberate, because a stable symlink can be the right path to register, where its versioned target would break on upgrade. Installers should run the host from the path they want registered (PKG-01). `extension/README.md` shows where to save the manifest for development; installers register it later (PKG-01).
+The output names the host the build registers: `com.seatline.host` by default, or `com.tabbeam.host` for the standalone configuration built with `--no-default-features` (the packaged macOS and Windows hosts). It points `path` at the absolute path the host was run from, and lists one `chrome-extension://<id>/` origin per ID. Anything that isn't a 32-character `a`–`p` ID, such as a wildcard or a full origin, is refused with status 64. The path isn't canonicalized: on macOS a symlink or `..` is kept as typed, while Linux reports the resolved path. That is deliberate, because a stable symlink can be the right path to register, where its versioned target would break on upgrade. Installers should run the host from the path they want registered (PKG-01). `extension/README.md` shows where to save the manifest for development; installers register it later (PKG-01).
 
 ## Diagnostics
 

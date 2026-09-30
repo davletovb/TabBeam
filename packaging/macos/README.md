@@ -1,5 +1,7 @@
 # macOS companion release and verification
 
+> **Standalone configuration.** This package is built with `--no-default-features` and registers `com.tabbeam.host`. The default extension build connects to `com.seatline.host` (the shared Seatline companion) and does not work with it, and this package does not work with that extension. A signed shared-host installer is still to do. See `docs/architecture/shared-companion.md`.
+
 The package installs the release host at `/Library/Application Support/TabBeam/tabbeam-host` and its Chrome system Native Messaging manifest at `/Library/Google/Chrome/NativeMessagingHosts/com.tabbeam.host.json`. It also installs a Finder uninstaller at `/Applications/Uninstall TabBeam.app`. No user profile, provider credentials, or browser storage are touched by uninstall.
 
 ## Build a paired package

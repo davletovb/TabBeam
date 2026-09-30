@@ -92,6 +92,9 @@ Typical reasons:
 - `PROVIDER_UNAVAILABLE`
 - `PROVIDER_REJECTED_REQUEST`
 - `PROVIDER_INTERNAL_ERROR`
+- `QUEUE_FULL` — the shared Seatline companion has too many requests queued (retryable).
+- `PROVIDER_TIMEOUT` — the turn hit the shared companion's time limit (retryable).
+- `COMPANION_DISCONNECTED` — the connection to the shared companion ended before the request did (retryable).
 
 Retryability is reason-dependent:
 - rate limiting/unavailability/process crash MAY be retryable;
@@ -156,6 +159,8 @@ Required v1 protocol reasons include:
 - `PAGE_CONTEXT_TOOLS_ENABLED`
 - `MODEL_SELECTION_UNSUPPORTED`
 
+The default build, which runs providers through the shared Seatline companion, adds two reasons under `INVALID_REQUEST`: `APP_NOT_AUTHORIZED` (TabBeam has no grant in the companion) and `PROVIDER_DEFAULT_TOOLS_DENIED` (the grant does not include `--allow-provider-default`, which a plain, context-free question needs because it uses the provider's own tool settings).
+
 The extension also reports `REQUEST_TOO_LARGE` when it refuses to send a request that would exceed the Native Messaging frame limit (SEC-01, `docs/protocol/native-messaging-v1.json`). The host never receives such a request.
 
 A provider adapter reports `UNKNOWN_CONVERSATION` when `conversation_id` has no recoverable session and no usable dialogue history. Codex recovers its native session mapping after host restarts, or starts a new provider session from bounded `input.history` if the mapping has been lost or the resumed thread fails before a turn starts. The host rejects attached browser context with `PAGE_CONTEXT_UNSUPPORTED` when the selected provider does not report `page_context: true`, rather than silently answering without it (§6). Codex reports `page_context: true`; for a context turn it consumes validated browser context only with shell/image/apps/plugins/hooks/web-search/orchestrator-MCP/subagent surfaces disabled. Plugin/cache artifacts do not block the turn. It fails with `PAGE_CONTEXT_TOOLS_ENABLED` only when user-level standalone `mcp_servers` configuration is present and cannot yet be disabled deterministically.
@@ -173,6 +178,7 @@ Typical reasons:
 - `UNEXPECTED_FAILURE`
 - `SESSION_STORE_FAILED` — a provider session could not be recorded for later continuation.
 - `SESSION_FORGET_FAILED` — a forgotten conversation's session mapping or provider transcript could not be removed (retryable).
+- `SESSION_LIMIT_REACHED` — the shared companion has reached its stored-session limit for TabBeam.
 
 Default retryability: **false** unless the implementation explicitly knows the condition is transient.
 

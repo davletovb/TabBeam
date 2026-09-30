@@ -27,6 +27,9 @@ fn wire_reason(reason: &'static str) -> &'static str {
 
 fn message(provider: Option<&str>, reason: &str, retryable: bool) -> &'static str {
     match (provider, reason, retryable) {
+        (_, "APP_NOT_AUTHORIZED", _) => {
+            "Authorize TabBeam in your shared Seatline companion, then reopen TabBeam."
+        }
         (Some("codex"), "EXECUTABLE_NOT_FOUND", _) => {
             "Codex isn't installed. Install the Codex CLI, then try again."
         }
@@ -210,6 +213,20 @@ fn message(provider: Option<&str>, reason: &str, retryable: bool) -> &'static st
             "The provider crossed TabBeam's isolated execution boundary, so the turn was stopped."
         }
         (_, "PROVIDER_UNAVAILABLE", _) => "The provider couldn't answer right now. Try again.",
+        // Reasons the shared Seatline companion raises itself.
+        (_, "PROVIDER_DEFAULT_TOOLS_DENIED", _) => {
+            "TabBeam isn't allowed to use your provider's own tool settings, which plain questions need. Run the authorize command shown in TabBeam setup (it includes --allow-provider-default), then reopen TabBeam."
+        }
+        (_, "QUEUE_FULL", _) => {
+            "Your Seatline companion is busy with other requests. Try again in a moment."
+        }
+        (_, "PROVIDER_TIMEOUT", _) => "The provider took too long to answer. Try again.",
+        (_, "COMPANION_DISCONNECTED", _) => {
+            "TabBeam lost its connection to your Seatline companion. Make sure it is installed and authorized for TabBeam, then try again."
+        }
+        (_, "SESSION_LIMIT_REACHED", _) => {
+            "Your Seatline companion has stored too many conversations for TabBeam. Delete older conversations, then try again."
+        }
         _ => "The provider couldn't complete this request. Try again.",
     }
 }
@@ -265,6 +282,55 @@ mod tests {
                 rendered.message
             );
             assert!(!rendered.message.contains("sk-"));
+        }
+    }
+
+    #[test]
+    fn the_shared_companions_own_reasons_say_what_to_do() {
+        let cases = [
+            (
+                ErrorCode::InvalidRequest,
+                "PROVIDER_DEFAULT_TOOLS_DENIED",
+                false,
+                "--allow-provider-default",
+            ),
+            (ErrorCode::ProviderFailed, "QUEUE_FULL", true, "busy"),
+            (
+                ErrorCode::ProviderFailed,
+                "PROVIDER_TIMEOUT",
+                true,
+                "too long",
+            ),
+            (
+                ErrorCode::ProviderFailed,
+                "COMPANION_DISCONNECTED",
+                true,
+                "authorized for TabBeam",
+            ),
+            (
+                ErrorCode::InternalError,
+                "SESSION_LIMIT_REACHED",
+                false,
+                "Delete older conversations",
+            ),
+        ];
+        for (code, reason, retryable, expected) in cases {
+            let rendered = provider_failure(
+                Some("codex"),
+                Failure {
+                    code,
+                    reason,
+                    retryable,
+                },
+            );
+            // The reason keeps its name on the wire, and the wording is not the generic fallback.
+            assert_eq!(rendered.reason, reason);
+            assert_eq!(rendered.retryable, retryable);
+            assert!(
+                rendered.message.contains(expected),
+                "{reason}: {}",
+                rendered.message
+            );
         }
     }
 
