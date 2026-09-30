@@ -18,7 +18,10 @@ fn run_host(args: &[&str], stdin: &[u8]) -> Output {
     let mut child = Command::new(HOST)
         .args(args)
         .env("TABBEAM_PROVIDER_PATH", no_providers)
-        .env("SEATLINE_DATA_DIR", std::env::temp_dir().join(format!("tabbeam-cli-no-grants-{}",std::process::id())))
+        .env(
+            "SEATLINE_DATA_DIR",
+            std::env::temp_dir().join(format!("tabbeam-cli-no-grants-{}", std::process::id())),
+        )
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -263,5 +266,9 @@ fn the_shared_host_refuses_provider_work_without_an_app_grant() {
     let request = r#"{"version":1,"type":"request","request_id":"req_a","method":"provider.status","payload":{"provider_id":"codex"}}"#;
     let output = run_host(&[ORIGIN], &frame(request));
     let frames = frames_only(&output.stdout);
-    assert!(frames.iter().any(|value| value["payload"]["error"]["reason"]=="APP_NOT_AUTHORIZED"));
+    assert!(
+        frames
+            .iter()
+            .any(|value| value["payload"]["error"]["reason"] == "APP_NOT_AUTHORIZED")
+    );
 }

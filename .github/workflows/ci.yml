@@ -62,7 +62,7 @@ jobs:
       - name: Install shared broker for the round trip
         shell: bash
         run: |
-          cargo +stable install --git https://github.com/davletovb/seatline --rev 1bab40697bb3f9cba6431fe3c490a85e36981250 --locked seatline-companion
+          cargo +stable install --git https://github.com/davletovb/seatline --rev 928626e7fd853da1828fbdead5226f65b183a644 --locked seatline-companion
           seatline-companion authorize tabbeam codex,claude,gemini,grok --cache-title=TabBeam
       - name: Exercise Native Messaging through popup
         run: npm --prefix extension run test:roundtrip
