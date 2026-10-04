@@ -916,7 +916,9 @@ fn forward<W: Write + ?Sized>(
             };
             write_event(output, raw, Event::ProviderStatus, &payload)
         }
-        Update::Launched
+        Update::Queued { .. }
+        | Update::Admitted
+        | Update::Launched
         | Update::Session(_)
         | Update::SessionLost(_)
         | Update::Usage(_)

@@ -180,3 +180,7 @@ revision" CI job runs the former).
 To go back to a connection per request, change `installed_provider` in
 `native/host/src/providers/mod.rs` to build `RemoteProvider::new(APP, &metadata)`
 and drop the `Link`; nothing else depends on the shared connection.
+
+## F and adoption review correction pin
+
+The native dependency and broker CI pin is now `a33a0c95bd00956abb3314c8b87a0151a127ef32` ([Seatline #11](https://github.com/davletovb/seatline/pull/11)), including F scheduling/filesystem work and the queued-cleanup drain barrier. The host explicitly ignores the new `Update::Queued` and `Update::Admitted` variants; wire progress remains opt-in. The shared-client behavior and original fake-provider evidence above require fresh validation at this pin. This update does not claim a real-provider latency gain. Live cold/prepared/warm measurements remain open and slice E is deferred pending the Codex app-server decision.
