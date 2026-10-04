@@ -62,7 +62,7 @@ jobs:
       - name: Install shared broker for the round trip
         shell: bash
         run: |
-          cargo +stable install --root "$RUNNER_TEMP/seatline-install" --git https://github.com/davletovb/seatline --rev a33a0c95bd00956abb3314c8b87a0151a127ef32 --locked seatline-companion
+          cargo +stable install --root "$RUNNER_TEMP/seatline-install" --git https://github.com/davletovb/seatline --rev fdd237720a913963cb4df78817c41ee968a0ad2a --locked seatline-companion
           seatline_bin="$RUNNER_TEMP/seatline-install/bin/seatline-companion"
           "$seatline_bin" install
           "$seatline_bin" authorize tabbeam codex,claude,gemini,grok chrome-extension://abcdefghijklmnopabcdefghijklmnop/ --cache-title=TabBeam --allow-provider-default
@@ -322,7 +322,7 @@ jobs:
       - name: Install and authorize the shared provider broker
         shell: bash
         run: |
-          cargo install --root "$RUNNER_TEMP/seatline-install" --git https://github.com/davletovb/seatline --rev a33a0c95bd00956abb3314c8b87a0151a127ef32 --locked seatline-companion
+          cargo install --root "$RUNNER_TEMP/seatline-install" --git https://github.com/davletovb/seatline --rev fdd237720a913963cb4df78817c41ee968a0ad2a --locked seatline-companion
           seatline_bin="$RUNNER_TEMP/seatline-install/bin/seatline-companion"
           "$seatline_bin" install
           "$seatline_bin" authorize tabbeam codex,claude,gemini,grok --cache-title=TabBeam --allow-provider-default

@@ -326,7 +326,7 @@ checksum = "d3edd4d5d42c92f0a659926464d4cce56b562761267ecf0f469d85b7de384175"
 [[package]]
 name = "seatline-companion"
 version = "0.1.0-dev"
-source = "git+https://github.com/davletovb/seatline?rev=a33a0c95bd00956abb3314c8b87a0151a127ef32#a33a0c95bd00956abb3314c8b87a0151a127ef32"
+source = "git+https://github.com/davletovb/seatline?rev=fdd237720a913963cb4df78817c41ee968a0ad2a#fdd237720a913963cb4df78817c41ee968a0ad2a"
 dependencies = [
  "fs2",
  "getrandom",
@@ -345,7 +345,7 @@ dependencies = [
 [[package]]
 name = "seatline-core"
 version = "0.1.0-dev"
-source = "git+https://github.com/davletovb/seatline?rev=a33a0c95bd00956abb3314c8b87a0151a127ef32#a33a0c95bd00956abb3314c8b87a0151a127ef32"
+source = "git+https://github.com/davletovb/seatline?rev=fdd237720a913963cb4df78817c41ee968a0ad2a#fdd237720a913963cb4df78817c41ee968a0ad2a"
 dependencies = [
  "nix",
  "serde",
@@ -355,7 +355,7 @@ dependencies = [
 [[package]]
 name = "seatline-fake-provider"
 version = "0.1.0-dev"
-source = "git+https://github.com/davletovb/seatline?rev=a33a0c95bd00956abb3314c8b87a0151a127ef32#a33a0c95bd00956abb3314c8b87a0151a127ef32"
+source = "git+https://github.com/davletovb/seatline?rev=fdd237720a913963cb4df78817c41ee968a0ad2a#fdd237720a913963cb4df78817c41ee968a0ad2a"
 dependencies = [
  "nix",
  "seatline-core",
@@ -366,7 +366,7 @@ dependencies = [
 [[package]]
 name = "seatline-platform"
 version = "0.1.0-dev"
-source = "git+https://github.com/davletovb/seatline?rev=a33a0c95bd00956abb3314c8b87a0151a127ef32#a33a0c95bd00956abb3314c8b87a0151a127ef32"
+source = "git+https://github.com/davletovb/seatline?rev=fdd237720a913963cb4df78817c41ee968a0ad2a#fdd237720a913963cb4df78817c41ee968a0ad2a"
 dependencies = [
  "nix",
  "seatline-core",
@@ -375,7 +375,7 @@ dependencies = [
 [[package]]
 name = "seatline-providers"
 version = "0.1.0-dev"
-source = "git+https://github.com/davletovb/seatline?rev=a33a0c95bd00956abb3314c8b87a0151a127ef32#a33a0c95bd00956abb3314c8b87a0151a127ef32"
+source = "git+https://github.com/davletovb/seatline?rev=fdd237720a913963cb4df78817c41ee968a0ad2a#fdd237720a913963cb4df78817c41ee968a0ad2a"
 dependencies = [
  "seatline-core",
  "seatline-platform",
@@ -386,7 +386,7 @@ dependencies = [
 [[package]]
 name = "seatline-scheduler"
 version = "0.1.0-dev"
-source = "git+https://github.com/davletovb/seatline?rev=a33a0c95bd00956abb3314c8b87a0151a127ef32#a33a0c95bd00956abb3314c8b87a0151a127ef32"
+source = "git+https://github.com/davletovb/seatline?rev=fdd237720a913963cb4df78817c41ee968a0ad2a#fdd237720a913963cb4df78817c41ee968a0ad2a"
 dependencies = [
  "seatline-core",
 ]
