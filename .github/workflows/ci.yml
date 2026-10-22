@@ -34,7 +34,7 @@ jobs:
           fi
       - uses: actions/setup-node@v5
         with:
-          node-version: "22"
+          node-version: '22.23.4'
       - name: Lint
         run: npm --prefix extension run lint
       - name: Typecheck
@@ -54,7 +54,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
-          node-version: "22"
+          node-version: '22.23.4'
       - name: Install Rust
         run: rustup toolchain install stable --profile minimal
       - name: Build host
@@ -97,7 +97,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
-          node-version: "22"
+          node-version: '22.23.4'
       - name: Build unsigned test package
         run: packaging/macos/build.sh abcdefghijklmnopabcdefghijklmnop
       - name: Install and verify Chrome registration
@@ -144,7 +144,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
-          node-version: "22"
+          node-version: '22.23.4'
       - uses: actions/cache@v4
         with:
           path: |
@@ -312,7 +312,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
-          node-version: "22"
+          node-version: '22.23.4'
       - name: Install protocol validator
         run: npm --prefix scripts ci --ignore-scripts --no-audit --no-fund
       - name: Validate schemas and fixtures
@@ -337,7 +337,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
-          node-version: "22"
+          node-version: '22.23.4'
       - name: Verify the exact dependency pin
         id: seatline-pin
         run: node scripts/check-seatline-pin.mjs
@@ -428,7 +428,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
-          node-version: "22"
+          node-version: '22.23.4'
       - name: Install nightly Rust and cargo-fuzz
         run: |
           rustup toolchain install nightly --profile minimal
