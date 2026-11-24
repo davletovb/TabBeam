@@ -363,6 +363,8 @@ mod tests {
 
     fn runtime_capabilities(tool_isolation: Capability) -> seatline_core::protocol::Capabilities {
         seatline_core::protocol::Capabilities {
+            reasoning_effort: Capability::Unsupported,
+            service_tier: Capability::Unsupported,
             streaming: Capability::Supported,
             continuation: Capability::Supported,
             web_search: Capability::Unsupported,

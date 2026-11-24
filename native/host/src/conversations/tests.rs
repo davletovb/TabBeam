@@ -80,6 +80,8 @@ impl Provider for Recorder {
 
     fn capabilities(&self) -> Capabilities {
         Capabilities {
+            reasoning_effort: Capability::Unsupported,
+            service_tier: Capability::Unsupported,
             streaming: Capability::Supported,
             continuation: Capability::Supported,
             web_search: Capability::Supported,
