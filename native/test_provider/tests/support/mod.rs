@@ -60,7 +60,16 @@ impl FakeCodex {
     }
 
     pub fn adapter_with(&self, limits: Limits) -> Conversations<Codex> {
-        Conversations::new(self.codex(limits), self.sessions())
+        let home = self.dir.join("codex-home");
+        std::fs::create_dir_all(&home).expect("private test Codex home");
+        let adapter = self.codex(limits).with_environment([
+            (OsString::from("CODEX_HOME"), home.into_os_string()),
+            (
+                OsString::from("PATH"),
+                std::env::var_os("PATH").unwrap_or_default(),
+            ),
+        ]);
+        Conversations::new(adapter, self.sessions())
     }
 
     /// [`FakeCodex::adapter`] with the environment Codex gets from `host`.

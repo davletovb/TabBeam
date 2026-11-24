@@ -232,6 +232,6 @@ fn provider_differences_are_expressed_only_as_capabilities() {
     assert_eq!(claude.capabilities().web_search, Capability::Supported);
     assert_eq!(gemini.capabilities().web_search, Capability::Supported);
     assert_eq!(grok.capabilities().web_search, Capability::Unsupported);
-    assert_eq!(grok.capabilities().streaming, Capability::Unsupported);
+    assert_eq!(grok.capabilities().streaming, Capability::Supported);
     assert_eq!(gemini.capabilities().streaming, Capability::Supported);
 }
