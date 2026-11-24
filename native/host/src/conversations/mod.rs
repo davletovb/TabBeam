@@ -136,6 +136,8 @@ impl Draft {
             system: None,
             messages,
             model: self.model.clone(),
+            reasoning_effort: None,
+            service_tier: None,
             tools: self.tools,
             session: self.session,
             continuation,

@@ -22,6 +22,8 @@ pub const STATUS: ProviderState = ProviderState {
     availability: Availability::Available,
     authentication: Authentication::Authenticated,
     capabilities: Capabilities {
+        reasoning_effort: Capability::Unsupported,
+        service_tier: Capability::Unsupported,
         streaming: Capability::Supported,
         continuation: Capability::Supported,
         web_search: Capability::Unsupported,

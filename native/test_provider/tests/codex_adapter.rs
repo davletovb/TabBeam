@@ -103,18 +103,6 @@ fn ask(text: &str) -> SendRequest {
     }
 }
 
-fn context_adapter(codex: &FakeCodex) -> Conversations<Codex> {
-    let home = codex.dir.join("context-codex-home");
-    std::fs::create_dir_all(&home).unwrap();
-    codex.adapter_with_env([
-        (OsString::from("CODEX_HOME"), home.into_os_string()),
-        (
-            OsString::from("PATH"),
-            std::env::var_os("PATH").unwrap_or_default(),
-        ),
-    ])
-}
-
 /// The path Codex gets for its workspace: on POSIX, with every link resolved.
 fn workspace(codex: &FakeCodex) -> PathBuf {
     let work = codex.dir.join("work");
@@ -140,7 +128,7 @@ fn browser_context(text: &str) -> BrowserContext {
 #[test]
 fn page_context_reaches_codex_as_untrusted_reference_data() {
     let codex = FakeCodex::install("answers", "signed-in");
-    let adapter = context_adapter(&codex);
+    let adapter = codex.adapter();
     let updates = run_to_end(
         adapter
             .send(SendRequest {
@@ -168,12 +156,18 @@ fn page_context_reaches_codex_as_untrusted_reference_data() {
     for setting in [
         "features.shell_tool=false",
         "features.view_image=false",
+        "features.image_generation=false",
+        "features.sleep_tool=false",
         "features.apps=false",
         "features.plugins=false",
         "features.hooks=false",
         "features.multi_agent=false",
         "features.multi_agent_v2=false",
         "features.standalone_web_search=false",
+        "features.daemon_auto_start=false",
+        "features.skill_search=false",
+        "features.code_mode_host=false",
+        "agents.enabled=false",
         "features.web_search_request=false",
         "features.web_search_cached=false",
         "web_search=\"disabled\"",
@@ -181,7 +175,6 @@ fn page_context_reaches_codex_as_untrusted_reference_data() {
     ] {
         assert!(command.contains(&format!("-c {setting}")), "{command}");
     }
-    assert!(!command.contains("agents.enabled"), "{command}");
 
     let updates = run_to_end(adapter.status().as_mut());
     let Update::Status { status, .. } = &updates[0] else {
@@ -193,7 +186,7 @@ fn page_context_reaches_codex_as_untrusted_reference_data() {
 #[test]
 fn context_with_history_is_framed_before_one_current_question() {
     let codex = FakeCodex::install("answers", "signed-in");
-    let adapter = context_adapter(&codex);
+    let adapter = codex.adapter();
     let updates = run_to_end(
         adapter
             .send(SendRequest {
